@@ -42,6 +42,12 @@ public struct ContactsView: View {
     /// Whether search is active.
     @State private var isSearching = false
 
+    /// Contact selected for node details navigation.
+    @State private var selectedContact: Contact?
+
+    /// Conversation to navigate to after "Start Chat".
+    @State private var chatConversation: Conversation?
+
     /// Called when a contact is selected.
     public var onContactSelected: ((Contact) -> Void)?
 
@@ -86,6 +92,22 @@ public struct ContactsView: View {
                     toolbarContent(vm)
                 }
                 #endif
+                .navigationDestination(item: $selectedContact) { contact in
+                    NodeDetailsView(
+                        contact: contact,
+                        appServices: appServices,
+                        onStartChat: { contact in
+                            startChat(with: contact)
+                        }
+                    )
+                }
+                .navigationDestination(item: $chatConversation) { conversation in
+                    MessagingView(
+                        conversation: conversation,
+                        appServices: appServices,
+                        messageRepository: messageRepository
+                    )
+                }
                 .onAppear {
                     vm.startListening()
                 }
@@ -166,7 +188,9 @@ public struct ContactsView: View {
         case .network:
             NetworkAnnouncesTab(
                 viewModel: vm,
-                onContactSelected: onContactSelected
+                onContactSelected: { contact in
+                    selectedContact = contact
+                }
             )
         }
     }
@@ -217,7 +241,7 @@ public struct ContactsView: View {
                                 vm.toggleFavorite(for: contact.id)
                             },
                             onTap: {
-                                onContactSelected?(contact)
+                                selectedContact = contact
                             }
                         )
                         .padding(.horizontal, 16)
@@ -250,6 +274,30 @@ public struct ContactsView: View {
     }
 
     // MARK: - Toolbar
+
+    // MARK: - Start Chat
+
+    private func startChat(with contact: Contact) {
+        Task {
+            await viewModel?.addToContacts(contact)
+
+            let conversation = Conversation(
+                id: contact.id,
+                destinationHash: contact.identityHash,
+                displayName: contact.displayName,
+                lastMessageTimestamp: Date(),
+                lastMessagePreview: nil,
+                unreadCount: 0,
+                isFavorite: false
+            )
+
+            // Dismiss node details, then navigate to chat
+            selectedContact = nil
+            // Small delay to let navigation pop before pushing new destination
+            try? await Task.sleep(for: .milliseconds(300))
+            chatConversation = conversation
+        }
+    }
 
     #if os(iOS)
     @ToolbarContentBuilder

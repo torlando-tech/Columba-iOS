@@ -30,6 +30,7 @@
 		010 /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F010; };
 		011 /* ContactCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011; };
 		012 /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012; };
+		032 /* NodeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F032; };
 
 		/* Views/Messaging */
 		013 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013; };
@@ -114,6 +115,9 @@
 		/* Interface Management */
 		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
 		F031 /* InterfaceManagementScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementScreen.swift; sourceTree = "<group>"; };
+
+		/* Node Details */
+		F032 /* NodeDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeDetailsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -214,6 +218,7 @@
 				F010 /* ContactsView.swift */,
 				F011 /* ContactCard.swift */,
 				F012 /* NetworkAnnouncesTab.swift */,
+				F032 /* NodeDetailsView.swift */,
 			);
 			path = Contacts;
 			sourceTree = "<group>";
@@ -382,6 +387,7 @@
 				029 /* InterfaceRepository.swift in Sources */,
 				030 /* InterfaceManagementViewModel.swift in Sources */,
 				031 /* InterfaceManagementScreen.swift in Sources */,
+				032 /* NodeDetailsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
