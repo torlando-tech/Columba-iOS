@@ -73,7 +73,7 @@ struct MyIdentityView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .fullScreenCover(isPresented: $showQRFullScreen) {
             QRCodeFullScreenView(
-                identityHash: viewModel.identity.identityHash,
+                qrCodeString: viewModel.identity.qrCodeString,
                 displayName: viewModel.identity.displayName
             )
         }
@@ -291,7 +291,7 @@ struct MyIdentityView: View {
             HStack {
                 Spacer()
 
-                SettingsQRCodeView(string: viewModel.identity.identityHash)
+                SettingsQRCodeView(string: viewModel.identity.qrCodeString)
                     .frame(width: 180, height: 180)
                     .padding(8)
                     .background(Color.white)
@@ -409,7 +409,7 @@ struct MyIdentityView: View {
     private func generateQRCodeImage() -> UIImage? {
         let context = CIContext()
         let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(viewModel.identity.identityHash.utf8)
+        filter.message = Data(viewModel.identity.qrCodeString.utf8)
 
         guard let outputImage = filter.outputImage else { return nil }
 
@@ -471,7 +471,7 @@ struct SettingsQRCodeView: View {
 /// Full screen QR code display for easy scanning.
 @available(iOS 17.0, *)
 struct QRCodeFullScreenView: View {
-    let identityHash: String
+    let qrCodeString: String
     let displayName: String
     @Environment(\.dismiss) private var dismiss
 
@@ -482,7 +482,7 @@ struct QRCodeFullScreenView: View {
             VStack(spacing: 32) {
                 Spacer()
 
-                SettingsQRCodeView(string: identityHash)
+                SettingsQRCodeView(string: qrCodeString)
                     .frame(width: 280, height: 280)
                     .padding(16)
                     .background(Color.white)

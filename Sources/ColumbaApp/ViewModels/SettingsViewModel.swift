@@ -26,6 +26,9 @@ public struct IdentityInfo: Equatable {
     /// Identity hash as hex string.
     public let identityHash: String
 
+    /// 64-byte public key (encryption || signing) as hex string.
+    public let publicKeyHex: String
+
     /// Whether using auto-generated identicon or custom icon.
     public var usesIdenticon: Bool
 
@@ -35,14 +38,25 @@ public struct IdentityInfo: Equatable {
     /// Default display name when none set.
     public static let defaultDisplayName = "Unknown Peer"
 
+    /// QR code string in Android Columba-compatible format.
+    /// Format: `lxma://<destination_hash_hex>:<public_key_hex>`
+    public var qrCodeString: String {
+        guard !identityHash.isEmpty, !publicKeyHex.isEmpty else {
+            return identityHash
+        }
+        return "lxma://\(identityHash):\(publicKeyHex)"
+    }
+
     public init(
         displayName: String = "",
         identityHash: String = "",
+        publicKeyHex: String = "",
         usesIdenticon: Bool = true,
         customIconData: Data? = nil
     ) {
         self.displayName = displayName
         self.identityHash = identityHash
+        self.publicKeyHex = publicKeyHex
         self.usesIdenticon = usesIdenticon
         self.customIconData = customIconData
     }
@@ -159,10 +173,13 @@ public final class SettingsViewModel {
         identity.displayName = await settingsRepository.getDisplayName()
         savedDisplayName = identity.displayName
 
-        // Load identity hash from AppServices
+        // Load identity hash and public key from AppServices
+        let pubKeyHex = appServices.identity?.publicKeys
+            .map { String(format: "%02x", $0) }.joined() ?? ""
         identity = IdentityInfo(
             displayName: identity.displayName,
             identityHash: appServices.localIdentityHashHex,
+            publicKeyHex: pubKeyHex,
             usesIdenticon: true
         )
 
