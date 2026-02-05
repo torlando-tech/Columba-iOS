@@ -154,6 +154,12 @@ public final class ContactsViewModel {
     /// Loading state.
     public var isLoading = false
 
+    /// True while sending an announce.
+    public var isAnnouncing = false
+
+    /// Brief feedback after announce succeeds.
+    public var announceSuccess = false
+
     /// Error message if load failed.
     public var errorMessage: String?
 
@@ -335,6 +341,27 @@ public final class ContactsViewModel {
             )
             networkAnnounces[index] = updated
         }
+    }
+
+    /// Send an LXMF delivery announce so peers can discover and message this device.
+    @MainActor
+    public func sendAnnounce() async {
+        isAnnouncing = true
+        announceSuccess = false
+
+        do {
+            let displayName = await SettingsRepository().getDisplayName()
+            try await appServices.sendAnnounce(displayName: displayName)
+            announceSuccess = true
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                await MainActor.run { self.announceSuccess = false }
+            }
+        } catch {
+            errorMessage = "Announce failed: \(error.localizedDescription)"
+        }
+
+        isAnnouncing = false
     }
 
     /// Add a network contact to my contacts by creating a conversation.
