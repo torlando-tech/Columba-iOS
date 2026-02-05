@@ -1,0 +1,559 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		/* App */
+		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001; };
+
+		/* Theme */
+		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002; };
+
+		/* ViewModels */
+		003 /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003; };
+		004 /* ContactsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F004; };
+		005 /* MessagingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F005; };
+		006 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006; };
+
+		/* Views */
+		007 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007; };
+
+		/* Views/Chats */
+		008 /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008; };
+		009 /* ConversationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F009; };
+
+		/* Views/Contacts */
+		010 /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F010; };
+		011 /* ContactCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011; };
+		012 /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012; };
+
+		/* Views/Messaging */
+		013 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013; };
+		014 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014; };
+		015 /* MessageInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F015; };
+
+		/* Views/Settings */
+		016 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016; };
+		017 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017; };
+		018 /* ExpandableSettingsCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F018; };
+
+		/* Views/Components */
+		019 /* Identicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F019; };
+		020 /* IdenticonGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F020; };
+
+		/* Views/Map */
+		021 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021; };
+
+		/* Resources */
+		022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022; };
+
+		/* Package Dependencies */
+		023 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P001; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+
+		/* App */
+		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
+
+		/* Theme */
+		F002 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+
+		/* ViewModels */
+		F003 /* ChatsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsViewModel.swift; sourceTree = "<group>"; };
+		F004 /* ContactsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsViewModel.swift; sourceTree = "<group>"; };
+		F005 /* MessagingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingViewModel.swift; sourceTree = "<group>"; };
+		F006 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
+
+		/* Views */
+		F007 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		F008 /* ChatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsView.swift; sourceTree = "<group>"; };
+		F009 /* ConversationRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationRow.swift; sourceTree = "<group>"; };
+		F010 /* ContactsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsView.swift; sourceTree = "<group>"; };
+		F011 /* ContactCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactCard.swift; sourceTree = "<group>"; };
+		F012 /* NetworkAnnouncesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkAnnouncesTab.swift; sourceTree = "<group>"; };
+		F013 /* MessagingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingView.swift; sourceTree = "<group>"; };
+		F014 /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
+		F015 /* MessageInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageInputBar.swift; sourceTree = "<group>"; };
+		F016 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		F017 /* MyIdentityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyIdentityView.swift; sourceTree = "<group>"; };
+		F018 /* ExpandableSettingsCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpandableSettingsCard.swift; sourceTree = "<group>"; };
+		F019 /* Identicon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Identicon.swift; sourceTree = "<group>"; };
+		F020 /* IdenticonGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdenticonGenerator.swift; sourceTree = "<group>"; };
+		F021 /* MapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapView.swift; sourceTree = "<group>"; };
+
+		/* Resources */
+		F022 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		FWBP /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				023 /* LXMFSwift in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		ROOT = {
+			isa = PBXGroup;
+			children = (
+				SRCS /* Sources */,
+				PRODS /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		PRODS /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				PROD /* ColumbaApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		SRCS /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				GAPP /* App */,
+				GTHM /* Theme */,
+				GVM /* ViewModels */,
+				GVIEWS /* Views */,
+				GRES /* Resources */,
+			);
+			path = Sources/ColumbaApp;
+			sourceTree = "<group>";
+		};
+		GAPP /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F001 /* ColumbaApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		GTHM /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				F002 /* Theme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		GVM /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				F003 /* ChatsViewModel.swift */,
+				F004 /* ContactsViewModel.swift */,
+				F005 /* MessagingViewModel.swift */,
+				F006 /* SettingsViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		GVIEWS /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				F007 /* MainTabView.swift */,
+				GCHATS /* Chats */,
+				GCONT /* Contacts */,
+				GMSG /* Messaging */,
+				GSET /* Settings */,
+				GCOMP /* Components */,
+				GMAP /* Map */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		GCHATS /* Chats */ = {
+			isa = PBXGroup;
+			children = (
+				F008 /* ChatsView.swift */,
+				F009 /* ConversationRow.swift */,
+			);
+			path = Chats;
+			sourceTree = "<group>";
+		};
+		GCONT /* Contacts */ = {
+			isa = PBXGroup;
+			children = (
+				F010 /* ContactsView.swift */,
+				F011 /* ContactCard.swift */,
+				F012 /* NetworkAnnouncesTab.swift */,
+			);
+			path = Contacts;
+			sourceTree = "<group>";
+		};
+		GMSG /* Messaging */ = {
+			isa = PBXGroup;
+			children = (
+				F013 /* MessagingView.swift */,
+				F014 /* MessageBubble.swift */,
+				F015 /* MessageInputBar.swift */,
+			);
+			path = Messaging;
+			sourceTree = "<group>";
+		};
+		GSET /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				F016 /* SettingsView.swift */,
+				F017 /* MyIdentityView.swift */,
+				F018 /* ExpandableSettingsCard.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		GCOMP /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				F019 /* Identicon.swift */,
+				F020 /* IdenticonGenerator.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		GMAP /* Map */ = {
+			isa = PBXGroup;
+			children = (
+				F021 /* MapView.swift */,
+			);
+			path = Map;
+			sourceTree = "<group>";
+		};
+		GRES /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				F022 /* Assets.xcassets */,
+				F023 /* Info.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		TARG /* ColumbaApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BCLST;
+			buildPhases = (
+				SRCBP /* Sources */,
+				FWBP /* Frameworks */,
+				RESBP /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ColumbaApp;
+			packageProductDependencies = (
+				P001 /* LXMFSwift */,
+			);
+			productName = ColumbaApp;
+			productReference = PROD /* ColumbaApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		PROJ /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					TARG = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = PBCLST;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = ROOT;
+			packageReferences = (
+				PKGREF /* XCRemoteSwiftPackageReference "LXMFSwift" */,
+			);
+			productRefGroup = PRODS /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				TARG /* ColumbaApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		RESBP /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				022 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		SRCBP /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				001 /* ColumbaApp.swift in Sources */,
+				002 /* Theme.swift in Sources */,
+				003 /* ChatsViewModel.swift in Sources */,
+				004 /* ContactsViewModel.swift in Sources */,
+				005 /* MessagingViewModel.swift in Sources */,
+				006 /* SettingsViewModel.swift in Sources */,
+				007 /* MainTabView.swift in Sources */,
+				008 /* ChatsView.swift in Sources */,
+				009 /* ConversationRow.swift in Sources */,
+				010 /* ContactsView.swift in Sources */,
+				011 /* ContactCard.swift in Sources */,
+				012 /* NetworkAnnouncesTab.swift in Sources */,
+				013 /* MessagingView.swift in Sources */,
+				014 /* MessageBubble.swift in Sources */,
+				015 /* MessageInputBar.swift in Sources */,
+				016 /* SettingsView.swift in Sources */,
+				017 /* MyIdentityView.swift in Sources */,
+				018 /* ExpandableSettingsCard.swift in Sources */,
+				019 /* Identicon.swift in Sources */,
+				020 /* IdenticonGenerator.swift in Sources */,
+				021 /* MapView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		DBG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		REL /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		TDBG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.columba.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		TREL /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.columba.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		PBCLST /* Build configuration list for PBXProject "ColumbaApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DBG /* Debug */,
+				REL /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BCLST /* Build configuration list for PBXNativeTarget "ColumbaApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				TDBG /* Debug */,
+				TREL /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		PKGREF /* XCRemoteSwiftPackageReference "LXMFSwift" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../LXMFSwift;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		P001 /* LXMFSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LXMFSwift;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+	};
+	rootObject = PROJ /* Project object */;
+}

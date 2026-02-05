@@ -1,0 +1,287 @@
+//
+//  ContactCard.swift
+//  Columba-iOS
+//
+//  Glass card component for displaying a contact in the list.
+//  Shows identicon avatar, name, hash, badges, signal strength, and status.
+//
+
+import SwiftUI
+
+/// Glass card component for a contact entry.
+///
+/// Displays contact information with:
+/// - Identicon avatar (circular colorful dot pattern)
+/// - Display name or "Unknown Peer"
+/// - Truncated identity hash
+/// - Badges: "Peer" or "RELAY" (pink background)
+/// - Signal strength indicator (bars)
+/// - Hop count
+/// - Timestamp
+/// - Star/favorite button
+/// - Online status indicator (green dot)
+@available(iOS 17.0, *)
+struct ContactCard: View {
+    // MARK: - Properties
+
+    /// Contact to display.
+    let contact: Contact
+
+    /// Whether to show the globe icon (for network announces).
+    var showGlobeIcon: Bool = false
+
+    /// Called when favorite button is tapped.
+    var onFavoriteToggle: (() -> Void)?
+
+    /// Called when card is tapped.
+    var onTap: (() -> Void)?
+
+    // MARK: - Body
+
+    var body: some View {
+        Button {
+            onTap?()
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                // Avatar with online indicator
+                avatarView
+
+                // Content
+                VStack(alignment: .leading, spacing: 4) {
+                    // Name row
+                    nameRow
+
+                    // Hash row
+                    hashRow
+
+                    // Status row
+                    statusRow
+                }
+
+                Spacer()
+
+                // Right side: signal, hops, favorite
+                rightSideView
+            }
+            .padding(16)
+            .background(glassBackground)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Avatar View
+
+    private var avatarView: some View {
+        ZStack(alignment: .bottomTrailing) {
+            // Identicon
+            Identicon(hash: contact.identityHash)
+                .frame(width: 48, height: 48)
+
+            // Online indicator
+            if contact.isOnline {
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 12, height: 12)
+                    .overlay(
+                        Circle()
+                            .stroke(Color(white: 0.15), lineWidth: 2)
+                    )
+                    .offset(x: 2, y: 2)
+            }
+        }
+    }
+
+    // MARK: - Name Row
+
+    private var nameRow: some View {
+        HStack(spacing: 8) {
+            Text(contact.resolvedDisplayName)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+
+            // Badge
+            contactBadge
+        }
+    }
+
+    private var contactBadge: some View {
+        Group {
+            switch contact.badgeType {
+            case .relay:
+                Text("RELAY")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.pink)
+                    .cornerRadius(4)
+            case .peer:
+                Text("Peer")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.gray.opacity(0.5))
+                    .cornerRadius(4)
+            }
+        }
+    }
+
+    // MARK: - Hash Row
+
+    private var hashRow: some View {
+        Text(contact.truncatedHash)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.6))
+            .lineLimit(2)
+    }
+
+    // MARK: - Status Row
+
+    private var statusRow: some View {
+        HStack(spacing: 8) {
+            // Timestamp
+            HStack(spacing: 4) {
+                Image(systemName: "clock")
+                    .font(.caption2)
+                Text(contact.timeAgo)
+                    .font(.caption)
+            }
+            .foregroundStyle(.white.opacity(0.5))
+        }
+    }
+
+    // MARK: - Right Side View
+
+    private var rightSideView: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            // Favorite button
+            Button {
+                onFavoriteToggle?()
+            } label: {
+                Image(systemName: contact.isFavorite ? "star.fill" : "star")
+                    .font(.title3)
+                    .foregroundStyle(contact.isFavorite ? Color.yellow : Color.gray)
+            }
+            .buttonStyle(.plain)
+
+            // Signal strength
+            signalStrengthView
+
+            // Hop count
+            Text("\(contact.hopCount) hops")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.5))
+
+            // Globe icon for network announces
+            if showGlobeIcon {
+                Image(systemName: "globe")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+        }
+    }
+
+    // MARK: - Signal Strength View
+
+    private var signalStrengthView: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<4, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(index < contact.signalStrength ? signalColor : Color.gray.opacity(0.3))
+                    .frame(width: 4, height: CGFloat(6 + index * 3))
+            }
+        }
+    }
+
+    private var signalColor: Color {
+        switch contact.signalStrength {
+        case 0:
+            return .red
+        case 1:
+            return .orange
+        case 2:
+            return .yellow
+        case 3, 4:
+            return .green
+        default:
+            return .gray
+        }
+    }
+
+    // MARK: - Glass Background
+
+    private var glassBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color.white.opacity(0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            )
+    }
+}
+
+// MARK: - Preview
+
+#if DEBUG
+@available(iOS 17.0, *)
+#Preview {
+    ScrollView {
+        VStack(spacing: 12) {
+            ContactCard(
+                contact: Contact(
+                    id: "fc112928258ed5f6b9abd1cf0c8d58f0",
+                    displayName: "rns.moscow Propag...",
+                    identityHash: Data([0xFC, 0x11, 0x29, 0x28, 0x25, 0x8E, 0xD5, 0xF6, 0xB9, 0xAB, 0xD1, 0xCF, 0x0C, 0x8D, 0x58, 0xF0]),
+                    identityHashHex: "fc112928258ed5f6b9abd1cf0c8d58f0",
+                    badgeType: .relay,
+                    hopCount: 0,
+                    signalStrength: 4,
+                    timestamp: Date().addingTimeInterval(-480),
+                    isOnline: true,
+                    isFavorite: true,
+                    isRelay: true
+                )
+            )
+
+            ContactCard(
+                contact: Contact(
+                    id: "db3ffd2575469a78bff6b7c8c183e32a",
+                    displayName: "Torlando - Columba",
+                    identityHash: Data([0xDB, 0x3F, 0xFD, 0x25, 0x75, 0x46, 0x9A, 0x78, 0xBF, 0xF6, 0xB7, 0xC8, 0xC1, 0x83, 0xE3, 0x2A]),
+                    identityHashHex: "db3ffd2575469a78bff6b7c8c183e32a",
+                    badgeType: .peer,
+                    hopCount: 3,
+                    signalStrength: 3,
+                    timestamp: Date().addingTimeInterval(-60),
+                    isOnline: true,
+                    isFavorite: false,
+                    isRelay: false
+                ),
+                showGlobeIcon: true
+            )
+
+            ContactCard(
+                contact: Contact(
+                    id: "00e78bccb2ccc8e266a216b1e2d5475f",
+                    displayName: nil,
+                    identityHash: Data([0x00, 0xE7, 0x8B, 0xCC, 0xB2, 0xCC, 0xC8, 0xE2, 0x66, 0xA2, 0x16, 0xB1, 0xE2, 0xD5, 0x47, 0x5F]),
+                    identityHashHex: "00e78bccb2ccc8e266a216b1e2d5475f",
+                    badgeType: .peer,
+                    hopCount: 5,
+                    signalStrength: 1,
+                    timestamp: Date(),
+                    isOnline: false,
+                    isFavorite: false,
+                    isRelay: false
+                )
+            )
+        }
+        .padding()
+    }
+    .background(Color(white: 0.1))
+}
+#endif

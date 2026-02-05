@@ -1,0 +1,373 @@
+//
+//  SettingsView.swift
+//  Columba-iOS
+//
+//  Main settings screen with expandable cards for each category.
+//  Matches Android Columba design with glass material styling.
+//
+
+import SwiftUI
+
+/// Main settings screen view.
+///
+/// Displays expandable cards for each settings category:
+/// - Network
+/// - Identity (with View My Identity and Manage Identities buttons)
+/// - Privacy (with toggle)
+/// - Notifications (with toggle, default on)
+/// - Auto Announce (with toggle, default on)
+/// - Location Sharing (with toggle)
+/// - Map Sources
+@available(iOS 17.0, macOS 14.0, *)
+struct SettingsView: View {
+    // MARK: - Properties
+
+    @State private var viewModel = SettingsViewModel()
+    @State private var showMyIdentity = false
+    @State private var showManageIdentities = false
+
+    // MARK: - Body
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 12) {
+                    // Network
+                    networkCard
+
+                    // Identity
+                    identityCard
+
+                    // Privacy
+                    privacyCard
+
+                    // Notifications
+                    notificationsCard
+
+                    // Auto Announce
+                    autoAnnounceCard
+
+                    // Location Sharing
+                    locationSharingCard
+
+                    // Map Sources
+                    mapSourcesCard
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .background(Theme.backgroundPrimary)
+            .navigationTitle("Settings")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(Theme.backgroundPrimary, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            #endif
+            .navigationDestination(isPresented: $showMyIdentity) {
+                MyIdentityView(viewModel: viewModel)
+            }
+        }
+    }
+
+    // MARK: - Network Card
+
+    private var networkCard: some View {
+        ExpandableSettingsCard(
+            icon: "antenna.radiowaves.left.and.right",
+            title: "Network",
+            isExpanded: $viewModel.isNetworkExpanded
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Configure network interfaces and connection settings for Reticulum.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                HStack {
+                    Text("Status:")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+
+                    Circle()
+                        .fill(viewModel.isConnected ? Theme.success : Theme.error)
+                        .frame(width: 8, height: 8)
+
+                    Text(viewModel.isConnected ? "Connected" : "Disconnected")
+                        .font(.subheadline)
+                        .foregroundStyle(viewModel.isConnected ? Theme.success : Theme.error)
+                }
+
+                if viewModel.isConnected {
+                    HStack {
+                        Text("Interface:")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+
+                        Text(viewModel.connectedInterface)
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Identity Card
+
+    private var identityCard: some View {
+        ExpandableSettingsCard(
+            icon: "person.fill",
+            title: "Identity",
+            isExpanded: $viewModel.isIdentityExpanded
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("View and share your identity, edit your display name, and manage QR codes for contact sharing.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                Text("Create and manage multiple identities for different contexts (work, personal, anonymous).")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                // View My Identity Button
+                Button(action: { showMyIdentity = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("View My Identity")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                }
+
+                // Manage Identities Button
+                Button(action: { showManageIdentities = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("Manage Identities")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.backgroundTertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                }
+            }
+        }
+    }
+
+    // MARK: - Privacy Card
+
+    private var privacyCard: some View {
+        ExpandableSettingsCard(
+            icon: "shield.fill",
+            title: "Privacy",
+            isExpanded: $viewModel.isPrivacyExpanded,
+            toggle: $viewModel.isPrivacyEnabled
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Enable privacy mode to hide message previews and sensitive information from notifications and the app switcher.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                if viewModel.isPrivacyEnabled {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Theme.success)
+                        Text("Privacy mode is active")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.success)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Notifications Card
+
+    private var notificationsCard: some View {
+        ExpandableSettingsCard(
+            icon: "bell.fill",
+            title: "Notifications",
+            isExpanded: $viewModel.isNotificationsExpanded,
+            toggle: $viewModel.isNotificationsEnabled
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Configure how you receive notifications for incoming messages and announcements.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                if viewModel.isNotificationsEnabled {
+                    settingsToggleRow(
+                        title: "Message Previews",
+                        isOn: $viewModel.showMessagePreviews
+                    )
+
+                    settingsToggleRow(
+                        title: "Sound",
+                        isOn: $viewModel.playSounds
+                    )
+
+                    settingsToggleRow(
+                        title: "Vibrate",
+                        isOn: $viewModel.vibrate
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Auto Announce Card
+
+    private var autoAnnounceCard: some View {
+        ExpandableSettingsCard(
+            icon: "antenna.radiowaves.left.and.right",
+            title: "Auto Announce",
+            isExpanded: $viewModel.isAutoAnnounceExpanded,
+            toggle: $viewModel.isAutoAnnounceEnabled
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Automatically announce your presence on the network so others can discover and message you.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                if viewModel.isAutoAnnounceEnabled {
+                    settingsToggleRow(
+                        title: "Announce on Launch",
+                        isOn: $viewModel.announceOnLaunch
+                    )
+
+                    HStack {
+                        Text("Interval")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+
+                        Spacer()
+
+                        Picker("", selection: $viewModel.announceIntervalMinutes) {
+                            Text("5 min").tag(5)
+                            Text("15 min").tag(15)
+                            Text("30 min").tag(30)
+                            Text("1 hour").tag(60)
+                        }
+                        .pickerStyle(.menu)
+                        .tint(Theme.accentColor)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Location Sharing Card
+
+    private var locationSharingCard: some View {
+        ExpandableSettingsCard(
+            icon: "location.fill",
+            title: "Location Sharing",
+            isExpanded: $viewModel.isLocationSharingExpanded,
+            toggle: $viewModel.isLocationSharingEnabled
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Share your location with contacts. Your location is end-to-end encrypted and only visible to peers you communicate with.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                if viewModel.isLocationSharingEnabled {
+                    settingsToggleRow(
+                        title: "Precise Location",
+                        isOn: $viewModel.sharePreciseLocation
+                    )
+
+                    HStack {
+                        Text("Update Interval")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+
+                        Spacer()
+
+                        Picker("", selection: $viewModel.locationUpdateInterval) {
+                            Text("30 sec").tag(30)
+                            Text("1 min").tag(60)
+                            Text("5 min").tag(300)
+                            Text("15 min").tag(900)
+                        }
+                        .pickerStyle(.menu)
+                        .tint(Theme.accentColor)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Map Sources Card
+
+    private var mapSourcesCard: some View {
+        ExpandableSettingsCard(
+            icon: "map.fill",
+            title: "Map Sources",
+            isExpanded: $viewModel.isMapSourcesExpanded
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Choose the map provider for viewing contact locations.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                ForEach(SettingsViewModel.MapSource.allCases) { source in
+                    mapSourceRow(source: source)
+                }
+            }
+        }
+    }
+
+    // MARK: - Helper Views
+
+    private func settingsToggleRow(title: String, isOn: Binding<Bool>) -> some View {
+        HStack {
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+
+            Spacer()
+
+            Toggle("", isOn: isOn)
+                .toggleStyle(AccentToggleStyle())
+                .labelsHidden()
+        }
+    }
+
+    private func mapSourceRow(source: SettingsViewModel.MapSource) -> some View {
+        Button(action: {
+            viewModel.selectedMapSource = source
+        }) {
+            HStack {
+                Text(source.rawValue)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textPrimary)
+
+                Spacer()
+
+                if viewModel.selectedMapSource == source {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.accentColor)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+    }
+}
+
+// MARK: - Preview
+
+#if DEBUG
+@available(iOS 17.0, macOS 14.0, *)
+#Preview {
+    SettingsView()
+        .preferredColorScheme(.dark)
+}
+#endif
