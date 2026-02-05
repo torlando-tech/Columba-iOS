@@ -72,6 +72,15 @@ public final class AppServices {
     /// True when the TCP interface is connected to the relay server.
     public private(set) var isConnected: Bool = false
 
+    /// Human-readable connection error message (nil when connected or connecting).
+    ///
+    /// Set when the TCP interface reports a failure (e.g., unreachable host,
+    /// timeout, connection refused). Cleared on successful connection.
+    public private(set) var connectionError: String?
+
+    /// Whether the interface is actively reconnecting after a failure.
+    public private(set) var isReconnecting: Bool = false
+
     /// Local LXMF delivery destination hash (16 bytes).
     ///
     /// This is the hash that other peers use to address messages to us.
@@ -331,10 +340,36 @@ public final class AppServices {
         stateObserverTask = Task { [weak self] in
             guard let self = self else { return }
 
+            // Track the last error we reported to avoid spamming logs
+            var lastReportedError: String?
+
             // Poll interface state periodically
             // (TCPInterface doesn't expose AsyncStream for state changes)
             while !Task.isCancelled {
                 await self.updateConnectionState()
+
+                // Check for error info from the interface's underlying transport
+                if let interface = await self.tcpInterface {
+                    let state = await interface.state
+                    if case .reconnecting = state {
+                        // Get the last error description from the transport
+                        let errorDesc = await interface.lastErrorDescription
+                        if let desc = errorDesc, desc != lastReportedError {
+                            lastReportedError = desc
+                            await MainActor.run {
+                                self.connectionError = desc
+                            }
+                        }
+                    } else if state == .connected {
+                        if lastReportedError != nil {
+                            lastReportedError = nil
+                            await MainActor.run {
+                                self.connectionError = nil
+                            }
+                        }
+                    }
+                }
+
                 try? await Task.sleep(for: .milliseconds(500))
             }
         }
@@ -345,16 +380,47 @@ public final class AppServices {
         guard let interface = tcpInterface else {
             if isConnected {
                 isConnected = false
+                connectionError = nil
+                isReconnecting = false
             }
             return
         }
 
         let state = await interface.state
-        let newConnected = (state == .connected)
-        if isConnected != newConnected {
-            isConnected = newConnected
-            logger.info("Connection state changed: \(self.isConnected ? "connected" : "disconnected")")
+        switch state {
+        case .connected:
+            if !isConnected {
+                isConnected = true
+                connectionError = nil
+                isReconnecting = false
+                logger.info("Connection state changed: connected")
+            }
+        case .reconnecting(let attempt):
+            if isConnected || !isReconnecting {
+                isConnected = false
+                isReconnecting = true
+                logger.info("Connection state changed: reconnecting (attempt \(attempt))")
+            }
+        case .connecting:
+            if isConnected {
+                isConnected = false
+                logger.info("Connection state changed: connecting")
+            }
+        case .disconnected:
+            if isConnected || isReconnecting {
+                isConnected = false
+                isReconnecting = false
+                logger.info("Connection state changed: disconnected")
+            }
         }
+    }
+
+    /// Update connection error from interface delegate.
+    ///
+    /// Called by the interface state observer when an error is detected.
+    func setConnectionError(_ message: String) {
+        connectionError = message
+        logger.warning("Connection error: \(message)")
     }
 
     // MARK: - Utility Methods

@@ -31,6 +31,8 @@ struct SettingsView: View {
     @State private var viewModel: SettingsViewModel?
     @State private var showMyIdentity = false
     @State private var showManageIdentities = false
+    @State private var showInterfaceManagement = false
+    @State private var interfaceRepository: InterfaceRepository?
 
     // MARK: - Body
 
@@ -72,6 +74,17 @@ struct SettingsView: View {
                 #endif
                 .navigationDestination(isPresented: $showMyIdentity) {
                     MyIdentityView(viewModel: vm)
+                }
+                .navigationDestination(isPresented: $showInterfaceManagement) {
+                    if let repo = interfaceRepository {
+                        InterfaceManagementScreen(
+                            viewModel: InterfaceManagementViewModel(
+                                repository: repo,
+                                appServices: appServices,
+                                settingsRepository: settingsRepository
+                            )
+                        )
+                    }
                 }
             } else {
                 ProgressView()
@@ -126,6 +139,29 @@ struct SettingsView: View {
                             .font(.subheadline)
                             .foregroundStyle(Theme.textPrimary)
                     }
+                }
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                // Manage Interfaces Button
+                Button(action: {
+                    if interfaceRepository == nil {
+                        interfaceRepository = InterfaceRepository()
+                    }
+                    showInterfaceManagement = true
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("Manage Interfaces")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.backgroundTertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                 }
             }
         }

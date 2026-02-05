@@ -51,6 +51,18 @@
 		/* Resources */
 		022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022; };
 
+		/* Services */
+		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024; };
+		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025; };
+		026 /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026; };
+		027 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027; };
+		028 /* IncomingMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F028; };
+		029 /* InterfaceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F029; };
+
+		/* Interface Management */
+		030 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030; };
+		031 /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031; };
+
 		/* Package Dependencies */
 		023 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P001; };
 /* End PBXBuildFile section */
@@ -90,6 +102,18 @@
 		/* Resources */
 		F022 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+
+		/* Services */
+		F024 /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
+		F025 /* MessageRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRepository.swift; sourceTree = "<group>"; };
+		F026 /* SettingsRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRepository.swift; sourceTree = "<group>"; };
+		F027 /* NotificationObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationObserver.swift; sourceTree = "<group>"; };
+		F028 /* IncomingMessageHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingMessageHandler.swift; sourceTree = "<group>"; };
+		F029 /* InterfaceRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceRepository.swift; sourceTree = "<group>"; };
+
+		/* Interface Management */
+		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
+		F031 /* InterfaceManagementScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -127,6 +151,7 @@
 				GTHM /* Theme */,
 				GVM /* ViewModels */,
 				GVIEWS /* Views */,
+				GSVC /* Services */,
 				GRES /* Resources */,
 			);
 			path = Sources/ColumbaApp;
@@ -155,6 +180,7 @@
 				F004 /* ContactsViewModel.swift */,
 				F005 /* MessagingViewModel.swift */,
 				F006 /* SettingsViewModel.swift */,
+				F030 /* InterfaceManagementViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -208,6 +234,7 @@
 				F016 /* SettingsView.swift */,
 				F017 /* MyIdentityView.swift */,
 				F018 /* ExpandableSettingsCard.swift */,
+				F031 /* InterfaceManagementScreen.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -227,6 +254,19 @@
 				F021 /* MapView.swift */,
 			);
 			path = Map;
+			sourceTree = "<group>";
+		};
+		GSVC /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				F024 /* AppServices.swift */,
+				F025 /* MessageRepository.swift */,
+				F026 /* SettingsRepository.swift */,
+				F027 /* NotificationObserver.swift */,
+				F028 /* IncomingMessageHandler.swift */,
+				F029 /* InterfaceRepository.swift */,
+			);
+			path = Services;
 			sourceTree = "<group>";
 		};
 		GRES /* Resources */ = {
@@ -334,6 +374,14 @@
 				019 /* Identicon.swift in Sources */,
 				020 /* IdenticonGenerator.swift in Sources */,
 				021 /* MapView.swift in Sources */,
+				024 /* AppServices.swift in Sources */,
+				025 /* MessageRepository.swift in Sources */,
+				026 /* SettingsRepository.swift in Sources */,
+				027 /* NotificationObserver.swift in Sources */,
+				028 /* IncomingMessageHandler.swift in Sources */,
+				029 /* InterfaceRepository.swift in Sources */,
+				030 /* InterfaceManagementViewModel.swift in Sources */,
+				031 /* InterfaceManagementScreen.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
