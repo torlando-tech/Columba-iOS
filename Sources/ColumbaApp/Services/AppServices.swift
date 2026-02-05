@@ -394,6 +394,12 @@ public final class AppServices {
                 connectionError = nil
                 isReconnecting = false
                 logger.info("Connection state changed: connected")
+
+                // Auto-announce LXMF delivery destination so peers can reach us
+                Task {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    await autoAnnounce()
+                }
             }
         case .reconnecting(let attempt):
             if isConnected || !isReconnecting {
@@ -598,6 +604,17 @@ public final class AppServices {
         try await transport.send(packet: packet)
 
         logger.info("Announce sent successfully for destination: \(destination.hexHash)")
+    }
+
+    /// Auto-announce on interface connect using the stored display name.
+    private func autoAnnounce() async {
+        let displayName = await SettingsRepository().getDisplayName()
+        do {
+            try await sendAnnounce(displayName: displayName)
+            logger.info("Auto-announce completed on interface connect")
+        } catch {
+            logger.warning("Auto-announce failed: \(error.localizedDescription)")
+        }
     }
 }
 
