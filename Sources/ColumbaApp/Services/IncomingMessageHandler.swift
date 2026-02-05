@@ -20,6 +20,12 @@ import os.log
 /// and ensure thread-safe UI operations.
 @MainActor
 public final class IncomingMessageHandler: LXMRouterDelegate {
+    // MARK: - Constants
+
+    /// In-process notification posted when a new message is saved to the database.
+    /// The `userInfo` contains "sourceHash" (Data) for the conversation that changed.
+    public static let messageReceivedNotification = Notification.Name("com.columba.messageReceived")
+
     // MARK: - Properties
 
     /// Repository for persisting messages to database.
@@ -58,11 +64,19 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
         print("[LXMF_INBOUND] content preview: \(contentPreview)")
         logger.info("Received message from \(sourceHashHex)... hash=\(messageHashHex)... content=\(contentPreview)")
 
-        // Save to database asynchronously
+        // Save to database asynchronously, then notify
+        let sourceHash = message.sourceHash
         Task {
             do {
                 try await messageRepository.saveMessage(message)
                 logger.debug("Message \(messageHashHex)... saved to database")
+
+                // Post in-process notification so open chat views refresh immediately
+                NotificationCenter.default.post(
+                    name: IncomingMessageHandler.messageReceivedNotification,
+                    object: nil,
+                    userInfo: ["sourceHash": sourceHash]
+                )
             } catch {
                 logger.error("Failed to save message \(messageHashHex)...: \(error.localizedDescription)")
             }
