@@ -304,6 +304,23 @@ public struct ContactsView: View {
     private func toolbarContent(_ vm: ContactsViewModel) -> some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             HStack(spacing: 16) {
+                // Announce button
+                Button {
+                    Task { await vm.sendAnnounce() }
+                } label: {
+                    if vm.isAnnouncing {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: vm.announceSuccess
+                              ? "checkmark.circle.fill"
+                              : "antenna.radiowaves.left.and.right")
+                            .font(.title3)
+                            .foregroundStyle(vm.announceSuccess ? .green : .white)
+                    }
+                }
+                .disabled(vm.isAnnouncing)
+
                 // Search button
                 Button {
                     withAnimation {
@@ -315,34 +332,6 @@ public struct ContactsView: View {
                 } label: {
                     Image(systemName: isSearching ? "magnifyingglass.circle.fill" : "magnifyingglass")
                         .font(.title3)
-                }
-
-                // Filter button (for network tab)
-                if vm.selectedTab == .network {
-                    Button {
-                        // Filter action
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease")
-                            .font(.title3)
-                    }
-
-                    // Volume/mute button
-                    Button {
-                        // Mute action
-                    } label: {
-                        Image(systemName: "speaker.wave.2")
-                            .font(.title3)
-                    }
-                }
-
-                // Add button (for my contacts tab)
-                if vm.selectedTab == .myContacts {
-                    Button {
-                        // Add contact action
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.title3)
-                    }
                 }
 
                 // More options
