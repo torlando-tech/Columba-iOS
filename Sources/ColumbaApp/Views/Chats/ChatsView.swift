@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import LXMFSwift
 
 /// Main chats view displaying conversation list.
 ///
@@ -16,11 +17,18 @@ import SwiftUI
 /// - List of ConversationRow items with glass card backgrounds
 /// - Empty state when no conversations exist
 /// - Pull-to-refresh support
+@available(iOS 17.0, macOS 14.0, *)
 struct ChatsView: View {
+    // MARK: - Dependencies
+
+    let appServices: AppServices
+    let messageRepository: MessageRepository
+    let notificationObserver: NotificationObserver
+
     // MARK: - State
 
     /// ViewModel managing conversation data.
-    @State private var viewModel = ChatsViewModel()
+    @State private var viewModel: ChatsViewModel?
 
     /// Controls search sheet presentation.
     @State private var isSearchPresented: Bool = false
@@ -31,7 +39,7 @@ struct ChatsView: View {
     // MARK: - Theme Colors
 
     private let backgroundColor = Color.black
-    private let accentColor = Color(red: 0.404, green: 0.314, blue: 0.643) // #6750A4
+    private let accentColor = Theme.accentColor
 
     // MARK: - Body
 
@@ -42,15 +50,19 @@ struct ChatsView: View {
                 backgroundColor.ignoresSafeArea()
 
                 // Content
-                if viewModel.filteredConversations.isEmpty && !viewModel.isLoading {
-                    emptyStateView
-                } else {
-                    conversationListView
-                }
+                if let vm = viewModel {
+                    if vm.filteredConversations.isEmpty && !vm.isLoading {
+                        emptyStateView
+                    } else {
+                        conversationListView(vm)
+                    }
 
-                // Loading overlay
-                if viewModel.isLoading {
-                    loadingOverlay
+                    // Loading overlay
+                    if vm.isLoading {
+                        loadingOverlay
+                    }
+                } else {
+                    ProgressView()
                 }
             }
             .navigationTitle("Chats")
@@ -59,10 +71,6 @@ struct ChatsView: View {
             .toolbarBackground(backgroundColor, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    // Empty to allow custom title area
-                }
-
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     // Search button
                     Button {
@@ -78,21 +86,21 @@ struct ChatsView: View {
                     // Refresh button
                     Button {
                         Task {
-                            await viewModel.refreshConversations()
+                            await viewModel?.refreshConversations()
                         }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 17, weight: .medium))
                             .foregroundColor(.white)
-                            .rotationEffect(.degrees(viewModel.isRefreshing ? 360 : 0))
+                            .rotationEffect(.degrees(viewModel?.isRefreshing == true ? 360 : 0))
                             .animation(
-                                viewModel.isRefreshing
+                                viewModel?.isRefreshing == true
                                     ? .linear(duration: 1).repeatForever(autoreverses: false)
                                     : .default,
-                                value: viewModel.isRefreshing
+                                value: viewModel?.isRefreshing
                             )
                     }
-                    .disabled(viewModel.isRefreshing)
+                    .disabled(viewModel?.isRefreshing == true)
                 }
             }
             #endif
@@ -103,7 +111,14 @@ struct ChatsView: View {
         .preferredColorScheme(.dark)
         .tint(accentColor)
         .task {
-            await viewModel.loadConversations()
+            // Initialize view model with dependencies
+            if viewModel == nil {
+                viewModel = ChatsViewModel(
+                    repository: messageRepository,
+                    notificationObserver: notificationObserver
+                )
+            }
+            await viewModel?.loadConversations()
         }
     }
 
@@ -113,28 +128,32 @@ struct ChatsView: View {
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Search bar (when active)
-            if isSearchPresented {
-                searchBar
+            if isSearchPresented, let vm = viewModel {
+                searchBar(vm)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
     }
 
     /// Search bar for filtering conversations.
-    private var searchBar: some View {
+    @ViewBuilder
+    private func searchBar(_ vm: ChatsViewModel) -> some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.white.opacity(0.5))
 
-                TextField("Search conversations", text: $viewModel.searchQuery)
-                    .foregroundColor(.white)
-                    .focused($isSearchFocused)
-                    .submitLabel(.search)
+                TextField("Search conversations", text: Binding(
+                    get: { vm.searchQuery },
+                    set: { vm.searchQuery = $0 }
+                ))
+                .foregroundColor(.white)
+                .focused($isSearchFocused)
+                .submitLabel(.search)
 
-                if !viewModel.searchQuery.isEmpty {
+                if !vm.searchQuery.isEmpty {
                     Button {
-                        viewModel.searchQuery = ""
+                        vm.searchQuery = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.white.opacity(0.5))
@@ -148,7 +167,7 @@ struct ChatsView: View {
 
             Button("Cancel") {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    viewModel.searchQuery = ""
+                    vm.searchQuery = ""
                     isSearchPresented = false
                     isSearchFocused = false
                 }
@@ -162,22 +181,14 @@ struct ChatsView: View {
         }
     }
 
-    /// Subtitle showing conversation count.
-    private var subtitleView: some View {
-        Text(viewModel.conversationCountText)
-            .font(.system(size: 14))
-            .foregroundColor(.white.opacity(0.6))
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-    }
-
     /// List of conversation rows.
-    private var conversationListView: some View {
+    @ViewBuilder
+    private func conversationListView(_ vm: ChatsViewModel) -> some View {
         ScrollView {
             LazyVStack(spacing: 8) {
                 // Subtitle
                 HStack {
-                    Text(viewModel.conversationCountText)
+                    Text(vm.conversationCountText)
                         .font(.system(size: 14))
                         .foregroundColor(.white.opacity(0.6))
                     Spacer()
@@ -187,12 +198,19 @@ struct ChatsView: View {
                 .padding(.bottom, 8)
 
                 // Conversation rows
-                ForEach(viewModel.filteredConversations) { conversation in
-                    NavigationLink(value: conversation) {
+                ForEach(vm.filteredConversations) { conversation in
+                    NavigationLink {
+                        // Navigate to messaging view
+                        MessagingView(
+                            conversation: conversation,
+                            appServices: appServices,
+                            messageRepository: messageRepository
+                        )
+                    } label: {
                         ConversationRow(
                             conversation: conversation,
                             onFavoriteToggle: {
-                                viewModel.toggleFavorite(conversation)
+                                vm.toggleFavorite(conversation)
                             }
                         )
                     }
@@ -203,12 +221,7 @@ struct ChatsView: View {
             .padding(.bottom, 16)
         }
         .refreshable {
-            await viewModel.refreshConversations()
-        }
-        .navigationDestination(for: Conversation.self) { conversation in
-            // Placeholder for message thread view
-            Text("Chat with \(conversation.peerName)")
-                .foregroundColor(.white)
+            await vm.refreshConversations()
         }
     }
 
@@ -241,7 +254,7 @@ struct ChatsView: View {
             // Refresh button
             Button {
                 Task {
-                    await viewModel.refreshConversations()
+                    await viewModel?.refreshConversations()
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -284,17 +297,3 @@ struct ConversationRowButtonStyle: ButtonStyle {
             .animation(.easeInOut(duration: 0.15), value: configuration.isPressed)
     }
 }
-
-// MARK: - Preview
-
-#if DEBUG
-#Preview("With Conversations") {
-    ChatsView()
-}
-
-#Preview("Empty State") {
-    let view = ChatsView()
-    // Note: Empty state preview requires modifying viewModel
-    return view
-}
-#endif

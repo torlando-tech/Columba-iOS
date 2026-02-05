@@ -3,15 +3,17 @@
 //  Columba-iOS
 //
 //  ViewModel for the chats screen using @Observable macro.
-//  Manages conversation list data and refresh operations.
+//  Manages conversation list data from MessageRepository.
 //
 
 import Foundation
 import Observation
+import LXMFSwift
 
 // MARK: - Conversation Model
 
 /// Represents a conversation in the chats list.
+/// Wraps ConversationRecord from LXMFSwift with UI-specific properties.
 public struct Conversation: Identifiable, Equatable, Hashable {
     public let id: String
     public let destinationHash: Data
@@ -57,6 +59,17 @@ public struct Conversation: Identifiable, Equatable, Hashable {
         }
     }
 
+    /// Create from LXMFSwift ConversationRecord.
+    public init(from record: ConversationRecord) {
+        self.id = record.destinationHash.map { String(format: "%02x", $0) }.joined()
+        self.destinationHash = record.destinationHash
+        self.displayName = record.displayName
+        self.lastMessageTimestamp = Date(timeIntervalSince1970: record.lastMessageTimestamp)
+        self.lastMessagePreview = record.lastMessagePreview
+        self.unreadCount = record.unreadCount
+        self.isFavorite = false // TODO: Persist favorites
+    }
+
     public init(
         id: String = UUID().uuidString,
         destinationHash: Data,
@@ -81,7 +94,8 @@ public struct Conversation: Identifiable, Equatable, Hashable {
 /// ViewModel for the chats screen.
 ///
 /// Uses iOS 17+ @Observable macro for automatic SwiftUI observation.
-/// Provides mock data for development and integration point for MessageRepository.
+/// Fetches conversation data from MessageRepository.
+@available(iOS 17.0, macOS 14.0, *)
 @Observable
 public final class ChatsViewModel {
     // MARK: - Published Properties
@@ -120,34 +134,38 @@ public final class ChatsViewModel {
 
     // MARK: - Dependencies
 
-    // TODO: Inject MessageRepository when available
-    // private let repository: MessageRepository
+    private let repository: MessageRepository
+    private let notificationObserver: NotificationObserver
 
     // MARK: - Initialization
 
-    public init() {
-        // Load mock data for development
-        loadMockData()
+    public init(repository: MessageRepository, notificationObserver: NotificationObserver) {
+        self.repository = repository
+        self.notificationObserver = notificationObserver
+
+        // Register for new message notifications to auto-refresh
+        notificationObserver.onNewMessage { [weak self] in
+            Task { @MainActor in
+                await self?.loadConversations()
+            }
+        }
     }
 
     // MARK: - Public Methods
 
     /// Load conversations from storage.
-    ///
-    /// Integration point for MessageRepository.
     @MainActor
     public func loadConversations() async {
         isLoading = true
         defer { isLoading = false }
 
-        // Simulate network delay
-        try? await Task.sleep(nanoseconds: 500_000_000)
-
-        // TODO: Replace with actual repository call
-        // conversations = try await repository.fetchConversations()
-
-        // For now, use mock data
-        loadMockData()
+        do {
+            let records = try await repository.fetchConversations()
+            conversations = records.map { Conversation(from: $0) }
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     /// Refresh conversations from storage.
@@ -156,11 +174,13 @@ public final class ChatsViewModel {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        // Simulate network delay
-        try? await Task.sleep(nanoseconds: 800_000_000)
-
-        // TODO: Replace with actual repository call
-        loadMockData()
+        do {
+            let records = try await repository.fetchConversations()
+            conversations = records.map { Conversation(from: $0) }
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     /// Toggle favorite status for a conversation.
@@ -172,7 +192,6 @@ public final class ChatsViewModel {
             return
         }
         conversations[index].isFavorite.toggle()
-
         // TODO: Persist favorite status to storage
     }
 
@@ -181,41 +200,11 @@ public final class ChatsViewModel {
     /// - Parameter conversation: The conversation to delete
     @MainActor
     public func deleteConversation(_ conversation: Conversation) async {
-        conversations.removeAll { $0.id == conversation.id }
-
-        // TODO: Delete from repository
-        // try await repository.deleteConversation(conversation.destinationHash)
-    }
-
-    // MARK: - Private Methods
-
-    /// Load mock data for development and preview.
-    private func loadMockData() {
-        conversations = [
-            Conversation(
-                destinationHash: Data([0xDB, 0x3F, 0xFD, 0x25, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06]),
-                displayName: nil,
-                lastMessageTimestamp: Date().addingTimeInterval(-60),
-                lastMessagePreview: "Hi there!",
-                unreadCount: 0,
-                isFavorite: false
-            ),
-            Conversation(
-                destinationHash: Data([0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10]),
-                displayName: "Alice",
-                lastMessageTimestamp: Date().addingTimeInterval(-3600),
-                lastMessagePreview: "Have you set up your Reticulum node yet?",
-                unreadCount: 2,
-                isFavorite: true
-            ),
-            Conversation(
-                destinationHash: Data([0xC1, 0xD2, 0xE3, 0xF4, 0x05, 0x16, 0x27, 0x38, 0x49, 0x5A, 0x6B, 0x7C, 0x8D, 0x9E, 0xAF, 0xB0]),
-                displayName: "Bob",
-                lastMessageTimestamp: Date().addingTimeInterval(-86400),
-                lastMessagePreview: "The mesh network is working great now",
-                unreadCount: 0,
-                isFavorite: false
-            )
-        ]
+        do {
+            try await repository.deleteConversation(conversation.destinationHash)
+            conversations.removeAll { $0.id == conversation.id }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import LXMFSwift
 
 // MARK: - App Theme
 
@@ -26,12 +27,17 @@ enum AppTheme {
 /// - Search and filter icons in toolbar
 /// - List of ContactCard items
 /// - Section headers for grouped contacts
-@available(iOS 17.0, *)
+@available(iOS 17.0, macOS 14.0, *)
 public struct ContactsView: View {
-    // MARK: - Properties
+    // MARK: - Dependencies
+
+    let appServices: AppServices
+    let messageRepository: MessageRepository
+
+    // MARK: - State
 
     /// ViewModel for contacts data.
-    @State private var viewModel = ContactsViewModel()
+    @State private var viewModel: ContactsViewModel?
 
     /// Whether search is active.
     @State private var isSearching = false
@@ -41,7 +47,13 @@ public struct ContactsView: View {
 
     // MARK: - Initialization
 
-    public init(onContactSelected: ((Contact) -> Void)? = nil) {
+    public init(
+        appServices: AppServices,
+        messageRepository: MessageRepository,
+        onContactSelected: ((Contact) -> Void)? = nil
+    ) {
+        self.appServices = appServices
+        self.messageRepository = messageRepository
         self.onContactSelected = onContactSelected
     }
 
@@ -49,44 +61,64 @@ public struct ContactsView: View {
 
     public var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Segmented picker
-                tabPicker
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-
-                // Search bar (if active)
-                if isSearching {
-                    searchBar
+            if let vm = viewModel {
+                VStack(spacing: 0) {
+                    // Segmented picker
+                    tabPicker(vm)
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
-                }
 
-                // Content
-                tabContent
-            }
-            .background(Color(white: 0.1))
-            .navigationTitle("Contacts")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                toolbarContent
-            }
-            #endif
-            .task {
-                await viewModel.loadContacts()
+                    // Search bar (if active)
+                    if isSearching {
+                        searchBar(vm)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                    }
+
+                    // Content
+                    tabContent(vm)
+                }
+                .background(Color(white: 0.1))
+                .navigationTitle("Contacts")
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    toolbarContent(vm)
+                }
+                #endif
+                .onAppear {
+                    vm.startListening()
+                }
+                .onDisappear {
+                    vm.stopListening()
+                }
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .tint(AppTheme.accentColor)
+        .task {
+            if viewModel == nil {
+                viewModel = ContactsViewModel(
+                    appServices: appServices,
+                    messageRepository: messageRepository
+                )
+            }
+            await viewModel?.loadContacts()
+        }
     }
 
     // MARK: - Tab Picker
 
-    private var tabPicker: some View {
-        Picker("Tab", selection: $viewModel.selectedTab) {
-            Text("My Contacts (\(viewModel.myContacts.count))")
+    private func tabPicker(_ vm: ContactsViewModel) -> some View {
+        Picker("Tab", selection: Binding(
+            get: { vm.selectedTab },
+            set: { vm.selectedTab = $0 }
+        )) {
+            Text("My Contacts (\(vm.myContacts.count))")
                 .tag(ContactsTab.myContacts)
-            Text("Network (\(viewModel.networkAnnounces.count))")
+            Text("Network (\(vm.networkAnnounces.count))")
                 .tag(ContactsTab.network)
         }
         .pickerStyle(.segmented)
@@ -94,12 +126,15 @@ public struct ContactsView: View {
 
     // MARK: - Search Bar
 
-    private var searchBar: some View {
+    private func searchBar(_ vm: ContactsViewModel) -> some View {
         HStack {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.gray)
 
-            TextField("Search contacts...", text: $viewModel.searchText)
+            TextField("Search contacts...", text: Binding(
+                get: { vm.searchText },
+                set: { vm.searchText = $0 }
+            ))
                 .textFieldStyle(.plain)
                 .foregroundStyle(.white)
                 .autocorrectionDisabled()
@@ -107,9 +142,9 @@ public struct ContactsView: View {
                 .textInputAutocapitalization(.never)
                 #endif
 
-            if !viewModel.searchText.isEmpty {
+            if !vm.searchText.isEmpty {
                 Button {
-                    viewModel.searchText = ""
+                    vm.searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.gray)
@@ -124,13 +159,13 @@ public struct ContactsView: View {
     // MARK: - Tab Content
 
     @ViewBuilder
-    private var tabContent: some View {
-        switch viewModel.selectedTab {
+    private func tabContent(_ vm: ContactsViewModel) -> some View {
+        switch vm.selectedTab {
         case .myContacts:
-            myContactsTab
+            myContactsTab(vm)
         case .network:
             NetworkAnnouncesTab(
-                viewModel: viewModel,
+                viewModel: vm,
                 onContactSelected: onContactSelected
             )
         }
@@ -138,13 +173,12 @@ public struct ContactsView: View {
 
     // MARK: - My Contacts Tab
 
-    private var myContactsTab: some View {
-        Group {
-            if viewModel.filteredMyContacts.isEmpty {
-                myContactsEmptyState
-            } else {
-                myContactsList
-            }
+    @ViewBuilder
+    private func myContactsTab(_ vm: ContactsViewModel) -> some View {
+        if vm.filteredMyContacts.isEmpty {
+            myContactsEmptyState
+        } else {
+            myContactsList(vm)
         }
     }
 
@@ -167,10 +201,10 @@ public struct ContactsView: View {
         .padding()
     }
 
-    private var myContactsList: some View {
+    private func myContactsList(_ vm: ContactsViewModel) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(viewModel.groupedMyContacts, id: \.title) { group in
+                ForEach(vm.groupedMyContacts, id: \.title) { group in
                     // Section header
                     sectionHeader(title: group.title)
 
@@ -180,7 +214,7 @@ public struct ContactsView: View {
                             contact: contact,
                             showGlobeIcon: false,
                             onFavoriteToggle: {
-                                viewModel.toggleFavorite(for: contact.id)
+                                vm.toggleFavorite(for: contact.id)
                             },
                             onTap: {
                                 onContactSelected?(contact)
@@ -194,7 +228,7 @@ public struct ContactsView: View {
             .padding(.vertical, 12)
         }
         .refreshable {
-            await viewModel.loadContacts()
+            await vm.loadContacts()
         }
     }
 
@@ -219,7 +253,7 @@ public struct ContactsView: View {
 
     #if os(iOS)
     @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
+    private func toolbarContent(_ vm: ContactsViewModel) -> some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             HStack(spacing: 16) {
                 // Search button
@@ -227,7 +261,7 @@ public struct ContactsView: View {
                     withAnimation {
                         isSearching.toggle()
                         if !isSearching {
-                            viewModel.searchText = ""
+                            vm.searchText = ""
                         }
                     }
                 } label: {
@@ -236,7 +270,7 @@ public struct ContactsView: View {
                 }
 
                 // Filter button (for network tab)
-                if viewModel.selectedTab == .network {
+                if vm.selectedTab == .network {
                     Button {
                         // Filter action
                     } label: {
@@ -254,7 +288,7 @@ public struct ContactsView: View {
                 }
 
                 // Add button (for my contacts tab)
-                if viewModel.selectedTab == .myContacts {
+                if vm.selectedTab == .myContacts {
                     Button {
                         // Add contact action
                     } label: {
@@ -281,10 +315,5 @@ public struct ContactsView: View {
 
 // MARK: - Preview
 
-#if DEBUG
-@available(iOS 17.0, *)
-#Preview {
-    ContactsView()
-        .preferredColorScheme(.dark)
-}
-#endif
+// Note: Preview disabled - requires AppServices and MessageRepository dependencies
+// To preview, use the simulator with the full app.

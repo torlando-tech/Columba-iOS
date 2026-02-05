@@ -8,6 +8,7 @@
 
 import Foundation
 import Observation
+import LXMFSwift
 
 // MARK: - Contact Type
 
@@ -64,6 +65,65 @@ public struct Contact: Identifiable, Sendable, Hashable {
             return "\(hopCount) hops"
         }
     }
+
+    /// Create from PathEntry.
+    public init(from entry: PathEntry) {
+        let hex = entry.destinationHash.map { String(format: "%02x", $0) }.joined()
+        self.id = hex
+        self.displayName = entry.displayName
+        self.identityHash = entry.destinationHash
+        self.identityHashHex = hex
+        self.badgeType = .peer
+        self.hopCount = Int(entry.hopCount)
+        // Map hop count to signal strength (0 hops = 4 bars, 5+ hops = 1 bar)
+        self.signalStrength = max(1, 4 - Int(entry.hopCount / 2))
+        self.timestamp = entry.timestamp
+        self.isOnline = Date() < entry.expires
+        self.isFavorite = false
+        self.isRelay = false
+    }
+
+    /// Create from ConversationRecord.
+    public init(from record: ConversationRecord) {
+        let hex = record.destinationHash.map { String(format: "%02x", $0) }.joined()
+        self.id = hex
+        self.displayName = record.displayName
+        self.identityHash = record.destinationHash
+        self.identityHashHex = hex
+        self.badgeType = .peer
+        self.hopCount = 0
+        self.signalStrength = 3
+        self.timestamp = Date(timeIntervalSince1970: record.lastMessageTimestamp)
+        self.isOnline = true
+        self.isFavorite = false
+        self.isRelay = false
+    }
+
+    public init(
+        id: String,
+        displayName: String?,
+        identityHash: Data,
+        identityHashHex: String,
+        badgeType: ContactBadgeType,
+        hopCount: Int,
+        signalStrength: Int,
+        timestamp: Date,
+        isOnline: Bool,
+        isFavorite: Bool,
+        isRelay: Bool
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.identityHash = identityHash
+        self.identityHashHex = identityHashHex
+        self.badgeType = badgeType
+        self.hopCount = hopCount
+        self.signalStrength = signalStrength
+        self.timestamp = timestamp
+        self.isOnline = isOnline
+        self.isFavorite = isFavorite
+        self.isRelay = isRelay
+    }
 }
 
 // MARK: - Tab Selection
@@ -77,15 +137,15 @@ public enum ContactsTab: Int, Sendable, Equatable, Hashable {
 // MARK: - ViewModel
 
 /// ViewModel for contacts screen.
-@available(iOS 17.0, *)
+@available(iOS 17.0, macOS 14.0, *)
 @Observable
 public final class ContactsViewModel {
     // MARK: - Published Properties
 
-    /// My saved contacts.
+    /// My saved contacts (from conversations).
     public var myContacts: [Contact] = []
 
-    /// Network announces from the mesh.
+    /// Network announces from the mesh (from path table).
     public var networkAnnounces: [Contact] = []
 
     /// Currently selected tab.
@@ -99,6 +159,14 @@ public final class ContactsViewModel {
 
     /// Search text.
     public var searchText: String = ""
+
+    // MARK: - Dependencies
+
+    private let appServices: AppServices
+    private let messageRepository: MessageRepository
+
+    /// Task for streaming path updates.
+    private var updateTask: Task<Void, Never>?
 
     // MARK: - Computed Properties
 
@@ -141,7 +209,50 @@ public final class ContactsViewModel {
 
     // MARK: - Initialization
 
-    public init() {}
+    public init(appServices: AppServices, messageRepository: MessageRepository) {
+        self.appServices = appServices
+        self.messageRepository = messageRepository
+    }
+
+    deinit {
+        updateTask?.cancel()
+    }
+
+    // MARK: - Real-Time Updates
+
+    /// Start listening for real-time path updates.
+    @MainActor
+    public func startListening() {
+        guard let pathTable = appServices.pathTable else { return }
+
+        updateTask?.cancel()
+        updateTask = Task {
+            for await entry in pathTable.pathUpdates {
+                guard !Task.isCancelled else { break }
+                await handleNewPathEntry(entry)
+            }
+        }
+    }
+
+    /// Stop listening for updates.
+    public func stopListening() {
+        updateTask?.cancel()
+        updateTask = nil
+    }
+
+    /// Handle a new path entry from the stream.
+    @MainActor
+    private func handleNewPathEntry(_ entry: PathEntry) {
+        let contact = Contact(from: entry)
+
+        if let existingIndex = networkAnnounces.firstIndex(where: { $0.id == contact.id }) {
+            networkAnnounces[existingIndex] = contact
+        } else {
+            networkAnnounces.insert(contact, at: 0)
+        }
+
+        networkAnnounces.sort { $0.timestamp > $1.timestamp }
+    }
 
     // MARK: - Public Methods
 
@@ -151,10 +262,22 @@ public final class ContactsViewModel {
         isLoading = true
         errorMessage = nil
 
-        // In a real app, this would load from database
-        // For now, using demo data
-        myContacts = Self.sampleMyContacts
-        networkAnnounces = Self.sampleNetworkAnnounces
+        do {
+            // Load my contacts from conversations
+            let conversations = try await messageRepository.fetchConversations()
+            myContacts = conversations.map { Contact(from: $0) }
+
+            // Load network announces from path table
+            if let pathTable = appServices.pathTable {
+                let entries = await pathTable.allEntries()
+                networkAnnounces = entries.map { Contact(from: $0) }
+                    .sorted { $0.timestamp > $1.timestamp }
+            }
+
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
 
         isLoading = false
     }
@@ -165,11 +288,12 @@ public final class ContactsViewModel {
         isLoading = true
         errorMessage = nil
 
-        // Simulate network delay
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        if let pathTable = appServices.pathTable {
+            let entries = await pathTable.allEntries()
+            networkAnnounces = entries.map { Contact(from: $0) }
+                .sorted { $0.timestamp > $1.timestamp }
+        }
 
-        // In a real app, this would query the path table
-        networkAnnounces = Self.sampleNetworkAnnounces
         isLoading = false
     }
 
@@ -213,113 +337,19 @@ public final class ContactsViewModel {
         }
     }
 
-    /// Add a network contact to my contacts.
+    /// Add a network contact to my contacts by creating a conversation.
     @MainActor
-    public func addToContacts(_ contact: Contact) {
+    public func addToContacts(_ contact: Contact) async {
         guard !myContacts.contains(where: { $0.id == contact.id }) else { return }
-        myContacts.append(contact)
-    }
 
-    // MARK: - Sample Data
-
-    private static var sampleMyContacts: [Contact] {
-        [
-            Contact(
-                id: "fc112928258ed5f6b9abd1cf0c8d58f0",
-                displayName: "rns.moscow Propag...",
-                identityHash: Data(repeating: 0xFC, count: 16),
-                identityHashHex: "fc112928258ed5f6b9abd1cf0c8d58f0",
-                badgeType: .relay,
-                hopCount: 0,
-                signalStrength: 4,
-                timestamp: Date().addingTimeInterval(-480),
-                isOnline: true,
-                isFavorite: true,
-                isRelay: true
-            ),
-            Contact(
-                id: "db3ffd2575469a78bff6b7c8c183e32a",
-                displayName: "Torlando - Columba",
-                identityHash: Data(repeating: 0xDB, count: 16),
-                identityHashHex: "db3ffd2575469a78bff6b7c8c183e32a",
-                badgeType: .peer,
-                hopCount: 3,
-                signalStrength: 3,
-                timestamp: Date().addingTimeInterval(-60),
-                isOnline: true,
-                isFavorite: false,
-                isRelay: false
-            ),
-        ]
-    }
-
-    private static var sampleNetworkAnnounces: [Contact] {
-        [
-            Contact(
-                id: "ae8d8dfcbdbb317c9bb845e9568e3ca1",
-                displayName: "Alexander",
-                identityHash: Data(repeating: 0xAE, count: 16),
-                identityHashHex: "ae8d8dfcbdbb317c9bb845e9568e3ca1",
-                badgeType: .peer,
-                hopCount: 4,
-                signalStrength: 3,
-                timestamp: Date(),
-                isOnline: true,
-                isFavorite: false,
-                isRelay: false
-            ),
-            Contact(
-                id: "3a5aedd0b00eed70b082fa59d7d68a79",
-                displayName: "HSWro LoRa Conference Bot",
-                identityHash: Data(repeating: 0x3A, count: 16),
-                identityHashHex: "3a5aedd0b00eed70b082fa59d7d68a79",
-                badgeType: .peer,
-                hopCount: 5,
-                signalStrength: 2,
-                timestamp: Date(),
-                isOnline: true,
-                isFavorite: false,
-                isRelay: false
-            ),
-            Contact(
-                id: "00e78bccb2ccc8e266a216b1e2d5475f",
-                displayName: "LucienStorm",
-                identityHash: Data(repeating: 0x00, count: 16),
-                identityHashHex: "00e78bccb2ccc8e266a216b1e2d5475f",
-                badgeType: .peer,
-                hopCount: 5,
-                signalStrength: 2,
-                timestamp: Date(),
-                isOnline: true,
-                isFavorite: false,
-                isRelay: false
-            ),
-            Contact(
-                id: "bf79f82d383f1c03978df59c3e552b55",
-                displayName: "Echo Bot",
-                identityHash: Data(repeating: 0xBF, count: 16),
-                identityHashHex: "bf79f82d383f1c03978df59c3e552b55",
-                badgeType: .peer,
-                hopCount: 2,
-                signalStrength: 4,
-                timestamp: Date(),
-                isOnline: true,
-                isFavorite: false,
-                isRelay: false
-            ),
-            Contact(
-                id: "1d4998a3ae4b8b703a06262fe62ae832",
-                displayName: "BBDXNODE-A1",
-                identityHash: Data(repeating: 0x1D, count: 16),
-                identityHashHex: "1d4998a3ae4b8b703a06262fe62ae832",
-                badgeType: .peer,
-                hopCount: 2,
-                signalStrength: 4,
-                timestamp: Date(),
-                isOnline: true,
-                isFavorite: false,
-                isRelay: false
-            ),
-        ]
+        do {
+            try await messageRepository.ensureConversation(
+                contact.identityHash,
+                displayName: contact.displayName
+            )
+            myContacts.append(contact)
+        } catch {
+            errorMessage = "Failed to add contact: \(error.localizedDescription)"
+        }
     }
 }

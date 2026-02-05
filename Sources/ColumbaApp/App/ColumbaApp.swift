@@ -3,7 +3,7 @@
 //  ColumbaApp
 //
 //  SwiftUI App entry point for Columba iOS.
-//  Uses @Observable for state management (iOS 17+).
+//  Initializes services and provides them to the view hierarchy.
 //
 
 import SwiftUI
@@ -15,44 +15,195 @@ public let appGroupIdentifier = "group.com.columba.ios"
 /// Main SwiftUI App entry point.
 ///
 /// Creates MainTabView as the root navigation container.
-/// Configured with dark theme as default.
+/// Handles service initialization via AppServices.
 @main
 @available(iOS 17.0, macOS 14.0, *)
 struct ColumbaApp: App {
-    // MARK: - App State
+    // MARK: - Services
 
-    /// App-wide state container using @Observable.
-    @State private var appState = AppState()
+    /// Settings repository for UserDefaults-backed configuration.
+    @State private var settingsRepository = SettingsRepository()
+
+    /// Darwin notification observer for IPC from Network Extension.
+    @State private var notificationObserver = NotificationObserver()
 
     // MARK: - App Body
 
     var body: some Scene {
         WindowGroup {
-            MainTabView()
-                .environment(appState)
-                .preferredColorScheme(.dark)
-                .tint(Theme.accentColor)
+            RootView(
+                settingsRepository: settingsRepository,
+                notificationObserver: notificationObserver
+            )
+            .preferredColorScheme(.dark)
+            .tint(Theme.accentColor)
         }
     }
 }
 
-// MARK: - App State
+// MARK: - Root View
 
-/// App-wide observable state container.
+/// Root view that handles async service initialization.
 ///
-/// Uses iOS 17+ @Observable macro for automatic SwiftUI updates.
+/// Separating initialization into a View (vs App) ensures the .task modifier
+/// runs correctly in the SwiftUI lifecycle.
 @available(iOS 17.0, macOS 14.0, *)
-@Observable
-final class AppState {
-    /// Currently selected tab index.
-    var selectedTab: Tab = .chats
+struct RootView: View {
+    // MARK: - Dependencies
 
-    /// Whether the app is fully initialized.
-    var isInitialized = false
+    let settingsRepository: SettingsRepository
+    let notificationObserver: NotificationObserver
 
-    /// Error message if initialization fails.
-    var initError: String?
+    // MARK: - Services
+
+    /// Central service layer owning Identity, Router, Transport, PathTable.
+    @State private var appServices = AppServices()
+
+    // MARK: - Internal State
+
+    @State private var database: LXMFDatabase?
+    @State private var messageRepository: MessageRepository?
+    @State private var incomingMessageHandler: IncomingMessageHandler?
+    @State private var initError: String?
+    @State private var isInitialized = false
+
+    // MARK: - Body
+
+    var body: some View {
+        Group {
+            if let error = initError {
+                errorView(error)
+            } else if isInitialized,
+                      let repo = messageRepository {
+                MainTabView(
+                    appServices: appServices,
+                    messageRepository: repo,
+                    settingsRepository: settingsRepository,
+                    notificationObserver: notificationObserver
+                )
+            } else {
+                loadingView
+            }
+        }
+        .task {
+            await initializeServices()
+        }
+    }
+
+    // MARK: - Loading View
+
+    private var loadingView: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                // App icon placeholder
+                ZStack {
+                    Circle()
+                        .fill(Theme.accentColor.opacity(0.2))
+                        .frame(width: 100, height: 100)
+
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(Theme.accentColor)
+                }
+
+                Text("Columba")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: Theme.accentColor))
+                    .scaleEffect(1.2)
+
+                Text("Connecting to network...")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+        }
+    }
+
+    // MARK: - Error View
+
+    private func errorView(_ message: String) -> some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 50))
+                    .foregroundStyle(.orange)
+
+                Text("Connection Failed")
+                    .font(.title2.bold())
+                    .foregroundStyle(.white)
+
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+
+                Button {
+                    Task {
+                        initError = nil
+                        await initializeServices()
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Retry")
+                    }
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 14)
+                    .background(Theme.accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .padding(.top, 10)
+            }
+        }
+    }
+
+    // MARK: - Initialization
+
+    @MainActor
+    private func initializeServices() async {
+        do {
+            // Initialize AppServices with relay address from settings
+            let relayAddress = await settingsRepository.getRelayAddress()
+            print("[ROOT] Relay address from settings: \(relayAddress)")
+            try await appServices.initialize(relayAddress: relayAddress)
+            print("[ROOT] AppServices initialized, local hash: \(appServices.localIdentityHashHex)")
+
+            // Use the shared database from AppServices
+            guard let db = appServices.database else {
+                throw AppServicesError.routerNotInitialized
+            }
+            self.database = db
+
+            let repo = MessageRepository(database: db)
+            self.messageRepository = repo
+
+            // Create incoming message handler and set as router delegate
+            let handler = IncomingMessageHandler(messageRepository: repo)
+            self.incomingMessageHandler = handler
+            if let router = appServices.router {
+                await router.setDelegate(handler)
+                print("[ROOT] IncomingMessageHandler set as router delegate")
+            }
+
+            // Mark as initialized to trigger UI update
+            self.isInitialized = true
+
+        } catch {
+            self.initError = error.localizedDescription
+        }
+    }
 }
+
+// MARK: - Tab Enum
 
 /// Tab identifiers for main navigation.
 enum Tab: Int, CaseIterable, Identifiable {

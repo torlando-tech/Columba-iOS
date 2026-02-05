@@ -8,6 +8,7 @@
 
 import Foundation
 import Observation
+import LXMFSwift
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -81,23 +82,30 @@ public final class SettingsViewModel {
 
     public var isConnected: Bool = false
     public var connectedInterface: String = "TCP (127.0.0.1:4242)"
+    public var isReconnecting: Bool = false
+    public var reconnectError: String?
 
     // MARK: - Identity Settings
 
     /// Current identity information.
-    public var identity = IdentityInfo(
-        displayName: "emu",
-        identityHash: "f3b4bba6765b2ae4414a32b6408a6806",
-        usesIdenticon: true
-    )
+    public var identity = IdentityInfo()
 
     /// Saved display name for change detection.
-    private var savedDisplayName: String = "emu"
+    private var savedDisplayName: String = ""
 
     /// Whether identity has unsaved changes.
     public var hasUnsavedChanges: Bool {
         identity.displayName != savedDisplayName
     }
+
+    /// True while sending an announce.
+    public var isAnnouncing: Bool = false
+
+    /// Error message if announce fails.
+    public var announceError: String?
+
+    /// Success message after announce sent.
+    public var announceSuccess: Bool = false
 
     // MARK: - Privacy Settings
 
@@ -126,16 +134,44 @@ public final class SettingsViewModel {
 
     public var selectedMapSource: MapSource = .apple
 
+    // MARK: - Dependencies
+
+    private let appServices: AppServices
+    private let settingsRepository: SettingsRepository
+
     // MARK: - Initialization
 
-    public init() {
-        loadSettings()
+    public init(appServices: AppServices, settingsRepository: SettingsRepository) {
+        self.appServices = appServices
+        self.settingsRepository = settingsRepository
+        loadLocalSettings()
     }
 
     // MARK: - Methods
 
-    /// Load settings from UserDefaults.
-    private func loadSettings() {
+    /// Load settings from repository and AppServices.
+    @MainActor
+    public func loadSettings() async {
+        // Load relay address from repository
+        connectedInterface = "TCP (\(await settingsRepository.getRelayAddress()))"
+
+        // Load display name from repository
+        identity.displayName = await settingsRepository.getDisplayName()
+        savedDisplayName = identity.displayName
+
+        // Load identity hash from AppServices
+        identity = IdentityInfo(
+            displayName: identity.displayName,
+            identityHash: appServices.localIdentityHashHex,
+            usesIdenticon: true
+        )
+
+        // Update connection state from AppServices
+        isConnected = appServices.isConnected
+    }
+
+    /// Load local settings from UserDefaults.
+    private func loadLocalSettings() {
         let defaults = UserDefaults.standard
 
         isPrivacyEnabled = defaults.bool(forKey: "privacy_enabled")
@@ -188,9 +224,39 @@ public final class SettingsViewModel {
     }
 
     /// Save the current display name.
-    public func saveDisplayName() {
+    @MainActor
+    public func saveDisplayName() async {
         savedDisplayName = identity.displayName
+        await settingsRepository.setDisplayName(identity.displayName)
         saveSettings()
+    }
+
+    /// Send announce to the network.
+    @MainActor
+    public func sendAnnounce() async {
+        // Save display name first
+        await settingsRepository.setDisplayName(identity.displayName)
+        savedDisplayName = identity.displayName
+
+        isAnnouncing = true
+        announceError = nil
+        announceSuccess = false
+
+        do {
+            try await appServices.sendAnnounce(displayName: identity.displayName)
+            announceSuccess = true
+            // Clear success after a delay
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                await MainActor.run {
+                    self.announceSuccess = false
+                }
+            }
+        } catch {
+            announceError = "Failed to announce: \(error.localizedDescription)"
+        }
+
+        isAnnouncing = false
     }
 
     /// Copy identity hash to clipboard.
@@ -201,5 +267,22 @@ public final class SettingsViewModel {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(identity.identityHash, forType: .string)
         #endif
+    }
+
+    /// Reconnect to relay server.
+    @MainActor
+    public func reconnect(relayAddress: String) async {
+        isReconnecting = true
+        reconnectError = nil
+
+        do {
+            await settingsRepository.setRelayAddress(relayAddress)
+            try await appServices.reconnect(relayAddress: relayAddress)
+            connectedInterface = "TCP (\(relayAddress))"
+        } catch {
+            reconnectError = "Failed to connect: \(error.localizedDescription)"
+        }
+
+        isReconnecting = false
     }
 }

@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import LXMFSwift
 
 /// Main tab-based navigation container.
 ///
@@ -17,29 +18,41 @@ import SwiftUI
 /// - Settings: App configuration
 @available(iOS 17.0, macOS 14.0, *)
 struct MainTabView: View {
-    // MARK: - Environment
+    // MARK: - Dependencies
 
-    @Environment(AppState.self) private var appState
+    let appServices: AppServices
+    let messageRepository: MessageRepository
+    let settingsRepository: SettingsRepository
+    let notificationObserver: NotificationObserver
+
+    // MARK: - State
+
+    @State private var selectedTab: Tab = .chats
 
     // MARK: - Body
 
     var body: some View {
-        @Bindable var state = appState
-
-        TabView(selection: $state.selectedTab) {
+        TabView(selection: $selectedTab) {
             // Chats Tab
-            ChatsView()
-                .tabItem {
-                    Label(Tab.chats.title, systemImage: Tab.chats.icon)
-                }
-                .tag(Tab.chats)
+            ChatsView(
+                appServices: appServices,
+                messageRepository: messageRepository,
+                notificationObserver: notificationObserver
+            )
+            .tabItem {
+                Label(Tab.chats.title, systemImage: Tab.chats.icon)
+            }
+            .tag(Tab.chats)
 
             // Contacts Tab
-            ContactsView()
-                .tabItem {
-                    Label(Tab.contacts.title, systemImage: Tab.contacts.icon)
-                }
-                .tag(Tab.contacts)
+            ContactsView(
+                appServices: appServices,
+                messageRepository: messageRepository
+            )
+            .tabItem {
+                Label(Tab.contacts.title, systemImage: Tab.contacts.icon)
+            }
+            .tag(Tab.contacts)
 
             // Map Tab
             MapView()
@@ -49,23 +62,15 @@ struct MainTabView: View {
                 .tag(Tab.map)
 
             // Settings Tab
-            SettingsView()
-                .tabItem {
-                    Label(Tab.settings.title, systemImage: Tab.settings.icon)
-                }
-                .tag(Tab.settings)
+            SettingsView(
+                appServices: appServices,
+                settingsRepository: settingsRepository
+            )
+            .tabItem {
+                Label(Tab.settings.title, systemImage: Tab.settings.icon)
+            }
+            .tag(Tab.settings)
         }
         .tint(Theme.accentColor)
     }
 }
-
-// MARK: - Preview
-
-#if DEBUG
-@available(iOS 17.0, macOS 14.0, *)
-#Preview {
-    MainTabView()
-        .environment(AppState())
-        .preferredColorScheme(.dark)
-}
-#endif

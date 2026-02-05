@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import LXMFSwift
 
 /// Main settings screen view.
 ///
@@ -20,9 +21,14 @@ import SwiftUI
 /// - Map Sources
 @available(iOS 17.0, macOS 14.0, *)
 struct SettingsView: View {
-    // MARK: - Properties
+    // MARK: - Dependencies
 
-    @State private var viewModel = SettingsViewModel()
+    let appServices: AppServices
+    let settingsRepository: SettingsRepository
+
+    // MARK: - State
+
+    @State private var viewModel: SettingsViewModel?
     @State private var showMyIdentity = false
     @State private var showManageIdentities = false
 
@@ -30,52 +36,66 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 12) {
-                    // Network
-                    networkCard
+            if let vm = viewModel {
+                ScrollView {
+                    VStack(spacing: 12) {
+                        // Network
+                        networkCard(vm)
 
-                    // Identity
-                    identityCard
+                        // Identity
+                        identityCard(vm)
 
-                    // Privacy
-                    privacyCard
+                        // Privacy
+                        privacyCard(vm)
 
-                    // Notifications
-                    notificationsCard
+                        // Notifications
+                        notificationsCard(vm)
 
-                    // Auto Announce
-                    autoAnnounceCard
+                        // Auto Announce
+                        autoAnnounceCard(vm)
 
-                    // Location Sharing
-                    locationSharingCard
+                        // Location Sharing
+                        locationSharingCard(vm)
 
-                    // Map Sources
-                    mapSourcesCard
+                        // Map Sources
+                        mapSourcesCard(vm)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .background(Theme.backgroundPrimary)
+                .navigationTitle("Settings")
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.large)
+                .toolbarBackground(Theme.backgroundPrimary, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                #endif
+                .navigationDestination(isPresented: $showMyIdentity) {
+                    MyIdentityView(viewModel: vm)
+                }
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(Theme.backgroundPrimary)
-            .navigationTitle("Settings")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(Theme.backgroundPrimary, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            #endif
-            .navigationDestination(isPresented: $showMyIdentity) {
-                MyIdentityView(viewModel: viewModel)
+        }
+        .task {
+            if viewModel == nil {
+                viewModel = SettingsViewModel(
+                    appServices: appServices,
+                    settingsRepository: settingsRepository
+                )
             }
+            await viewModel?.loadSettings()
         }
     }
 
     // MARK: - Network Card
 
-    private var networkCard: some View {
+    private func networkCard(_ vm: SettingsViewModel) -> some View {
         ExpandableSettingsCard(
             icon: "antenna.radiowaves.left.and.right",
             title: "Network",
-            isExpanded: $viewModel.isNetworkExpanded
+            isExpanded: Binding(get: { vm.isNetworkExpanded }, set: { vm.isNetworkExpanded = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Configure network interfaces and connection settings for Reticulum.")
@@ -88,21 +108,21 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.textSecondary)
 
                     Circle()
-                        .fill(viewModel.isConnected ? Theme.success : Theme.error)
+                        .fill(vm.isConnected ? Theme.success : Theme.error)
                         .frame(width: 8, height: 8)
 
-                    Text(viewModel.isConnected ? "Connected" : "Disconnected")
+                    Text(vm.isConnected ? "Connected" : "Disconnected")
                         .font(.subheadline)
-                        .foregroundStyle(viewModel.isConnected ? Theme.success : Theme.error)
+                        .foregroundStyle(vm.isConnected ? Theme.success : Theme.error)
                 }
 
-                if viewModel.isConnected {
+                if vm.isConnected {
                     HStack {
                         Text("Interface:")
                             .font(.subheadline)
                             .foregroundStyle(Theme.textSecondary)
 
-                        Text(viewModel.connectedInterface)
+                        Text(vm.connectedInterface)
                             .font(.subheadline)
                             .foregroundStyle(Theme.textPrimary)
                     }
@@ -113,11 +133,11 @@ struct SettingsView: View {
 
     // MARK: - Identity Card
 
-    private var identityCard: some View {
+    private func identityCard(_ vm: SettingsViewModel) -> some View {
         ExpandableSettingsCard(
             icon: "person.fill",
             title: "Identity",
-            isExpanded: $viewModel.isIdentityExpanded
+            isExpanded: Binding(get: { vm.isIdentityExpanded }, set: { vm.isIdentityExpanded = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("View and share your identity, edit your display name, and manage QR codes for contact sharing.")
@@ -163,19 +183,19 @@ struct SettingsView: View {
 
     // MARK: - Privacy Card
 
-    private var privacyCard: some View {
+    private func privacyCard(_ vm: SettingsViewModel) -> some View {
         ExpandableSettingsCard(
             icon: "shield.fill",
             title: "Privacy",
-            isExpanded: $viewModel.isPrivacyExpanded,
-            toggle: $viewModel.isPrivacyEnabled
+            isExpanded: Binding(get: { vm.isPrivacyExpanded }, set: { vm.isPrivacyExpanded = $0 }),
+            toggle: Binding(get: { vm.isPrivacyEnabled }, set: { vm.isPrivacyEnabled = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Enable privacy mode to hide message previews and sensitive information from notifications and the app switcher.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
-                if viewModel.isPrivacyEnabled {
+                if vm.isPrivacyEnabled {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(Theme.success)
@@ -190,32 +210,32 @@ struct SettingsView: View {
 
     // MARK: - Notifications Card
 
-    private var notificationsCard: some View {
+    private func notificationsCard(_ vm: SettingsViewModel) -> some View {
         ExpandableSettingsCard(
             icon: "bell.fill",
             title: "Notifications",
-            isExpanded: $viewModel.isNotificationsExpanded,
-            toggle: $viewModel.isNotificationsEnabled
+            isExpanded: Binding(get: { vm.isNotificationsExpanded }, set: { vm.isNotificationsExpanded = $0 }),
+            toggle: Binding(get: { vm.isNotificationsEnabled }, set: { vm.isNotificationsEnabled = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Configure how you receive notifications for incoming messages and announcements.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
-                if viewModel.isNotificationsEnabled {
+                if vm.isNotificationsEnabled {
                     settingsToggleRow(
                         title: "Message Previews",
-                        isOn: $viewModel.showMessagePreviews
+                        isOn: Binding(get: { vm.showMessagePreviews }, set: { vm.showMessagePreviews = $0 })
                     )
 
                     settingsToggleRow(
                         title: "Sound",
-                        isOn: $viewModel.playSounds
+                        isOn: Binding(get: { vm.playSounds }, set: { vm.playSounds = $0 })
                     )
 
                     settingsToggleRow(
                         title: "Vibrate",
-                        isOn: $viewModel.vibrate
+                        isOn: Binding(get: { vm.vibrate }, set: { vm.vibrate = $0 })
                     )
                 }
             }
@@ -224,22 +244,22 @@ struct SettingsView: View {
 
     // MARK: - Auto Announce Card
 
-    private var autoAnnounceCard: some View {
+    private func autoAnnounceCard(_ vm: SettingsViewModel) -> some View {
         ExpandableSettingsCard(
             icon: "antenna.radiowaves.left.and.right",
             title: "Auto Announce",
-            isExpanded: $viewModel.isAutoAnnounceExpanded,
-            toggle: $viewModel.isAutoAnnounceEnabled
+            isExpanded: Binding(get: { vm.isAutoAnnounceExpanded }, set: { vm.isAutoAnnounceExpanded = $0 }),
+            toggle: Binding(get: { vm.isAutoAnnounceEnabled }, set: { vm.isAutoAnnounceEnabled = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Automatically announce your presence on the network so others can discover and message you.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
-                if viewModel.isAutoAnnounceEnabled {
+                if vm.isAutoAnnounceEnabled {
                     settingsToggleRow(
                         title: "Announce on Launch",
-                        isOn: $viewModel.announceOnLaunch
+                        isOn: Binding(get: { vm.announceOnLaunch }, set: { vm.announceOnLaunch = $0 })
                     )
 
                     HStack {
@@ -249,7 +269,7 @@ struct SettingsView: View {
 
                         Spacer()
 
-                        Picker("", selection: $viewModel.announceIntervalMinutes) {
+                        Picker("", selection: Binding(get: { vm.announceIntervalMinutes }, set: { vm.announceIntervalMinutes = $0 })) {
                             Text("5 min").tag(5)
                             Text("15 min").tag(15)
                             Text("30 min").tag(30)
@@ -265,22 +285,22 @@ struct SettingsView: View {
 
     // MARK: - Location Sharing Card
 
-    private var locationSharingCard: some View {
+    private func locationSharingCard(_ vm: SettingsViewModel) -> some View {
         ExpandableSettingsCard(
             icon: "location.fill",
             title: "Location Sharing",
-            isExpanded: $viewModel.isLocationSharingExpanded,
-            toggle: $viewModel.isLocationSharingEnabled
+            isExpanded: Binding(get: { vm.isLocationSharingExpanded }, set: { vm.isLocationSharingExpanded = $0 }),
+            toggle: Binding(get: { vm.isLocationSharingEnabled }, set: { vm.isLocationSharingEnabled = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Share your location with contacts. Your location is end-to-end encrypted and only visible to peers you communicate with.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
-                if viewModel.isLocationSharingEnabled {
+                if vm.isLocationSharingEnabled {
                     settingsToggleRow(
                         title: "Precise Location",
-                        isOn: $viewModel.sharePreciseLocation
+                        isOn: Binding(get: { vm.sharePreciseLocation }, set: { vm.sharePreciseLocation = $0 })
                     )
 
                     HStack {
@@ -290,7 +310,7 @@ struct SettingsView: View {
 
                         Spacer()
 
-                        Picker("", selection: $viewModel.locationUpdateInterval) {
+                        Picker("", selection: Binding(get: { vm.locationUpdateInterval }, set: { vm.locationUpdateInterval = $0 })) {
                             Text("30 sec").tag(30)
                             Text("1 min").tag(60)
                             Text("5 min").tag(300)
@@ -306,11 +326,11 @@ struct SettingsView: View {
 
     // MARK: - Map Sources Card
 
-    private var mapSourcesCard: some View {
+    private func mapSourcesCard(_ vm: SettingsViewModel) -> some View {
         ExpandableSettingsCard(
             icon: "map.fill",
             title: "Map Sources",
-            isExpanded: $viewModel.isMapSourcesExpanded
+            isExpanded: Binding(get: { vm.isMapSourcesExpanded }, set: { vm.isMapSourcesExpanded = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Choose the map provider for viewing contact locations.")
@@ -318,7 +338,7 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.textSecondary)
 
                 ForEach(SettingsViewModel.MapSource.allCases) { source in
-                    mapSourceRow(source: source)
+                    mapSourceRow(vm, source: source)
                 }
             }
         }
@@ -340,9 +360,9 @@ struct SettingsView: View {
         }
     }
 
-    private func mapSourceRow(source: SettingsViewModel.MapSource) -> some View {
+    private func mapSourceRow(_ vm: SettingsViewModel, source: SettingsViewModel.MapSource) -> some View {
         Button(action: {
-            viewModel.selectedMapSource = source
+            vm.selectedMapSource = source
         }) {
             HStack {
                 Text(source.rawValue)
@@ -351,7 +371,7 @@ struct SettingsView: View {
 
                 Spacer()
 
-                if viewModel.selectedMapSource == source {
+                if vm.selectedMapSource == source {
                     Image(systemName: "checkmark")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Theme.accentColor)
@@ -364,10 +384,5 @@ struct SettingsView: View {
 
 // MARK: - Preview
 
-#if DEBUG
-@available(iOS 17.0, macOS 14.0, *)
-#Preview {
-    SettingsView()
-        .preferredColorScheme(.dark)
-}
-#endif
+// Note: Preview disabled - requires AppServices and SettingsRepository dependencies
+// To preview, use the simulator with the full app.

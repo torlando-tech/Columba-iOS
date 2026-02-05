@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import LXMFSwift
 
 /// Individual message bubble view.
 ///
@@ -152,6 +153,28 @@ public struct Message: Identifiable, Equatable {
         self.timestamp = timestamp
         self.isFromMe = isFromMe
         self.deliveryStatus = deliveryStatus
+    }
+
+    /// Create from LXMessage.
+    public init(from lxMessage: LXMessage, localHash: Data) {
+        self.id = lxMessage.hash.map { String(format: "%02x", $0) }.joined()
+        self.content = String(data: lxMessage.content, encoding: .utf8) ?? ""
+        self.timestamp = Date(timeIntervalSince1970: lxMessage.timestamp)
+        self.isFromMe = lxMessage.sourceHash == localHash
+
+        // Map LXMessage state to DeliveryStatus
+        switch lxMessage.state {
+        case .sending:
+            self.deliveryStatus = .sending
+        case .sent:
+            self.deliveryStatus = .sent
+        case .delivered:
+            self.deliveryStatus = .delivered
+        case .failed:
+            self.deliveryStatus = .failed
+        default:
+            self.deliveryStatus = .sent
+        }
     }
 }
 
