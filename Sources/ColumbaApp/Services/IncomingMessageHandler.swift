@@ -64,28 +64,36 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
         print("[LXMF_INBOUND] content preview: \(contentPreview)")
         logger.info("Received message from \(sourceHashHex)... hash=\(messageHashHex)... content=\(contentPreview)")
 
-        // Save to database asynchronously, then notify
         let sourceHash = message.sourceHash
+
+        // Post in-process notification IMMEDIATELY so open chat views start reloading
+        // (mirrors the Darwin notification which also fires immediately)
+        NotificationCenter.default.post(
+            name: IncomingMessageHandler.messageReceivedNotification,
+            object: nil,
+            userInfo: ["sourceHash": sourceHash]
+        )
+        logger.error("[LXMF_INBOUND] Posted immediate NotificationCenter notification for source=\(sourceHashHex)")
+
+        // Post Darwin notification for cross-process UI refresh
+        NotificationObserver.postNewMessage()
+
+        // Save to database asynchronously, then notify again for definitive data
         Task {
             do {
                 try await messageRepository.saveMessage(message)
-                logger.debug("Message \(messageHashHex)... saved to database")
+                logger.error("[LXMF_INBOUND] Message \(messageHashHex) saved to database OK")
 
-                // Post in-process notification so open chat views refresh immediately
+                // Post notification again after save so views reload with saved data
                 NotificationCenter.default.post(
                     name: IncomingMessageHandler.messageReceivedNotification,
                     object: nil,
                     userInfo: ["sourceHash": sourceHash]
                 )
             } catch {
-                logger.error("Failed to save message \(messageHashHex)...: \(error.localizedDescription)")
+                logger.error("[LXMF_INBOUND] FAILED to save message \(messageHashHex): \(error.localizedDescription)")
             }
         }
-
-        // Post Darwin notification to trigger UI refresh
-        // This works across process boundaries (e.g., from Network Extension to main app)
-        NotificationObserver.postNewMessage()
-        logger.debug("Posted new message notification")
     }
 
     /// Called when an outbound message state changes.

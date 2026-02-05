@@ -9,6 +9,7 @@
 import SwiftUI
 import Observation
 import LXMFSwift
+import os.log
 
 /// ViewModel for the messaging screen.
 ///
@@ -35,6 +36,7 @@ public final class MessagingViewModel {
     private let repository: MessageRepository
     private let appServices: AppServices
     private let displayName: String?
+    private let logger = Logger(subsystem: "com.columba.app", category: "MessagingViewModel")
 
     /// Observation token for incoming message notifications.
     private var notificationTask: Any?
@@ -59,19 +61,30 @@ public final class MessagingViewModel {
         self.appServices = appServices
         self.displayName = displayName
 
+        let convHashHex = conversationHash.prefix(8).map { String(format: "%02x", $0) }.joined()
+        logger.error("[MSG_VM] MessagingViewModel init for conversation=\(convHashHex)")
+
         // Listen for incoming messages and reload when this conversation is affected
         notificationTask = NotificationCenter.default.addObserver(
             forName: IncomingMessageHandler.messageReceivedNotification,
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            guard let self else { return }
-            // Reload if the message is for this conversation, or always reload
-            // (sourceHash may be the peer's hash which matches our conversationHash)
-            if let sourceHash = notification.userInfo?["sourceHash"] as? Data,
-               sourceHash != self.conversationHash {
+            guard let self else {
+                Logger(subsystem: "com.columba.app", category: "MessagingViewModel")
+                    .error("[MSG_VM] Notification received but self is nil (deallocated)")
                 return
             }
+            let notifSourceHex = (notification.userInfo?["sourceHash"] as? Data)?.prefix(8)
+                .map { String(format: "%02x", $0) }.joined() ?? "none"
+            self.logger.error("[MSG_VM] Notification received! sourceHash=\(notifSourceHex) conversationHash=\(convHashHex)")
+
+            if let sourceHash = notification.userInfo?["sourceHash"] as? Data,
+               sourceHash != self.conversationHash {
+                self.logger.error("[MSG_VM] sourceHash MISMATCH - skipping reload")
+                return
+            }
+            self.logger.error("[MSG_VM] sourceHash MATCHES - reloading messages")
             Task { @MainActor in
                 await self.loadMessages()
             }
