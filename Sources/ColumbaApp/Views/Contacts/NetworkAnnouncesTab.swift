@@ -15,7 +15,7 @@ import SwiftUI
 /// - "Peer" badges
 /// - Pull-to-refresh
 /// - Empty state when no announces
-@available(iOS 17.0, *)
+@available(iOS 17.0, macOS 14.0, *)
 struct NetworkAnnouncesTab: View {
     // MARK: - Properties
 
@@ -99,23 +99,5 @@ struct NetworkAnnouncesTab: View {
 
 // MARK: - Preview
 
-#if DEBUG
-@available(iOS 17.0, *)
-#Preview("With Announces") {
-    let viewModel = ContactsViewModel()
-    Task {
-        await viewModel.loadContacts()
-    }
-
-    return NetworkAnnouncesTab(viewModel: viewModel)
-        .background(Color(white: 0.1))
-}
-
-@available(iOS 17.0, *)
-#Preview("Empty State") {
-    let viewModel = ContactsViewModel()
-
-    return NetworkAnnouncesTab(viewModel: viewModel)
-        .background(Color(white: 0.1))
-}
-#endif
+// Note: Preview disabled - requires AppServices and MessageRepository dependencies
+// To preview, use the simulator with the full app.

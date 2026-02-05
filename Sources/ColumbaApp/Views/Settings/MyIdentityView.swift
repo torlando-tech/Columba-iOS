@@ -137,7 +137,9 @@ struct MyIdentityView: View {
             // Save and View QR buttons
             HStack(spacing: 12) {
                 Button(action: {
-                    viewModel.saveDisplayName()
+                    Task {
+                        await viewModel.saveDisplayName()
+                    }
                     #if os(iOS)
                     let generator = UINotificationFeedbackGenerator()
                     generator.notificationOccurred(.success)
@@ -597,12 +599,5 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 // MARK: - Preview
 
-#if DEBUG
-@available(iOS 17.0, macOS 14.0, *)
-#Preview {
-    NavigationStack {
-        MyIdentityView(viewModel: SettingsViewModel())
-    }
-    .preferredColorScheme(.dark)
-}
-#endif
+// Note: Preview disabled - SettingsViewModel requires AppServices and SettingsRepository
+// To preview, use the simulator with the full app.

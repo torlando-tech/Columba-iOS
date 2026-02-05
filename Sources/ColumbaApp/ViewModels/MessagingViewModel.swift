@@ -3,17 +3,19 @@
 //  Columba-iOS
 //
 //  ViewModel for messaging screen using @Observable macro.
-//  Provides async message loading and sending with optimistic UI.
+//  Provides async message loading and sending via LXMFSwift.
 //
 
 import SwiftUI
 import Observation
+import LXMFSwift
 
 /// ViewModel for the messaging screen.
 ///
 /// Uses iOS 17+ @Observable macro for automatic SwiftUI observation.
 /// Implements optimistic UI pattern - shows message immediately while
-/// persisting for network extension processing.
+/// sending via LXMRouter.
+@available(iOS 17.0, macOS 14.0, *)
 @Observable
 public final class MessagingViewModel {
     // MARK: - Published Properties
@@ -29,33 +31,51 @@ public final class MessagingViewModel {
 
     // MARK: - Dependencies
 
-    private let conversationId: String?
+    private let conversationHash: Data
+    private let repository: MessageRepository
+    private let appServices: AppServices
+    private let displayName: String?
 
     // MARK: - Initialization
 
     /// Create ViewModel for a specific conversation.
     ///
-    /// - Parameter conversationId: Optional conversation identifier for loading messages
-    public init(conversationId: String? = nil) {
-        self.conversationId = conversationId
+    /// - Parameters:
+    ///   - conversationHash: Destination hash (16 bytes) of the conversation
+    ///   - repository: MessageRepository for database access
+    ///   - appServices: AppServices for router and identity access
+    ///   - displayName: Optional display name for the peer
+    public init(
+        conversationHash: Data,
+        repository: MessageRepository,
+        appServices: AppServices,
+        displayName: String? = nil
+    ) {
+        self.conversationHash = conversationHash
+        self.repository = repository
+        self.appServices = appServices
+        self.displayName = displayName
     }
 
     // MARK: - Public Methods
 
     /// Load messages for this conversation.
-    ///
-    /// Fetches messages from database and updates the messages array.
     @MainActor
     public func loadMessages() async {
         isLoading = true
         defer { isLoading = false }
 
         do {
-            // In a real implementation, this would fetch from MessageRepository
-            // For now, load sample messages for preview/testing
-            if messages.isEmpty {
-                messages = createSampleMessages()
-            }
+            // Ensure conversation exists
+            try await repository.ensureConversation(conversationHash, displayName: displayName)
+
+            // Fetch messages (returns newest first, we reverse for chronological)
+            let lxMessages = try await repository.fetchMessages(for: conversationHash)
+            messages = lxMessages.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+
+            // Mark as read
+            try await repository.markConversationRead(conversationHash)
+
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -64,18 +84,39 @@ public final class MessagingViewModel {
 
     /// Send a message with optimistic UI.
     ///
-    /// Creates an optimistic message shown immediately in the UI, then
-    /// persists to database for network extension processing.
-    ///
     /// - Parameter text: Message text to send
+    /// - Returns: True if message was sent successfully
     @MainActor
-    public func sendMessage(text: String) async {
+    public func sendMessage(text: String) async -> Bool {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty else { return }
+        guard !trimmedText.isEmpty else { return false }
 
-        // Create optimistic message
+        guard let identity = appServices.identity else {
+            errorMessage = "Identity not initialized"
+            return false
+        }
+
+        guard let router = appServices.router else {
+            errorMessage = "Router not initialized"
+            return false
+        }
+
+        // Create outbound LXMF message
+        var lxMessage = LXMessage(
+            destinationHash: conversationHash,
+            sourceIdentity: identity,
+            content: trimmedText.data(using: .utf8) ?? Data(),
+            title: Data(),
+            fields: nil,
+            desiredMethod: .opportunistic
+        )
+
+        // Generate temporary hash for optimistic UI
         let optimisticId = UUID().uuidString
-        var newMessage = Message(
+        lxMessage.hash = optimisticId.data(using: .utf8)!
+
+        // Create UI message for immediate display
+        let optimisticMessage = Message(
             id: optimisticId,
             content: trimmedText,
             timestamp: Date(),
@@ -83,32 +124,26 @@ public final class MessagingViewModel {
             deliveryStatus: .sending
         )
 
-        // Add to UI immediately with animation
+        // Add to UI immediately
         withAnimation(.easeOut(duration: 0.25)) {
-            messages.append(newMessage)
+            messages.append(optimisticMessage)
         }
 
         do {
-            // Simulate network delay for demo
-            // In real implementation: try await repository.saveMessage(outboundMessage)
-            try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            // Send via router
+            try await router.handleOutbound(&lxMessage)
 
-            // Update to sent status
+            // Update UI with sent status
             if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     messages[index].deliveryStatus = .sent
                 }
             }
 
-            // Simulate delivery confirmation
-            try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            // Save to database
+            try await repository.saveMessage(lxMessage)
 
-            if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    messages[index].deliveryStatus = .delivered
-                }
-            }
-
+            return true
         } catch {
             // Update to failed status
             if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
@@ -117,12 +152,11 @@ public final class MessagingViewModel {
                 }
             }
             errorMessage = "Failed to send: \(error.localizedDescription)"
+            return false
         }
     }
 
     /// Retry sending a failed message.
-    ///
-    /// - Parameter messageId: ID of the message to retry
     @MainActor
     public func retryMessage(messageId: String) async {
         guard let index = messages.firstIndex(where: { $0.id == messageId }),
@@ -138,52 +172,11 @@ public final class MessagingViewModel {
         }
 
         // Resend
-        await sendMessage(text: content)
+        _ = await sendMessage(text: content)
     }
 
-    // MARK: - Private Methods
-
-    /// Create sample messages for preview/testing.
-    private func createSampleMessages() -> [Message] {
-        [
-            Message(
-                id: "1",
-                content: "Hello!",
-                timestamp: Date().addingTimeInterval(-300),
-                isFromMe: false
-            ),
-            Message(
-                id: "2",
-                content: "Hi there!",
-                timestamp: Date().addingTimeInterval(-60),
-                isFromMe: true,
-                deliveryStatus: .delivered
-            )
-        ]
-    }
-}
-
-// MARK: - Preview Helpers
-
-extension MessagingViewModel {
-    /// Create a preview ViewModel with sample messages.
-    static var preview: MessagingViewModel {
-        let viewModel = MessagingViewModel()
-        viewModel.messages = [
-            Message(
-                id: "1",
-                content: "Hello!",
-                timestamp: Date().addingTimeInterval(-300),
-                isFromMe: false
-            ),
-            Message(
-                id: "2",
-                content: "Hi there!",
-                timestamp: Date(),
-                isFromMe: true,
-                deliveryStatus: .delivered
-            )
-        ]
-        return viewModel
+    /// Check if a message is from the local user.
+    public func isMessageFromMe(_ message: Message) -> Bool {
+        message.isFromMe
     }
 }
