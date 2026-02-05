@@ -36,6 +36,9 @@ public final class MessagingViewModel {
     private let appServices: AppServices
     private let displayName: String?
 
+    /// Observation token for incoming message notifications.
+    private var notificationTask: Any?
+
     // MARK: - Initialization
 
     /// Create ViewModel for a specific conversation.
@@ -55,6 +58,30 @@ public final class MessagingViewModel {
         self.repository = repository
         self.appServices = appServices
         self.displayName = displayName
+
+        // Listen for incoming messages and reload when this conversation is affected
+        notificationTask = NotificationCenter.default.addObserver(
+            forName: IncomingMessageHandler.messageReceivedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            // Reload if the message is for this conversation, or always reload
+            // (sourceHash may be the peer's hash which matches our conversationHash)
+            if let sourceHash = notification.userInfo?["sourceHash"] as? Data,
+               sourceHash != self.conversationHash {
+                return
+            }
+            Task { @MainActor in
+                await self.loadMessages()
+            }
+        }
+    }
+
+    deinit {
+        if let token = notificationTask {
+            NotificationCenter.default.removeObserver(token)
+        }
     }
 
     // MARK: - Public Methods
