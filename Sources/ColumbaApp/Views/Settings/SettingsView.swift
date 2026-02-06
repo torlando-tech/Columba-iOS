@@ -274,7 +274,13 @@ struct SettingsView: View {
             icon: "bell.fill",
             title: "Notifications",
             isExpanded: Binding(get: { vm.isNotificationsExpanded }, set: { vm.isNotificationsExpanded = $0 }),
-            toggle: Binding(get: { vm.isNotificationsEnabled }, set: { vm.isNotificationsEnabled = $0 })
+            toggle: Binding(get: { vm.isNotificationsEnabled }, set: { newValue in
+                vm.isNotificationsEnabled = newValue
+                vm.saveSettings()
+                if newValue {
+                    Task { await NotificationService.shared.requestPermission() }
+                }
+            })
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Configure how you receive notifications for incoming messages and announcements.")
@@ -284,17 +290,26 @@ struct SettingsView: View {
                 if vm.isNotificationsEnabled {
                     settingsToggleRow(
                         title: "Message Previews",
-                        isOn: Binding(get: { vm.showMessagePreviews }, set: { vm.showMessagePreviews = $0 })
+                        isOn: Binding(get: { vm.showMessagePreviews }, set: {
+                            vm.showMessagePreviews = $0
+                            vm.saveSettings()
+                        })
                     )
 
                     settingsToggleRow(
                         title: "Sound",
-                        isOn: Binding(get: { vm.playSounds }, set: { vm.playSounds = $0 })
+                        isOn: Binding(get: { vm.playSounds }, set: {
+                            vm.playSounds = $0
+                            vm.saveSettings()
+                        })
                     )
 
                     settingsToggleRow(
                         title: "Vibrate",
-                        isOn: Binding(get: { vm.vibrate }, set: { vm.vibrate = $0 })
+                        isOn: Binding(get: { vm.vibrate }, set: {
+                            vm.vibrate = $0
+                            vm.saveSettings()
+                        })
                     )
                 }
             }

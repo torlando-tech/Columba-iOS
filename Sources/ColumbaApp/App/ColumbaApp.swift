@@ -8,6 +8,7 @@
 
 import SwiftUI
 import LXMFSwift
+import UserNotifications
 
 /// App Group identifier for shared data between app and extensions.
 public let appGroupIdentifier = "group.com.columba.ios"
@@ -66,6 +67,7 @@ struct RootView: View {
     @State private var incomingMessageHandler: IncomingMessageHandler?
     @State private var initError: String?
     @State private var isInitialized = false
+    @Environment(\.scenePhase) private var scenePhase
 
     // MARK: - Body
 
@@ -87,6 +89,11 @@ struct RootView: View {
         }
         .task {
             await initializeServices()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                NotificationService.shared.clearBadge()
+            }
         }
     }
 
@@ -196,7 +203,7 @@ struct RootView: View {
             self.messageRepository = repo
 
             // Create incoming message handler and set as router delegate
-            let handler = IncomingMessageHandler(messageRepository: repo)
+            let handler = IncomingMessageHandler(messageRepository: repo, database: db)
             self.incomingMessageHandler = handler
             if let router = appServices.router {
                 await router.setDelegate(handler)
@@ -214,6 +221,11 @@ struct RootView: View {
                         // Non-fatal — app works without LAN discovery
                     }
                 }
+            }
+
+            // Request notification permission if user has notifications enabled
+            if UserDefaults.standard.bool(forKey: "notifications_enabled") {
+                await NotificationService.shared.requestPermission()
             }
 
             // Mark as initialized to trigger UI update

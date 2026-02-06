@@ -142,6 +142,7 @@ public final class ChatsViewModel {
 
     private let repository: MessageRepository
     private let notificationObserver: NotificationObserver
+    private var inProcessObserver: NSObjectProtocol?
 
     // MARK: - Initialization
 
@@ -149,11 +150,28 @@ public final class ChatsViewModel {
         self.repository = repository
         self.notificationObserver = notificationObserver
 
-        // Register for new message notifications to auto-refresh
+        // Register for Darwin notifications (cross-process, fires before DB save)
         notificationObserver.onNewMessage { [weak self] in
             Task { @MainActor in
                 await self?.loadConversations()
             }
+        }
+
+        // Register for in-process notifications (fires after DB save — this is the reliable one)
+        inProcessObserver = NotificationCenter.default.addObserver(
+            forName: IncomingMessageHandler.messageReceivedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.loadConversations()
+            }
+        }
+    }
+
+    deinit {
+        if let observer = inProcessObserver {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 

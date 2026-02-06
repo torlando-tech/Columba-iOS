@@ -266,7 +266,7 @@ public final class SettingsViewModel {
             selectedMapSource = source
         }
 
-        // Set defaults for first launch
+        // Set defaults for first launch and persist them
         if !defaults.bool(forKey: "settings_initialized") {
             isNotificationsEnabled = true
             showMessagePreviews = true
@@ -277,6 +277,8 @@ public final class SettingsViewModel {
             announceIntervalMinutes = 15
             locationUpdateInterval = 60
             defaults.set(true, forKey: "settings_initialized")
+            // Persist notification defaults so NotificationService can read them
+            saveSettings()
         }
     }
 

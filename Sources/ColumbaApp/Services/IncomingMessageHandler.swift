@@ -8,6 +8,7 @@
 
 import Foundation
 import LXMFSwift
+import UserNotifications
 import os.log
 
 /// Handler for incoming LXMF messages.
@@ -31,6 +32,9 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     /// Repository for persisting messages to database.
     private let messageRepository: MessageRepository
 
+    /// Database for notification sender name lookups.
+    private let database: LXMFDatabase?
+
     /// Logger for debugging message receipt.
     private let logger = Logger(subsystem: "com.columba.app", category: "IncomingMessageHandler")
 
@@ -38,9 +42,12 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
     /// Create handler with message repository.
     ///
-    /// - Parameter messageRepository: Repository for saving messages to database
-    public init(messageRepository: MessageRepository) {
+    /// - Parameters:
+    ///   - messageRepository: Repository for saving messages to database
+    ///   - database: Database for sender name lookups in notifications
+    public init(messageRepository: MessageRepository, database: LXMFDatabase? = nil) {
         self.messageRepository = messageRepository
+        self.database = database
     }
 
     // MARK: - LXMRouterDelegate
@@ -91,6 +98,13 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     try await messageRepository.updatePeerIcon(message.sourceHash, icon: icon)
                     logger.info("[LXMF_INBOUND] Saved peer icon: \(icon.iconName) for \(sourceHashHex)")
                 }
+
+                // Post local push notification (respects user preferences)
+                await NotificationService.shared.postMessageNotification(
+                    message,
+                    senderName: nil,
+                    database: self.database
+                )
 
                 // Post notification again after save so views reload with saved data
                 NotificationCenter.default.post(
