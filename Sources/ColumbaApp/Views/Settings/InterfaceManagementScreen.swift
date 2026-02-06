@@ -466,7 +466,7 @@ struct TCPInterfaceConfigSheet: View {
                         // Interface Name
                         configField(
                             title: "Interface Name",
-                            placeholder: "e.g., Home Relay",
+                            placeholder: "e.g., Home Server",
                             text: $viewModel.configName,
                             error: viewModel.nameError
                         )

@@ -170,9 +170,9 @@ struct RootView: View {
 
     private func initializeServices() async {
         do {
-            // Initialize AppServices with relay address from settings
-            let relayAddress = await settingsRepository.getRelayAddress()
-            try await appServices.initialize(relayAddress: relayAddress)
+            // Initialize AppServices with TCP server address from settings
+            let serverAddress = await settingsRepository.getServerAddress()
+            try await appServices.initialize(tcpServerAddress: serverAddress)
 
             // Use the shared database from AppServices
             guard let db = appServices.database else {

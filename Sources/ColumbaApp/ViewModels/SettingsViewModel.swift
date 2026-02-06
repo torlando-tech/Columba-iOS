@@ -203,7 +203,7 @@ public final class SettingsViewModel {
     @MainActor
     public func loadSettings() async {
         // Load relay address from repository
-        connectedInterface = "TCP (\(await settingsRepository.getRelayAddress()))"
+        connectedInterface = "TCP (\(await settingsRepository.getServerAddress()))"
 
         // Load display name from repository
         identity.displayName = await settingsRepository.getDisplayName()
@@ -389,16 +389,16 @@ public final class SettingsViewModel {
         #endif
     }
 
-    /// Reconnect to relay server.
+    /// Reconnect to TCP server.
     @MainActor
-    public func reconnect(relayAddress: String) async {
+    public func reconnect(tcpServerAddress: String) async {
         isReconnecting = true
         reconnectError = nil
 
         do {
-            await settingsRepository.setRelayAddress(relayAddress)
-            try await appServices.reconnect(relayAddress: relayAddress)
-            connectedInterface = "TCP (\(relayAddress))"
+            await settingsRepository.setServerAddress(tcpServerAddress)
+            try await appServices.reconnect(tcpServerAddress: tcpServerAddress)
+            connectedInterface = "TCP (\(tcpServerAddress))"
         } catch {
             reconnectError = "Failed to connect: \(error.localizedDescription)"
         }

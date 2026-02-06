@@ -21,6 +21,7 @@ struct InterfaceInfo: Identifiable {
     let state: InterfaceState
     let isAutoInterfacePeer: Bool
     let peerAddress: String?
+    let lastErrorDescription: String?
 }
 
 // MARK: - Network Status ViewModel
@@ -123,7 +124,8 @@ final class NetworkStatusViewModel {
                 online: isOnline,
                 state: snap.state,
                 isAutoInterfacePeer: snap.isAutoInterfacePeer,
-                peerAddress: snap.peerAddress
+                peerAddress: snap.peerAddress,
+                lastErrorDescription: snap.lastErrorDescription
             ))
         }
 
