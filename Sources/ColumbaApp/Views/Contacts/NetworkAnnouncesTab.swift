@@ -28,9 +28,16 @@ struct NetworkAnnouncesTab: View {
     // MARK: - Body
 
     var body: some View {
-        Group {
-            if viewModel.filteredNetworkAnnounces.isEmpty {
+        VStack(spacing: 0) {
+            // Always show filter bar when there are any announces
+            if !viewModel.networkAnnounces.isEmpty {
+                filterBar
+            }
+
+            if viewModel.networkAnnounces.isEmpty {
                 emptyState
+            } else if viewModel.filteredNetworkAnnounces.isEmpty {
+                filteredEmptyState
             } else {
                 announcesList
             }
@@ -68,6 +75,60 @@ struct NetworkAnnouncesTab: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
+    }
+
+    // MARK: - Filtered Empty State
+
+    private var filteredEmptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: viewModel.announceFilter == .relays
+                  ? "server.rack" : "person.2")
+                .font(.system(size: 48))
+                .foregroundStyle(.gray)
+
+            Text("No \(viewModel.announceFilter.rawValue) Found")
+                .font(.headline)
+                .foregroundStyle(.white)
+
+            Text("Try a different filter or wait\nfor new announces")
+                .font(.subheadline)
+                .foregroundStyle(.gray)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
+    // MARK: - Filter Bar
+
+    private var filterBar: some View {
+        HStack(spacing: 8) {
+            ForEach(AnnounceFilter.allCases, id: \.self) { filter in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.announceFilter = filter
+                    }
+                } label: {
+                    Text(filter.rawValue)
+                        .font(.subheadline)
+                        .fontWeight(viewModel.announceFilter == filter ? .semibold : .regular)
+                        .foregroundStyle(viewModel.announceFilter == filter ? .white : .gray)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background {
+                            if viewModel.announceFilter == filter {
+                                Capsule().fill(AppTheme.accentColor)
+                            } else {
+                                Capsule().fill(Color.white.opacity(0.08))
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
     }
 
     // MARK: - Announces List

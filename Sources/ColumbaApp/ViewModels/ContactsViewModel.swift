@@ -144,6 +144,13 @@ public enum ContactsTab: Int, Sendable, Equatable, Hashable {
     case network = 1
 }
 
+/// Filter for network announces by type.
+public enum AnnounceFilter: String, Sendable, Equatable, Hashable, CaseIterable {
+    case peers = "Peers"
+    case relays = "Relays"
+    case all = "All"
+}
+
 // MARK: - ViewModel
 
 /// ViewModel for contacts screen.
@@ -176,6 +183,9 @@ public final class ContactsViewModel {
     /// Search text.
     public var searchText: String = ""
 
+    /// Network announces filter (default: peers only).
+    public var announceFilter: AnnounceFilter = .peers
+
     /// Currently selected relay node hash (from PropagationNodeManager).
     public var selectedRelayHash: Data?
 
@@ -202,14 +212,30 @@ public final class ContactsViewModel {
         }
     }
 
-    /// Filtered network announces based on search.
+    /// Filtered network announces based on search and type filter.
     public var filteredNetworkAnnounces: [Contact] {
-        guard !searchText.isEmpty else { return networkAnnounces }
-        let query = searchText.lowercased()
-        return networkAnnounces.filter { contact in
-            contact.resolvedDisplayName.lowercased().contains(query) ||
-            contact.identityHashHex.lowercased().contains(query)
+        var results = networkAnnounces
+
+        // Apply type filter
+        switch announceFilter {
+        case .peers:
+            results = results.filter { !$0.isRelay }
+        case .relays:
+            results = results.filter { $0.isRelay }
+        case .all:
+            break
         }
+
+        // Apply search filter
+        if !searchText.isEmpty {
+            let query = searchText.lowercased()
+            results = results.filter { contact in
+                contact.resolvedDisplayName.lowercased().contains(query) ||
+                contact.identityHashHex.lowercased().contains(query)
+            }
+        }
+
+        return results
     }
 
     /// The currently selected relay contact, if any.
