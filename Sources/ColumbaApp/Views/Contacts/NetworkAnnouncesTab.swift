@@ -80,7 +80,7 @@ struct NetworkAnnouncesTab: View {
                         contact: contact,
                         showGlobeIcon: true,
                         onFavoriteToggle: {
-                            viewModel.toggleFavorite(for: contact.id)
+                            Task { await viewModel.addToContacts(contact) }
                         },
                         onTap: {
                             onContactSelected?(contact)
