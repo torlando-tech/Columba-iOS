@@ -84,8 +84,7 @@ struct SettingsView: View {
                         InterfaceManagementScreen(
                             viewModel: InterfaceManagementViewModel(
                                 repository: repo,
-                                appServices: appServices,
-                                settingsRepository: settingsRepository
+                                appServices: appServices
                             )
                         )
                     }

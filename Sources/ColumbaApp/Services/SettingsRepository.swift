@@ -19,14 +19,9 @@ public actor SettingsRepository {
     /// App Group identifier for shared container.
     private static let appGroupSuiteName = "group.com.columba.app"
 
-    /// Default TCP server address for Reticulum network.
-    /// TODO: Change back to "tcp://reticulum.network:4242" for production
-    private static let defaultServerAddress = "127.0.0.1:4242"
-
     // MARK: - Keys
 
     private enum Keys {
-        static let relayAddress = "relayAddress"
         static let identityFingerprint = "identityFingerprint"
         static let displayName = "displayName"
         static let defaultDeliveryMethod = "defaultDeliveryMethod"
@@ -52,22 +47,6 @@ public actor SettingsRepository {
         // Use App Group UserDefaults for sharing with Network Extension
         // Falls back to standard UserDefaults if App Group not available
         self.defaults = UserDefaults(suiteName: Self.appGroupSuiteName) ?? .standard
-    }
-
-    // MARK: - TCP Server Configuration
-
-    /// Get the configured TCP server address.
-    ///
-    /// - Returns: TCP server address (e.g., "tcp://reticulum.network:4242")
-    public func getServerAddress() -> String {
-        defaults.string(forKey: Keys.relayAddress) ?? Self.defaultServerAddress
-    }
-
-    /// Set the TCP server address.
-    ///
-    /// - Parameter address: TCP server address (e.g., "tcp://10.0.0.1:4242")
-    public func setServerAddress(_ address: String) {
-        defaults.set(address, forKey: Keys.relayAddress)
     }
 
     // MARK: - Identity
@@ -231,9 +210,8 @@ public actor SettingsRepository {
 
     /// Reset all settings to defaults.
     ///
-    /// Removes stored relay address and identity fingerprint.
+    /// Removes stored identity fingerprint.
     public func reset() {
-        defaults.removeObject(forKey: Keys.relayAddress)
         defaults.removeObject(forKey: Keys.identityFingerprint)
     }
 }

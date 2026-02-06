@@ -202,8 +202,14 @@ public final class SettingsViewModel {
     /// Load settings from repository and AppServices.
     @MainActor
     public func loadSettings() async {
-        // Load relay address from repository
-        connectedInterface = "TCP (\(await settingsRepository.getServerAddress()))"
+        // Load TCP server address from InterfaceRepository (single source of truth)
+        let interfaceRepo = InterfaceRepository()
+        if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
+           case .tcpClient(let config) = tcpEntity.config {
+            connectedInterface = "TCP (\(config.targetHost):\(config.targetPort))"
+        } else {
+            connectedInterface = "No TCP interface"
+        }
 
         // Load display name from repository
         identity.displayName = await settingsRepository.getDisplayName()
@@ -389,20 +395,4 @@ public final class SettingsViewModel {
         #endif
     }
 
-    /// Reconnect to TCP server.
-    @MainActor
-    public func reconnect(tcpServerAddress: String) async {
-        isReconnecting = true
-        reconnectError = nil
-
-        do {
-            await settingsRepository.setServerAddress(tcpServerAddress)
-            try await appServices.reconnect(tcpServerAddress: tcpServerAddress)
-            connectedInterface = "TCP (\(tcpServerAddress))"
-        } catch {
-            reconnectError = "Failed to connect: \(error.localizedDescription)"
-        }
-
-        isReconnecting = false
-    }
 }
