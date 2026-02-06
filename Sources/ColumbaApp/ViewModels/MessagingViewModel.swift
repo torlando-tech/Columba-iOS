@@ -141,6 +141,15 @@ public final class MessagingViewModel {
             return false
         }
 
+        // Determine delivery method from settings
+        let deliveryMethod: LXDeliveryMethod
+        let settingsMethod = await SettingsRepository().getDefaultDeliveryMethod()
+        if settingsMethod == "propagated" {
+            deliveryMethod = .propagated
+        } else {
+            deliveryMethod = .direct
+        }
+
         // Create outbound LXMF message
         var lxMessage = LXMessage(
             destinationHash: conversationHash,
@@ -148,7 +157,7 @@ public final class MessagingViewModel {
             content: trimmedText.data(using: .utf8) ?? Data(),
             title: Data(),
             fields: nil,
-            desiredMethod: .opportunistic
+            desiredMethod: deliveryMethod
         )
 
         // Generate temporary hash for optimistic UI
@@ -185,6 +194,42 @@ public final class MessagingViewModel {
 
             return true
         } catch {
+            // Retry via relay if enabled and delivery method was not already propagated
+            let retryViaRelay = await SettingsRepository().getRetryViaRelay()
+            if retryViaRelay && deliveryMethod != .propagated {
+                logger.info("[MSG_VM] Direct delivery failed, retrying via relay")
+
+                // Update UI to show retrying
+                if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        messages[index].deliveryStatus = .sending
+                    }
+                }
+
+                // Create new message with propagated method
+                var retryMessage = LXMessage(
+                    destinationHash: conversationHash,
+                    sourceIdentity: identity,
+                    content: trimmedText.data(using: .utf8) ?? Data(),
+                    title: Data(),
+                    fields: nil,
+                    desiredMethod: .propagated
+                )
+
+                do {
+                    try await router.handleOutbound(&retryMessage)
+                    if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            messages[index].deliveryStatus = .sent
+                        }
+                    }
+                    try await repository.saveMessage(retryMessage)
+                    return true
+                } catch {
+                    logger.error("[MSG_VM] Relay retry also failed: \(error.localizedDescription)")
+                }
+            }
+
             // Update to failed status
             if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                 withAnimation(.easeInOut(duration: 0.2)) {

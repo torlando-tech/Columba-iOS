@@ -91,6 +91,7 @@ public final class SettingsViewModel {
     public var isAutoAnnounceExpanded: Bool = false
     public var isLocationSharingExpanded: Bool = false
     public var isMapSourcesExpanded: Bool = false
+    public var isDeliveryRetrievalExpanded: Bool = false
 
     // MARK: - Network Settings
 
@@ -144,6 +145,38 @@ public final class SettingsViewModel {
     public var sharePreciseLocation: Bool = false
     public var locationUpdateInterval: Int = 60
 
+    // MARK: - Delivery & Retrieval Settings
+
+    /// Default delivery method: "direct" or "propagated"
+    public var defaultDeliveryMethod: String = "direct"
+
+    /// Whether to retry via relay when direct delivery fails.
+    public var retryViaRelay: Bool = false
+
+    /// Whether auto-select relay is enabled.
+    public var autoSelectRelay: Bool = true
+
+    /// Selected relay node display name (read from PropagationNodeManager).
+    public var selectedRelayName: String?
+
+    /// Whether auto-retrieve from relay is enabled.
+    public var autoRetrieveEnabled: Bool = false
+
+    /// Auto-retrieve interval in seconds.
+    public var autoRetrieveInterval: TimeInterval = 3600
+
+    /// Whether a sync is currently in progress.
+    public var isSyncing: Bool = false
+
+    /// Current sync progress (0.0 to 1.0).
+    public var syncProgress: Double = 0.0
+
+    /// Last sync time for display.
+    public var lastSyncTime: Date?
+
+    /// Sync error message.
+    public var syncError: String?
+
     // MARK: - Map Settings
 
     public var selectedMapSource: MapSource = .apple
@@ -185,6 +218,19 @@ public final class SettingsViewModel {
 
         // Update connection state from AppServices
         isConnected = appServices.isConnected
+
+        // Load delivery/retrieval settings
+        defaultDeliveryMethod = await settingsRepository.getDefaultDeliveryMethod()
+        retryViaRelay = await settingsRepository.getRetryViaRelay()
+        autoSelectRelay = await settingsRepository.getAutoSelectRelay()
+        autoRetrieveEnabled = await settingsRepository.getPeriodicSyncEnabled()
+        autoRetrieveInterval = await settingsRepository.getSyncInterval()
+
+        // Load propagation manager state
+        if let propManager = appServices.propagationManager {
+            selectedRelayName = propManager.selectedNodeName
+            lastSyncTime = propManager.lastSyncTime
+        }
     }
 
     /// Load local settings from UserDefaults.
@@ -274,6 +320,50 @@ public final class SettingsViewModel {
         }
 
         isAnnouncing = false
+    }
+
+    /// Save delivery/retrieval settings.
+    @MainActor
+    public func saveDeliverySettings() async {
+        await settingsRepository.setDefaultDeliveryMethod(defaultDeliveryMethod)
+        await settingsRepository.setRetryViaRelay(retryViaRelay)
+        await settingsRepository.setAutoSelectRelay(autoSelectRelay)
+        await settingsRepository.setPeriodicSyncEnabled(autoRetrieveEnabled)
+        await settingsRepository.setSyncInterval(autoRetrieveInterval)
+
+        // Update propagation manager
+        if let propManager = appServices.propagationManager {
+            propManager.autoSelectEnabled = autoSelectRelay
+            propManager.periodicSyncEnabled = autoRetrieveEnabled
+            propManager.syncInterval = autoRetrieveInterval
+            if autoRetrieveEnabled {
+                propManager.startPeriodicSync()
+            } else {
+                propManager.stopPeriodicSync()
+            }
+        }
+    }
+
+    /// Trigger immediate sync from propagation node.
+    @MainActor
+    public func syncNow() async {
+        guard let propManager = appServices.propagationManager else {
+            syncError = "Propagation manager not available"
+            return
+        }
+
+        isSyncing = true
+        syncError = nil
+
+        await propManager.syncNow()
+
+        syncProgress = propManager.syncState.progress
+        lastSyncTime = propManager.lastSyncTime
+        isSyncing = false
+
+        if let error = propManager.syncState.errorDescription {
+            syncError = error
+        }
     }
 
     /// Copy identity hash to clipboard.

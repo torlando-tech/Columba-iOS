@@ -67,20 +67,29 @@ public struct Contact: Identifiable, Sendable, Hashable {
     }
 
     /// Create from PathEntry.
+    ///
+    /// Detects propagation nodes by parsing appData with PropagationNodeInfo.
     public init(from entry: PathEntry) {
         let hex = entry.destinationHash.map { String(format: "%02x", $0) }.joined()
         self.id = hex
         self.displayName = entry.displayName
         self.identityHash = entry.destinationHash
         self.identityHashHex = hex
-        self.badgeType = .peer
         self.hopCount = Int(entry.hopCount)
-        // Map hop count to signal strength (0 hops = 4 bars, 5+ hops = 1 bar)
         self.signalStrength = max(1, 4 - Int(entry.hopCount / 2))
         self.timestamp = entry.timestamp
         self.isOnline = Date() < entry.expires
         self.isFavorite = false
-        self.isRelay = false
+
+        // Detect propagation nodes from appData
+        if let appData = entry.appData,
+           let _ = PropagationNodeInfo.parse(from: appData) {
+            self.badgeType = .relay
+            self.isRelay = true
+        } else {
+            self.badgeType = .peer
+            self.isRelay = false
+        }
     }
 
     /// Create from ConversationRecord.
@@ -166,6 +175,12 @@ public final class ContactsViewModel {
     /// Search text.
     public var searchText: String = ""
 
+    /// Currently selected relay node hash (from PropagationNodeManager).
+    public var selectedRelayHash: Data?
+
+    /// Whether the relay was auto-selected.
+    public var isRelayAutoSelected: Bool = true
+
     // MARK: - Dependencies
 
     private let appServices: AppServices
@@ -196,16 +211,32 @@ public final class ContactsViewModel {
         }
     }
 
-    /// My contacts grouped by relay status.
-    public var groupedMyContacts: [(title: String, contacts: [Contact])] {
-        let relayContacts = filteredMyContacts.filter { $0.isRelay }
-        let regularContacts = filteredMyContacts.filter { !$0.isRelay }
+    /// The currently selected relay contact, if any.
+    ///
+    /// Looks up the stored relay hash and finds the matching contact
+    /// in network announces or my contacts.
+    public var currentRelayContact: Contact? {
+        guard let selectedHash = selectedRelayHash else { return nil }
+        // Check network announces first (relays are usually discovered there)
+        if let relay = networkAnnounces.first(where: { $0.identityHash == selectedHash }) {
+            return relay
+        }
+        // Fall back to my contacts
+        return myContacts.first(where: { $0.identityHash == selectedHash })
+    }
 
+    /// My contacts grouped with selected relay at top.
+    public var groupedMyContacts: [(title: String, contacts: [Contact])] {
         var groups: [(title: String, contacts: [Contact])] = []
 
-        if !relayContacts.isEmpty {
-            groups.append((title: "MY RELAY (auto)", contacts: relayContacts))
+        // Show selected relay at top (from PropagationNodeManager, not just isRelay flag)
+        if let relay = currentRelayContact {
+            let autoLabel = isRelayAutoSelected ? " (auto)" : ""
+            groups.append((title: "MY RELAY\(autoLabel)", contacts: [relay]))
         }
+
+        // Regular contacts (exclude the selected relay to avoid duplication)
+        let regularContacts = filteredMyContacts.filter { $0.identityHash != selectedRelayHash }
         if !regularContacts.isEmpty {
             groups.append((title: "ALL CONTACTS", contacts: regularContacts))
         }
@@ -258,6 +289,9 @@ public final class ContactsViewModel {
         }
 
         networkAnnounces.sort { $0.timestamp > $1.timestamp }
+
+        // Re-sync relay state (auto-select may have picked this new node)
+        syncRelayState()
     }
 
     // MARK: - Public Methods
@@ -280,6 +314,9 @@ public final class ContactsViewModel {
                     .sorted { $0.timestamp > $1.timestamp }
             }
 
+            // Sync relay state from PropagationNodeManager
+            syncRelayState()
+
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -300,7 +337,17 @@ public final class ContactsViewModel {
                 .sorted { $0.timestamp > $1.timestamp }
         }
 
+        // Sync relay state from PropagationNodeManager
+        syncRelayState()
+
         isLoading = false
+    }
+
+    /// Sync relay selection state from PropagationNodeManager.
+    @MainActor
+    public func syncRelayState() {
+        selectedRelayHash = appServices.propagationManager?.selectedNodeHash
+        isRelayAutoSelected = appServices.propagationManager?.autoSelectEnabled ?? true
     }
 
     /// Toggle favorite status for a contact.

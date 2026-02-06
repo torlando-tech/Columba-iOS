@@ -28,6 +28,13 @@ public actor SettingsRepository {
         static let relayAddress = "relayAddress"
         static let identityFingerprint = "identityFingerprint"
         static let displayName = "displayName"
+        static let defaultDeliveryMethod = "defaultDeliveryMethod"
+        static let retryViaRelay = "retryViaRelay"
+        static let autoSelectRelay = "autoSelectRelay"
+        static let manualRelayHash = "manualRelayHash"
+        static let periodicSyncEnabled = "periodicSyncEnabled"
+        static let syncIntervalSeconds = "syncIntervalSeconds"
+        static let lastSyncTimestamp = "lastSyncTimestamp"
     }
 
     // MARK: - Properties
@@ -98,6 +105,86 @@ public actor SettingsRepository {
     /// - Parameter name: Display name to broadcast when announcing
     public func setDisplayName(_ name: String) {
         defaults.set(name, forKey: Keys.displayName)
+    }
+
+    // MARK: - Delivery & Propagation
+
+    /// Get default delivery method ("direct" or "propagated").
+    public func getDefaultDeliveryMethod() -> String {
+        defaults.string(forKey: Keys.defaultDeliveryMethod) ?? "direct"
+    }
+
+    /// Set default delivery method.
+    public func setDefaultDeliveryMethod(_ method: String) {
+        defaults.set(method, forKey: Keys.defaultDeliveryMethod)
+    }
+
+    /// Get whether to retry failed direct sends via relay.
+    public func getRetryViaRelay() -> Bool {
+        defaults.bool(forKey: Keys.retryViaRelay)
+    }
+
+    /// Set whether to retry via relay on direct failure.
+    public func setRetryViaRelay(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Keys.retryViaRelay)
+    }
+
+    /// Get whether auto-select relay is enabled.
+    public func getAutoSelectRelay() -> Bool {
+        // Default to true if never set
+        if defaults.object(forKey: Keys.autoSelectRelay) == nil { return true }
+        return defaults.bool(forKey: Keys.autoSelectRelay)
+    }
+
+    /// Set auto-select relay preference.
+    public func setAutoSelectRelay(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Keys.autoSelectRelay)
+    }
+
+    /// Get manually selected relay hash (hex string).
+    public func getManualRelayHash() -> String? {
+        defaults.string(forKey: Keys.manualRelayHash)
+    }
+
+    /// Set manually selected relay hash.
+    public func setManualRelayHash(_ hashHex: String?) {
+        if let hex = hashHex {
+            defaults.set(hex, forKey: Keys.manualRelayHash)
+        } else {
+            defaults.removeObject(forKey: Keys.manualRelayHash)
+        }
+    }
+
+    /// Get whether periodic sync is enabled.
+    public func getPeriodicSyncEnabled() -> Bool {
+        defaults.bool(forKey: Keys.periodicSyncEnabled)
+    }
+
+    /// Set periodic sync preference.
+    public func setPeriodicSyncEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Keys.periodicSyncEnabled)
+    }
+
+    /// Get sync interval in seconds.
+    public func getSyncInterval() -> TimeInterval {
+        let value = defaults.double(forKey: Keys.syncIntervalSeconds)
+        return value > 0 ? value : 3600 // Default 1 hour
+    }
+
+    /// Set sync interval in seconds.
+    public func setSyncInterval(_ interval: TimeInterval) {
+        defaults.set(interval, forKey: Keys.syncIntervalSeconds)
+    }
+
+    /// Get last sync timestamp.
+    public func getLastSyncTimestamp() -> TimeInterval? {
+        let value = defaults.double(forKey: Keys.lastSyncTimestamp)
+        return value > 0 ? value : nil
+    }
+
+    /// Set last sync timestamp.
+    public func setLastSyncTimestamp(_ timestamp: TimeInterval) {
+        defaults.set(timestamp, forKey: Keys.lastSyncTimestamp)
     }
 
     // MARK: - Utility
