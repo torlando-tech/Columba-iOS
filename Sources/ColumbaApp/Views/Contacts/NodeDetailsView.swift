@@ -32,6 +32,8 @@ struct NodeDetailsView: View {
 
     @State private var expiresDate: Date?
     @State private var interfaceName: String?
+    @State private var propagationInfo: PropagationNodeInfo?
+    @State private var isCurrentRelay: Bool = false
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -40,8 +42,14 @@ struct NodeDetailsView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
+                if propagationInfo != nil {
+                    setAsRelayButton
+                }
                 startChatButton
                 detailsSection
+                if propagationInfo != nil {
+                    propagationDetailsSection
+                }
             }
             .padding(16)
         }
@@ -207,6 +215,69 @@ struct NodeDetailsView: View {
         .glassCard()
     }
 
+    // MARK: - Set as Relay Button
+
+    private var setAsRelayButton: some View {
+        Button {
+            if let propManager = appServices.propagationManager {
+                if isCurrentRelay {
+                    Task { await propManager.clearSelection() }
+                    isCurrentRelay = false
+                } else {
+                    propManager.autoSelectEnabled = false
+                    Task { await propManager.selectNode(hash: contact.identityHash) }
+                    isCurrentRelay = true
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isCurrentRelay ? "checkmark.circle.fill" : "antenna.radiowaves.left.and.right")
+                Text(isCurrentRelay ? "Current Relay" : "Set as My Relay")
+            }
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background {
+                if isCurrentRelay {
+                    RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
+                        .fill(Theme.success)
+                } else {
+                    RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
+                        .fill(Theme.accentGradient)
+                }
+            }
+        }
+    }
+
+    // MARK: - Propagation Details
+
+    private var propagationDetailsSection: some View {
+        VStack(spacing: 12) {
+            if let info = propagationInfo {
+                detailRow(
+                    icon: "tray.full",
+                    label: "Per Transfer Limit",
+                    value: "\(info.perTransferLimit) messages"
+                )
+
+                detailRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    label: "Per Sync Limit",
+                    value: "\(info.perSyncLimit) messages"
+                )
+
+                if info.stampCost > 0 {
+                    detailRow(
+                        icon: "seal",
+                        label: "Stamp Cost",
+                        value: "\(info.stampCost)"
+                    )
+                }
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func formattedDate(_ date: Date) -> String {
@@ -223,6 +294,14 @@ struct NodeDetailsView: View {
             if !entry.interfaceId.isEmpty {
                 interfaceName = entry.interfaceId
             }
+            // Detect propagation node
+            if let appData = entry.appData {
+                propagationInfo = PropagationNodeInfo.parse(from: appData)
+            }
+        }
+        // Check if this is the currently selected relay
+        if let propManager = appServices.propagationManager {
+            isCurrentRelay = propManager.selectedNodeHash == contact.identityHash
         }
     }
 }

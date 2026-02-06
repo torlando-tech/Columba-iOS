@@ -199,7 +199,7 @@ public struct ContactsView: View {
 
     @ViewBuilder
     private func myContactsTab(_ vm: ContactsViewModel) -> some View {
-        if vm.filteredMyContacts.isEmpty {
+        if vm.groupedMyContacts.isEmpty {
             myContactsEmptyState
         } else {
             myContactsList(vm)
@@ -237,6 +237,7 @@ public struct ContactsView: View {
                         ContactCard(
                             contact: contact,
                             showGlobeIcon: false,
+                            isSelectedRelay: group.title.contains("RELAY"),
                             onFavoriteToggle: {
                                 vm.toggleFavorite(for: contact.id)
                             },
@@ -257,17 +258,17 @@ public struct ContactsView: View {
     }
 
     private func sectionHeader(title: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             if title.contains("RELAY") {
-                Image(systemName: "sparkles")
+                Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
                     .font(.caption)
-                    .foregroundStyle(Color.pink)
+                    .foregroundStyle(AppTheme.accentColor)
             }
 
             Text(title)
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundStyle(title.contains("RELAY") ? Color.pink : Color.gray)
+                .foregroundStyle(title.contains("RELAY") ? AppTheme.accentColor : Color.gray)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)

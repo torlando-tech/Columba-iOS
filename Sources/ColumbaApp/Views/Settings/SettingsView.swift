@@ -44,6 +44,9 @@ struct SettingsView: View {
                         // Network
                         networkCard(vm)
 
+                        // Delivery & Retrieval
+                        deliveryRetrievalCard(vm)
+
                         // Identity
                         identityCard(vm)
 
@@ -375,6 +378,182 @@ struct SettingsView: View {
 
                 ForEach(SettingsViewModel.MapSource.allCases) { source in
                     mapSourceRow(vm, source: source)
+                }
+            }
+        }
+    }
+
+    // MARK: - Delivery & Retrieval Card
+
+    private func deliveryRetrievalCard(_ vm: SettingsViewModel) -> some View {
+        ExpandableSettingsCard(
+            icon: "arrow.triangle.swap",
+            title: "Message Delivery & Retrieval",
+            isExpanded: Binding(get: { vm.isDeliveryRetrievalExpanded }, set: { vm.isDeliveryRetrievalExpanded = $0 })
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Configure how messages are sent and retrieved from propagation nodes.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                // Default Delivery Method
+                HStack {
+                    Text("Default Method")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+
+                    Spacer()
+
+                    Picker("", selection: Binding(
+                        get: { vm.defaultDeliveryMethod },
+                        set: {
+                            vm.defaultDeliveryMethod = $0
+                            Task { await vm.saveDeliverySettings() }
+                        }
+                    )) {
+                        Text("Direct").tag("direct")
+                        Text("Propagated").tag("propagated")
+                    }
+                    .pickerStyle(.menu)
+                    .tint(Theme.accentColor)
+                }
+
+                // Retry via Relay toggle
+                settingsToggleRow(
+                    title: "Retry via Relay",
+                    isOn: Binding(
+                        get: { vm.retryViaRelay },
+                        set: {
+                            vm.retryViaRelay = $0
+                            Task { await vm.saveDeliverySettings() }
+                        }
+                    )
+                )
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                // RELAY SELECTION
+                Text("RELAY SELECTION")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.textSecondary)
+
+                settingsToggleRow(
+                    title: "Auto-select Relay",
+                    isOn: Binding(
+                        get: { vm.autoSelectRelay },
+                        set: {
+                            vm.autoSelectRelay = $0
+                            Task { await vm.saveDeliverySettings() }
+                        }
+                    )
+                )
+
+                // Current relay display
+                HStack {
+                    Text("Current Relay:")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+
+                    Spacer()
+
+                    Text(vm.selectedRelayName ?? "None")
+                        .font(.subheadline)
+                        .foregroundStyle(vm.selectedRelayName != nil ? Theme.textPrimary : Theme.textSecondary)
+                }
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                // MESSAGE RETRIEVAL
+                Text("MESSAGE RETRIEVAL")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.textSecondary)
+
+                settingsToggleRow(
+                    title: "Auto-retrieve Messages",
+                    isOn: Binding(
+                        get: { vm.autoRetrieveEnabled },
+                        set: {
+                            vm.autoRetrieveEnabled = $0
+                            Task { await vm.saveDeliverySettings() }
+                        }
+                    )
+                )
+
+                if vm.autoRetrieveEnabled {
+                    HStack {
+                        Text("Interval")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+
+                        Spacer()
+
+                        Picker("", selection: Binding(
+                            get: { vm.autoRetrieveInterval },
+                            set: {
+                                vm.autoRetrieveInterval = $0
+                                Task { await vm.saveDeliverySettings() }
+                            }
+                        )) {
+                            Text("1 hour").tag(TimeInterval(3600))
+                            Text("3 hours").tag(TimeInterval(10800))
+                            Text("6 hours").tag(TimeInterval(21600))
+                            Text("12 hours").tag(TimeInterval(43200))
+                        }
+                        .pickerStyle(.menu)
+                        .tint(Theme.accentColor)
+                    }
+                }
+
+                // Sync Now button
+                Button(action: {
+                    Task { await vm.syncNow() }
+                }) {
+                    HStack(spacing: 8) {
+                        if vm.isSyncing {
+                            ProgressView()
+                                .tint(.white)
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        Text(vm.isSyncing ? "Syncing..." : "Sync Now")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.accentColor.opacity(vm.isSyncing ? 0.6 : 1.0))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                }
+                .disabled(vm.isSyncing)
+
+                // Last sync time
+                if let lastSync = vm.lastSyncTime {
+                    HStack {
+                        Text("Last Sync:")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+
+                        Text(lastSync, style: .relative)
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+
+                        Text("ago")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+
+                // Sync error
+                if let error = vm.syncError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(Theme.error)
                 }
             }
         }

@@ -30,6 +30,9 @@ struct ContactCard: View {
     /// Whether to show the globe icon (for network announces).
     var showGlobeIcon: Bool = false
 
+    /// Whether this card is the currently selected relay (shows hub badge on avatar).
+    var isSelectedRelay: Bool = false
+
     /// Called when favorite button is tapped.
     var onFavoriteToggle: (() -> Void)?
 
@@ -77,8 +80,25 @@ struct ContactCard: View {
             Identicon(hash: contact.identityHash)
                 .frame(width: 48, height: 48)
 
-            // Online indicator
-            if contact.isOnline {
+            // Hub badge for selected relay
+            if isSelectedRelay {
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.404, green: 0.314, blue: 0.643))
+                        .frame(width: 20, height: 20)
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+                .overlay(
+                    Circle()
+                        .stroke(Color(white: 0.15), lineWidth: 2)
+                        .frame(width: 20, height: 20)
+                )
+                .offset(x: 4, y: 4)
+            }
+            // Online indicator (only when not showing relay badge)
+            else if contact.isOnline {
                 Circle()
                     .fill(Color.green)
                     .frame(width: 12, height: 12)

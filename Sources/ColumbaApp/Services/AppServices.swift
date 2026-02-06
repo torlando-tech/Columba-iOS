@@ -65,6 +65,9 @@ public final class AppServices {
     /// LXMF database for message persistence.
     public private(set) var database: LXMFDatabase?
 
+    /// Propagation node manager for relay discovery and sync.
+    public private(set) var propagationManager: PropagationNodeManager?
+
     // MARK: - Observable Properties
 
     /// Connection state (observable for UI binding).
@@ -329,6 +332,14 @@ public final class AppServices {
         // Start monitoring interface state for UI updates
         startStateObserver()
 
+        // 11. Initialize propagation node manager
+        let propManager = PropagationNodeManager(appServices: self)
+        self.propagationManager = propManager
+        propManager.startListening()
+        await propManager.loadPreferences()
+        propManager.startPeriodicSync()
+        logger.info("PropagationNodeManager initialized")
+
         logger.info("AppServices initialization complete")
     }
 
@@ -460,6 +471,10 @@ public final class AppServices {
 
         stateObserverTask?.cancel()
         stateObserverTask = nil
+
+        // Stop propagation manager
+        propagationManager?.stopListening()
+        propagationManager?.stopPeriodicSync()
 
         // Shutdown router first (stops processing loop)
         await router?.shutdown()
