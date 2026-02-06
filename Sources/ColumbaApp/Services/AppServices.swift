@@ -11,6 +11,7 @@
 
 import Foundation
 import LXMFSwift
+import ReticulumSwift
 import os.log
 
 /// Central LXMF service layer for the SwiftUI application.
@@ -59,6 +60,9 @@ public final class AppServices {
     /// TCP interface to relay server.
     public private(set) var tcpInterface: TCPInterface?
 
+    /// Auto discovery interface for LAN peer discovery.
+    public private(set) var autoInterface: AutoInterface?
+
     /// LXMF delivery destination for receiving messages.
     public private(set) var deliveryDestination: Destination?
 
@@ -106,6 +110,7 @@ public final class AppServices {
 
     /// Logger for debugging service initialization.
     private let logger = Logger(subsystem: "com.columba.app", category: "AppServices")
+
 
     /// Interface state observer task (cancelled on deinit).
     private var stateObserverTask: Task<Void, Never>?
@@ -257,34 +262,29 @@ public final class AppServices {
     /// - Parameter relayAddress: TCP relay address (e.g., "tcp://10.0.0.1:4242" or "10.0.0.1:4242")
     /// - Throws: InterfaceError, DatabaseError, or other initialization errors
     public func initialize(relayAddress: String) async throws {
-        logger.info("Initializing AppServices with relay: \(relayAddress)")
+        logger.info("Starting initialize with relay: \(relayAddress, privacy: .public)")
 
         // 1. Load identity from persistent storage (try Keychain first, then file)
         let newIdentity: Identity = Self.loadOrCreateIdentity()
         self.identity = newIdentity
-        logger.info("Using identity: \(newIdentity.hexHash)")
 
         // 2. Create path table for routing with persistence
         let pathDbPath = Self.pathTableFilePath
         let newPathTable = try PathTable(databasePath: pathDbPath)
         self.pathTable = newPathTable
-        logger.info("Created PathTable with persistence: \(pathDbPath)")
 
         // 3. Create transport with path table
         let newTransport = ReticuLumTransport(pathTable: newPathTable)
         self.transport = newTransport
-        logger.debug("Created ReticuLumTransport")
 
         // 4. Create persistent LXMF database
         let dbPath = Self.databaseFilePath
         let newDatabase = try LXMFDatabase(path: dbPath)
         self.database = newDatabase
-        logger.info("Created LXMFDatabase at: \(dbPath)")
 
         // 5. Create LXMRouter with identity and database path
         let newRouter = try await LXMRouter(identity: newIdentity, databasePath: dbPath)
         self.router = newRouter
-        logger.debug("Created LXMRouter")
 
         // 6. Create and register LXMF delivery destination
         let newDestination = Destination(
@@ -296,51 +296,45 @@ public final class AppServices {
         )
         self.deliveryDestination = newDestination
         await newTransport.registerDestination(newDestination)
-        logger.info("Registered LXMF delivery destination: \(newDestination.hexHash)")
 
-        // 7. Parse relay address and create TCP interface
-        guard let (host, port) = parseHostPort(relayAddress) else {
-            logger.error("Failed to parse relay address: \(relayAddress)")
-            throw AppServicesError.invalidRelayAddress(relayAddress)
+        // 7. Set transport on router for message delivery (before interfaces, so
+        //    router is ready to receive packets as soon as any interface connects)
+        await newRouter.setTransport(newTransport)
+
+        // 8. Parse relay address and create TCP interface (non-fatal — app works offline)
+        if let (host, port) = parseHostPort(relayAddress) {
+            let config = InterfaceConfig(
+                id: "relay",
+                name: "Relay Server",
+                type: .tcp,
+                enabled: true,
+                mode: .full,
+                host: host,
+                port: port
+            )
+            do {
+                let newInterface = try TCPInterface(config: config)
+                self.tcpInterface = newInterface
+                try await newTransport.addInterface(newInterface)
+            } catch {
+                logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
+            }
         }
 
-        logger.info("Connecting to \(host):\(port)")
-        let config = InterfaceConfig(
-            id: "relay",
-            name: "Relay Server",
-            type: .tcp,
-            enabled: true,
-            mode: .full,
-            host: host,
-            port: port
-        )
-        let newInterface = try TCPInterface(config: config)
-        self.tcpInterface = newInterface
-
-        // 8. Add interface to transport (this connects it)
-        try await newTransport.addInterface(newInterface)
-        logger.info("TCP interface added and connecting")
-
-        // 9. Set transport on router for message delivery
-        await newRouter.setTransport(newTransport)
-        logger.debug("Transport set on router")
-
-        // 10. Register delivery destination with router to receive inbound LXMF messages
+        // 9. Register delivery destination with router to receive inbound LXMF messages
         try await newRouter.registerDeliveryDestination(newDestination)
-        logger.info("Registered delivery destination for inbound LXMF messages")
 
         // Start monitoring interface state for UI updates
         startStateObserver()
 
-        // 11. Initialize propagation node manager
+        // 10. Initialize propagation node manager
         let propManager = PropagationNodeManager(appServices: self)
         self.propagationManager = propManager
         propManager.startListening()
         await propManager.loadPreferences()
         propManager.startPeriodicSync()
-        logger.info("PropagationNodeManager initialized")
 
-        logger.info("AppServices initialization complete")
+        logger.info("Initialization complete")
     }
 
     // MARK: - State Observation
@@ -461,6 +455,135 @@ public final class AppServices {
         return (String(parts[0]), port)
     }
 
+    // MARK: - Auto Interface
+
+    /// Start the AutoInterface for LAN peer discovery.
+    ///
+    /// Creates an AutoInterface and adds it to the transport. If the transport
+    /// or identity haven't been initialized yet, initializes the base stack first.
+    ///
+    /// - Parameter groupId: Group ID for peer discovery (default: "reticulum")
+    public func startAutoInterface(groupId: String = "reticulum") async throws {
+        // Stop existing auto interface if any
+        await stopAutoInterface()
+
+        // Ensure we have base stack (identity, transport, router)
+        if transport == nil {
+            try await initializeBaseStack()
+        }
+
+        guard let transport = transport else {
+            throw AppServicesError.transportNotConnected
+        }
+
+        let config = InterfaceConfig(
+            id: "auto0",
+            name: "Auto Discovery",
+            type: .autoInterface,
+            enabled: true,
+            mode: .full,
+            host: groupId,
+            port: 0
+        )
+
+        let newAutoInterface = AutoInterface(config: config)
+        self.autoInterface = newAutoInterface
+
+        try await transport.addAutoInterface(newAutoInterface)
+        logger.info("AutoInterface started with group: \(groupId)")
+    }
+
+    /// Stop the AutoInterface.
+    public func stopAutoInterface() async {
+        guard let auto = autoInterface else { return }
+        await auto.disconnect()
+        if let transport = transport {
+            await transport.removeInterface(id: auto.id)
+        }
+        autoInterface = nil
+        logger.info("AutoInterface stopped")
+    }
+
+    /// Initialize the base stack (identity, transport, router) without a TCP interface.
+    ///
+    /// Used when starting only AutoInterface without a TCP relay.
+    private func initializeBaseStack() async throws {
+        // 1. Identity
+        if identity == nil {
+            let newIdentity = Self.loadOrCreateIdentity()
+            self.identity = newIdentity
+            logger.info("Using identity: \(newIdentity.hexHash)")
+        }
+
+        guard let existingIdentity = identity else {
+            throw AppServicesError.identityNotInitialized
+        }
+
+        // 2. Path table
+        if pathTable == nil {
+            let pathDbPath = Self.pathTableFilePath
+            let newPathTable = try PathTable(databasePath: pathDbPath)
+            self.pathTable = newPathTable
+        }
+
+        // 3. Transport
+        if transport == nil, let pt = pathTable {
+            let newTransport = ReticuLumTransport(pathTable: pt)
+            self.transport = newTransport
+        }
+
+        // 4. Database
+        if database == nil {
+            let dbPath = Self.databaseFilePath
+            let newDatabase = try LXMFDatabase(path: dbPath)
+            self.database = newDatabase
+        }
+
+        // 5. Router
+        if router == nil {
+            let dbPath = Self.databaseFilePath
+            let newRouter = try await LXMRouter(identity: existingIdentity, databasePath: dbPath)
+            self.router = newRouter
+        }
+
+        // 6. Delivery destination
+        if deliveryDestination == nil {
+            let newDestination = Destination(
+                identity: existingIdentity,
+                appName: "lxmf",
+                aspects: ["delivery"],
+                type: .single,
+                direction: .in
+            )
+            self.deliveryDestination = newDestination
+        }
+
+        // Wire up transport <-> router
+        if let transport = transport, let dest = deliveryDestination {
+            await transport.registerDestination(dest)
+        }
+        if let router = router, let transport = transport {
+            await router.setTransport(transport)
+            if let dest = deliveryDestination {
+                try await router.registerDeliveryDestination(dest)
+            }
+        }
+
+        // Start state observer if not running
+        if stateObserverTask == nil {
+            startStateObserver()
+        }
+
+        // Init propagation manager if needed
+        if propagationManager == nil {
+            let propManager = PropagationNodeManager(appServices: self)
+            self.propagationManager = propManager
+            propManager.startListening()
+            await propManager.loadPreferences()
+            propManager.startPeriodicSync()
+        }
+    }
+
     // MARK: - Shutdown
 
     /// Shutdown all services gracefully.
@@ -481,6 +604,9 @@ public final class AppServices {
 
         // Disconnect TCP interface
         await tcpInterface?.disconnect()
+
+        // Stop auto interface
+        await stopAutoInterface()
 
         // Remove interface from transport
         if let transport = transport {
