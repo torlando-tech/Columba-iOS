@@ -170,8 +170,20 @@ struct RootView: View {
 
     private func initializeServices() async {
         do {
-            // Initialize AppServices with TCP server address from settings
-            let serverAddress = await settingsRepository.getServerAddress()
+            // Load interface configurations (single source of truth)
+            let interfaceRepo = InterfaceRepository()
+            let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
+
+            // Get TCP server address from InterfaceRepository
+            let serverAddress: String
+            if let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient }),
+               case .tcpClient(let config) = tcpEntity.config {
+                serverAddress = "\(config.targetHost):\(config.targetPort)"
+            } else {
+                serverAddress = ""
+            }
+
+            // Initialize AppServices with TCP server address (empty = no TCP interface)
             try await appServices.initialize(tcpServerAddress: serverAddress)
 
             // Use the shared database from AppServices
@@ -191,9 +203,6 @@ struct RootView: View {
             }
 
             // Start AutoInterface if configured and enabled (non-blocking — don't gate UI)
-            let interfaceRepo = InterfaceRepository()
-            interfaceRepo.loadInterfaces()
-            let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
             if let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface }),
                case .autoInterface(let config) = autoEntity.config {
                 let groupId = config.groupId ?? "reticulum"

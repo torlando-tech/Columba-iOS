@@ -24,7 +24,6 @@ public final class InterfaceManagementViewModel {
 
     private let repository: InterfaceRepository
     private let appServices: AppServices
-    private let settingsRepository: SettingsRepository
 
     // MARK: - List State
 
@@ -138,10 +137,9 @@ public final class InterfaceManagementViewModel {
 
     // MARK: - Initialization
 
-    public init(repository: InterfaceRepository, appServices: AppServices, settingsRepository: SettingsRepository) {
+    public init(repository: InterfaceRepository, appServices: AppServices) {
         self.repository = repository
         self.appServices = appServices
-        self.settingsRepository = settingsRepository
         loadInterfaces()
         startStatusObserver()
     }
@@ -268,7 +266,6 @@ public final class InterfaceManagementViewModel {
                 activeInterfaceId = tcpInterface.id
                 interfaceStatus[tcpInterface.id] = .connecting
 
-                await settingsRepository.setServerAddress(serverAddress)
                 try await appServices.reconnect(tcpServerAddress: serverAddress)
 
                 showSuccess("Connecting to \(config.targetHost):\(config.targetPort)...")
