@@ -73,30 +73,46 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
         let sourceHash = message.sourceHash
 
-        // Post in-process notification IMMEDIATELY so open chat views start reloading
-        // (mirrors the Darwin notification which also fires immediately)
-        NotificationCenter.default.post(
-            name: IncomingMessageHandler.messageReceivedNotification,
-            object: nil,
-            userInfo: ["sourceHash": sourceHash]
-        )
-        logger.error("[LXMF_INBOUND] Posted immediate NotificationCenter notification for source=\(sourceHashHex)")
-
-        // Post Darwin notification for cross-process UI refresh
-        NotificationObserver.postNewMessage()
-
-        // Save to database asynchronously, then notify again for definitive data
+        // Save to database asynchronously, then notify
         Task {
+            // Check block unknown senders setting (needs async DB access)
+            if UserDefaults.standard.bool(forKey: "block_unknown_senders"),
+               let db = self.database {
+                let isKnownContact: Bool
+                do {
+                    let conversation = try await db.getConversation(hash: sourceHash)
+                    isKnownContact = conversation != nil && conversation!.isFavorite != 0
+                } catch {
+                    // Fail open: allow message through if DB check fails
+                    isKnownContact = true
+                }
+                if !isKnownContact {
+                    self.logger.info("[LXMF_INBOUND] Blocking message from unknown sender \(sourceHashHex) (block_unknown_senders enabled)")
+                    return
+                }
+            }
+
+            // Post in-process notification so open chat views start reloading
+            NotificationCenter.default.post(
+                name: IncomingMessageHandler.messageReceivedNotification,
+                object: nil,
+                userInfo: ["sourceHash": sourceHash]
+            )
+            self.logger.info("[LXMF_INBOUND] Posted NotificationCenter notification for source=\(sourceHashHex)")
+
+            // Post Darwin notification for cross-process UI refresh
+            NotificationObserver.postNewMessage()
+
             do {
-                try await messageRepository.saveMessage(message)
-                logger.error("[LXMF_INBOUND] Message \(messageHashHex) saved to database OK")
+                try await self.messageRepository.saveMessage(message)
+                self.logger.info("[LXMF_INBOUND] Message \(messageHashHex) saved to database OK")
 
                 // Extract icon appearance from LXMF Field 4
                 if let fields = message.fields,
                    let iconValue = fields[IconAppearance.fieldKey],
                    let icon = IconAppearance.fromLXMFFieldValue(iconValue) {
-                    try await messageRepository.updatePeerIcon(message.sourceHash, icon: icon)
-                    logger.info("[LXMF_INBOUND] Saved peer icon: \(icon.iconName) for \(sourceHashHex)")
+                    try await self.messageRepository.updatePeerIcon(message.sourceHash, icon: icon)
+                    self.logger.info("[LXMF_INBOUND] Saved peer icon: \(icon.iconName) for \(sourceHashHex)")
                 }
 
                 // Post local push notification (respects user preferences)
@@ -113,7 +129,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     userInfo: ["sourceHash": sourceHash]
                 )
             } catch {
-                logger.error("[LXMF_INBOUND] FAILED to save message \(messageHashHex): \(error.localizedDescription)")
+                self.logger.error("[LXMF_INBOUND] FAILED to save message \(messageHashHex): \(error.localizedDescription)")
             }
         }
     }

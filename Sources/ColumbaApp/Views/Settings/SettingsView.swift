@@ -247,22 +247,17 @@ struct SettingsView: View {
             icon: "shield.fill",
             title: "Privacy",
             isExpanded: Binding(get: { vm.isPrivacyExpanded }, set: { vm.isPrivacyExpanded = $0 }),
-            toggle: Binding(get: { vm.isPrivacyEnabled }, set: { vm.isPrivacyEnabled = $0 })
+            toggle: Binding(get: { vm.blockUnknownSenders }, set: { newValue in
+                vm.blockUnknownSenders = newValue
+                vm.saveSettings()
+            })
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Enable privacy mode to hide message previews and sensitive information from notifications and the app switcher.")
+                Text(vm.blockUnknownSenders
+                    ? "Only contacts can message you. Messages from unknown senders are silently discarded."
+                    : "Anyone can send you messages, including unknown senders.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
-
-                if vm.isPrivacyEnabled {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Theme.success)
-                        Text("Privacy mode is active")
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.success)
-                    }
-                }
             }
         }
     }
