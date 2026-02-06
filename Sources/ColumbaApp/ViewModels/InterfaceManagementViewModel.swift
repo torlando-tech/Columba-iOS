@@ -8,6 +8,7 @@
 
 import Foundation
 import SwiftUI
+import ReticulumSwift
 
 // MARK: - Interface Management ViewModel
 
@@ -91,6 +92,9 @@ public final class InterfaceManagementViewModel {
     // TCP Server fields
     public var configListenIp: String = "0.0.0.0"
     public var configListenPort: String = "4242"
+
+    // Auto Interface fields
+    public var configAutoGroupId: String = "reticulum"
 
     // Validation errors
     public var nameError: String?
@@ -251,37 +255,52 @@ public final class InterfaceManagementViewModel {
         isApplyingChanges = true
 
         do {
-            // Get enabled TCP client interfaces
             let enabledInterfaces = repository.getEnabledInterfaces()
 
-            // For now, we only support a single TCP interface
-            // Find the first enabled TCP client
-            if let tcpInterface = enabledInterfaces.first(where: { $0.type == .tcpClient }),
+            // Handle TCP client interface
+            let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient })
+            if let tcpInterface = tcpEntity,
                case .tcpClient(let config) = tcpInterface.config {
 
-                // Build relay address
                 let relayAddress = "\(config.targetHost):\(config.targetPort)"
                 print("[INTERFACE_VM] Applying changes, connecting to: \(relayAddress)")
 
-                // Mark as connecting
                 activeInterfaceId = tcpInterface.id
                 interfaceStatus[tcpInterface.id] = .connecting
 
-                // Persist relay address for next app launch
                 await settingsRepository.setRelayAddress(relayAddress)
-
-                // Reconnect AppServices with new relay address
                 try await appServices.reconnect(relayAddress: relayAddress)
 
-                hasPendingChanges = false
                 showSuccess("Connecting to \(config.targetHost):\(config.targetPort)...")
+            } else if tcpEntity == nil {
+                // No TCP — shutdown TCP if running
+                if appServices.tcpInterface != nil {
+                    print("[INTERFACE_VM] No enabled TCP interfaces, shutting down TCP")
+                    await appServices.shutdown()
+                    activeInterfaceId = nil
+                }
+            }
 
+            // Handle Auto Discovery interface
+            let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface })
+            if let autoIf = autoEntity,
+               case .autoInterface(let config) = autoIf.config {
+
+                let groupId = config.groupId ?? "reticulum"
+                print("[INTERFACE_VM] Starting AutoInterface with group: \(groupId)")
+
+                interfaceStatus[autoIf.id] = .connecting
+                try await appServices.startAutoInterface(groupId: groupId)
+                interfaceStatus[autoIf.id] = .connected
+                showSuccess("Auto Discovery started (group: \(groupId))")
             } else {
-                // No enabled TCP interfaces - disconnect
-                print("[INTERFACE_VM] No enabled TCP interfaces, shutting down")
-                await appServices.shutdown()
-                activeInterfaceId = nil
-                hasPendingChanges = false
+                // No enabled auto interface — stop if running
+                await appServices.stopAutoInterface()
+            }
+
+            hasPendingChanges = false
+
+            if tcpEntity == nil && autoEntity == nil {
                 showSuccess("Disconnected")
             }
         } catch {
@@ -298,12 +317,26 @@ public final class InterfaceManagementViewModel {
     // MARK: - Status Observation
 
     /// Start polling AppServices connection state to update interface status.
+    ///
+    /// On the first iteration, this also performs initial sync — detecting
+    /// interfaces that are already running (from app startup) and reflecting
+    /// their true state in the UI.
     private func startStatusObserver() {
         statusObserverTask?.cancel()
         statusObserverTask = Task { @MainActor [weak self] in
+            // Initial sync: detect already-running TCP interface
+            if let self = self {
+                let enabledInterfaces = self.repository.getEnabledInterfaces()
+                if let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient }),
+                   self.appServices.tcpInterface != nil {
+                    self.activeInterfaceId = tcpEntity.id
+                }
+            }
+
             while !Task.isCancelled {
                 guard let self = self else { break }
 
+                // Track TCP interface status
                 if let interfaceId = self.activeInterfaceId {
                     if self.appServices.isConnected {
                         if self.interfaceStatus[interfaceId] != .connected {
@@ -312,7 +345,6 @@ public final class InterfaceManagementViewModel {
                         }
                     } else if self.appServices.isReconnecting {
                         self.interfaceStatus[interfaceId] = .reconnecting
-                        // Show the connection error if available
                         if let error = self.appServices.connectionError,
                            self.errorMessage != error {
                             self.showError(error)
@@ -323,6 +355,29 @@ public final class InterfaceManagementViewModel {
                            self.errorMessage != error {
                             self.showError(error)
                         }
+                    }
+                }
+
+                // Track Auto interface status
+                let enabledInterfaces = self.repository.getEnabledInterfaces()
+                if let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface }) {
+                    if let auto = self.appServices.autoInterface {
+                        let autoState = await auto.state
+                        let peerCount = await auto.peerCount
+                        switch autoState {
+                        case .connected:
+                            self.interfaceStatus[autoEntity.id] = .connected
+                        case .connecting:
+                            self.interfaceStatus[autoEntity.id] = .connecting
+                        default:
+                            if peerCount > 0 {
+                                self.interfaceStatus[autoEntity.id] = .connected
+                            } else {
+                                self.interfaceStatus[autoEntity.id] = .disconnected
+                            }
+                        }
+                    } else {
+                        self.interfaceStatus[autoEntity.id] = .disconnected
                     }
                 }
 
@@ -345,6 +400,7 @@ public final class InterfaceManagementViewModel {
         configShowPassphrase = false
         configListenIp = "0.0.0.0"
         configListenPort = "4242"
+        configAutoGroupId = "reticulum"
         nameError = nil
         targetHostError = nil
         targetPortError = nil
@@ -367,8 +423,8 @@ public final class InterfaceManagementViewModel {
             configListenIp = config.listenIp
             configListenPort = String(config.listenPort)
 
-        case .autoInterface:
-            break
+        case .autoInterface(let config):
+            configAutoGroupId = config.groupId ?? "reticulum"
         }
     }
 
@@ -386,6 +442,12 @@ public final class InterfaceManagementViewModel {
             return .tcpServer(TCPServerConfig(
                 listenIp: configListenIp.trimmingCharacters(in: .whitespaces),
                 listenPort: UInt16(configListenPort) ?? 4242
+            ))
+
+        case .autoInterface:
+            let groupId = configAutoGroupId.trimmingCharacters(in: .whitespaces)
+            return .autoInterface(AutoInterfaceConfig(
+                groupId: groupId.isEmpty ? nil : groupId
             ))
 
         default:

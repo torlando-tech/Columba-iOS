@@ -194,6 +194,22 @@ struct RootView: View {
                 print("[ROOT] IncomingMessageHandler set as router delegate")
             }
 
+            // Start AutoInterface if configured and enabled
+            let interfaceRepo = InterfaceRepository()
+            interfaceRepo.loadInterfaces()
+            let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
+            if let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface }),
+               case .autoInterface(let config) = autoEntity.config {
+                let groupId = config.groupId ?? "reticulum"
+                print("[ROOT] Starting AutoInterface with group: \(groupId)")
+                do {
+                    try await appServices.startAutoInterface(groupId: groupId)
+                    print("[ROOT] AutoInterface started")
+                } catch {
+                    print("[ROOT] AutoInterface start failed (non-fatal): \(error)")
+                }
+            }
+
             // Mark as initialized to trigger UI update
             self.isInitialized = true
 

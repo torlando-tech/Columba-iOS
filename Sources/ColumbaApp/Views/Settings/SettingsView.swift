@@ -32,6 +32,7 @@ struct SettingsView: View {
     @State private var showMyIdentity = false
     @State private var showManageIdentities = false
     @State private var showInterfaceManagement = false
+    @State private var showNetworkStatus = false
     @State private var interfaceRepository: InterfaceRepository?
 
     // MARK: - Body
@@ -88,6 +89,9 @@ struct SettingsView: View {
                             )
                         )
                     }
+                }
+                .navigationDestination(isPresented: $showNetworkStatus) {
+                    NetworkStatusView(appServices: appServices)
                 }
             } else {
                 ProgressView()
@@ -146,6 +150,23 @@ struct SettingsView: View {
 
                 Divider()
                     .padding(.vertical, 4)
+
+                // View Network Status Button
+                Button(action: {
+                    showNetworkStatus = true
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chart.bar.xaxis")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("View Network Status")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                }
 
                 // Manage Interfaces Button
                 Button(action: {
