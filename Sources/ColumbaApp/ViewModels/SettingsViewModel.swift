@@ -127,7 +127,8 @@ public final class SettingsViewModel {
 
     // MARK: - Privacy Settings
 
-    public var isPrivacyEnabled: Bool = false
+    /// Block messages from senders not in contacts list.
+    public var blockUnknownSenders: Bool = false
 
     // MARK: - Notification Settings
 
@@ -249,7 +250,7 @@ public final class SettingsViewModel {
     private func loadLocalSettings() {
         let defaults = UserDefaults.standard
 
-        isPrivacyEnabled = defaults.bool(forKey: "privacy_enabled")
+        blockUnknownSenders = defaults.bool(forKey: "block_unknown_senders")
         isNotificationsEnabled = defaults.bool(forKey: "notifications_enabled")
         showMessagePreviews = defaults.bool(forKey: "show_message_previews")
         playSounds = defaults.bool(forKey: "play_sounds")
@@ -286,7 +287,7 @@ public final class SettingsViewModel {
     public func saveSettings() {
         let defaults = UserDefaults.standard
 
-        defaults.set(isPrivacyEnabled, forKey: "privacy_enabled")
+        defaults.set(blockUnknownSenders, forKey: "block_unknown_senders")
         defaults.set(isNotificationsEnabled, forKey: "notifications_enabled")
         defaults.set(showMessagePreviews, forKey: "show_message_previews")
         defaults.set(playSounds, forKey: "play_sounds")
