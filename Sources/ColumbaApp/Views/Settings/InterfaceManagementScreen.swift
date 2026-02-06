@@ -110,9 +110,15 @@ struct InterfaceManagementScreen: View {
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $viewModel.showConfigSheet) {
-            TCPInterfaceConfigSheet(viewModel: viewModel)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+            Group {
+                if viewModel.configType == .autoInterface {
+                    AutoInterfaceConfigSheet(viewModel: viewModel)
+                } else {
+                    TCPInterfaceConfigSheet(viewModel: viewModel)
+                }
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .alert("Delete Interface?", isPresented: $viewModel.showDeleteConfirmation) {
             Button("Cancel", role: .cancel) {
@@ -282,6 +288,14 @@ struct InterfaceCard: View {
                         .font(.caption.monospaced())
                 }
                 .foregroundStyle(Theme.textSecondary)
+            } else if case .autoInterface(let config) = interface.config {
+                HStack(spacing: 4) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.caption)
+                    Text("Group: \(config.groupId ?? "reticulum")")
+                        .font(.caption.monospaced())
+                }
+                .foregroundStyle(Theme.textSecondary)
             }
 
             // Status row
@@ -368,17 +382,15 @@ struct InterfaceTypeSelector: View {
                     .ignoresSafeArea()
 
                 VStack(spacing: 16) {
-                    // For now, only TCP Client
                     typeOption(
                         type: .tcpClient,
                         highlighted: true
                     )
 
-                    // Future options (disabled for now)
-                    Text("More interface types coming soon")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                        .padding(.top, 8)
+                    typeOption(
+                        type: .autoInterface,
+                        highlighted: true
+                    )
                 }
                 .padding(16)
             }
@@ -648,6 +660,130 @@ struct TCPInterfaceConfigSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+    }
+}
+
+// MARK: - Auto Interface Config Sheet
+
+/// Sheet for configuring Auto Discovery interface.
+@available(iOS 17.0, macOS 14.0, *)
+struct AutoInterfaceConfigSheet: View {
+
+    @Bindable var viewModel: InterfaceManagementViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.backgroundPrimary
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Interface Name
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Interface Name")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Theme.textPrimary)
+
+                            TextField("e.g., LAN Discovery", text: $viewModel.configName)
+                                .textFieldStyle(.plain)
+                                .padding(12)
+                                .background(Theme.backgroundSecondary)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
+                                .foregroundStyle(Theme.textPrimary)
+                                #if os(iOS)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.never)
+                                #endif
+
+                            if let error = viewModel.nameError {
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.error)
+                            }
+                        }
+
+                        // Group ID
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Group ID")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Theme.textPrimary)
+
+                            TextField("reticulum", text: $viewModel.configAutoGroupId)
+                                .textFieldStyle(.plain)
+                                .padding(12)
+                                .background(Theme.backgroundSecondary)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
+                                .foregroundStyle(Theme.textPrimary)
+                                #if os(iOS)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.never)
+                                #endif
+
+                            Text("Peers must share the same group ID to discover each other. Default: \"reticulum\"")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+
+                        // Enabled Toggle
+                        HStack {
+                            Text("Enabled")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Theme.textPrimary)
+
+                            Spacer()
+
+                            Toggle("", isOn: $viewModel.configEnabled)
+                                .labelsHidden()
+                                .tint(Theme.accentColor)
+                        }
+                        .padding(16)
+                        .background(Theme.backgroundSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+
+                        // Info card
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("How Auto Discovery Works", systemImage: "info.circle")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Theme.accentColor)
+
+                            Text("Auto Discovery uses IPv6 link-local multicast to find other Reticulum nodes on your local network. No manual IP configuration needed.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+
+                            Text("Peers on the same WiFi or Ethernet network will automatically discover each other and exchange messages directly.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(16)
+                        .background(Theme.accentColor.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                    }
+                    .padding(16)
+                }
+            }
+            .navigationTitle(viewModel.isEditing ? "Edit Auto Discovery" : "Add Auto Discovery")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") {
+                        viewModel.dismissConfigSheet()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(viewModel.isEditing ? "Update" : "Add") {
+                        viewModel.saveInterface()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(!viewModel.isFormValid)
+                }
+            }
+            .toolbarBackground(Theme.backgroundPrimary, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            #endif
         }
     }
 }

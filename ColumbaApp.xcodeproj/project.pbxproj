@@ -65,6 +65,10 @@
 		030 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030; };
 		031 /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031; };
 
+		/* Network Status */
+		034 /* NetworkStatusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F034; };
+		035 /* NetworkStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F035; };
+
 		/* Package Dependencies */
 		023 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P001; };
 /* End PBXBuildFile section */
@@ -120,6 +124,10 @@
 
 		/* Node Details */
 		F032 /* NodeDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeDetailsView.swift; sourceTree = "<group>"; };
+
+		/* Network Status */
+		F034 /* NetworkStatusViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkStatusViewModel.swift; sourceTree = "<group>"; };
+		F035 /* NetworkStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkStatusView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -187,6 +195,7 @@
 				F005 /* MessagingViewModel.swift */,
 				F006 /* SettingsViewModel.swift */,
 				F030 /* InterfaceManagementViewModel.swift */,
+				F034 /* NetworkStatusViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -242,6 +251,7 @@
 				F017 /* MyIdentityView.swift */,
 				F018 /* ExpandableSettingsCard.swift */,
 				F031 /* InterfaceManagementScreen.swift */,
+				F035 /* NetworkStatusView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -392,6 +402,8 @@
 				031 /* InterfaceManagementScreen.swift in Sources */,
 				032 /* NodeDetailsView.swift in Sources */,
 				033 /* PropagationNodeManager.swift in Sources */,
+				034 /* NetworkStatusViewModel.swift in Sources */,
+				035 /* NetworkStatusView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
