@@ -8,6 +8,7 @@
 
 import SwiftUI
 import LXMFSwift
+import ReticulumSwift
 
 /// Node details screen showing identity info and a Start Chat action.
 ///
@@ -291,8 +292,14 @@ struct NodeDetailsView: View {
         guard let pathTable = appServices.pathTable else { return }
         if let entry = await pathTable.lookup(destinationHash: contact.identityHash) {
             expiresDate = entry.expires
+            // Resolve interface ID to human-readable name via transport
             if !entry.interfaceId.isEmpty {
-                interfaceName = entry.interfaceId
+                if let transport = appServices.transport {
+                    interfaceName = await transport.getInterfaceName(for: entry.interfaceId)
+                        ?? entry.interfaceId
+                } else {
+                    interfaceName = entry.interfaceId
+                }
             }
             // Detect propagation node
             if let appData = entry.appData {
