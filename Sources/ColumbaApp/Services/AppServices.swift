@@ -388,9 +388,24 @@ public final class AppServices {
         }
     }
 
+    /// Append a debug line to the state observer log.
+    private func appendStateDebug(_ line: String) {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let full = "[\(ts)] \(line)\n"
+        let path = "/tmp/columba_state_debug.log"
+        if let fh = FileHandle(forWritingAtPath: path) {
+            fh.seekToEndOfFile()
+            fh.write(full.data(using: .utf8)!)
+            fh.closeFile()
+        } else {
+            FileManager.default.createFile(atPath: path, contents: full.data(using: .utf8), attributes: nil)
+        }
+    }
+
     /// Update connection state from interface.
     private func updateConnectionState() async {
         guard let interface = tcpInterface else {
+            appendStateDebug("[STATE] tcpInterface is nil, isConnected=\(isConnected)")
             if isConnected {
                 isConnected = false
                 connectionError = nil
@@ -400,6 +415,7 @@ public final class AppServices {
         }
 
         let state = await interface.state
+        appendStateDebug("[STATE] polled: \(state), isConnected=\(isConnected)")
         switch state {
         case .connected:
             if !isConnected {
@@ -407,6 +423,7 @@ public final class AppServices {
                 connectionError = nil
                 isReconnecting = false
                 logger.info("Connection state changed: connected")
+                appendStateDebug("[STATE] TRANSITION → connected! Triggering autoAnnounce")
 
                 // Auto-announce LXMF delivery destination so peers can reach us
                 Task {
@@ -760,6 +777,20 @@ public final class AppServices {
         // Create and build the announce packet
         let announce = Announce(destination: destination)
         let packet = try announce.buildPacket()
+
+        // Debug: log announce structure details
+        let encoded = packet.encode()
+        let nameHash = destination.nameHash
+        let destHash = destination.hash
+        logger.info("[ANNOUNCE_DEBUG] destHash(\(destHash.count)B): \(destHash.map { String(format: "%02x", $0) }.joined())")
+        logger.info("[ANNOUNCE_DEBUG] nameHash(\(nameHash.count)B): \(nameHash.map { String(format: "%02x", $0) }.joined())")
+        logger.info("[ANNOUNCE_DEBUG] appData: \(displayName) (\(destination.appData?.count ?? 0)B)")
+        logger.info("[ANNOUNCE_DEBUG] packet flags=0x\(String(format: "%02x", encoded[0])) hops=\(encoded[1]) total=\(encoded.count)B")
+        logger.info("[ANNOUNCE_DEBUG] announce payload: \(packet.data.count)B")
+        if let pubKeys = destination.publicKeys {
+            logger.info("[ANNOUNCE_DEBUG] pubKeys(\(pubKeys.count)B): \(pubKeys.prefix(8).map { String(format: "%02x", $0) }.joined())...")
+        }
+        logger.info("[ANNOUNCE_DEBUG] raw hex (ALL \(encoded.count)B): \(encoded.map { String(format: "%02x", $0) }.joined())")
 
         // Send the announce via transport
         try await transport.send(packet: packet)
