@@ -9,6 +9,7 @@
 import Foundation
 import Observation
 import LXMFSwift
+import ReticulumSwift
 import os.log
 
 /// Debug logging for propagation node manager.

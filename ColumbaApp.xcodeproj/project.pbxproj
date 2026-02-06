@@ -60,6 +60,7 @@
 		028 /* IncomingMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F028; };
 		029 /* InterfaceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F029; };
 		033 /* PropagationNodeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F033; };
+		040 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F040; };
 
 		/* Interface Management */
 		030 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030; };
@@ -123,6 +124,7 @@
 		F028 /* IncomingMessageHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingMessageHandler.swift; sourceTree = "<group>"; };
 		F029 /* InterfaceRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceRepository.swift; sourceTree = "<group>"; };
 		F033 /* PropagationNodeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropagationNodeManager.swift; sourceTree = "<group>"; };
+		F040 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 
 		/* Interface Management */
 		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
@@ -298,6 +300,7 @@
 				F028 /* IncomingMessageHandler.swift */,
 				F029 /* InterfaceRepository.swift */,
 				F033 /* PropagationNodeManager.swift */,
+				F040 /* NotificationService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -424,6 +427,7 @@
 				036 /* MaterialDesignIcons.swift in Sources */,
 				037 /* ProfileIcon.swift in Sources */,
 				038 /* IconPickerView.swift in Sources */,
+				040 /* NotificationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
