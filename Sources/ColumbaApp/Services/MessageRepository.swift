@@ -84,6 +84,16 @@ public actor MessageRepository {
         try await database.ensureConversation(hash: conversationHash, displayName: displayName)
     }
 
+    /// Set favorite status for a conversation.
+    ///
+    /// - Parameters:
+    ///   - conversationHash: Destination hash (16 bytes)
+    ///   - isFavorite: Whether to mark as favorite
+    /// - Throws: DatabaseError
+    public func setFavorite(_ conversationHash: Data, isFavorite: Bool) async throws {
+        try await database.setFavorite(hash: conversationHash, isFavorite: isFavorite)
+    }
+
     // MARK: - Message Operations
 
     /// Fetch messages for a specific conversation.

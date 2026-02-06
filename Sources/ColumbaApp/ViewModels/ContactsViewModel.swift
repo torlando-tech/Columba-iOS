@@ -9,6 +9,7 @@
 import Foundation
 import Observation
 import LXMFSwift
+import ReticulumSwift
 
 // MARK: - Contact Type
 
@@ -104,7 +105,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.signalStrength = 3
         self.timestamp = Date(timeIntervalSince1970: record.lastMessageTimestamp)
         self.isOnline = true
-        self.isFavorite = false
+        self.isFavorite = record.isFavorite != 0
         self.isRelay = false
     }
 
@@ -280,7 +281,19 @@ public final class ContactsViewModel {
     /// Handle a new path entry from the stream.
     @MainActor
     private func handleNewPathEntry(_ entry: PathEntry) {
-        let contact = Contact(from: entry)
+        var contact = Contact(from: entry)
+
+        // Preserve saved-contact state (star filled if already in myContacts)
+        let isSaved = myContacts.contains(where: { $0.id == contact.id })
+        if isSaved && !contact.isFavorite {
+            contact = Contact(
+                id: contact.id, displayName: contact.displayName,
+                identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
+                badgeType: contact.badgeType, hopCount: contact.hopCount,
+                signalStrength: contact.signalStrength, timestamp: contact.timestamp,
+                isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay
+            )
+        }
 
         if let existingIndex = networkAnnounces.firstIndex(where: { $0.id == contact.id }) {
             networkAnnounces[existingIndex] = contact
@@ -303,9 +316,11 @@ public final class ContactsViewModel {
         errorMessage = nil
 
         do {
-            // Load my contacts from conversations
+            // Load my contacts from favorited conversations only
             let conversations = try await messageRepository.fetchConversations()
-            myContacts = conversations.map { Contact(from: $0) }
+            myContacts = conversations
+                .filter { $0.isFavorite != 0 }
+                .map { Contact(from: $0) }
 
             // Load network announces from path table
             if let pathTable = appServices.pathTable {
@@ -313,6 +328,9 @@ public final class ContactsViewModel {
                 networkAnnounces = entries.map { Contact(from: $0) }
                     .sorted { $0.timestamp > $1.timestamp }
             }
+
+            // Mark network announces that are already saved contacts
+            markSavedContacts()
 
             // Sync relay state from PropagationNodeManager
             syncRelayState()
@@ -337,6 +355,9 @@ public final class ContactsViewModel {
                 .sorted { $0.timestamp > $1.timestamp }
         }
 
+        // Mark network announces that are already saved contacts
+        markSavedContacts()
+
         // Sync relay state from PropagationNodeManager
         syncRelayState()
 
@@ -350,43 +371,42 @@ public final class ContactsViewModel {
         isRelayAutoSelected = appServices.propagationManager?.autoSelectEnabled ?? true
     }
 
-    /// Toggle favorite status for a contact.
+    /// Toggle favorite status for a contact and persist to database.
+    ///
+    /// In My Contacts: unfavoriting removes the contact from the list.
+    /// In Network Announces: this is unused (addToContacts handles that).
     @MainActor
     public func toggleFavorite(for contactId: String) {
         if let index = myContacts.firstIndex(where: { $0.id == contactId }) {
             let contact = myContacts[index]
-            let updated = Contact(
-                id: contact.id,
-                displayName: contact.displayName,
-                identityHash: contact.identityHash,
-                identityHashHex: contact.identityHashHex,
-                badgeType: contact.badgeType,
-                hopCount: contact.hopCount,
-                signalStrength: contact.signalStrength,
-                timestamp: contact.timestamp,
-                isOnline: contact.isOnline,
-                isFavorite: !contact.isFavorite,
-                isRelay: contact.isRelay
-            )
-            myContacts[index] = updated
-        }
-
-        if let index = networkAnnounces.firstIndex(where: { $0.id == contactId }) {
-            let contact = networkAnnounces[index]
-            let updated = Contact(
-                id: contact.id,
-                displayName: contact.displayName,
-                identityHash: contact.identityHash,
-                identityHashHex: contact.identityHashHex,
-                badgeType: contact.badgeType,
-                hopCount: contact.hopCount,
-                signalStrength: contact.signalStrength,
-                timestamp: contact.timestamp,
-                isOnline: contact.isOnline,
-                isFavorite: !contact.isFavorite,
-                isRelay: contact.isRelay
-            )
-            networkAnnounces[index] = updated
+            let newValue = !contact.isFavorite
+            Task {
+                try? await messageRepository.setFavorite(contact.identityHash, isFavorite: newValue)
+            }
+            if newValue {
+                let updated = Contact(
+                    id: contact.id, displayName: contact.displayName,
+                    identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
+                    badgeType: contact.badgeType, hopCount: contact.hopCount,
+                    signalStrength: contact.signalStrength, timestamp: contact.timestamp,
+                    isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay
+                )
+                myContacts[index] = updated
+            } else {
+                // Unfavorited — remove from My Contacts
+                myContacts.remove(at: index)
+                // Also unmark in network announces
+                if let nIndex = networkAnnounces.firstIndex(where: { $0.id == contactId }) {
+                    let c = networkAnnounces[nIndex]
+                    networkAnnounces[nIndex] = Contact(
+                        id: c.id, displayName: c.displayName,
+                        identityHash: c.identityHash, identityHashHex: c.identityHashHex,
+                        badgeType: c.badgeType, hopCount: c.hopCount,
+                        signalStrength: c.signalStrength, timestamp: c.timestamp,
+                        isOnline: c.isOnline, isFavorite: false, isRelay: c.isRelay
+                    )
+                }
+            }
         }
     }
 
@@ -411,7 +431,7 @@ public final class ContactsViewModel {
         isAnnouncing = false
     }
 
-    /// Add a network contact to my contacts by creating a conversation.
+    /// Add a network contact to my contacts by creating a conversation and marking as favorite.
     @MainActor
     public func addToContacts(_ contact: Contact) async {
         guard !myContacts.contains(where: { $0.id == contact.id }) else { return }
@@ -421,9 +441,47 @@ public final class ContactsViewModel {
                 contact.identityHash,
                 displayName: contact.displayName
             )
-            myContacts.append(contact)
+            try await messageRepository.setFavorite(contact.identityHash, isFavorite: true)
+            let saved = Contact(
+                id: contact.id, displayName: contact.displayName,
+                identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
+                badgeType: contact.badgeType, hopCount: contact.hopCount,
+                signalStrength: contact.signalStrength, timestamp: contact.timestamp,
+                isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay
+            )
+            myContacts.append(saved)
+
+            // Mark this contact as saved in network announces
+            if let index = networkAnnounces.firstIndex(where: { $0.id == contact.id }) {
+                let c = networkAnnounces[index]
+                networkAnnounces[index] = Contact(
+                    id: c.id, displayName: c.displayName,
+                    identityHash: c.identityHash, identityHashHex: c.identityHashHex,
+                    badgeType: c.badgeType, hopCount: c.hopCount,
+                    signalStrength: c.signalStrength, timestamp: c.timestamp,
+                    isOnline: c.isOnline, isFavorite: true, isRelay: c.isRelay
+                )
+            }
         } catch {
             errorMessage = "Failed to add contact: \(error.localizedDescription)"
+        }
+    }
+
+    /// Mark network announces that already exist in my contacts.
+    @MainActor
+    private func markSavedContacts() {
+        let savedIds = Set(myContacts.map { $0.id })
+        networkAnnounces = networkAnnounces.map { contact in
+            if savedIds.contains(contact.id) && !contact.isFavorite {
+                return Contact(
+                    id: contact.id, displayName: contact.displayName,
+                    identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
+                    badgeType: contact.badgeType, hopCount: contact.hopCount,
+                    signalStrength: contact.signalStrength, timestamp: contact.timestamp,
+                    isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay
+                )
+            }
+            return contact
         }
     }
 }

@@ -67,7 +67,7 @@ public struct Conversation: Identifiable, Equatable, Hashable {
         self.lastMessageTimestamp = Date(timeIntervalSince1970: record.lastMessageTimestamp)
         self.lastMessagePreview = record.lastMessagePreview
         self.unreadCount = record.unreadCount
-        self.isFavorite = false // TODO: Persist favorites
+        self.isFavorite = record.isFavorite != 0
     }
 
     public init(
@@ -183,7 +183,7 @@ public final class ChatsViewModel {
         }
     }
 
-    /// Toggle favorite status for a conversation.
+    /// Toggle favorite status for a conversation and persist to database.
     ///
     /// - Parameter conversation: The conversation to toggle
     @MainActor
@@ -191,8 +191,11 @@ public final class ChatsViewModel {
         guard let index = conversations.firstIndex(where: { $0.id == conversation.id }) else {
             return
         }
-        conversations[index].isFavorite.toggle()
-        // TODO: Persist favorite status to storage
+        let newValue = !conversations[index].isFavorite
+        conversations[index].isFavorite = newValue
+        Task {
+            try? await repository.setFavorite(conversation.destinationHash, isFavorite: newValue)
+        }
     }
 
     /// Delete a conversation.
