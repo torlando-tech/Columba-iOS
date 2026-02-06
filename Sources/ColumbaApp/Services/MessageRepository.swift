@@ -94,6 +94,27 @@ public actor MessageRepository {
         try await database.setFavorite(hash: conversationHash, isFavorite: isFavorite)
     }
 
+    // MARK: - Icon Appearance
+
+    /// Update peer icon appearance for a conversation.
+    ///
+    /// - Parameters:
+    ///   - hash: Destination hash (16 bytes)
+    ///   - icon: IconAppearance to save
+    /// - Throws: DatabaseError
+    public func updatePeerIcon(_ hash: Data, icon: IconAppearance) async throws {
+        try await database.updatePeerIcon(hash, iconName: icon.iconName, fgColor: icon.foregroundColor, bgColor: icon.backgroundColor)
+    }
+
+    /// Get peer icon appearance for a conversation.
+    ///
+    /// - Parameter hash: Destination hash (16 bytes)
+    /// - Returns: IconAppearance if set, nil otherwise
+    /// - Throws: DatabaseError
+    public func getPeerIcon(_ hash: Data) async throws -> IconAppearance? {
+        try await database.getPeerIcon(hash)
+    }
+
     // MARK: - Message Operations
 
     /// Fetch messages for a specific conversation.

@@ -69,6 +69,12 @@
 		034 /* NetworkStatusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F034; };
 		035 /* NetworkStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F035; };
 
+		/* Profile Icons */
+		036 /* MaterialDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F036; };
+		037 /* ProfileIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F037; };
+		038 /* IconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F038; };
+		039 /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039; };
+
 		/* Package Dependencies */
 		023 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P001; };
 /* End PBXBuildFile section */
@@ -128,6 +134,12 @@
 		/* Network Status */
 		F034 /* NetworkStatusViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkStatusViewModel.swift; sourceTree = "<group>"; };
 		F035 /* NetworkStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkStatusView.swift; sourceTree = "<group>"; };
+
+		/* Profile Icons */
+		F036 /* MaterialDesignIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaterialDesignIcons.swift; sourceTree = "<group>"; };
+		F037 /* ProfileIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileIcon.swift; sourceTree = "<group>"; };
+		F038 /* IconPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconPickerView.swift; sourceTree = "<group>"; };
+		F039 /* materialdesignicons.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = materialdesignicons.ttf; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -252,6 +264,7 @@
 				F018 /* ExpandableSettingsCard.swift */,
 				F031 /* InterfaceManagementScreen.swift */,
 				F035 /* NetworkStatusView.swift */,
+				F038 /* IconPickerView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -261,6 +274,8 @@
 			children = (
 				F019 /* Identicon.swift */,
 				F020 /* IdenticonGenerator.swift */,
+				F036 /* MaterialDesignIcons.swift */,
+				F037 /* ProfileIcon.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -292,6 +307,7 @@
 			children = (
 				F022 /* Assets.xcassets */,
 				F023 /* Info.plist */,
+				F039 /* materialdesignicons.ttf */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -361,6 +377,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				022 /* Assets.xcassets in Resources */,
+				039 /* materialdesignicons.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -404,6 +421,9 @@
 				033 /* PropagationNodeManager.swift in Sources */,
 				034 /* NetworkStatusViewModel.swift in Sources */,
 				035 /* NetworkStatusView.swift in Sources */,
+				036 /* MaterialDesignIcons.swift in Sources */,
+				037 /* ProfileIcon.swift in Sources */,
+				038 /* IconPickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

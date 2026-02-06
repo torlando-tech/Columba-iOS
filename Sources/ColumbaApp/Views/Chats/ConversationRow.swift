@@ -79,18 +79,16 @@ struct ConversationRow: View {
 
     // MARK: - Subviews
 
-    /// Identicon avatar with rocket icon placeholder.
+    /// Profile icon with MDI icon or identicon fallback.
     private var avatarView: some View {
-        Circle()
-            .fill(accentColor)
-            .frame(width: 48, height: 48)
-            .overlay {
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundColor(.white)
-                    .rotationEffect(.degrees(-45))
-            }
-            .shadow(color: accentColor.opacity(0.4), radius: 8, x: 0, y: 4)
+        ProfileIcon(
+            iconName: conversation.iconName,
+            foregroundColor: conversation.iconFgColor,
+            backgroundColor: conversation.iconBgColor,
+            fallbackHash: conversation.destinationHash,
+            size: 48
+        )
+        .shadow(color: accentColor.opacity(0.4), radius: 8, x: 0, y: 4)
     }
 
     /// Favorite/star button with animation.

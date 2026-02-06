@@ -84,6 +84,14 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 try await messageRepository.saveMessage(message)
                 logger.error("[LXMF_INBOUND] Message \(messageHashHex) saved to database OK")
 
+                // Extract icon appearance from LXMF Field 4
+                if let fields = message.fields,
+                   let iconValue = fields[IconAppearance.fieldKey],
+                   let icon = IconAppearance.fromLXMFFieldValue(iconValue) {
+                    try await messageRepository.updatePeerIcon(message.sourceHash, icon: icon)
+                    logger.info("[LXMF_INBOUND] Saved peer icon: \(icon.iconName) for \(sourceHashHex)")
+                }
+
                 // Post notification again after save so views reload with saved data
                 NotificationCenter.default.post(
                     name: IncomingMessageHandler.messageReceivedNotification,

@@ -68,9 +68,14 @@ struct NodeDetailsView: View {
 
     private var headerSection: some View {
         VStack(spacing: 12) {
-            // Large identicon
-            Identicon(hash: contact.identityHash)
-                .frame(width: 80, height: 80)
+            // Large profile icon (MDI or identicon fallback)
+            ProfileIcon(
+                iconName: contact.iconName,
+                foregroundColor: contact.iconFgColor,
+                backgroundColor: contact.iconBgColor,
+                fallbackHash: contact.identityHash,
+                size: 80
+            )
 
             // Display name
             Text(contact.resolvedDisplayName)

@@ -76,9 +76,14 @@ struct ContactCard: View {
 
     private var avatarView: some View {
         ZStack(alignment: .bottomTrailing) {
-            // Identicon
-            Identicon(hash: contact.identityHash)
-                .frame(width: 48, height: 48)
+            // Profile icon (MDI with colors, or identicon fallback)
+            ProfileIcon(
+                iconName: contact.iconName,
+                foregroundColor: contact.iconFgColor,
+                backgroundColor: contact.iconBgColor,
+                fallbackHash: contact.identityHash,
+                size: 48
+            )
 
             // Hub badge for selected relay
             if isSelectedRelay {
