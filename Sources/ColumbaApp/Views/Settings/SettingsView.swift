@@ -25,6 +25,8 @@ struct SettingsView: View {
 
     let appServices: AppServices
     let settingsRepository: SettingsRepository
+    let identityManager: IdentityManager
+    var onIdentitySwitch: (() -> Void)?
 
     // MARK: - State
 
@@ -92,6 +94,14 @@ struct SettingsView: View {
                 .navigationDestination(isPresented: $showNetworkStatus) {
                     NetworkStatusView(appServices: appServices)
                 }
+                .navigationDestination(isPresented: $showManageIdentities) {
+                    IdentityManagerView(
+                        identityManager: identityManager,
+                        appServices: appServices,
+                        settingsRepository: settingsRepository,
+                        onIdentitySwitch: onIdentitySwitch
+                    )
+                }
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -101,7 +111,8 @@ struct SettingsView: View {
             if viewModel == nil {
                 viewModel = SettingsViewModel(
                     appServices: appServices,
-                    settingsRepository: settingsRepository
+                    settingsRepository: settingsRepository,
+                    identityManager: identityManager
                 )
             }
             await viewModel?.loadSettings()
@@ -206,6 +217,17 @@ struct SettingsView: View {
                 Text("Create and manage multiple identities for different contexts (work, personal, anonymous).")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
+
+                if !vm.activeIdentityName.isEmpty {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Theme.accentColor)
+                            .frame(width: 8, height: 8)
+                        Text("Active: \(vm.activeIdentityName)")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Theme.accentColor)
+                    }
+                }
 
                 // View My Identity Button
                 Button(action: { showMyIdentity = true }) {

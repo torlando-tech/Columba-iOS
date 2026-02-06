@@ -135,13 +135,21 @@ public final class AppServices {
         return columbaDir.appendingPathComponent("identity.key")
     }
 
-    /// File path for LXMF database persistence.
+    /// File path for LXMF database persistence (legacy, used by single-identity fallback).
     private static var databaseFilePath: String {
+        databaseFilePath(for: nil)
+    }
+
+    /// File path for LXMF database for a specific identity.
+    ///
+    /// - Parameter identityHash: Identity hash hex string, or nil for legacy `lxmf.db`
+    /// - Returns: Full path to the database file
+    private static func databaseFilePath(for identityHash: String?) -> String {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let columbaDir = appSupport.appendingPathComponent("Columba", isDirectory: true)
-        // Create directory if needed
         try? FileManager.default.createDirectory(at: columbaDir, withIntermediateDirectories: true)
-        return columbaDir.appendingPathComponent("lxmf.db").path
+        let filename = identityHash.map { "lxmf_\($0).db" } ?? "lxmf.db"
+        return columbaDir.appendingPathComponent(filename).path
     }
 
     /// File path for path table database persistence.
@@ -343,6 +351,117 @@ public final class AppServices {
         announceManager.start()
 
         logger.info("Initialization complete")
+    }
+
+    /// Initialize all LXMF components with an externally-provided identity.
+    ///
+    /// Used by multi-identity flow where IdentityManager loads the identity
+    /// from Keychain and passes it in directly.
+    ///
+    /// - Parameters:
+    ///   - identity: Pre-loaded Reticulum identity with private keys
+    ///   - identityHash: Hex hash of the identity (used for DB filename)
+    ///   - tcpServerAddress: TCP server address (e.g., "10.0.0.1:4242")
+    public func initialize(identity: Identity, identityHash: String, tcpServerAddress: String) async throws {
+        logger.info("Starting initialize with provided identity: \(identityHash)")
+
+        self.identity = identity
+
+        // 2. Create path table for routing with persistence
+        let pathDbPath = Self.pathTableFilePath
+        let newPathTable = try PathTable(databasePath: pathDbPath)
+        self.pathTable = newPathTable
+
+        // 3. Create transport with path table
+        let newTransport = ReticuLumTransport(pathTable: newPathTable)
+        self.transport = newTransport
+
+        // 4. Create persistent LXMF database (per-identity)
+        let dbPath = Self.databaseFilePath(for: identityHash)
+        let newDatabase = try LXMFDatabase(path: dbPath)
+        self.database = newDatabase
+
+        // 5. Create LXMRouter with identity and database path
+        let newRouter = try await LXMRouter(identity: identity, databasePath: dbPath)
+        self.router = newRouter
+
+        // 6. Create and register LXMF delivery destination
+        let newDestination = Destination(
+            identity: identity,
+            appName: "lxmf",
+            aspects: ["delivery"],
+            type: .single,
+            direction: .in
+        )
+        self.deliveryDestination = newDestination
+        await newTransport.registerDestination(newDestination)
+
+        // 7. Set transport on router
+        await newRouter.setTransport(newTransport)
+
+        // 8. Parse server address and create TCP interface
+        if let (host, port) = parseHostPort(tcpServerAddress) {
+            let config = InterfaceConfig(
+                id: "tcp-server",
+                name: "TCP Server",
+                type: .tcp,
+                enabled: true,
+                mode: .full,
+                host: host,
+                port: port
+            )
+            do {
+                let newInterface = try TCPInterface(config: config)
+                self.tcpInterface = newInterface
+                try await newTransport.addInterface(newInterface)
+            } catch {
+                logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        // 9. Register delivery destination with router
+        try await newRouter.registerDeliveryDestination(newDestination)
+
+        startStateObserver()
+
+        // 10. Initialize propagation node manager
+        let propManager = PropagationNodeManager(appServices: self)
+        self.propagationManager = propManager
+        propManager.startListening()
+        await propManager.loadPreferences()
+        propManager.startPeriodicSync()
+
+        // 11. Initialize auto-announce manager
+        let announceManager = AutoAnnounceManager(appServices: self)
+        self.autoAnnounceManager = announceManager
+        announceManager.start()
+
+        logger.info("Initialization complete (identity: \(identityHash))")
+    }
+
+    /// Switch to a different identity, tearing down and re-initializing the full stack.
+    ///
+    /// - Parameters:
+    ///   - newIdentity: The identity to switch to (already loaded from Keychain)
+    ///   - identityHash: Hex hash of the new identity
+    ///   - tcpServerAddress: TCP server address to reconnect to
+    public func switchIdentity(to newIdentity: Identity, identityHash: String, tcpServerAddress: String) async throws {
+        logger.info("Switching identity to: \(identityHash)")
+
+        // Tear down current stack
+        await shutdown()
+
+        // NOTE: Path table is NOT cleared here — path entries (announce routes)
+        // are identity-agnostic and remain valid across identity switches.
+        // Only reconnect() clears paths (different network = stale routes).
+
+        // Small delay to ensure clean shutdown
+        try? await Task.sleep(for: .milliseconds(200))
+
+        // Re-initialize with new identity
+        try await initialize(identity: newIdentity, identityHash: identityHash, tcpServerAddress: tcpServerAddress)
+
+        logger.info("Identity switch complete: \(identityHash)")
     }
 
     // MARK: - State Observation
