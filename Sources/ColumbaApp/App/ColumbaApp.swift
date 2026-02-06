@@ -168,14 +168,11 @@ struct RootView: View {
 
     // MARK: - Initialization
 
-    @MainActor
     private func initializeServices() async {
         do {
             // Initialize AppServices with relay address from settings
             let relayAddress = await settingsRepository.getRelayAddress()
-            print("[ROOT] Relay address from settings: \(relayAddress)")
             try await appServices.initialize(relayAddress: relayAddress)
-            print("[ROOT] AppServices initialized, local hash: \(appServices.localIdentityHashHex)")
 
             // Use the shared database from AppServices
             guard let db = appServices.database else {
@@ -191,22 +188,22 @@ struct RootView: View {
             self.incomingMessageHandler = handler
             if let router = appServices.router {
                 await router.setDelegate(handler)
-                print("[ROOT] IncomingMessageHandler set as router delegate")
             }
 
-            // Start AutoInterface if configured and enabled
+            // Start AutoInterface if configured and enabled (non-blocking — don't gate UI)
             let interfaceRepo = InterfaceRepository()
             interfaceRepo.loadInterfaces()
             let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
             if let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface }),
                case .autoInterface(let config) = autoEntity.config {
                 let groupId = config.groupId ?? "reticulum"
-                print("[ROOT] Starting AutoInterface with group: \(groupId)")
-                do {
-                    try await appServices.startAutoInterface(groupId: groupId)
-                    print("[ROOT] AutoInterface started")
-                } catch {
-                    print("[ROOT] AutoInterface start failed (non-fatal): \(error)")
+                let services = appServices
+                Task {
+                    do {
+                        try await services.startAutoInterface(groupId: groupId)
+                    } catch {
+                        // Non-fatal — app works without LAN discovery
+                    }
                 }
             }
 

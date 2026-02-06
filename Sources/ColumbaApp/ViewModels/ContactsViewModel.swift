@@ -307,6 +307,9 @@ public final class ContactsViewModel {
     /// Handle a new path entry from the stream.
     @MainActor
     private func handleNewPathEntry(_ entry: PathEntry) {
+        // Skip non-LXMF destinations (no appData = can't identify as LXMF peer/relay)
+        guard let appData = entry.appData, !appData.isEmpty else { return }
+
         var contact = Contact(from: entry)
 
         // Preserve saved-contact state (star filled if already in myContacts)
@@ -348,10 +351,13 @@ public final class ContactsViewModel {
                 .filter { $0.isFavorite != 0 }
                 .map { Contact(from: $0) }
 
-            // Load network announces from path table
+            // Load network announces from path table (only entries with appData,
+            // which identifies them as LXMF destinations we can interact with)
             if let pathTable = appServices.pathTable {
                 let entries = await pathTable.allEntries()
-                networkAnnounces = entries.map { Contact(from: $0) }
+                networkAnnounces = entries
+                    .filter { $0.appData != nil && !$0.appData!.isEmpty }
+                    .map { Contact(from: $0) }
                     .sorted { $0.timestamp > $1.timestamp }
             }
 
@@ -377,7 +383,9 @@ public final class ContactsViewModel {
 
         if let pathTable = appServices.pathTable {
             let entries = await pathTable.allEntries()
-            networkAnnounces = entries.map { Contact(from: $0) }
+            networkAnnounces = entries
+                .filter { $0.appData != nil && !$0.appData!.isEmpty }
+                .map { Contact(from: $0) }
                 .sorted { $0.timestamp > $1.timestamp }
         }
 
