@@ -62,6 +62,9 @@
 		033 /* PropagationNodeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F033; };
 		040 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F040; };
 		041 /* AutoAnnounceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041; };
+		042 /* LocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F042; };
+		043 /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043; };
+		044 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044; };
 
 		/* Interface Management */
 		030 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030; };
@@ -127,6 +130,11 @@
 		F033 /* PropagationNodeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropagationNodeManager.swift; sourceTree = "<group>"; };
 		F040 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		F041 /* AutoAnnounceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnounceManager.swift; sourceTree = "<group>"; };
+		F042 /* LocalIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalIdentity.swift; sourceTree = "<group>"; };
+		F043 /* IdentityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManager.swift; sourceTree = "<group>"; };
+
+		/* Identity Management View */
+		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
 
 		/* Interface Management */
 		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
@@ -269,6 +277,7 @@
 				F031 /* InterfaceManagementScreen.swift */,
 				F035 /* NetworkStatusView.swift */,
 				F038 /* IconPickerView.swift */,
+				F044 /* IdentityManagerView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -304,6 +313,8 @@
 				F033 /* PropagationNodeManager.swift */,
 				F040 /* NotificationService.swift */,
 				F041 /* AutoAnnounceManager.swift */,
+				F042 /* LocalIdentity.swift */,
+				F043 /* IdentityManager.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -432,6 +443,9 @@
 				038 /* IconPickerView.swift in Sources */,
 				040 /* NotificationService.swift in Sources */,
 				041 /* AutoAnnounceManager.swift in Sources */,
+				042 /* LocalIdentity.swift in Sources */,
+				043 /* IdentityManager.swift in Sources */,
+				044 /* IdentityManagerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

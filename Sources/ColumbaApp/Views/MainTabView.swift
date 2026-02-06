@@ -24,6 +24,8 @@ struct MainTabView: View {
     let messageRepository: MessageRepository
     let settingsRepository: SettingsRepository
     let notificationObserver: NotificationObserver
+    let identityManager: IdentityManager
+    var onIdentitySwitch: (() -> Void)?
 
     // MARK: - State
 
@@ -64,7 +66,9 @@ struct MainTabView: View {
             // Settings Tab
             SettingsView(
                 appServices: appServices,
-                settingsRepository: settingsRepository
+                settingsRepository: settingsRepository,
+                identityManager: identityManager,
+                onIdentitySwitch: onIdentitySwitch
             )
             .tabItem {
                 Label(Tab.settings.title, systemImage: Tab.settings.icon)

@@ -188,16 +188,23 @@ public final class SettingsViewModel {
 
     public var selectedMapSource: MapSource = .apple
 
+    // MARK: - Active Identity Info
+
+    /// Display name of the currently active identity (from IdentityManager).
+    public var activeIdentityName: String = ""
+
     // MARK: - Dependencies
 
     private let appServices: AppServices
     private let settingsRepository: SettingsRepository
+    private let identityManager: IdentityManager?
 
     // MARK: - Initialization
 
-    public init(appServices: AppServices, settingsRepository: SettingsRepository) {
+    init(appServices: AppServices, settingsRepository: SettingsRepository, identityManager: IdentityManager? = nil) {
         self.appServices = appServices
         self.settingsRepository = settingsRepository
+        self.identityManager = identityManager
         loadLocalSettings()
     }
 
@@ -228,6 +235,13 @@ public final class SettingsViewModel {
             publicKeyHex: pubKeyHex,
             usesIdenticon: true
         )
+
+        // Load active identity name from IdentityManager
+        if let mgr = identityManager {
+            if let active = await mgr.getActiveIdentity() {
+                activeIdentityName = active.displayName
+            }
+        }
 
         // Load icon appearance
         iconAppearance = await settingsRepository.getIconAppearance()

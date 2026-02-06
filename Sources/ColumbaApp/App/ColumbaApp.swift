@@ -60,6 +60,9 @@ struct RootView: View {
     /// Central service layer owning Identity, Router, Transport, PathTable.
     @State private var appServices = AppServices()
 
+    /// Multi-identity manager.
+    @State private var identityManager = IdentityManager()
+
     // MARK: - Internal State
 
     @State private var database: LXMFDatabase?
@@ -67,6 +70,7 @@ struct RootView: View {
     @State private var incomingMessageHandler: IncomingMessageHandler?
     @State private var initError: String?
     @State private var isInitialized = false
+    @State private var identitySwitchTrigger = UUID()
     @Environment(\.scenePhase) private var scenePhase
 
     // MARK: - Body
@@ -81,13 +85,23 @@ struct RootView: View {
                     appServices: appServices,
                     messageRepository: repo,
                     settingsRepository: settingsRepository,
-                    notificationObserver: notificationObserver
+                    notificationObserver: notificationObserver,
+                    identityManager: identityManager,
+                    onIdentitySwitch: {
+                        // Reset state so RootView re-initializes
+                        isInitialized = false
+                        messageRepository = nil
+                        incomingMessageHandler = nil
+                        database = nil
+                        initError = nil
+                        identitySwitchTrigger = UUID()
+                    }
                 )
             } else {
                 loadingView
             }
         }
-        .task {
+        .task(id: identitySwitchTrigger) {
             await initializeServices()
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -177,11 +191,28 @@ struct RootView: View {
 
     private func initializeServices() async {
         do {
-            // Load interface configurations (single source of truth)
+            // 1. Migration check (first launch after update)
+            await identityManager.migrateFromSingleIdentityIfNeeded(settingsRepository: settingsRepository)
+
+            // 2. Get or create active identity
+            var activeLocal = await identityManager.getActiveIdentity()
+            if activeLocal == nil {
+                let newId = try await identityManager.createIdentity(displayName: "Anonymous Peer")
+                let (switched, _) = try await identityManager.switchToIdentity(newId.identityHash)
+                activeLocal = switched
+            }
+
+            guard let active = activeLocal else {
+                throw AppServicesError.identityNotInitialized
+            }
+
+            // 3. Load identity keys from Keychain
+            let identity = try await identityManager.loadIdentityKeys(for: active.identityHash)
+
+            // 4. Load interface configurations
             let interfaceRepo = InterfaceRepository()
             let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
 
-            // Get TCP server address from InterfaceRepository
             let serverAddress: String
             if let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient }),
                case .tcpClient(let config) = tcpEntity.config {
@@ -190,10 +221,14 @@ struct RootView: View {
                 serverAddress = ""
             }
 
-            // Initialize AppServices with TCP server address (empty = no TCP interface)
-            try await appServices.initialize(tcpServerAddress: serverAddress)
+            // 5. Initialize AppServices with identity
+            try await appServices.initialize(
+                identity: identity,
+                identityHash: active.identityHash,
+                tcpServerAddress: serverAddress
+            )
 
-            // Use the shared database from AppServices
+            // 6. Wire up database, message repo, handler
             guard let db = appServices.database else {
                 throw AppServicesError.routerNotInitialized
             }
@@ -202,14 +237,13 @@ struct RootView: View {
             let repo = MessageRepository(database: db)
             self.messageRepository = repo
 
-            // Create incoming message handler and set as router delegate
             let handler = IncomingMessageHandler(messageRepository: repo, database: db)
             self.incomingMessageHandler = handler
             if let router = appServices.router {
                 await router.setDelegate(handler)
             }
 
-            // Start AutoInterface if configured and enabled (non-blocking — don't gate UI)
+            // 7. Start AutoInterface if configured (non-blocking)
             if let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface }),
                case .autoInterface(let config) = autoEntity.config {
                 let groupId = config.groupId ?? "reticulum"
@@ -218,17 +252,16 @@ struct RootView: View {
                     do {
                         try await services.startAutoInterface(groupId: groupId)
                     } catch {
-                        // Non-fatal — app works without LAN discovery
+                        // Non-fatal
                     }
                 }
             }
 
-            // Request notification permission if user has notifications enabled
+            // 8. Request notification permission if enabled
             if UserDefaults.standard.bool(forKey: "notifications_enabled") {
                 await NotificationService.shared.requestPermission()
             }
 
-            // Mark as initialized to trigger UI update
             self.isInitialized = true
 
         } catch {
