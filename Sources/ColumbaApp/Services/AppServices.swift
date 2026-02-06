@@ -72,6 +72,9 @@ public final class AppServices {
     /// Propagation node manager for relay discovery and sync.
     public private(set) var propagationManager: PropagationNodeManager?
 
+    /// Auto announce manager for periodic network announces.
+    public private(set) var autoAnnounceManager: AutoAnnounceManager?
+
     // MARK: - Observable Properties
 
     /// Connection state (observable for UI binding).
@@ -334,6 +337,11 @@ public final class AppServices {
         await propManager.loadPreferences()
         propManager.startPeriodicSync()
 
+        // 11. Initialize auto-announce manager
+        let announceManager = AutoAnnounceManager(appServices: self)
+        self.autoAnnounceManager = announceManager
+        announceManager.start()
+
         logger.info("Initialization complete")
     }
 
@@ -404,6 +412,8 @@ public final class AppServices {
                 Task {
                     try? await Task.sleep(for: .milliseconds(500))
                     await autoAnnounce()
+                    // Reset periodic timer since we just announced
+                    self.autoAnnounceManager?.resetTimer()
                 }
             }
         case .reconnecting(let attempt):
@@ -582,6 +592,13 @@ public final class AppServices {
             await propManager.loadPreferences()
             propManager.startPeriodicSync()
         }
+
+        // Init auto-announce manager if needed
+        if autoAnnounceManager == nil {
+            let announceManager = AutoAnnounceManager(appServices: self)
+            self.autoAnnounceManager = announceManager
+            announceManager.start()
+        }
     }
 
     // MARK: - Shutdown
@@ -594,6 +611,9 @@ public final class AppServices {
 
         stateObserverTask?.cancel()
         stateObserverTask = nil
+
+        // Stop auto-announce manager
+        autoAnnounceManager?.stop()
 
         // Stop propagation manager
         propagationManager?.stopListening()

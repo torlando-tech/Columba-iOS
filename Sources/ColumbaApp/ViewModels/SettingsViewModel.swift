@@ -140,8 +140,11 @@ public final class SettingsViewModel {
     // MARK: - Auto Announce Settings
 
     public var isAutoAnnounceEnabled: Bool = true
-    public var announceOnLaunch: Bool = true
-    public var announceIntervalMinutes: Int = 15
+    public var announceIntervalHours: Int = 3
+    public var lastAnnounceTime: Date?
+    public var isManualAnnouncing: Bool = false
+    public var manualAnnounceSuccess: Bool = false
+    public var manualAnnounceError: String?
 
     // MARK: - Location Sharing Settings
 
@@ -256,8 +259,10 @@ public final class SettingsViewModel {
         playSounds = defaults.bool(forKey: "play_sounds")
         vibrate = defaults.bool(forKey: "vibrate")
         isAutoAnnounceEnabled = defaults.bool(forKey: "auto_announce_enabled")
-        announceOnLaunch = defaults.bool(forKey: "announce_on_launch")
-        announceIntervalMinutes = defaults.integer(forKey: "announce_interval")
+        let storedInterval = defaults.integer(forKey: "announce_interval_hours")
+        announceIntervalHours = storedInterval > 0 ? storedInterval : 3
+        let lastTs = defaults.double(forKey: "last_announce_time")
+        lastAnnounceTime = lastTs > 0 ? Date(timeIntervalSince1970: lastTs) : nil
         isLocationSharingEnabled = defaults.bool(forKey: "location_sharing_enabled")
         sharePreciseLocation = defaults.bool(forKey: "share_precise_location")
         locationUpdateInterval = defaults.integer(forKey: "location_update_interval")
@@ -274,8 +279,7 @@ public final class SettingsViewModel {
             playSounds = true
             vibrate = true
             isAutoAnnounceEnabled = true
-            announceOnLaunch = true
-            announceIntervalMinutes = 15
+            announceIntervalHours = 3
             locationUpdateInterval = 60
             defaults.set(true, forKey: "settings_initialized")
             // Persist notification defaults so NotificationService can read them
@@ -293,12 +297,25 @@ public final class SettingsViewModel {
         defaults.set(playSounds, forKey: "play_sounds")
         defaults.set(vibrate, forKey: "vibrate")
         defaults.set(isAutoAnnounceEnabled, forKey: "auto_announce_enabled")
-        defaults.set(announceOnLaunch, forKey: "announce_on_launch")
-        defaults.set(announceIntervalMinutes, forKey: "announce_interval")
+        defaults.set(announceIntervalHours, forKey: "announce_interval_hours")
         defaults.set(isLocationSharingEnabled, forKey: "location_sharing_enabled")
         defaults.set(sharePreciseLocation, forKey: "share_precise_location")
         defaults.set(locationUpdateInterval, forKey: "location_update_interval")
         defaults.set(selectedMapSource.rawValue, forKey: "map_source")
+    }
+
+    /// Sync auto-announce manager state with current settings.
+    ///
+    /// Call after changing the auto-announce toggle or interval.
+    @MainActor
+    public func syncAutoAnnounce() {
+        if let manager = appServices.autoAnnounceManager {
+            if isAutoAnnounceEnabled {
+                manager.start()
+            } else {
+                manager.stop()
+            }
+        }
     }
 
     /// Update icon appearance and persist.
@@ -316,7 +333,7 @@ public final class SettingsViewModel {
         saveSettings()
     }
 
-    /// Send announce to the network.
+    /// Send announce to the network (from Identity page).
     @MainActor
     public func sendAnnounce() async {
         // Save display name first
@@ -330,6 +347,7 @@ public final class SettingsViewModel {
         do {
             try await appServices.sendAnnounce(displayName: identity.displayName)
             announceSuccess = true
+            recordAnnounceTime()
             // Clear success after a delay
             Task {
                 try? await Task.sleep(for: .seconds(3))
@@ -342,6 +360,48 @@ public final class SettingsViewModel {
         }
 
         isAnnouncing = false
+    }
+
+    /// Trigger a manual announce from the Auto Announce card.
+    @MainActor
+    public func triggerManualAnnounce() async {
+        isManualAnnouncing = true
+        manualAnnounceSuccess = false
+        manualAnnounceError = nil
+
+        do {
+            try await appServices.sendAnnounce(displayName: identity.displayName)
+            manualAnnounceSuccess = true
+            recordAnnounceTime()
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                await MainActor.run {
+                    self.manualAnnounceSuccess = false
+                }
+            }
+        } catch {
+            manualAnnounceError = error.localizedDescription
+            Task {
+                try? await Task.sleep(for: .seconds(5))
+                await MainActor.run {
+                    self.manualAnnounceError = nil
+                }
+            }
+        }
+
+        isManualAnnouncing = false
+    }
+
+    /// Record last announce timestamp.
+    private func recordAnnounceTime() {
+        lastAnnounceTime = Date()
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "last_announce_time")
+    }
+
+    /// Next scheduled announce time (based on last + interval).
+    public var nextAnnounceTime: Date? {
+        guard isAutoAnnounceEnabled, let last = lastAnnounceTime else { return nil }
+        return last.addingTimeInterval(Double(announceIntervalHours) * 3600)
     }
 
     /// Save delivery/retrieval settings.
