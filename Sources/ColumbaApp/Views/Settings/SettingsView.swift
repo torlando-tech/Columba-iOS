@@ -318,34 +318,132 @@ struct SettingsView: View {
             icon: "antenna.radiowaves.left.and.right",
             title: "Auto Announce",
             isExpanded: Binding(get: { vm.isAutoAnnounceExpanded }, set: { vm.isAutoAnnounceExpanded = $0 }),
-            toggle: Binding(get: { vm.isAutoAnnounceEnabled }, set: { vm.isAutoAnnounceEnabled = $0 })
+            toggle: Binding(get: { vm.isAutoAnnounceEnabled }, set: { newValue in
+                vm.isAutoAnnounceEnabled = newValue
+                vm.saveSettings()
+                vm.syncAutoAnnounce()
+            })
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Automatically announce your presence on the network so others can discover and message you.")
+                Text("Automatically announce your presence on the network at regular intervals. This helps other peers discover you.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
                 if vm.isAutoAnnounceEnabled {
-                    settingsToggleRow(
-                        title: "Announce on Launch",
-                        isOn: Binding(get: { vm.announceOnLaunch }, set: { vm.announceOnLaunch = $0 })
-                    )
+                    // Interval selector
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Announce Interval: \(vm.announceIntervalHours) hour\(vm.announceIntervalHours == 1 ? "" : "s")")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Theme.accentColor)
 
-                    HStack {
-                        Text("Interval")
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.textSecondary)
-
-                        Spacer()
-
-                        Picker("", selection: Binding(get: { vm.announceIntervalMinutes }, set: { vm.announceIntervalMinutes = $0 })) {
-                            Text("5 min").tag(5)
-                            Text("15 min").tag(15)
-                            Text("30 min").tag(30)
-                            Text("1 hour").tag(60)
+                        // Preset chips
+                        HStack(spacing: 8) {
+                            ForEach([1, 3, 6, 12], id: \.self) { hours in
+                                Button {
+                                    vm.announceIntervalHours = hours
+                                    vm.saveSettings()
+                                    vm.syncAutoAnnounce()
+                                } label: {
+                                    Text("\(hours)h")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(vm.announceIntervalHours == hours ? .white : Theme.textSecondary)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 6)
+                                        .background(
+                                            vm.announceIntervalHours == hours
+                                                ? Theme.accentColor
+                                                : Theme.backgroundTertiary
+                                        )
+                                        .clipShape(Capsule())
+                                }
+                            }
                         }
-                        .pickerStyle(.menu)
-                        .tint(Theme.accentColor)
+                    }
+
+                    // Announce status
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let last = vm.lastAnnounceTime {
+                            HStack(spacing: 4) {
+                                Text("Last announce:")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textSecondary)
+                                Text(last, style: .relative)
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textSecondary)
+                                Text("ago")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                        } else {
+                            Text("No announces sent yet")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+
+                        if let next = vm.nextAnnounceTime, next > Date() {
+                            HStack(spacing: 4) {
+                                Text("Next announce in:")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(Theme.accentColor)
+                                Text(next, style: .relative)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(Theme.accentColor)
+                            }
+                        }
+                    }
+
+                    // Announce Now button
+                    HStack {
+                        Spacer()
+                        Button {
+                            Task { await vm.triggerManualAnnounce() }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if vm.isManualAnnouncing {
+                                    ProgressView()
+                                        .tint(Theme.accentColor)
+                                        .scaleEffect(0.7)
+                                } else {
+                                    Image(systemName: "paperplane")
+                                        .font(.system(size: 13, weight: .medium))
+                                }
+                                Text(vm.isManualAnnouncing ? "Announcing..." : "Announce Now")
+                                    .font(.system(size: 14, weight: .medium))
+                            }
+                            .foregroundStyle(Theme.accentColor)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Theme.accentColor.opacity(0.5), lineWidth: 1)
+                            )
+                        }
+                        .disabled(vm.isManualAnnouncing)
+                    }
+
+                    // Success / error feedback
+                    if vm.manualAnnounceSuccess {
+                        HStack(spacing: 4) {
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(Theme.success)
+                            Text("Announce sent!")
+                                .font(.caption)
+                                .foregroundStyle(Theme.success)
+                        }
+                    }
+
+                    if let error = vm.manualAnnounceError {
+                        HStack(spacing: 4) {
+                            Spacer()
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(Theme.error)
+                            Text("Error: \(error)")
+                                .font(.caption)
+                                .foregroundStyle(Theme.error)
+                        }
                     }
                 }
             }
