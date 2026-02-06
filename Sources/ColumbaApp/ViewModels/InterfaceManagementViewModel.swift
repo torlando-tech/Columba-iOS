@@ -262,14 +262,14 @@ public final class InterfaceManagementViewModel {
             if let tcpInterface = tcpEntity,
                case .tcpClient(let config) = tcpInterface.config {
 
-                let relayAddress = "\(config.targetHost):\(config.targetPort)"
-                print("[INTERFACE_VM] Applying changes, connecting to: \(relayAddress)")
+                let serverAddress = "\(config.targetHost):\(config.targetPort)"
+                print("[INTERFACE_VM] Applying changes, connecting to: \(serverAddress)")
 
                 activeInterfaceId = tcpInterface.id
                 interfaceStatus[tcpInterface.id] = .connecting
 
-                await settingsRepository.setRelayAddress(relayAddress)
-                try await appServices.reconnect(relayAddress: relayAddress)
+                await settingsRepository.setServerAddress(serverAddress)
+                try await appServices.reconnect(tcpServerAddress: serverAddress)
 
                 showSuccess("Connecting to \(config.targetHost):\(config.targetPort)...")
             } else if tcpEntity == nil {

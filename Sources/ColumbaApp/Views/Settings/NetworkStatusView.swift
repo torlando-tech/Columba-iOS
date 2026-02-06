@@ -23,6 +23,7 @@ struct NetworkStatusView: View {
     // MARK: - State
 
     @State private var viewModel: NetworkStatusViewModel
+    @State private var selectedInterface: InterfaceInfo?
 
     // MARK: - Init
 
@@ -46,6 +47,9 @@ struct NetworkStatusView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .sheet(item: $selectedInterface) { info in
+            interfaceDetailSheet(info)
+        }
     }
 
     // MARK: - Status Card
@@ -149,7 +153,12 @@ struct NetworkStatusView: View {
                 }
             } else {
                 ForEach(viewModel.interfaces) { info in
-                    interfaceRow(info)
+                    Button {
+                        selectedInterface = info
+                    } label: {
+                        interfaceRow(info)
+                    }
+                    .buttonStyle(.plain)
                     if info.id != viewModel.interfaces.last?.id {
                         Divider()
                             .overlay(Theme.divider)
@@ -209,6 +218,116 @@ struct NetworkStatusView: View {
                 .foregroundStyle(statusIconColor(info))
         }
         .padding(.vertical, 4)
+    }
+
+    // MARK: - Interface Detail Sheet
+
+    private func interfaceDetailSheet(_ info: InterfaceInfo) -> some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Status header
+                    HStack(spacing: 12) {
+                        Image(systemName: iconForType(info.type))
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(Theme.accentColor)
+                            .frame(width: 44, height: 44)
+                            .background(Theme.accentColor.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(info.type)
+                                .font(.headline)
+                                .foregroundStyle(Theme.textPrimary)
+                            Text(stateLabel(info.state))
+                                .font(.subheadline)
+                                .foregroundStyle(info.online ? Theme.success : Theme.error)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: statusIcon(info))
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(statusIconColor(info))
+                    }
+                    .padding(16)
+                    .glassCard()
+
+                    // Details
+                    VStack(alignment: .leading, spacing: 12) {
+                        detailRow(label: "Name", value: info.name)
+                        detailRow(label: "Type", value: info.type)
+                        detailRow(label: "ID", value: info.id)
+                        if let addr = info.peerAddress {
+                            detailRow(label: "Peer Address", value: addr)
+                        }
+                    }
+                    .padding(16)
+                    .glassCard()
+
+                    // Error section
+                    if let error = info.lastErrorDescription {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Theme.error)
+                                Text("Connection Error")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.error)
+                            }
+
+                            Text(error)
+                                .font(.system(.callout, design: .monospaced))
+                                .foregroundStyle(Theme.textPrimary)
+                                .textSelection(.enabled)
+                        }
+                        .padding(16)
+                        .glassCard()
+                    } else if !info.online {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "info.circle")
+                                    .foregroundStyle(Theme.warning)
+                                Text("Interface Offline")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.warning)
+                            }
+
+                            Text("This interface is not currently connected. Check your network settings and ensure the destination is reachable.")
+                                .font(.callout)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(16)
+                        .glassCard()
+                    }
+                }
+                .padding(16)
+            }
+            .background(Theme.backgroundPrimary)
+            .navigationTitle("Interface Details")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { selectedInterface = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func detailRow(label: String, value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 100, alignment: .leading)
+            Text(value)
+                .font(.system(.subheadline, design: .monospaced))
+                .foregroundStyle(Theme.textPrimary)
+                .textSelection(.enabled)
+        }
     }
 
     // MARK: - Helpers

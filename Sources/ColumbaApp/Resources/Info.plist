@@ -31,6 +31,12 @@
 	<array>
 		<string>materialdesignicons.ttf</string>
 	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Columba uses local network access to discover nearby Reticulum peers and connect to TCP servers on your network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_reticulum._tcp</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>

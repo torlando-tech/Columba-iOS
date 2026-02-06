@@ -12,16 +12,16 @@ import LXMFSwift
 /// Actor for thread-safe settings access.
 ///
 /// Uses App Group UserDefaults for data sharing between main app
-/// and Network Extension. Stores relay configuration and identity info.
+/// and Network Extension. Stores server configuration and identity info.
 public actor SettingsRepository {
     // MARK: - Constants
 
     /// App Group identifier for shared container.
     private static let appGroupSuiteName = "group.com.columba.app"
 
-    /// Default relay address for Reticulum network.
+    /// Default TCP server address for Reticulum network.
     /// TODO: Change back to "tcp://reticulum.network:4242" for production
-    private static let defaultRelayAddress = "127.0.0.1:4242"
+    private static let defaultServerAddress = "127.0.0.1:4242"
 
     // MARK: - Keys
 
@@ -54,19 +54,19 @@ public actor SettingsRepository {
         self.defaults = UserDefaults(suiteName: Self.appGroupSuiteName) ?? .standard
     }
 
-    // MARK: - Relay Configuration
+    // MARK: - TCP Server Configuration
 
-    /// Get the configured relay address.
+    /// Get the configured TCP server address.
     ///
-    /// - Returns: Relay TCP address (e.g., "tcp://reticulum.network:4242")
-    public func getRelayAddress() -> String {
-        defaults.string(forKey: Keys.relayAddress) ?? Self.defaultRelayAddress
+    /// - Returns: TCP server address (e.g., "tcp://reticulum.network:4242")
+    public func getServerAddress() -> String {
+        defaults.string(forKey: Keys.relayAddress) ?? Self.defaultServerAddress
     }
 
-    /// Set the relay address.
+    /// Set the TCP server address.
     ///
-    /// - Parameter address: Relay TCP address (e.g., "tcp://10.0.0.1:4242")
-    public func setRelayAddress(_ address: String) {
+    /// - Parameter address: TCP server address (e.g., "tcp://10.0.0.1:4242")
+    public func setServerAddress(_ address: String) {
         defaults.set(address, forKey: Keys.relayAddress)
     }
 

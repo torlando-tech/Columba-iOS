@@ -20,7 +20,7 @@ import os.log
 /// - **Identity**: Local Reticulum identity for signing/encryption
 /// - **LXMRouter**: LXMF message router for sending/receiving
 /// - **ReticuLumTransport**: Transport layer with path routing
-/// - **TCPInterface**: TCP connection to relay server
+/// - **TCPInterface**: TCP connection to server
 /// - **Destination**: LXMF delivery destination for receiving messages
 ///
 /// Uses `@Observable` macro (iOS 17+/macOS 14+) for SwiftUI integration.
@@ -28,7 +28,7 @@ import os.log
 /// Example usage:
 /// ```swift
 /// let services = AppServices()
-/// try await services.initialize(relayAddress: "tcp://10.0.0.1:4242")
+/// try await services.initialize(tcpServerAddress: "tcp://10.0.0.1:4242")
 ///
 /// // Access the router for sending messages
 /// var message = LXMessage(...)
@@ -57,7 +57,7 @@ public final class AppServices {
     /// Path table for route lookups.
     public private(set) var pathTable: PathTable?
 
-    /// TCP interface to relay server.
+    /// TCP interface to server.
     public private(set) var tcpInterface: TCPInterface?
 
     /// Auto discovery interface for LAN peer discovery.
@@ -76,7 +76,7 @@ public final class AppServices {
 
     /// Connection state (observable for UI binding).
     ///
-    /// True when the TCP interface is connected to the relay server.
+    /// True when the TCP interface is connected to the server.
     public private(set) var isConnected: Bool = false
 
     /// Human-readable connection error message (nil when connected or connecting).
@@ -237,7 +237,7 @@ public final class AppServices {
 
     /// Create uninitialized AppServices.
     ///
-    /// Call `initialize(relayAddress:)` to set up all components.
+    /// Call `initialize(tcpServerAddress:)` to set up all components.
     public init() {}
 
     // Note: No deinit needed - stateObserverTask is automatically cancelled
@@ -255,14 +255,14 @@ public final class AppServices {
     /// 4. Creates LXMFDatabase (in-memory for now)
     /// 5. Creates LXMRouter with identity and database
     /// 6. Creates and registers LXMF delivery Destination
-    /// 7. Parses relay address and creates TCPInterface
+    /// 7. Parses server address and creates TCPInterface
     /// 8. Adds interface to transport
     /// 9. Sets transport on router
     ///
-    /// - Parameter relayAddress: TCP relay address (e.g., "tcp://10.0.0.1:4242" or "10.0.0.1:4242")
+    /// - Parameter tcpServerAddress: TCP server address (e.g., "tcp://10.0.0.1:4242" or "10.0.0.1:4242")
     /// - Throws: InterfaceError, DatabaseError, or other initialization errors
-    public func initialize(relayAddress: String) async throws {
-        logger.info("Starting initialize with relay: \(relayAddress, privacy: .public)")
+    public func initialize(tcpServerAddress: String) async throws {
+        logger.info("Starting initialize with TCP server: \(tcpServerAddress, privacy: .public)")
 
         // 1. Load identity from persistent storage (try Keychain first, then file)
         let newIdentity: Identity = Self.loadOrCreateIdentity()
@@ -301,11 +301,11 @@ public final class AppServices {
         //    router is ready to receive packets as soon as any interface connects)
         await newRouter.setTransport(newTransport)
 
-        // 8. Parse relay address and create TCP interface (non-fatal — app works offline)
-        if let (host, port) = parseHostPort(relayAddress) {
+        // 8. Parse server address and create TCP interface (non-fatal — app works offline)
+        if let (host, port) = parseHostPort(tcpServerAddress) {
             let config = InterfaceConfig(
-                id: "relay",
-                name: "Relay Server",
+                id: "tcp-server",
+                name: "TCP Server",
                 type: .tcp,
                 enabled: true,
                 mode: .full,
@@ -506,7 +506,7 @@ public final class AppServices {
 
     /// Initialize the base stack (identity, transport, router) without a TCP interface.
     ///
-    /// Used when starting only AutoInterface without a TCP relay.
+    /// Used when starting only AutoInterface without a TCP server.
     private func initializeBaseStack() async throws {
         // 1. Identity
         if identity == nil {
@@ -610,7 +610,7 @@ public final class AppServices {
 
         // Remove interface from transport
         if let transport = transport {
-            await transport.removeInterface(id: "relay")
+            await transport.removeInterface(id: "tcp-server")
         }
 
         isConnected = false
@@ -619,17 +619,17 @@ public final class AppServices {
 
     // MARK: - Reconnection
 
-    /// Reconnect to a new relay server.
+    /// Reconnect to a new TCP server.
     ///
     /// This method:
     /// 1. Shuts down existing connections
     /// 2. Clears the path table (old paths invalid for new network)
-    /// 3. Re-initializes with the new relay address
+    /// 3. Re-initializes with the new server address
     ///
-    /// - Parameter relayAddress: New relay TCP address (e.g., "tcp://10.0.0.1:4242")
+    /// - Parameter tcpServerAddress: New TCP server address (e.g., "tcp://10.0.0.1:4242")
     /// - Throws: InterfaceError or other initialization errors
-    public func reconnect(relayAddress: String) async throws {
-        logger.info("Reconnecting to new relay: \(relayAddress)")
+    public func reconnect(tcpServerAddress: String) async throws {
+        logger.info("Reconnecting to new TCP server: \(tcpServerAddress)")
 
         // 1. Shutdown existing connection
         await shutdown()
@@ -643,7 +643,7 @@ public final class AppServices {
         try? await Task.sleep(for: .milliseconds(100))
 
         // 4. Re-initialize with new address (reuses existing identity)
-        try await reinitializeConnection(relayAddress: relayAddress)
+        try await reinitializeConnection(tcpServerAddress: tcpServerAddress)
 
         logger.info("Reconnection complete")
     }
@@ -651,14 +651,14 @@ public final class AppServices {
     /// Re-initialize just the connection components (keeps identity).
     ///
     /// Used by reconnect() to avoid recreating identity on server change.
-    private func reinitializeConnection(relayAddress: String) async throws {
+    private func reinitializeConnection(tcpServerAddress: String) async throws {
         guard let existingIdentity = identity else {
             throw AppServicesError.identityNotInitialized
         }
 
-        // Parse relay address
-        guard let (host, port) = parseHostPort(relayAddress) else {
-            throw AppServicesError.invalidRelayAddress(relayAddress)
+        // Parse server address
+        guard let (host, port) = parseHostPort(tcpServerAddress) else {
+            throw AppServicesError.invalidServerAddress(tcpServerAddress)
         }
 
         logger.info("Connecting to \(host):\(port)")
@@ -680,8 +680,8 @@ public final class AppServices {
 
         // Create and connect new TCP interface
         let config = InterfaceConfig(
-            id: "relay",
-            name: "Relay Server",
+            id: "tcp-server",
+            name: "TCP Server",
             type: .tcp,
             enabled: true,
             mode: .full,
@@ -763,8 +763,8 @@ public final class AppServices {
 
 /// Errors from AppServices operations.
 public enum AppServicesError: Error, Equatable {
-    /// Invalid relay address format
-    case invalidRelayAddress(String)
+    /// Invalid server address format
+    case invalidServerAddress(String)
 
     /// Identity not initialized
     case identityNotInitialized
@@ -781,8 +781,8 @@ public enum AppServicesError: Error, Equatable {
 extension AppServicesError: CustomStringConvertible {
     public var description: String {
         switch self {
-        case .invalidRelayAddress(let address):
-            return "Invalid relay address format: \(address)"
+        case .invalidServerAddress(let address):
+            return "Invalid server address format: \(address)"
         case .identityNotInitialized:
             return "Identity not initialized"
         case .routerNotInitialized:
