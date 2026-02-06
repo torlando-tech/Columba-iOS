@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import LXMFSwift
 
 /// Actor for thread-safe settings access.
 ///
@@ -35,6 +36,9 @@ public actor SettingsRepository {
         static let periodicSyncEnabled = "periodicSyncEnabled"
         static let syncIntervalSeconds = "syncIntervalSeconds"
         static let lastSyncTimestamp = "lastSyncTimestamp"
+        static let iconName = "profileIconName"
+        static let iconFgColor = "profileIconFgColor"
+        static let iconBgColor = "profileIconBgColor"
     }
 
     // MARK: - Properties
@@ -185,6 +189,35 @@ public actor SettingsRepository {
     /// Set last sync timestamp.
     public func setLastSyncTimestamp(_ timestamp: TimeInterval) {
         defaults.set(timestamp, forKey: Keys.lastSyncTimestamp)
+    }
+
+    // MARK: - Icon Appearance
+
+    /// Get the local user's profile icon appearance.
+    ///
+    /// - Returns: IconAppearance if set, nil if using identicon
+    public func getIconAppearance() -> IconAppearance? {
+        guard let name = defaults.string(forKey: Keys.iconName),
+              let fg = defaults.string(forKey: Keys.iconFgColor),
+              let bg = defaults.string(forKey: Keys.iconBgColor) else {
+            return nil
+        }
+        return IconAppearance(iconName: name, foregroundColor: fg, backgroundColor: bg)
+    }
+
+    /// Set the local user's profile icon appearance.
+    ///
+    /// - Parameter icon: IconAppearance to save, or nil to revert to identicon
+    public func setIconAppearance(_ icon: IconAppearance?) {
+        if let icon = icon {
+            defaults.set(icon.iconName, forKey: Keys.iconName)
+            defaults.set(icon.foregroundColor, forKey: Keys.iconFgColor)
+            defaults.set(icon.backgroundColor, forKey: Keys.iconBgColor)
+        } else {
+            defaults.removeObject(forKey: Keys.iconName)
+            defaults.removeObject(forKey: Keys.iconFgColor)
+            defaults.removeObject(forKey: Keys.iconBgColor)
+        }
     }
 
     // MARK: - Utility

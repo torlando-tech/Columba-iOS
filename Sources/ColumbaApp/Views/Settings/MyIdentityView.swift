@@ -32,7 +32,7 @@ struct MyIdentityView: View {
     @State private var showAdvanced = false
     @State private var showQRFullScreen = false
     @State private var showShareSheet = false
-    @State private var showImagePicker = false
+    @State private var showIconPicker = false
     @State private var copiedToClipboard = false
 
     // MARK: - Body
@@ -81,6 +81,14 @@ struct MyIdentityView: View {
             if let qrImage = generateQRCodeImage() {
                 ShareSheet(items: [qrImage])
             }
+        }
+        .sheet(isPresented: $showIconPicker) {
+            IconPickerView(iconAppearance: Binding(
+                get: { viewModel.iconAppearance },
+                set: { newValue in
+                    Task { await viewModel.updateIconAppearance(newValue) }
+                }
+            ))
         }
         #endif
     }
@@ -236,27 +244,50 @@ struct MyIdentityView: View {
 
             // Current icon preview
             HStack(spacing: 12) {
-                // Identicon placeholder
-                SettingsIdenticonView(hash: viewModel.identity.identityHash)
+                if let icon = viewModel.iconAppearance,
+                   let char = MaterialDesignIcons.character(for: icon.iconName) {
+                    // Show MDI icon
+                    ZStack {
+                        Circle()
+                            .fill(Color(hexRGB: icon.backgroundColor))
+                        Text(String(char))
+                            .font(.custom(MaterialDesignIcons.fontName, size: 26))
+                            .foregroundStyle(Color(hexRGB: icon.foregroundColor))
+                    }
                     .frame(width: 48, height: 48)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Using Identicon")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textPrimary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Custom Icon")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textPrimary)
 
-                    Text("Auto-generated from your identity")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
+                        Text(icon.iconName)
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                } else {
+                    // Identicon fallback
+                    SettingsIdenticonView(hash: viewModel.identity.identityHash)
+                        .frame(width: 48, height: 48)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Using Identicon")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textPrimary)
+
+                        Text("Auto-generated from your identity")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
                 }
 
                 Spacer()
             }
 
             // Choose Custom Icon button
-            Button(action: { showImagePicker = true }) {
+            Button(action: { showIconPicker = true }) {
                 HStack(spacing: 8) {
-                    Image(systemName: "photo.badge.plus")
+                    Image(systemName: "face.smiling.inverse")
                         .font(.system(size: 14, weight: .medium))
                     Text("Choose Custom Icon")
                         .font(.system(size: 15, weight: .medium))

@@ -105,6 +105,9 @@ public final class SettingsViewModel {
     /// Current identity information.
     public var identity = IdentityInfo()
 
+    /// Current icon appearance (nil = identicon).
+    public var iconAppearance: IconAppearance?
+
     /// Saved display name for change detection.
     private var savedDisplayName: String = ""
 
@@ -216,6 +219,9 @@ public final class SettingsViewModel {
             usesIdenticon: true
         )
 
+        // Load icon appearance
+        iconAppearance = await settingsRepository.getIconAppearance()
+
         // Update connection state from AppServices
         isConnected = appServices.isConnected
 
@@ -284,6 +290,13 @@ public final class SettingsViewModel {
         defaults.set(sharePreciseLocation, forKey: "share_precise_location")
         defaults.set(locationUpdateInterval, forKey: "location_update_interval")
         defaults.set(selectedMapSource.rawValue, forKey: "map_source")
+    }
+
+    /// Update icon appearance and persist.
+    @MainActor
+    public func updateIconAppearance(_ icon: IconAppearance?) async {
+        iconAppearance = icon
+        await settingsRepository.setIconAppearance(icon)
     }
 
     /// Save the current display name.

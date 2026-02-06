@@ -22,6 +22,9 @@ public struct Conversation: Identifiable, Equatable, Hashable {
     public var lastMessagePreview: String?
     public var unreadCount: Int
     public var isFavorite: Bool
+    public var iconName: String?
+    public var iconFgColor: String?
+    public var iconBgColor: String?
 
     /// Display name with fallback to truncated hash.
     public var peerName: String {
@@ -68,6 +71,9 @@ public struct Conversation: Identifiable, Equatable, Hashable {
         self.lastMessagePreview = record.lastMessagePreview
         self.unreadCount = record.unreadCount
         self.isFavorite = record.isFavorite != 0
+        self.iconName = record.iconName
+        self.iconFgColor = record.iconFgColor
+        self.iconBgColor = record.iconBgColor
     }
 
     public init(

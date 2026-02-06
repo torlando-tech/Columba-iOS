@@ -9,6 +9,7 @@
 import SwiftUI
 import Observation
 import LXMFSwift
+import ReticulumSwift
 import os.log
 
 /// ViewModel for the messaging screen.
@@ -150,13 +151,19 @@ public final class MessagingViewModel {
             deliveryMethod = .direct
         }
 
+        // Build fields with icon appearance if set
+        var fields: [UInt8: Any]? = nil
+        if let icon = await SettingsRepository().getIconAppearance() {
+            fields = [IconAppearance.fieldKey: icon.toLXMFFieldValue()]
+        }
+
         // Create outbound LXMF message
         var lxMessage = LXMessage(
             destinationHash: conversationHash,
             sourceIdentity: identity,
             content: trimmedText.data(using: .utf8) ?? Data(),
             title: Data(),
-            fields: nil,
+            fields: fields,
             desiredMethod: deliveryMethod
         )
 
@@ -212,7 +219,7 @@ public final class MessagingViewModel {
                     sourceIdentity: identity,
                     content: trimmedText.data(using: .utf8) ?? Data(),
                     title: Data(),
-                    fields: nil,
+                    fields: fields,
                     desiredMethod: .propagated
                 )
 

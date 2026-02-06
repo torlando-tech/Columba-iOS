@@ -34,6 +34,9 @@ public struct Contact: Identifiable, Sendable, Hashable {
     public let isOnline: Bool
     public let isFavorite: Bool
     public let isRelay: Bool
+    public var iconName: String?
+    public var iconFgColor: String?
+    public var iconBgColor: String?
 
     /// Display name with fallback to "Unknown Peer".
     public var resolvedDisplayName: String {
@@ -107,6 +110,9 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.isOnline = true
         self.isFavorite = record.isFavorite != 0
         self.isRelay = false
+        self.iconName = record.iconName
+        self.iconFgColor = record.iconFgColor
+        self.iconBgColor = record.iconBgColor
     }
 
     public init(
