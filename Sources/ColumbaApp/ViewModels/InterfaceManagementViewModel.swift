@@ -95,10 +95,20 @@ public final class InterfaceManagementViewModel {
     // Auto Interface fields
     public var configAutoGroupId: String = "reticulum"
 
+    // RNode fields
+    public var configDeviceName: String = ""
+    public var configFrequency: String = "915000000"
+    public var configBandwidth: String = "125000"
+    public var configTxPower: String = "17"
+    public var configSpreadingFactor: String = "7"
+    public var configCodingRate: String = "5"
+
     // Validation errors
     public var nameError: String?
     public var targetHostError: String?
     public var targetPortError: String?
+    public var deviceNameError: String?
+    public var frequencyError: String?
 
     // MARK: - Runtime Status
 
@@ -130,6 +140,10 @@ public final class InterfaceManagementViewModel {
                 && isValidPort(configTargetPort)
         case .tcpServer:
             return isValidPort(configListenPort)
+        case .rnode:
+            return !configDeviceName.trimmingCharacters(in: .whitespaces).isEmpty
+                && UInt32(configFrequency) != nil
+                && UInt32(configBandwidth) != nil
         default:
             return true
         }
@@ -295,6 +309,67 @@ public final class InterfaceManagementViewModel {
                 await appServices.stopAutoInterface()
             }
 
+            // Handle RNode interface
+            let rnodeEntity = enabledInterfaces.first(where: { $0.type == .rnode })
+            if let rnodeIf = rnodeEntity,
+               case .rnode(let rnodeConfig) = rnodeIf.config {
+
+                print("[INTERFACE_VM] Applying RNode changes, device: \(rnodeConfig.deviceName)")
+
+                // Build transport-layer config
+                let transportConfig = InterfaceConfig(
+                    id: rnodeIf.id,
+                    name: rnodeIf.name,
+                    type: .rnode,
+                    enabled: true,
+                    mode: .full,
+                    host: rnodeConfig.deviceName,  // BLE device name in "host" field
+                    port: 0                        // Unused for BLE
+                )
+
+                // Disconnect existing RNode if any
+                if let existingRNode = appServices.rnodeInterface {
+                    await existingRNode.disconnect()
+                    if let transport = await appServices.transport {
+                        await transport.removeInterface(id: existingRNode.id)
+                    }
+                }
+
+                // Ensure base stack exists
+                if await appServices.transport == nil {
+                    // Transport not initialized yet -- skip RNode (needs TCP or base stack first)
+                    print("[INTERFACE_VM] Transport not initialized, skipping RNode")
+                } else {
+                    // Create new RNode interface
+                    let rnodeInterface = try RNodeInterface(config: transportConfig)
+
+                    // Configure radio BEFORE connecting (critical ordering!)
+                    let radioConfig = rnodeConfig.toRadioConfig()
+                    try await rnodeInterface.configureRadio(radioConfig)
+
+                    // Store reference in AppServices for lifecycle management
+                    appServices.rnodeInterface = rnodeInterface
+
+                    // Register with transport (connects automatically)
+                    guard let transport = await appServices.transport else {
+                        throw AppServicesError.transportNotConnected
+                    }
+                    try await transport.addInterface(rnodeInterface)
+
+                    interfaceStatus[rnodeIf.id] = .connecting
+                    showSuccess("Connecting to RNode \(rnodeConfig.deviceName)...")
+                }
+            } else {
+                // No enabled RNode -- disconnect if running
+                if let existingRNode = appServices.rnodeInterface {
+                    await existingRNode.disconnect()
+                    if let transport = await appServices.transport {
+                        await transport.removeInterface(id: existingRNode.id)
+                    }
+                    appServices.rnodeInterface = nil
+                }
+            }
+
             hasPendingChanges = false
 
             if tcpEntity == nil && autoEntity == nil {
@@ -378,6 +453,25 @@ public final class InterfaceManagementViewModel {
                     }
                 }
 
+                // Track RNode interface status
+                if let rnodeEntity = enabledInterfaces.first(where: { $0.type == .rnode }) {
+                    if let rnode = self.appServices.rnodeInterface {
+                        let rnodeState = await rnode.state
+                        switch rnodeState {
+                        case .connected:
+                            self.interfaceStatus[rnodeEntity.id] = .connected
+                        case .connecting:
+                            self.interfaceStatus[rnodeEntity.id] = .connecting
+                        case .reconnecting:
+                            self.interfaceStatus[rnodeEntity.id] = .reconnecting
+                        case .disconnected:
+                            self.interfaceStatus[rnodeEntity.id] = .disconnected
+                        }
+                    } else {
+                        self.interfaceStatus[rnodeEntity.id] = .disconnected
+                    }
+                }
+
                 try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
             }
         }
@@ -398,9 +492,17 @@ public final class InterfaceManagementViewModel {
         configListenIp = "0.0.0.0"
         configListenPort = "4242"
         configAutoGroupId = "reticulum"
+        configDeviceName = ""
+        configFrequency = "915000000"
+        configBandwidth = "125000"
+        configTxPower = "17"
+        configSpreadingFactor = "7"
+        configCodingRate = "5"
         nameError = nil
         targetHostError = nil
         targetPortError = nil
+        deviceNameError = nil
+        frequencyError = nil
     }
 
     private func populateConfigForm(from interface: InterfaceEntity) {
@@ -423,9 +525,13 @@ public final class InterfaceManagementViewModel {
         case .autoInterface(let config):
             configAutoGroupId = config.groupId ?? "reticulum"
 
-        case .rnode:
-            // RNode config editing will be implemented in Phase 12-02
-            break
+        case .rnode(let config):
+            configDeviceName = config.deviceName
+            configFrequency = String(config.frequency)
+            configBandwidth = String(config.bandwidth)
+            configTxPower = String(config.txPower)
+            configSpreadingFactor = String(config.spreadingFactor)
+            configCodingRate = String(config.codingRate)
         }
     }
 
@@ -452,9 +558,14 @@ public final class InterfaceManagementViewModel {
             ))
 
         case .rnode:
-            // RNode config editing will be implemented in Phase 12-02
-            // Return default US 915 MHz config for now
-            return .rnode(RNodeConfig.defaultUS915)
+            return .rnode(RNodeConfig(
+                deviceName: configDeviceName.trimmingCharacters(in: .whitespaces),
+                frequency: UInt32(configFrequency) ?? 915_000_000,
+                bandwidth: UInt32(configBandwidth) ?? 125_000,
+                txPower: UInt8(configTxPower) ?? 17,
+                spreadingFactor: UInt8(configSpreadingFactor) ?? 7,
+                codingRate: UInt8(configCodingRate) ?? 5
+            ))
 
         case .androidBLE:
             // AndroidBLE not yet implemented, fall through to default
@@ -496,6 +607,27 @@ public final class InterfaceManagementViewModel {
                 valid = false
             } else {
                 targetPortError = nil
+            }
+
+        case .rnode:
+            let device = configDeviceName.trimmingCharacters(in: .whitespaces)
+            if device.isEmpty {
+                deviceNameError = "Device name is required"
+                valid = false
+            } else {
+                deviceNameError = nil
+            }
+
+            if let freq = UInt32(configFrequency) {
+                if freq < 137_000_000 || freq > 3_000_000_000 {
+                    frequencyError = "Frequency must be 137 MHz - 3 GHz"
+                    valid = false
+                } else {
+                    frequencyError = nil
+                }
+            } else {
+                frequencyError = "Invalid frequency"
+                valid = false
             }
 
         default:
