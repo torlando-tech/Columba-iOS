@@ -103,6 +103,8 @@ final class NetworkStatusViewModel {
             let typeName: String
             if snap.isAutoInterfacePeer {
                 typeName = "AutoInterfacePeer"
+            } else if snap.isBLEPeerInterface {
+                typeName = "BLEPeer"
             } else {
                 switch snap.type {
                 case .tcp: typeName = "TCPClient"
@@ -110,6 +112,7 @@ final class NetworkStatusViewModel {
                 case .i2p: typeName = "I2P"
                 case .autoInterface: typeName = "AutoInterface"
                 case .rnode: typeName = "RNode"
+                case .ble: typeName = "BLE"
                 }
             }
 

@@ -66,6 +66,9 @@ public final class AppServices {
     /// Auto discovery interface for LAN peer discovery.
     public private(set) var autoInterface: AutoInterface?
 
+    /// BLE interface for Bluetooth peer-to-peer networking.
+    public private(set) var bleInterface: BLEInterface?
+
     /// LXMF delivery destination for receiving messages.
     public private(set) var deliveryDestination: Destination?
 
@@ -640,6 +643,53 @@ public final class AppServices {
         logger.info("AutoInterface stopped")
     }
 
+    #if canImport(CoreBluetooth)
+    /// Start the BLE interface for Bluetooth peer-to-peer networking.
+    public func startBLEInterface() async throws {
+        // Stop existing BLE interface if running
+        await stopBLEInterface()
+
+        // Ensure base stack exists
+        if transport == nil {
+            try await initializeBaseStack()
+        }
+
+        guard let transport = transport, let identity = identity else {
+            throw AppServicesError.transportNotConnected
+        }
+
+        let identityHash = identity.hash
+
+        let config = InterfaceConfig(
+            id: "ble0",
+            name: "Bluetooth LE",
+            type: .ble,
+            enabled: true,
+            mode: .full,
+            host: "",
+            port: 0
+        )
+
+        let driver = CoreBluetoothBLEDriver(identityHash: identityHash)
+        let newBLEInterface = BLEInterface(config: config, driver: driver, transportIdentity: identityHash)
+        self.bleInterface = newBLEInterface
+
+        try await transport.addBLEInterface(newBLEInterface)
+        logger.info("BLEInterface started")
+    }
+
+    /// Stop the BLE interface.
+    public func stopBLEInterface() async {
+        guard let ble = bleInterface else { return }
+        await ble.disconnect()
+        if let transport = transport {
+            await transport.removeInterface(id: ble.id)
+        }
+        bleInterface = nil
+        logger.info("BLEInterface stopped")
+    }
+    #endif
+
     /// Initialize the base stack (identity, transport, router) without a TCP interface.
     ///
     /// Used when starting only AutoInterface without a TCP server.
@@ -757,6 +807,11 @@ public final class AppServices {
             await transport.removeInterface(id: rnode.id)
         }
         rnodeInterface = nil
+
+        // Stop BLE interface
+        #if canImport(CoreBluetooth)
+        await stopBLEInterface()
+        #endif
 
         // Stop auto interface
         await stopAutoInterface()

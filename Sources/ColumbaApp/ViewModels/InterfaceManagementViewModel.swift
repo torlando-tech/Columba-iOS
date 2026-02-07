@@ -309,6 +309,20 @@ public final class InterfaceManagementViewModel {
                 await appServices.stopAutoInterface()
             }
 
+            // Handle BLE interface
+            #if canImport(CoreBluetooth)
+            let bleEntity = enabledInterfaces.first(where: { $0.type == .ble })
+            if bleEntity != nil {
+                print("[INTERFACE_VM] Starting BLE interface")
+                interfaceStatus[bleEntity!.id] = .connecting
+                try await appServices.startBLEInterface()
+                interfaceStatus[bleEntity!.id] = .connected
+                showSuccess("BLE interface started")
+            } else {
+                await appServices.stopBLEInterface()
+            }
+            #endif
+
             // Handle RNode interface
             let rnodeEntity = enabledInterfaces.first(where: { $0.type == .rnode })
             if let rnodeIf = rnodeEntity,
@@ -410,13 +424,14 @@ public final class InterfaceManagementViewModel {
                 guard let self = self else { break }
 
                 // Read @MainActor properties we need for actor lookups
-                let (activeId, isConn, isReconn, connErr, autoIf, rnodeIf, enabledIfs) = await MainActor.run {
+                let (activeId, isConn, isReconn, connErr, autoIf, bleIf, rnodeIf, enabledIfs) = await MainActor.run {
                     (
                         self.activeInterfaceId,
                         self.appServices.isConnected,
                         self.appServices.isReconnecting,
                         self.appServices.connectionError,
                         self.appServices.autoInterface,
+                        self.appServices.bleInterface,
                         self.appServices.rnodeInterface,
                         self.repository.getEnabledInterfaces()
                     )
@@ -428,6 +443,13 @@ public final class InterfaceManagementViewModel {
                 if let auto = autoIf {
                     autoState = await auto.state
                     autoPeerCount = await auto.peerCount
+                }
+
+                var bleState: InterfaceState?
+                var blePeerCount: Int?
+                if let ble = bleIf {
+                    bleState = await ble.state
+                    blePeerCount = await ble.peerCount
                 }
 
                 var rnodeState: InterfaceState?
@@ -476,6 +498,26 @@ public final class InterfaceManagementViewModel {
                             }
                         } else {
                             self.interfaceStatus[autoEntity.id] = .disconnected
+                        }
+                    }
+
+                    // Track BLE interface status
+                    if let bleEntity = enabledIfs.first(where: { $0.type == .ble }) {
+                        if let state = bleState {
+                            switch state {
+                            case .connected:
+                                self.interfaceStatus[bleEntity.id] = .connected
+                            case .connecting:
+                                self.interfaceStatus[bleEntity.id] = .connecting
+                            default:
+                                if (blePeerCount ?? 0) > 0 {
+                                    self.interfaceStatus[bleEntity.id] = .connected
+                                } else {
+                                    self.interfaceStatus[bleEntity.id] = .disconnected
+                                }
+                            }
+                        } else {
+                            self.interfaceStatus[bleEntity.id] = .disconnected
                         }
                     }
 
@@ -551,6 +593,9 @@ public final class InterfaceManagementViewModel {
         case .autoInterface(let config):
             configAutoGroupId = config.groupId ?? "reticulum"
 
+        case .ble:
+            break // No type-specific fields to populate
+
         case .rnode(let config):
             configDeviceName = config.deviceName
             configFrequency = String(config.frequency)
@@ -593,12 +638,8 @@ public final class InterfaceManagementViewModel {
                 codingRate: UInt8(configCodingRate) ?? 5
             ))
 
-        case .androidBLE:
-            // AndroidBLE not yet implemented, fall through to default
-            return .tcpClient(TCPClientConfig(
-                targetHost: configTargetHost,
-                targetPort: 4242
-            ))
+        case .ble:
+            return .ble(BLEConfig())
         }
     }
 

@@ -73,7 +73,7 @@ public enum InterfaceType: String, Codable, Sendable, CaseIterable {
     case tcpClient = "TCPClient"
     case tcpServer = "TCPServer"
     case autoInterface = "AutoInterface"
-    case androidBLE = "AndroidBLE"
+    case ble = "BLE"
     case rnode = "RNode"
 
     public var displayName: String {
@@ -81,7 +81,7 @@ public enum InterfaceType: String, Codable, Sendable, CaseIterable {
         case .tcpClient: return "TCP Client"
         case .tcpServer: return "TCP Server"
         case .autoInterface: return "Auto Discovery"
-        case .androidBLE: return "Bluetooth LE"
+        case .ble: return "Bluetooth LE"
         case .rnode: return "RNode LoRa"
         }
     }
@@ -91,7 +91,7 @@ public enum InterfaceType: String, Codable, Sendable, CaseIterable {
         case .tcpClient: return "Connect to a remote Reticulum transport node"
         case .tcpServer: return "Accept incoming connections from other nodes"
         case .autoInterface: return "Automatically discover peers on local network"
-        case .androidBLE: return "Direct connection via Bluetooth LE"
+        case .ble: return "Peer-to-peer networking over Bluetooth LE"
         case .rnode: return "Connect to RNode hardware via Bluetooth"
         }
     }
@@ -101,7 +101,7 @@ public enum InterfaceType: String, Codable, Sendable, CaseIterable {
         case .tcpClient: return "arrow.up.forward.circle"
         case .tcpServer: return "arrow.down.backward.circle"
         case .autoInterface: return "antenna.radiowaves.left.and.right"
-        case .androidBLE: return "wave.3.right"
+        case .ble: return "wave.3.right"
         case .rnode: return "radio"
         }
     }
@@ -114,6 +114,7 @@ public enum InterfaceTypeConfig: Codable, Equatable, Sendable {
     case tcpClient(TCPClientConfig)
     case tcpServer(TCPServerConfig)
     case autoInterface(AutoInterfaceConfig)
+    case ble(BLEConfig)
     case rnode(RNodeConfig)
 
     private enum CodingKeys: String, CodingKey {
@@ -135,6 +136,9 @@ public enum InterfaceTypeConfig: Codable, Equatable, Sendable {
         case "autoInterface":
             let config = try container.decode(AutoInterfaceConfig.self, forKey: .config)
             self = .autoInterface(config)
+        case "ble":
+            let config = try container.decode(BLEConfig.self, forKey: .config)
+            self = .ble(config)
         case "rnode":
             let config = try container.decode(RNodeConfig.self, forKey: .config)
             self = .rnode(config)
@@ -155,6 +159,9 @@ public enum InterfaceTypeConfig: Codable, Equatable, Sendable {
             try container.encode(config, forKey: .config)
         case .autoInterface(let config):
             try container.encode("autoInterface", forKey: .type)
+            try container.encode(config, forKey: .config)
+        case .ble(let config):
+            try container.encode("ble", forKey: .type)
             try container.encode(config, forKey: .config)
         case .rnode(let config):
             try container.encode("rnode", forKey: .type)
@@ -237,6 +244,25 @@ public struct AutoInterfaceConfig: Codable, Equatable, Sendable {
         self.discoveryScope = discoveryScope
         self.discoveryPort = discoveryPort
         self.dataPort = dataPort
+    }
+}
+
+// MARK: - BLE Mesh Config
+
+/// Configuration for BLE mesh interface.
+public struct BLEConfig: Codable, Equatable, Sendable {
+    /// Whether to enable advertising (GATT server)
+    public var advertise: Bool
+
+    /// Whether to enable scanning (GATT client)
+    public var scan: Bool
+
+    public init(
+        advertise: Bool = true,
+        scan: Bool = true
+    ) {
+        self.advertise = advertise
+        self.scan = scan
     }
 }
 

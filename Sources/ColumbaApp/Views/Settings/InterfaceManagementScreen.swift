@@ -113,6 +113,8 @@ struct InterfaceManagementScreen: View {
             Group {
                 if viewModel.configType == .autoInterface {
                     AutoInterfaceConfigSheet(viewModel: viewModel)
+                } else if viewModel.configType == .ble {
+                    BLEInterfaceConfigSheet(viewModel: viewModel)
                 } else if viewModel.configType == .rnode {
                     RNodeConfigSheet(viewModel: viewModel)
                 } else {
@@ -298,6 +300,14 @@ struct InterfaceCard: View {
                         .font(.caption.monospaced())
                 }
                 .foregroundStyle(Theme.textSecondary)
+            } else if case .ble = interface.config {
+                HStack(spacing: 4) {
+                    Image(systemName: "wave.3.right")
+                        .font(.caption)
+                    Text("Bluetooth LE peer-to-peer")
+                        .font(.caption.monospaced())
+                }
+                .foregroundStyle(Theme.textSecondary)
             } else if case .rnode(let config) = interface.config {
                 HStack(spacing: 4) {
                     Image(systemName: "radio")
@@ -399,6 +409,11 @@ struct InterfaceTypeSelector: View {
 
                     typeOption(
                         type: .autoInterface,
+                        highlighted: true
+                    )
+
+                    typeOption(
+                        type: .ble,
                         highlighted: true
                     )
 
@@ -780,6 +795,112 @@ struct AutoInterfaceConfigSheet: View {
                 }
             }
             .navigationTitle(viewModel.isEditing ? "Edit Auto Discovery" : "Add Auto Discovery")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") {
+                        viewModel.dismissConfigSheet()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(viewModel.isEditing ? "Update" : "Add") {
+                        viewModel.saveInterface()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(!viewModel.isFormValid)
+                }
+            }
+            .toolbarBackground(Theme.backgroundPrimary, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            #endif
+        }
+    }
+}
+
+// MARK: - BLE Interface Config Sheet
+
+/// Sheet for configuring BLE interface.
+@available(iOS 17.0, macOS 14.0, *)
+struct BLEInterfaceConfigSheet: View {
+
+    @Bindable var viewModel: InterfaceManagementViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.backgroundPrimary
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Interface Name
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Interface Name")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Theme.textPrimary)
+
+                            TextField("e.g., BLE Peers", text: $viewModel.configName)
+                                .textFieldStyle(.plain)
+                                .padding(12)
+                                .background(Theme.backgroundSecondary)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
+                                .foregroundStyle(Theme.textPrimary)
+                                #if os(iOS)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.never)
+                                #endif
+
+                            if let error = viewModel.nameError {
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.error)
+                            }
+                        }
+
+                        // Enabled Toggle
+                        HStack {
+                            Text("Enabled")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Theme.textPrimary)
+
+                            Spacer()
+
+                            Toggle("", isOn: $viewModel.configEnabled)
+                                .labelsHidden()
+                                .tint(Theme.accentColor)
+                        }
+                        .padding(16)
+                        .background(Theme.backgroundSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+
+                        // Info card
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("How BLE Works", systemImage: "info.circle")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Theme.accentColor)
+
+                            Text("BLE creates a peer-to-peer Bluetooth Low Energy network between nearby devices running Reticulum. No internet or WiFi required.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+
+                            Text("Devices automatically discover, connect, and exchange packets over BLE GATT. Up to 7 simultaneous peer connections.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+
+                            Text("Range is typically 10-30 meters depending on environment and device.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(16)
+                        .background(Theme.accentColor.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                    }
+                    .padding(16)
+                }
+            }
+            .navigationTitle(viewModel.isEditing ? "Edit BLE" : "Add BLE")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
