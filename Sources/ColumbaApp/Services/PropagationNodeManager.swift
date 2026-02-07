@@ -12,21 +12,6 @@ import LXMFSwift
 import ReticulumSwift
 import os.log
 
-/// Debug logging for propagation node manager.
-private func appendPropMgrDebug(_ message: String) {
-    let line = "[\(Date())] \(message)\n"
-    let path = "/tmp/columba_propmgr_debug.log"
-    if let handle = FileHandle(forWritingAtPath: path) {
-        handle.seekToEndOfFile()
-        if let data = line.data(using: .utf8) {
-            handle.write(data)
-        }
-        handle.closeFile()
-    } else {
-        try? line.write(toFile: path, atomically: true, encoding: .utf8)
-    }
-}
-
 // MARK: - Propagation Node Model
 
 /// Display model for a discovered propagation node.
@@ -116,7 +101,6 @@ public final class PropagationNodeManager {
     /// Start listening for propagation node announces on the path table.
     public func startListening() {
         guard let pathTable = appServices?.pathTable else {
-            appendPropMgrDebug("[PROP_MGR] startListening: pathTable is nil, cannot start")
             return
         }
 
@@ -124,14 +108,9 @@ public final class PropagationNodeManager {
         listenTask = Task {
             // Initial scan of existing path entries
             let entries = await pathTable.allEntries()
-            appendPropMgrDebug("[PROP_MGR] Initial scan: \(entries.count) path entries")
             for entry in entries {
-                let hex = entry.destinationHash.prefix(8).map { String(format: "%02x", $0) }.joined()
-                let hasAppData = entry.appData != nil
-                appendPropMgrDebug("[PROP_MGR] Checking entry \(hex), appData=\(hasAppData ? "\(entry.appData!.count)B" : "nil")")
                 await processPathEntry(entry)
             }
-            appendPropMgrDebug("[PROP_MGR] Initial scan done, knownNodes=\(knownNodes.count), selectedNodeHash=\(selectedNodeHash != nil)")
 
             // Listen for new path entries
             for await entry in pathTable.pathUpdates {
@@ -208,12 +187,9 @@ public final class PropagationNodeManager {
         selectedNodeName = node?.resolvedDisplayName
 
         // Wire to router (awaited directly, not fire-and-forget)
-        let hashHex = hash.prefix(8).map { String(format: "%02x", $0) }.joined()
         let stampCost = node?.info.stampCost ?? 0
-        appendPropMgrDebug("[PROP_MGR] selectNode: wiring \(hashHex) to router (router=\(appServices?.router != nil), stampCost=\(stampCost))")
         await appServices?.router?.setOutboundPropagationNode(hash)
         await appServices?.router?.setPropagationStampCost(stampCost)
-        appendPropMgrDebug("[PROP_MGR] selectNode: wired successfully")
 
         logger.info("Selected propagation node: \(self.selectedNodeName ?? "unknown")")
     }
@@ -274,7 +250,6 @@ public final class PropagationNodeManager {
 
     /// Load preferences from SettingsRepository.
     public func loadPreferences() async {
-        appendPropMgrDebug("[PROP_MGR] loadPreferences called")
         let settings = SettingsRepository()
         let defaultMethod = await settings.getDefaultDeliveryMethod()
         autoSelectEnabled = await settings.getAutoSelectRelay()
@@ -282,7 +257,6 @@ public final class PropagationNodeManager {
         syncInterval = await settings.getSyncInterval()
 
         if let hashHex = await settings.getManualRelayHash(), !hashHex.isEmpty {
-            appendPropMgrDebug("[PROP_MGR] loadPreferences: found saved relay hash=\(hashHex.prefix(16))")
             let hash = Data(hexString: hashHex)
             if let hash = hash {
                 selectedNodeHash = hash
@@ -292,13 +266,9 @@ public final class PropagationNodeManager {
 
                 // Wire to router (awaited directly, not fire-and-forget)
                 let stampCost = node?.info.stampCost ?? 0
-                appendPropMgrDebug("[PROP_MGR] loadPreferences: wiring saved hash to router (stampCost=\(stampCost))")
                 await appServices?.router?.setOutboundPropagationNode(hash)
                 await appServices?.router?.setPropagationStampCost(stampCost)
-                appendPropMgrDebug("[PROP_MGR] loadPreferences: wired successfully")
             }
-        } else {
-            appendPropMgrDebug("[PROP_MGR] loadPreferences: no saved manual relay hash")
         }
 
         if let timestamp = await settings.getLastSyncTimestamp() {
