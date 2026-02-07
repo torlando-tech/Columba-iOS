@@ -66,6 +66,11 @@
 		043 /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043; };
 		044 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044; };
 
+		/* RNode Configuration UI */
+		045 /* LoRaPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F045; };
+		046 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046; };
+		047 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047; };
+
 		/* Interface Management */
 		030 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030; };
 		031 /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031; };
@@ -136,6 +141,11 @@
 		/* Identity Management View */
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
 
+		/* RNode Configuration UI */
+		F045 /* LoRaPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoRaPresets.swift; sourceTree = "<group>"; };
+		F046 /* BLEDevicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEDevicePickerSheet.swift; sourceTree = "<group>"; };
+		F047 /* RNodeConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeConfigSheet.swift; sourceTree = "<group>"; };
+
 		/* Interface Management */
 		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
 		F031 /* InterfaceManagementScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementScreen.swift; sourceTree = "<group>"; };
@@ -187,6 +197,7 @@
 			children = (
 				GAPP /* App */,
 				GTHM /* Theme */,
+				GMOD /* Models */,
 				GVM /* ViewModels */,
 				GVIEWS /* Views */,
 				GSVC /* Services */,
@@ -209,6 +220,14 @@
 				F002 /* Theme.swift */,
 			);
 			path = Theme;
+			sourceTree = "<group>";
+		};
+		GMOD /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				F045 /* LoRaPresets.swift */,
+			);
+			path = Models;
 			sourceTree = "<group>";
 		};
 		GVM /* ViewModels */ = {
@@ -278,6 +297,8 @@
 				F035 /* NetworkStatusView.swift */,
 				F038 /* IconPickerView.swift */,
 				F044 /* IdentityManagerView.swift */,
+				F046 /* BLEDevicePickerSheet.swift */,
+				F047 /* RNodeConfigSheet.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -446,6 +467,9 @@
 				042 /* LocalIdentity.swift in Sources */,
 				043 /* IdentityManager.swift in Sources */,
 				044 /* IdentityManagerView.swift in Sources */,
+				045 /* LoRaPresets.swift in Sources */,
+				046 /* BLEDevicePickerSheet.swift in Sources */,
+				047 /* RNodeConfigSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
