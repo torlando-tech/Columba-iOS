@@ -422,6 +422,10 @@ public final class InterfaceManagementViewModel {
 
         case .autoInterface(let config):
             configAutoGroupId = config.groupId ?? "reticulum"
+
+        case .rnode:
+            // RNode config editing will be implemented in Phase 12-02
+            break
         }
     }
 
@@ -447,8 +451,13 @@ public final class InterfaceManagementViewModel {
                 groupId: groupId.isEmpty ? nil : groupId
             ))
 
-        default:
-            // Default to TCP client for unsupported types
+        case .rnode:
+            // RNode config editing will be implemented in Phase 12-02
+            // Return default US 915 MHz config for now
+            return .rnode(RNodeConfig.defaultUS915)
+
+        case .androidBLE:
+            // AndroidBLE not yet implemented, fall through to default
             return .tcpClient(TCPClientConfig(
                 targetHost: configTargetHost,
                 targetPort: 4242

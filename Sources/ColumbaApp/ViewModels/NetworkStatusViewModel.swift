@@ -106,6 +106,7 @@ final class NetworkStatusViewModel {
                 case .udp: typeName = "UDP"
                 case .i2p: typeName = "I2P"
                 case .autoInterface: typeName = "AutoInterface"
+                case .rnode: typeName = "RNode"
                 }
             }
 
