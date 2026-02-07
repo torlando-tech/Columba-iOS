@@ -470,116 +470,94 @@ public final class AppServices {
     // MARK: - State Observation
 
     /// Start observing interface state for UI updates.
+    ///
+    /// Uses Task.detached to read actor-isolated properties off the main thread,
+    /// then batches all @MainActor property mutations into a single MainActor.run.
     private func startStateObserver() {
         stateObserverTask?.cancel()
-        stateObserverTask = Task { [weak self] in
-            guard let self = self else { return }
-
+        stateObserverTask = Task.detached { [weak self] in
             // Track the last error we reported to avoid spamming logs
             var lastReportedError: String?
 
             // Poll interface state periodically
             // (TCPInterface doesn't expose AsyncStream for state changes)
             while !Task.isCancelled {
-                await self.updateConnectionState()
+                guard let self = self else { return }
 
-                // Check for error info from the interface's underlying transport
-                if let interface = await self.tcpInterface {
-                    let state = await interface.state
-                    if case .reconnecting = state {
-                        // Get the last error description from the transport
-                        let errorDesc = await interface.lastErrorDescription
-                        if let desc = errorDesc, desc != lastReportedError {
-                            lastReportedError = desc
-                            await MainActor.run {
-                                self.connectionError = desc
-                            }
+                // Read actor-isolated properties OFF the main thread
+                let interface = await MainActor.run { self.tcpInterface }
+
+                guard let interface = interface else {
+                    await MainActor.run {
+                        if self.isConnected {
+                            self.isConnected = false
+                            self.connectionError = nil
+                            self.isReconnecting = false
                         }
-                    } else if state == .connected {
+                    }
+                    try? await Task.sleep(for: .milliseconds(500))
+                    continue
+                }
+
+                // Await actor state off main thread
+                let ifState = await interface.state
+                let errorDesc = await interface.lastErrorDescription
+
+                // Batch all UI mutations into a single MainActor.run
+                let shouldAnnounce: Bool = await MainActor.run {
+                    var needsAnnounce = false
+
+                    switch ifState {
+                    case .connected:
+                        if !self.isConnected {
+                            self.isConnected = true
+                            self.connectionError = nil
+                            self.isReconnecting = false
+                            self.logger.info("Connection state changed: connected")
+                            needsAnnounce = true
+                        }
                         if lastReportedError != nil {
                             lastReportedError = nil
-                            await MainActor.run {
-                                self.connectionError = nil
-                            }
+                            self.connectionError = nil
+                        }
+                    case .reconnecting(let attempt):
+                        if self.isConnected || !self.isReconnecting {
+                            self.isConnected = false
+                            self.isReconnecting = true
+                            self.logger.info("Connection state changed: reconnecting (attempt \(attempt))")
+                        }
+                        if let desc = errorDesc, desc != lastReportedError {
+                            lastReportedError = desc
+                            self.connectionError = desc
+                        }
+                    case .connecting:
+                        if self.isConnected {
+                            self.isConnected = false
+                            self.logger.info("Connection state changed: connecting")
+                        }
+                    case .disconnected:
+                        if self.isConnected || self.isReconnecting {
+                            self.isConnected = false
+                            self.isReconnecting = false
+                            self.logger.info("Connection state changed: disconnected")
+                        }
+                    }
+
+                    return needsAnnounce
+                }
+
+                // Auto-announce on connect (outside the MainActor.run to avoid blocking UI)
+                if shouldAnnounce {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    await MainActor.run {
+                        Task {
+                            await self.autoAnnounce()
+                            self.autoAnnounceManager?.resetTimer()
                         }
                     }
                 }
 
-                // Check RNode interface state
-                if let rnodeIf = await self.rnodeInterface {
-                    let rnodeState = await rnodeIf.state
-                    // RNode connected state is tracked but doesn't affect the main isConnected flag
-                    // (isConnected tracks TCP connectivity for LXMF message routing)
-                    // RNode status is surfaced through InterfaceManagementViewModel.interfaceStatus
-                    _ = rnodeState  // Placeholder -- ViewModel polls directly
-                }
-
                 try? await Task.sleep(for: .milliseconds(500))
-            }
-        }
-    }
-
-    /// Append a debug line to the state observer log.
-    private func appendStateDebug(_ line: String) {
-        let ts = ISO8601DateFormatter().string(from: Date())
-        let full = "[\(ts)] \(line)\n"
-        let path = "/tmp/columba_state_debug.log"
-        if let fh = FileHandle(forWritingAtPath: path) {
-            fh.seekToEndOfFile()
-            fh.write(full.data(using: .utf8)!)
-            fh.closeFile()
-        } else {
-            FileManager.default.createFile(atPath: path, contents: full.data(using: .utf8), attributes: nil)
-        }
-    }
-
-    /// Update connection state from interface.
-    private func updateConnectionState() async {
-        guard let interface = tcpInterface else {
-            appendStateDebug("[STATE] tcpInterface is nil, isConnected=\(isConnected)")
-            if isConnected {
-                isConnected = false
-                connectionError = nil
-                isReconnecting = false
-            }
-            return
-        }
-
-        let state = await interface.state
-        appendStateDebug("[STATE] polled: \(state), isConnected=\(isConnected)")
-        switch state {
-        case .connected:
-            if !isConnected {
-                isConnected = true
-                connectionError = nil
-                isReconnecting = false
-                logger.info("Connection state changed: connected")
-                appendStateDebug("[STATE] TRANSITION → connected! Triggering autoAnnounce")
-
-                // Auto-announce LXMF delivery destination so peers can reach us
-                Task {
-                    try? await Task.sleep(for: .milliseconds(500))
-                    await autoAnnounce()
-                    // Reset periodic timer since we just announced
-                    self.autoAnnounceManager?.resetTimer()
-                }
-            }
-        case .reconnecting(let attempt):
-            if isConnected || !isReconnecting {
-                isConnected = false
-                isReconnecting = true
-                logger.info("Connection state changed: reconnecting (attempt \(attempt))")
-            }
-        case .connecting:
-            if isConnected {
-                isConnected = false
-                logger.info("Connection state changed: connecting")
-            }
-        case .disconnected:
-            if isConnected || isReconnecting {
-                isConnected = false
-                isReconnecting = false
-                logger.info("Connection state changed: disconnected")
             }
         }
     }

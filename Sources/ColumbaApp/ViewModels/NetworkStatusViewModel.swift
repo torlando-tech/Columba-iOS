@@ -73,7 +73,7 @@ final class NetworkStatusViewModel {
 
     private func startPolling() {
         pollTask?.cancel()
-        pollTask = Task { @MainActor [weak self] in
+        pollTask = Task.detached { [weak self] in
             while !Task.isCancelled {
                 guard let self = self else { break }
                 await self.refresh()
@@ -82,17 +82,20 @@ final class NetworkStatusViewModel {
         }
     }
 
-    @MainActor
     func refresh() async {
-        guard let transport = appServices.transport else {
-            isInitialized = false
-            networkStatus = "Transport not initialized"
-            interfaces = []
+        // Read transport reference on MainActor
+        let transport = await MainActor.run { appServices.transport }
+
+        guard let transport = transport else {
+            await MainActor.run {
+                isInitialized = false
+                networkStatus = "Transport not initialized"
+                interfaces = []
+            }
             return
         }
 
-        isInitialized = true
-
+        // Await actor-isolated snapshots OFF main thread
         let snapshots = await transport.getInterfaceSnapshots()
 
         var infos: [InterfaceInfo] = []
@@ -130,18 +133,21 @@ final class NetworkStatusViewModel {
             ))
         }
 
-        interfaces = infos
-
-        // Update overall status
+        // Batch all UI mutations into single MainActor.run
         let onlineCount = infos.filter(\.online).count
-        if infos.isEmpty {
-            networkStatus = "No interfaces"
-        } else if onlineCount == infos.count {
-            networkStatus = "All interfaces online"
-        } else if onlineCount > 0 {
-            networkStatus = "\(onlineCount)/\(infos.count) interfaces online"
-        } else {
-            networkStatus = "All interfaces offline"
+        await MainActor.run {
+            isInitialized = true
+            interfaces = infos
+
+            if infos.isEmpty {
+                networkStatus = "No interfaces"
+            } else if onlineCount == infos.count {
+                networkStatus = "All interfaces online"
+            } else if onlineCount > 0 {
+                networkStatus = "\(onlineCount)/\(infos.count) interfaces online"
+            } else {
+                networkStatus = "All interfaces offline"
+            }
         }
     }
 }

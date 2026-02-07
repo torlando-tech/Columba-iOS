@@ -395,9 +395,10 @@ public final class InterfaceManagementViewModel {
     /// their true state in the UI.
     private func startStatusObserver() {
         statusObserverTask?.cancel()
-        statusObserverTask = Task { @MainActor [weak self] in
+        statusObserverTask = Task.detached { [weak self] in
             // Initial sync: detect already-running TCP interface
-            if let self = self {
+            await MainActor.run {
+                guard let self = self else { return }
                 let enabledInterfaces = self.repository.getEnabledInterfaces()
                 if let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient }),
                    self.appServices.tcpInterface != nil {
@@ -408,67 +409,92 @@ public final class InterfaceManagementViewModel {
             while !Task.isCancelled {
                 guard let self = self else { break }
 
-                // Track TCP interface status
-                if let interfaceId = self.activeInterfaceId {
-                    if self.appServices.isConnected {
-                        if self.interfaceStatus[interfaceId] != .connected {
-                            self.interfaceStatus[interfaceId] = .connected
-                            self.errorMessage = nil
-                        }
-                    } else if self.appServices.isReconnecting {
-                        self.interfaceStatus[interfaceId] = .reconnecting
-                        if let error = self.appServices.connectionError,
-                           self.errorMessage != error {
-                            self.showError(error)
-                        }
-                    } else if self.appServices.connectionError != nil {
-                        self.interfaceStatus[interfaceId] = .error
-                        if let error = self.appServices.connectionError,
-                           self.errorMessage != error {
-                            self.showError(error)
-                        }
-                    }
+                // Read @MainActor properties we need for actor lookups
+                let (activeId, isConn, isReconn, connErr, autoIf, rnodeIf, enabledIfs) = await MainActor.run {
+                    (
+                        self.activeInterfaceId,
+                        self.appServices.isConnected,
+                        self.appServices.isReconnecting,
+                        self.appServices.connectionError,
+                        self.appServices.autoInterface,
+                        self.appServices.rnodeInterface,
+                        self.repository.getEnabledInterfaces()
+                    )
                 }
 
-                // Track Auto interface status
-                let enabledInterfaces = self.repository.getEnabledInterfaces()
-                if let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface }) {
-                    if let auto = self.appServices.autoInterface {
-                        let autoState = await auto.state
-                        let peerCount = await auto.peerCount
-                        switch autoState {
-                        case .connected:
-                            self.interfaceStatus[autoEntity.id] = .connected
-                        case .connecting:
-                            self.interfaceStatus[autoEntity.id] = .connecting
-                        default:
-                            if peerCount > 0 {
-                                self.interfaceStatus[autoEntity.id] = .connected
-                            } else {
-                                self.interfaceStatus[autoEntity.id] = .disconnected
+                // Read actor-isolated state OFF main thread
+                var autoState: InterfaceState?
+                var autoPeerCount: Int?
+                if let auto = autoIf {
+                    autoState = await auto.state
+                    autoPeerCount = await auto.peerCount
+                }
+
+                var rnodeState: InterfaceState?
+                if let rnode = rnodeIf {
+                    rnodeState = await rnode.state
+                }
+
+                // Batch all UI mutations into single MainActor.run
+                await MainActor.run {
+                    // Track TCP interface status
+                    if let interfaceId = activeId {
+                        if isConn {
+                            if self.interfaceStatus[interfaceId] != .connected {
+                                self.interfaceStatus[interfaceId] = .connected
+                                self.errorMessage = nil
+                            }
+                        } else if isReconn {
+                            self.interfaceStatus[interfaceId] = .reconnecting
+                            if let error = connErr,
+                               self.errorMessage != error {
+                                self.showError(error)
+                            }
+                        } else if connErr != nil {
+                            self.interfaceStatus[interfaceId] = .error
+                            if let error = connErr,
+                               self.errorMessage != error {
+                                self.showError(error)
                             }
                         }
-                    } else {
-                        self.interfaceStatus[autoEntity.id] = .disconnected
                     }
-                }
 
-                // Track RNode interface status
-                if let rnodeEntity = enabledInterfaces.first(where: { $0.type == .rnode }) {
-                    if let rnode = self.appServices.rnodeInterface {
-                        let rnodeState = await rnode.state
-                        switch rnodeState {
-                        case .connected:
-                            self.interfaceStatus[rnodeEntity.id] = .connected
-                        case .connecting:
-                            self.interfaceStatus[rnodeEntity.id] = .connecting
-                        case .reconnecting:
-                            self.interfaceStatus[rnodeEntity.id] = .reconnecting
-                        case .disconnected:
+                    // Track Auto interface status
+                    if let autoEntity = enabledIfs.first(where: { $0.type == .autoInterface }) {
+                        if let state = autoState {
+                            switch state {
+                            case .connected:
+                                self.interfaceStatus[autoEntity.id] = .connected
+                            case .connecting:
+                                self.interfaceStatus[autoEntity.id] = .connecting
+                            default:
+                                if (autoPeerCount ?? 0) > 0 {
+                                    self.interfaceStatus[autoEntity.id] = .connected
+                                } else {
+                                    self.interfaceStatus[autoEntity.id] = .disconnected
+                                }
+                            }
+                        } else {
+                            self.interfaceStatus[autoEntity.id] = .disconnected
+                        }
+                    }
+
+                    // Track RNode interface status
+                    if let rnodeEntity = enabledIfs.first(where: { $0.type == .rnode }) {
+                        if let state = rnodeState {
+                            switch state {
+                            case .connected:
+                                self.interfaceStatus[rnodeEntity.id] = .connected
+                            case .connecting:
+                                self.interfaceStatus[rnodeEntity.id] = .connecting
+                            case .reconnecting:
+                                self.interfaceStatus[rnodeEntity.id] = .reconnecting
+                            case .disconnected:
+                                self.interfaceStatus[rnodeEntity.id] = .disconnected
+                            }
+                        } else {
                             self.interfaceStatus[rnodeEntity.id] = .disconnected
                         }
-                    } else {
-                        self.interfaceStatus[rnodeEntity.id] = .disconnected
                     }
                 }
 
