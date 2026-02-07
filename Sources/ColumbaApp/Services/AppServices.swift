@@ -60,6 +60,9 @@ public final class AppServices {
     /// TCP interface to server.
     public private(set) var tcpInterface: TCPInterface?
 
+    /// RNode BLE interface for LoRa radio communication.
+    public var rnodeInterface: RNodeInterface?
+
     /// Auto discovery interface for LAN peer discovery.
     public private(set) var autoInterface: AutoInterface?
 
@@ -502,6 +505,15 @@ public final class AppServices {
                     }
                 }
 
+                // Check RNode interface state
+                if let rnodeIf = await self.rnodeInterface {
+                    let rnodeState = await rnodeIf.state
+                    // RNode connected state is tracked but doesn't affect the main isConnected flag
+                    // (isConnected tracks TCP connectivity for LXMF message routing)
+                    // RNode status is surfaced through InterfaceManagementViewModel.interfaceStatus
+                    _ = rnodeState  // Placeholder -- ViewModel polls directly
+                }
+
                 try? await Task.sleep(for: .milliseconds(500))
             }
         }
@@ -760,6 +772,13 @@ public final class AppServices {
 
         // Disconnect TCP interface
         await tcpInterface?.disconnect()
+
+        // Disconnect RNode interface
+        await rnodeInterface?.disconnect()
+        if let transport = transport, let rnode = rnodeInterface {
+            await transport.removeInterface(id: rnode.id)
+        }
+        rnodeInterface = nil
 
         // Stop auto interface
         await stopAutoInterface()
