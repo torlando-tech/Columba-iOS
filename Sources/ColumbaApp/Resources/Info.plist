@@ -56,6 +56,8 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Columba uses your location to show your position on the map.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Columba uses Bluetooth to connect to RNode devices for off-grid mesh networking.</string>
 	<key>UIBackgroundModes</key>

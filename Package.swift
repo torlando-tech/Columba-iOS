@@ -15,11 +15,15 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../LXMFSwift"),
+        .package(url: "https://github.com/maplibre/maplibre-gl-native-distribution", from: "6.9.0"),
     ],
     targets: [
         .executableTarget(
             name: "ColumbaApp",
-            dependencies: ["LXMFSwift"],
+            dependencies: [
+                "LXMFSwift",
+                .product(name: "MapLibre", package: "maplibre-gl-native-distribution"),
+            ],
             path: "Sources/ColumbaApp"
         )
     ]

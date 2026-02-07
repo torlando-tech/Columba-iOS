@@ -14,7 +14,7 @@ import LXMFSwift
 /// Provides navigation between:
 /// - Chats: Conversation list and messaging
 /// - Contacts: Address book and announcements
-/// - Map: Network topology and node locations
+/// - Map: Vector map display
 /// - Settings: App configuration
 @available(iOS 17.0, macOS 14.0, *)
 struct MainTabView: View {

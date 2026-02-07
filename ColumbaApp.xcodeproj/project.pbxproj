@@ -48,6 +48,7 @@
 
 		/* Views/Map */
 		021 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021; };
+		048 /* MapLibreMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F048; };
 
 		/* Resources */
 		022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022; };
@@ -87,6 +88,7 @@
 
 		/* Package Dependencies */
 		023 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P001; };
+		049 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = P002; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -120,6 +122,7 @@
 		F019 /* Identicon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Identicon.swift; sourceTree = "<group>"; };
 		F020 /* IdenticonGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdenticonGenerator.swift; sourceTree = "<group>"; };
 		F021 /* MapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapView.swift; sourceTree = "<group>"; };
+		F048 /* MapLibreMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLibreMapView.swift; sourceTree = "<group>"; };
 
 		/* Resources */
 		F022 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -170,6 +173,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				023 /* LXMFSwift in Frameworks */,
+				049 /* MapLibre in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -318,6 +322,7 @@
 			isa = PBXGroup;
 			children = (
 				F021 /* MapView.swift */,
+				F048 /* MapLibreMapView.swift */,
 			);
 			path = Map;
 			sourceTree = "<group>";
@@ -368,6 +373,7 @@
 			name = ColumbaApp;
 			packageProductDependencies = (
 				P001 /* LXMFSwift */,
+				P002 /* MapLibre */,
 			);
 			productName = ColumbaApp;
 			productReference = PROD /* ColumbaApp.app */;
@@ -399,6 +405,7 @@
 			mainGroup = ROOT;
 			packageReferences = (
 				PKGREF /* XCRemoteSwiftPackageReference "LXMFSwift" */,
+				PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
 			);
 			productRefGroup = PRODS /* Products */;
 			projectDirPath = "";
@@ -447,6 +454,7 @@
 				019 /* Identicon.swift in Sources */,
 				020 /* IdenticonGenerator.swift in Sources */,
 				021 /* MapView.swift in Sources */,
+				048 /* MapLibreMapView.swift in Sources */,
 				024 /* AppServices.swift in Sources */,
 				025 /* MessageRepository.swift in Sources */,
 				026 /* SettingsRepository.swift in Sources */,
@@ -683,10 +691,26 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/maplibre/maplibre-gl-native-distribution";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 6.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		P001 /* LXMFSwift */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LXMFSwift;
+		};
+		P002 /* MapLibre */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PKGREF2;
+			productName = MapLibre;
 		};
 /* End XCSwiftPackageProductDependency section */
 
