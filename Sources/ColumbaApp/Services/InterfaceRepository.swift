@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ReticulumSwift
 
 // MARK: - Interface Entity
 
@@ -113,6 +114,7 @@ public enum InterfaceTypeConfig: Codable, Equatable, Sendable {
     case tcpClient(TCPClientConfig)
     case tcpServer(TCPServerConfig)
     case autoInterface(AutoInterfaceConfig)
+    case rnode(RNodeConfig)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -133,6 +135,9 @@ public enum InterfaceTypeConfig: Codable, Equatable, Sendable {
         case "autoInterface":
             let config = try container.decode(AutoInterfaceConfig.self, forKey: .config)
             self = .autoInterface(config)
+        case "rnode":
+            let config = try container.decode(RNodeConfig.self, forKey: .config)
+            self = .rnode(config)
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unknown config type: \(type)"))
         }
@@ -150,6 +155,9 @@ public enum InterfaceTypeConfig: Codable, Equatable, Sendable {
             try container.encode(config, forKey: .config)
         case .autoInterface(let config):
             try container.encode("autoInterface", forKey: .type)
+            try container.encode(config, forKey: .config)
+        case .rnode(let config):
+            try container.encode("rnode", forKey: .type)
             try container.encode(config, forKey: .config)
         }
     }
@@ -229,6 +237,86 @@ public struct AutoInterfaceConfig: Codable, Equatable, Sendable {
         self.discoveryScope = discoveryScope
         self.discoveryPort = discoveryPort
         self.dataPort = dataPort
+    }
+}
+
+// MARK: - RNode Config
+
+/// Configuration for RNode LoRa interface.
+///
+/// Stores BLE device name alongside all radio parameters needed
+/// for RNodeInterface. Use `toRadioConfig()` to convert to the
+/// transport-layer RadioConfig for RNodeInterface.configureRadio().
+public struct RNodeConfig: Codable, Equatable, Sendable {
+    /// BLE device name (e.g., "RNode_A9")
+    public var deviceName: String
+
+    /// Radio frequency in Hz (e.g., 915_000_000 for 915 MHz)
+    public var frequency: UInt32
+
+    /// Radio bandwidth in Hz (e.g., 125_000)
+    public var bandwidth: UInt32
+
+    /// TX power in dBm (2-22)
+    public var txPower: UInt8
+
+    /// LoRa spreading factor (7-12)
+    public var spreadingFactor: UInt8
+
+    /// LoRa coding rate (5-8)
+    public var codingRate: UInt8
+
+    /// Short-term airtime lock percentage (optional, 0-100%)
+    public var stAlock: Float?
+
+    /// Long-term airtime lock percentage (optional, 0-100%)
+    public var ltAlock: Float?
+
+    /// Convert to transport-layer RadioConfig for RNodeInterface.
+    public func toRadioConfig() -> RadioConfig {
+        RadioConfig(
+            frequency: frequency,
+            bandwidth: bandwidth,
+            txPower: txPower,
+            spreadingFactor: spreadingFactor,
+            codingRate: codingRate,
+            stAlock: stAlock,
+            ltAlock: ltAlock
+        )
+    }
+
+    /// Default RNode config for US 915 MHz ISM band.
+    public static var defaultUS915: RNodeConfig {
+        RNodeConfig(
+            deviceName: "",
+            frequency: 915_000_000,
+            bandwidth: 125_000,
+            txPower: 17,
+            spreadingFactor: 7,
+            codingRate: 5,
+            stAlock: nil,
+            ltAlock: nil
+        )
+    }
+
+    public init(
+        deviceName: String,
+        frequency: UInt32,
+        bandwidth: UInt32,
+        txPower: UInt8,
+        spreadingFactor: UInt8,
+        codingRate: UInt8,
+        stAlock: Float? = nil,
+        ltAlock: Float? = nil
+    ) {
+        self.deviceName = deviceName
+        self.frequency = frequency
+        self.bandwidth = bandwidth
+        self.txPower = txPower
+        self.spreadingFactor = spreadingFactor
+        self.codingRate = codingRate
+        self.stAlock = stAlock
+        self.ltAlock = ltAlock
     }
 }
 
