@@ -113,6 +113,8 @@ struct InterfaceManagementScreen: View {
             Group {
                 if viewModel.configType == .autoInterface {
                     AutoInterfaceConfigSheet(viewModel: viewModel)
+                } else if viewModel.configType == .rnode {
+                    RNodeConfigSheet(viewModel: viewModel)
                 } else {
                     TCPInterfaceConfigSheet(viewModel: viewModel)
                 }
@@ -296,6 +298,14 @@ struct InterfaceCard: View {
                         .font(.caption.monospaced())
                 }
                 .foregroundStyle(Theme.textSecondary)
+            } else if case .rnode(let config) = interface.config {
+                HStack(spacing: 4) {
+                    Image(systemName: "radio")
+                        .font(.caption)
+                    Text("\(config.deviceName) @ \(config.frequency / 1_000_000) MHz")
+                        .font(.caption.monospaced())
+                }
+                .foregroundStyle(Theme.textSecondary)
             }
 
             // Status row
@@ -389,6 +399,11 @@ struct InterfaceTypeSelector: View {
 
                     typeOption(
                         type: .autoInterface,
+                        highlighted: true
+                    )
+
+                    typeOption(
+                        type: .rnode,
                         highlighted: true
                     )
                 }
