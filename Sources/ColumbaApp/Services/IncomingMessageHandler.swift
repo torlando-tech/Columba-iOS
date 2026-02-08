@@ -61,15 +61,9 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     ///   - router: The router that received the message
     ///   - message: The validated incoming message
     public func router(_ router: LXMRouter, didReceiveMessage message: LXMessage) {
-        // Log receipt for debugging
-        let sourceHashHex = message.sourceHash.prefix(8).map { String(format: "%02x", $0) }.joined()
-        let messageHashHex = message.hash.prefix(8).map { String(format: "%02x", $0) }.joined()
-        let contentPreview = String(data: message.content.prefix(50), encoding: .utf8) ?? "<binary>"
-
-        print("[LXMF_INBOUND] *** IncomingMessageHandler.router(didReceiveMessage:) called! ***")
-        print("[LXMF_INBOUND] sourceHash=\(sourceHashHex), msgHash=\(messageHashHex)")
-        print("[LXMF_INBOUND] content preview: \(contentPreview)")
-        logger.info("Received message from \(sourceHashHex)... hash=\(messageHashHex)... content=\(contentPreview)")
+        let sourceHashHex = message.sourceHash.prefix(4).map { String(format: "%02x", $0) }.joined()
+        let messageHashHex = message.hash.prefix(4).map { String(format: "%02x", $0) }.joined()
+        logger.info("Received message from \(sourceHashHex) hash=\(messageHashHex)")
 
         let sourceHash = message.sourceHash
 
@@ -92,38 +86,15 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             }
 
-            // Post in-process notification so open chat views start reloading
-            NotificationCenter.default.post(
-                name: IncomingMessageHandler.messageReceivedNotification,
-                object: nil,
-                userInfo: ["sourceHash": sourceHash]
-            )
-            self.logger.info("[LXMF_INBOUND] Posted NotificationCenter notification for source=\(sourceHashHex)")
-
-            // Post Darwin notification for cross-process UI refresh
-            NotificationObserver.postNewMessage()
-
             do {
                 try await self.messageRepository.saveMessage(message)
-                self.logger.info("[LXMF_INBOUND] Message \(messageHashHex) saved to database OK")
 
                 // Extract icon appearance from LXMF Field 4
-                if let fields = message.fields {
-                    let fieldKeys = fields.keys.map { String($0) }.joined(separator: ",")
-                    self.logger.info("[LXMF_INBOUND] Message has fields: keys=[\(fieldKeys)]")
-                    if let iconValue = fields[IconAppearance.fieldKey] {
-                        self.logger.info("[LXMF_INBOUND] Found Field 4 (icon) data: \(type(of: iconValue))")
-                        if let icon = IconAppearance.fromLXMFFieldValue(iconValue) {
-                            try await self.messageRepository.updatePeerIcon(message.sourceHash, icon: icon)
-                            self.logger.info("[LXMF_INBOUND] Saved peer icon: name=\(icon.iconName) fg=\(icon.foregroundColor) bg=\(icon.backgroundColor) for \(sourceHashHex)")
-                        } else {
-                            self.logger.error("[LXMF_INBOUND] Failed to parse icon from Field 4 value")
-                        }
-                    } else {
-                        self.logger.info("[LXMF_INBOUND] No Field 4 (icon) in message fields")
-                    }
-                } else {
-                    self.logger.info("[LXMF_INBOUND] Message has no fields (no icon data)")
+                if let fields = message.fields,
+                   let iconValue = fields[IconAppearance.fieldKey],
+                   let icon = IconAppearance.fromLXMFFieldValue(iconValue) {
+                    try await self.messageRepository.updatePeerIcon(message.sourceHash, icon: icon)
+                    self.logger.info("Saved peer icon: \(icon.iconName) for \(sourceHashHex)")
                 }
 
                 // Post local push notification (respects user preferences)
@@ -133,12 +104,13 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     database: self.database
                 )
 
-                // Post notification again after save so views reload with saved data
+                // Post single notification after save so views reload with saved data
                 NotificationCenter.default.post(
                     name: IncomingMessageHandler.messageReceivedNotification,
                     object: nil,
                     userInfo: ["sourceHash": sourceHash]
                 )
+                NotificationObserver.postNewMessage()
             } catch {
                 self.logger.error("[LXMF_INBOUND] FAILED to save message \(messageHashHex): \(error.localizedDescription)")
             }

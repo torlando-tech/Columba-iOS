@@ -52,11 +52,16 @@ public struct Contact: Identifiable, Sendable, Hashable {
         return hex
     }
 
+    /// Cached formatter for relative time strings.
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
     /// Formatted time ago string.
     public var timeAgo: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: timestamp, relativeTo: Date())
+        Self.relativeFormatter.localizedString(for: timestamp, relativeTo: Date())
     }
 
     /// Hop count description.
