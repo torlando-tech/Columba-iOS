@@ -154,7 +154,7 @@ public final class SettingsViewModel {
 
     // MARK: - Delivery & Retrieval Settings
 
-    /// Default delivery method: "direct" or "propagated"
+    /// Default delivery method for large messages: "direct" or "propagated"
     public var defaultDeliveryMethod: String = "direct"
 
     /// Whether to retry via relay when direct delivery fails.
