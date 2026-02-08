@@ -98,35 +98,31 @@ public struct Identicon: View {
     // MARK: - Body
 
     public var body: some View {
-        GeometryReader { geometry in
-            let size = min(geometry.size.width, geometry.size.height)
-            let padding = size * 0.15  // Padding inside circle
+        Canvas { context, canvasSize in
+            let size = min(canvasSize.width, canvasSize.height)
+            let padding = size * 0.15
             let gridArea = size - (padding * 2)
             let cellSize = gridArea / CGFloat(pattern.gridSize) * dotSpacing
-            let dotSize = cellSize * dotScale
+            let dotRadius = cellSize * dotScale / 2
+            let gridOffset = (size - gridArea) / 2
 
-            ZStack {
-                // Background circle
-                Circle()
-                    .fill(pattern.backgroundColor)
+            // Background circle
+            let bgPath = Path(ellipseIn: CGRect(x: 0, y: 0, width: size, height: size))
+            context.fill(bgPath, with: .color(pattern.backgroundColor))
 
-                // Dot grid
-                let gridOffset = (size - gridArea) / 2
-                ForEach(0..<pattern.gridSize, id: \.self) { row in
-                    ForEach(0..<pattern.gridSize, id: \.self) { col in
-                        if pattern.cells[row][col] {
-                            Circle()
-                                .fill(pattern.colors[row][col])
-                                .frame(width: dotSize, height: dotSize)
-                                .position(
-                                    x: gridOffset + cellSize * (CGFloat(col) + 0.5),
-                                    y: gridOffset + cellSize * (CGFloat(row) + 0.5)
-                                )
-                        }
+            // Dot grid — single draw call per dot
+            for row in 0..<pattern.gridSize {
+                for col in 0..<pattern.gridSize {
+                    if pattern.cells[row][col] {
+                        let cx = gridOffset + cellSize * (CGFloat(col) + 0.5)
+                        let cy = gridOffset + cellSize * (CGFloat(row) + 0.5)
+                        let dotRect = CGRect(x: cx - dotRadius, y: cy - dotRadius,
+                                             width: dotRadius * 2, height: dotRadius * 2)
+                        let dotPath = Path(ellipseIn: dotRect)
+                        context.fill(dotPath, with: .color(pattern.colors[row][col]))
                     }
                 }
             }
-            .frame(width: size, height: size)
         }
         .aspectRatio(1, contentMode: .fit)
     }

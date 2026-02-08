@@ -82,6 +82,7 @@ public final class PropagationNodeManager {
     // MARK: - Dependencies
 
     private weak var appServices: AppServices?
+    private let settingsRepository = SettingsRepository()
     private let logger = Logger(subsystem: "com.columba.app", category: "PropagationNodeManager")
 
     /// Task for listening to path table updates.
@@ -143,15 +144,14 @@ public final class PropagationNodeManager {
             isOnline: Date() < entry.expires
         )
 
-        // Update or insert
+        // Update or insert, maintaining sorted order by hop count
         if let index = knownNodes.firstIndex(where: { $0.id == node.id }) {
-            knownNodes[index] = node
-        } else {
-            knownNodes.append(node)
+            knownNodes.remove(at: index)
         }
-
-        // Sort by hop count (lowest first)
-        knownNodes.sort { $0.hopCount < $1.hopCount }
+        // Binary search for sorted insert position
+        let insertIndex = knownNodes.firstIndex(where: { $0.hopCount > node.hopCount })
+            ?? knownNodes.endIndex
+        knownNodes.insert(node, at: insertIndex)
 
         logger.info("Discovered propagation node: \(node.resolvedDisplayName) (\(hex.prefix(16))) hops=\(node.hopCount)")
 
@@ -250,13 +250,12 @@ public final class PropagationNodeManager {
 
     /// Load preferences from SettingsRepository.
     public func loadPreferences() async {
-        let settings = SettingsRepository()
-        let defaultMethod = await settings.getDefaultDeliveryMethod()
-        autoSelectEnabled = await settings.getAutoSelectRelay()
-        periodicSyncEnabled = await settings.getPeriodicSyncEnabled()
-        syncInterval = await settings.getSyncInterval()
+        let defaultMethod = await settingsRepository.getDefaultDeliveryMethod()
+        autoSelectEnabled = await settingsRepository.getAutoSelectRelay()
+        periodicSyncEnabled = await settingsRepository.getPeriodicSyncEnabled()
+        syncInterval = await settingsRepository.getSyncInterval()
 
-        if let hashHex = await settings.getManualRelayHash(), !hashHex.isEmpty {
+        if let hashHex = await settingsRepository.getManualRelayHash(), !hashHex.isEmpty {
             let hash = Data(hexString: hashHex)
             if let hash = hash {
                 selectedNodeHash = hash
@@ -271,7 +270,7 @@ public final class PropagationNodeManager {
             }
         }
 
-        if let timestamp = await settings.getLastSyncTimestamp() {
+        if let timestamp = await settingsRepository.getLastSyncTimestamp() {
             lastSyncTime = Date(timeIntervalSince1970: timestamp)
         }
 
@@ -280,20 +279,19 @@ public final class PropagationNodeManager {
 
     /// Save preferences to SettingsRepository.
     public func savePreferences() async {
-        let settings = SettingsRepository()
-        await settings.setAutoSelectRelay(autoSelectEnabled)
-        await settings.setPeriodicSyncEnabled(periodicSyncEnabled)
-        await settings.setSyncInterval(syncInterval)
+        await settingsRepository.setAutoSelectRelay(autoSelectEnabled)
+        await settingsRepository.setPeriodicSyncEnabled(periodicSyncEnabled)
+        await settingsRepository.setSyncInterval(syncInterval)
 
         if let hash = selectedNodeHash {
             let hex = hash.map { String(format: "%02x", $0) }.joined()
-            await settings.setManualRelayHash(hex)
+            await settingsRepository.setManualRelayHash(hex)
         } else {
-            await settings.setManualRelayHash(nil)
+            await settingsRepository.setManualRelayHash(nil)
         }
 
         if let time = lastSyncTime {
-            await settings.setLastSyncTimestamp(time.timeIntervalSince1970)
+            await settingsRepository.setLastSyncTimestamp(time.timeIntervalSince1970)
         }
     }
 }

@@ -131,6 +131,22 @@ public actor MessageRepository {
         try await database.getMessages(forConversation: conversationHash, limit: limit, offset: offset)
     }
 
+    /// Fetch raw message records for a conversation (no LXMessage unpacking).
+    ///
+    /// Returns lightweight MessageRecord structs directly from database,
+    /// avoiding expensive MessagePack + SHA256 + Ed25519 operations.
+    /// Use this for UI display where only metadata is needed.
+    ///
+    /// - Parameters:
+    ///   - conversationHash: Destination hash (16 bytes) of the conversation
+    ///   - limit: Maximum number of records to return (default 50)
+    ///   - offset: Number of records to skip (default 0)
+    /// - Returns: Array of MessageRecord ordered by timestamp descending
+    /// - Throws: DatabaseError if query fails
+    public func fetchMessageRecords(for conversationHash: Data, limit: Int = 50, offset: Int = 0) async throws -> [MessageRecord] {
+        try await database.getMessageRecords(forConversation: conversationHash, limit: limit, offset: offset)
+    }
+
     /// Save a new outbound message.
     ///
     /// Persists the message to database and updates the conversation record.

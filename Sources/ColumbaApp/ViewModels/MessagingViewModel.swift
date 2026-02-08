@@ -98,9 +98,9 @@ public final class MessagingViewModel {
             // Ensure conversation exists
             try await repository.ensureConversation(conversationHash, displayName: displayName)
 
-            // Fetch messages (returns newest first, we reverse for chronological)
-            let lxMessages = try await repository.fetchMessages(for: conversationHash)
-            messages = lxMessages.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+            // Fetch lightweight records (no MessagePack/SHA256/Ed25519 per message)
+            let records = try await repository.fetchMessageRecords(for: conversationHash)
+            messages = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
 
             // Mark as read
             try await repository.markConversationRead(conversationHash)
