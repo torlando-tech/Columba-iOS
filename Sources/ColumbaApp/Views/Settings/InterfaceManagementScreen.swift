@@ -288,7 +288,7 @@ struct InterfaceCard: View {
                 HStack(spacing: 4) {
                     Image(systemName: "link")
                         .font(.caption)
-                    Text("\(config.targetHost):\(config.targetPort)")
+                    Text(verbatim: "\(config.targetHost):\(config.targetPort)")
                         .font(.caption.monospaced())
                 }
                 .foregroundStyle(Theme.textSecondary)
