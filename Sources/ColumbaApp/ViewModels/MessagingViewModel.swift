@@ -142,14 +142,12 @@ public final class MessagingViewModel {
             return false
         }
 
-        // Determine delivery method from settings
-        let deliveryMethod: LXDeliveryMethod
+        // Always start with opportunistic (single encrypted packet, no link needed).
+        // For large messages that exceed single-packet size, handleOutbound() will
+        // auto-fallback using the fallbackMethod (direct or propagated per settings).
+        // On failure, retry-via-relay handles the final propagated fallback.
         let settingsMethod = await SettingsRepository().getDefaultDeliveryMethod()
-        if settingsMethod == "propagated" {
-            deliveryMethod = .propagated
-        } else {
-            deliveryMethod = .direct
-        }
+        let fallbackForLargeMessages: LXDeliveryMethod = (settingsMethod == "propagated") ? .propagated : .direct
 
         // Build fields with icon appearance if set
         var fields: [UInt8: Any]? = nil
@@ -157,15 +155,16 @@ public final class MessagingViewModel {
             fields = [IconAppearance.fieldKey: icon.toLXMFFieldValue()]
         }
 
-        // Create outbound LXMF message
+        // Create outbound LXMF message — always opportunistic first
         var lxMessage = LXMessage(
             destinationHash: conversationHash,
             sourceIdentity: identity,
             content: trimmedText.data(using: .utf8) ?? Data(),
             title: Data(),
             fields: fields,
-            desiredMethod: deliveryMethod
+            desiredMethod: .opportunistic
         )
+        lxMessage.fallbackMethod = fallbackForLargeMessages
 
         // Generate temporary hash for optimistic UI
         let optimisticId = UUID().uuidString
@@ -201,10 +200,10 @@ public final class MessagingViewModel {
 
             return true
         } catch {
-            // Retry via relay if enabled and delivery method was not already propagated
+            // Retry via relay if enabled
             let retryViaRelay = await SettingsRepository().getRetryViaRelay()
-            if retryViaRelay && deliveryMethod != .propagated {
-                logger.info("[MSG_VM] Direct delivery failed, retrying via relay")
+            if retryViaRelay {
+                logger.info("[MSG_VM] Delivery failed, retrying via relay")
 
                 // Update UI to show retrying
                 if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
