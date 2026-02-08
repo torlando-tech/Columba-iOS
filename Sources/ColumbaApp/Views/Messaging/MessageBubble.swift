@@ -133,11 +133,16 @@ public struct Message: Identifiable, Equatable {
     public let isFromMe: Bool
     public var deliveryStatus: DeliveryStatus
 
+    /// Cached formatter for relative time strings.
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
     /// Formatted time string (e.g., "5 min ago", "Just now")
     public var formattedTime: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: timestamp, relativeTo: Date())
+        Self.relativeFormatter.localizedString(for: timestamp, relativeTo: Date())
     }
 
     /// Create a new message.

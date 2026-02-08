@@ -463,26 +463,33 @@ struct MyIdentityView: View {
 struct SettingsQRCodeView: View {
     let string: String
 
+    @State private var cachedImage: CGImage?
+
     var body: some View {
-        if let cgImage = generateQRCode() {
-            #if os(iOS)
-            Image(uiImage: UIImage(cgImage: cgImage))
-                .interpolation(.none)
-                .resizable()
-                .scaledToFit()
-            #else
-            Image(nsImage: NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height)))
-                .interpolation(.none)
-                .resizable()
-                .scaledToFit()
-            #endif
-        } else {
-            Rectangle()
-                .fill(Theme.backgroundTertiary)
+        Group {
+            if let cgImage = cachedImage {
+                #if os(iOS)
+                Image(uiImage: UIImage(cgImage: cgImage))
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+                #else
+                Image(nsImage: NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height)))
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+                #endif
+            } else {
+                Rectangle()
+                    .fill(Theme.backgroundTertiary)
+            }
+        }
+        .task(id: string) {
+            cachedImage = Self.generateQRCode(from: string)
         }
     }
 
-    private func generateQRCode() -> CGImage? {
+    private static func generateQRCode(from string: String) -> CGImage? {
         let context = CIContext()
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(string.utf8)

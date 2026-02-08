@@ -286,11 +286,15 @@ struct NodeDetailsView: View {
 
     // MARK: - Helpers
 
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
     private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        Self.dateFormatter.string(from: date)
     }
 
     private func loadPathDetails() async {

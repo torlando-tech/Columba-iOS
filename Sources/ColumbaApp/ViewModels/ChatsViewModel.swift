@@ -39,6 +39,13 @@ public struct Conversation: Identifiable, Equatable, Hashable {
         return "Peer \(hexString)"
     }
 
+    /// Cached date formatter for old timestamps.
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f
+    }()
+
     /// Formatted relative timestamp for display.
     public var relativeTimestamp: String {
         let now = Date()
@@ -56,9 +63,7 @@ public struct Conversation: Identifiable, Equatable, Hashable {
             let days = Int(interval / 86400)
             return "\(days)d"
         } else {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d"
-            return formatter.string(from: lastMessageTimestamp)
+            return Self.dateFormatter.string(from: lastMessageTimestamp)
         }
     }
 

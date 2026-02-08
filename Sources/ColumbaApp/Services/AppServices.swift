@@ -110,15 +110,16 @@ public final class AppServices {
         return Destination.hash(identity: identity, appName: "lxmf", aspects: ["delivery"])
     }
 
-    /// Hex string of local identity hash for display.
-    public var localIdentityHashHex: String {
-        localIdentityHash.map { String(format: "%02x", $0) }.joined()
-    }
+    /// Cached hex string of local identity hash for display.
+    public private(set) var localIdentityHashHex: String = ""
 
     // MARK: - Internal State
 
     /// Logger for debugging service initialization.
     private let logger = Logger(subsystem: "com.columba.app", category: "AppServices")
+
+    /// Static logger for use in static methods (identity loading).
+    private static let sLogger = Logger(subsystem: "com.columba.app", category: "AppServices")
 
 
     /// Interface state observer task (cancelled on deinit).
@@ -184,22 +185,22 @@ public final class AppServices {
                 service: keychainService,
                 account: keychainAccount
             ) {
-                print("[IDENTITY] ✓ Loaded from Keychain: \(stored.hexHash)")
+                sLogger.info("[IDENTITY] Loaded from Keychain")
                 return stored
             }
         } catch {
-            print("[IDENTITY] Keychain load error: \(error)")
+            sLogger.warning("[IDENTITY] Keychain load error: \(error.localizedDescription)")
         }
 
         // Try file-based storage (fallback)
         if let stored = loadIdentityFromFile() {
-            print("[IDENTITY] ✓ Loaded from file: \(stored.hexHash)")
+            sLogger.info("[IDENTITY] Loaded from file")
             return stored
         }
 
         // Create new identity
         let created = Identity()
-        print("[IDENTITY] + Created new identity: \(created.hexHash)")
+        sLogger.info("[IDENTITY] Created new identity")
 
         // Save to Keychain (try first, more secure)
         do {
@@ -207,19 +208,13 @@ public final class AppServices {
                 service: keychainService,
                 account: keychainAccount
             )
-            print("[IDENTITY] ✓ Saved to Keychain")
             return created
         } catch {
-            print("[IDENTITY] Keychain save failed: \(error)")
+            sLogger.warning("[IDENTITY] Keychain save failed: \(error.localizedDescription)")
         }
 
         // Fall back to file storage
-        if saveIdentityToFile(created) {
-            print("[IDENTITY] ✓ Saved to file: \(identityFilePath.path)")
-        } else {
-            print("[IDENTITY] ⚠ Failed to save identity - will be ephemeral")
-        }
-
+        _ = saveIdentityToFile(created)
         return created
     }
 
@@ -233,7 +228,7 @@ public final class AppServices {
             let data = try Data(contentsOf: path)
             return try Identity(privateKeyBytes: data)
         } catch {
-            print("[IDENTITY] File load error: \(error)")
+            sLogger.warning("[IDENTITY] File load error: \(error.localizedDescription)")
             return nil
         }
     }
@@ -245,7 +240,7 @@ public final class AppServices {
             try data.write(to: identityFilePath, options: .atomic)
             return true
         } catch {
-            print("[IDENTITY] File save error: \(error)")
+            sLogger.warning("[IDENTITY] File save error: \(error.localizedDescription)")
             return false
         }
     }
@@ -284,6 +279,7 @@ public final class AppServices {
         // 1. Load identity from persistent storage (try Keychain first, then file)
         let newIdentity: Identity = Self.loadOrCreateIdentity()
         self.identity = newIdentity
+        self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
 
         // 2. Create path table for routing with persistence
         let pathDbPath = Self.pathTableFilePath
@@ -372,6 +368,7 @@ public final class AppServices {
         logger.info("Starting initialize with provided identity: \(identityHash)")
 
         self.identity = identity
+        self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
 
         // 2. Create path table for routing with persistence
         let pathDbPath = Self.pathTableFilePath
@@ -498,7 +495,7 @@ public final class AppServices {
                             self.isReconnecting = false
                         }
                     }
-                    try? await Task.sleep(for: .milliseconds(500))
+                    try? await Task.sleep(for: .seconds(2))
                     continue
                 }
 
@@ -551,7 +548,7 @@ public final class AppServices {
 
                 // Auto-announce on connect (outside the MainActor.run to avoid blocking UI)
                 if shouldAnnounce {
-                    try? await Task.sleep(for: .milliseconds(500))
+                    try? await Task.sleep(for: .seconds(1))
                     await MainActor.run {
                         Task {
                             await self.autoAnnounce()
@@ -560,7 +557,7 @@ public final class AppServices {
                     }
                 }
 
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .seconds(2))
             }
         }
     }
@@ -698,6 +695,7 @@ public final class AppServices {
         if identity == nil {
             let newIdentity = Self.loadOrCreateIdentity()
             self.identity = newIdentity
+            self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
             logger.info("Using identity: \(newIdentity.hexHash)")
         }
 
@@ -948,20 +946,6 @@ public final class AppServices {
         // Create and build the announce packet
         let announce = Announce(destination: destination)
         let packet = try announce.buildPacket()
-
-        // Debug: log announce structure details
-        let encoded = packet.encode()
-        let nameHash = destination.nameHash
-        let destHash = destination.hash
-        logger.info("[ANNOUNCE_DEBUG] destHash(\(destHash.count)B): \(destHash.map { String(format: "%02x", $0) }.joined())")
-        logger.info("[ANNOUNCE_DEBUG] nameHash(\(nameHash.count)B): \(nameHash.map { String(format: "%02x", $0) }.joined())")
-        logger.info("[ANNOUNCE_DEBUG] appData: \(displayName) (\(destination.appData?.count ?? 0)B)")
-        logger.info("[ANNOUNCE_DEBUG] packet flags=0x\(String(format: "%02x", encoded[0])) hops=\(encoded[1]) total=\(encoded.count)B")
-        logger.info("[ANNOUNCE_DEBUG] announce payload: \(packet.data.count)B")
-        if let pubKeys = destination.publicKeys {
-            logger.info("[ANNOUNCE_DEBUG] pubKeys(\(pubKeys.count)B): \(pubKeys.prefix(8).map { String(format: "%02x", $0) }.joined())...")
-        }
-        logger.info("[ANNOUNCE_DEBUG] raw hex (ALL \(encoded.count)B): \(encoded.map { String(format: "%02x", $0) }.joined())")
 
         // Send the announce via transport
         try await transport.send(packet: packet)

@@ -36,6 +36,7 @@ public final class MessagingViewModel {
     private let conversationHash: Data
     private let repository: MessageRepository
     private let appServices: AppServices
+    private let settingsRepository = SettingsRepository()
     private let displayName: String?
     private let logger = Logger(subsystem: "com.columba.app", category: "MessagingViewModel")
 
@@ -62,30 +63,17 @@ public final class MessagingViewModel {
         self.appServices = appServices
         self.displayName = displayName
 
-        let convHashHex = conversationHash.prefix(8).map { String(format: "%02x", $0) }.joined()
-        logger.error("[MSG_VM] MessagingViewModel init for conversation=\(convHashHex)")
-
         // Listen for incoming messages and reload when this conversation is affected
         notificationTask = NotificationCenter.default.addObserver(
             forName: IncomingMessageHandler.messageReceivedNotification,
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            guard let self else {
-                Logger(subsystem: "com.columba.app", category: "MessagingViewModel")
-                    .error("[MSG_VM] Notification received but self is nil (deallocated)")
-                return
-            }
-            let notifSourceHex = (notification.userInfo?["sourceHash"] as? Data)?.prefix(8)
-                .map { String(format: "%02x", $0) }.joined() ?? "none"
-            self.logger.error("[MSG_VM] Notification received! sourceHash=\(notifSourceHex) conversationHash=\(convHashHex)")
-
+            guard let self else { return }
             if let sourceHash = notification.userInfo?["sourceHash"] as? Data,
                sourceHash != self.conversationHash {
-                self.logger.error("[MSG_VM] sourceHash MISMATCH - skipping reload")
                 return
             }
-            self.logger.error("[MSG_VM] sourceHash MATCHES - reloading messages")
             Task { @MainActor in
                 await self.loadMessages()
             }
@@ -146,12 +134,12 @@ public final class MessagingViewModel {
         // For large messages that exceed single-packet size, handleOutbound() will
         // auto-fallback using the fallbackMethod (direct or propagated per settings).
         // On failure, retry-via-relay handles the final propagated fallback.
-        let settingsMethod = await SettingsRepository().getDefaultDeliveryMethod()
+        let settingsMethod = await settingsRepository.getDefaultDeliveryMethod()
         let fallbackForLargeMessages: LXDeliveryMethod = (settingsMethod == "propagated") ? .propagated : .direct
 
         // Build fields with icon appearance if set
         var fields: [UInt8: Any]? = nil
-        if let icon = await SettingsRepository().getIconAppearance() {
+        if let icon = await settingsRepository.getIconAppearance() {
             fields = [IconAppearance.fieldKey: icon.toLXMFFieldValue()]
         }
 
@@ -201,7 +189,7 @@ public final class MessagingViewModel {
             return true
         } catch {
             // Retry via relay if enabled
-            let retryViaRelay = await SettingsRepository().getRetryViaRelay()
+            let retryViaRelay = await settingsRepository.getRetryViaRelay()
             if retryViaRelay {
                 logger.info("[MSG_VM] Delivery failed, retrying via relay")
 
