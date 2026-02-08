@@ -85,9 +85,12 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.isOnline = Date() < entry.expires
         self.isFavorite = false
 
-        // Detect propagation nodes from appData
-        if let appData = entry.appData,
-           let _ = PropagationNodeInfo.parse(from: appData) {
+        // Detect propagation nodes via aspect check or appData parsing
+        if entry.isLXMFPropagationNode {
+            self.badgeType = .relay
+            self.isRelay = true
+        } else if let appData = entry.appData,
+                  let _ = PropagationNodeInfo.parse(from: appData) {
             self.badgeType = .relay
             self.isRelay = true
         } else {
@@ -313,7 +316,8 @@ public final class ContactsViewModel {
     /// Handle a new path entry from the stream.
     @MainActor
     private func handleNewPathEntry(_ entry: PathEntry) {
-        // Skip non-LXMF destinations (no appData = can't identify as LXMF peer/relay)
+        // Skip non-LXMF destinations by verifying the destination hash matches lxmf.delivery aspect
+        guard entry.isLXMFDestination else { return }
         guard let appData = entry.appData, !appData.isEmpty else { return }
 
         var contact = Contact(from: entry)
@@ -357,12 +361,11 @@ public final class ContactsViewModel {
                 .filter { $0.isFavorite != 0 }
                 .map { Contact(from: $0) }
 
-            // Load network announces from path table (only entries with appData,
-            // which identifies them as LXMF destinations we can interact with)
+            // Load network announces from path table (only LXMF destinations)
             if let pathTable = appServices.pathTable {
                 let entries = await pathTable.allEntries()
                 networkAnnounces = entries
-                    .filter { $0.appData != nil && !$0.appData!.isEmpty }
+                    .filter { $0.isLXMFDestination && $0.appData != nil && !$0.appData!.isEmpty }
                     .map { Contact(from: $0) }
                     .sorted { $0.timestamp > $1.timestamp }
             }
@@ -390,7 +393,7 @@ public final class ContactsViewModel {
         if let pathTable = appServices.pathTable {
             let entries = await pathTable.allEntries()
             networkAnnounces = entries
-                .filter { $0.appData != nil && !$0.appData!.isEmpty }
+                .filter { $0.isLXMFDestination && $0.appData != nil && !$0.appData!.isEmpty }
                 .map { Contact(from: $0) }
                 .sorted { $0.timestamp > $1.timestamp }
         }
