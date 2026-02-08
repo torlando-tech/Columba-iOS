@@ -217,7 +217,7 @@ public final class SettingsViewModel {
         let interfaceRepo = InterfaceRepository()
         if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
            case .tcpClient(let config) = tcpEntity.config {
-            connectedInterface = "TCP (\(config.targetHost):\(config.targetPort))"
+            connectedInterface = "TCP (\(config.targetHost):\(String(config.targetPort)))"
         } else {
             connectedInterface = "No TCP interface"
         }
