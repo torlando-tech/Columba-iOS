@@ -687,6 +687,62 @@ public final class AppServices {
     }
     #endif
 
+    /// Start an RNode BLE interface with the given radio configuration.
+    ///
+    /// Creates an RNodeInterface, configures the radio, and registers it with
+    /// the transport layer (which calls connect()). If the base stack hasn't
+    /// been initialized yet, initializes it first.
+    ///
+    /// - Parameters:
+    ///   - config: RNode radio configuration (device name, frequency, etc.)
+    ///   - name: Display name for the interface
+    public func startRNodeInterface(config rnodeConfig: RNodeConfig, name: String) async throws {
+        // Stop existing RNode interface if running
+        await stopRNodeInterface()
+
+        // Ensure base stack exists
+        if transport == nil {
+            try await initializeBaseStack()
+        }
+
+        guard let transport = transport else {
+            throw AppServicesError.transportNotConnected
+        }
+
+        let transportConfig = InterfaceConfig(
+            id: "rnode0",
+            name: name,
+            type: .rnode,
+            enabled: true,
+            mode: .full,
+            host: rnodeConfig.deviceName,  // BLE device name in "host" field
+            port: 0
+        )
+
+        let newRNodeInterface = try RNodeInterface(config: transportConfig)
+
+        // Configure radio BEFORE connecting (critical ordering)
+        let radioConfig = rnodeConfig.toRadioConfig()
+        try await newRNodeInterface.configureRadio(radioConfig)
+
+        self.rnodeInterface = newRNodeInterface
+
+        // Register with transport — this calls connect() which starts BLE scan
+        try await transport.addInterface(newRNodeInterface)
+        logger.info("RNodeInterface started: \(name)")
+    }
+
+    /// Stop the RNode interface.
+    public func stopRNodeInterface() async {
+        guard let rnode = rnodeInterface else { return }
+        await rnode.disconnect()
+        if let transport = transport {
+            await transport.removeInterface(id: rnode.id)
+        }
+        rnodeInterface = nil
+        logger.info("RNodeInterface stopped")
+    }
+
     /// Initialize the base stack (identity, transport, router) without a TCP interface.
     ///
     /// Used when starting only AutoInterface without a TCP server.
@@ -799,12 +855,8 @@ public final class AppServices {
         // Disconnect TCP interface
         await tcpInterface?.disconnect()
 
-        // Disconnect RNode interface
-        await rnodeInterface?.disconnect()
-        if let transport = transport, let rnode = rnodeInterface {
-            await transport.removeInterface(id: rnode.id)
-        }
-        rnodeInterface = nil
+        // Stop RNode interface
+        await stopRNodeInterface()
 
         // Stop BLE interface
         #if canImport(CoreBluetooth)

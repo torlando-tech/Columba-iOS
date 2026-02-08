@@ -329,59 +329,11 @@ public final class InterfaceManagementViewModel {
                case .rnode(let rnodeConfig) = rnodeIf.config {
 
                 print("[INTERFACE_VM] Applying RNode changes, device: \(rnodeConfig.deviceName)")
-
-                // Build transport-layer config
-                let transportConfig = InterfaceConfig(
-                    id: rnodeIf.id,
-                    name: rnodeIf.name,
-                    type: .rnode,
-                    enabled: true,
-                    mode: .full,
-                    host: rnodeConfig.deviceName,  // BLE device name in "host" field
-                    port: 0                        // Unused for BLE
-                )
-
-                // Disconnect existing RNode if any
-                if let existingRNode = appServices.rnodeInterface {
-                    await existingRNode.disconnect()
-                    if let transport = await appServices.transport {
-                        await transport.removeInterface(id: existingRNode.id)
-                    }
-                }
-
-                // Ensure base stack exists
-                if await appServices.transport == nil {
-                    // Transport not initialized yet -- skip RNode (needs TCP or base stack first)
-                    print("[INTERFACE_VM] Transport not initialized, skipping RNode")
-                } else {
-                    // Create new RNode interface
-                    let rnodeInterface = try RNodeInterface(config: transportConfig)
-
-                    // Configure radio BEFORE connecting (critical ordering!)
-                    let radioConfig = rnodeConfig.toRadioConfig()
-                    try await rnodeInterface.configureRadio(radioConfig)
-
-                    // Store reference in AppServices for lifecycle management
-                    appServices.rnodeInterface = rnodeInterface
-
-                    // Register with transport (connects automatically)
-                    guard let transport = await appServices.transport else {
-                        throw AppServicesError.transportNotConnected
-                    }
-                    try await transport.addInterface(rnodeInterface)
-
-                    interfaceStatus[rnodeIf.id] = .connecting
-                    showSuccess("Connecting to RNode \(rnodeConfig.deviceName)...")
-                }
+                interfaceStatus[rnodeIf.id] = .connecting
+                try await appServices.startRNodeInterface(config: rnodeConfig, name: rnodeIf.name)
+                showSuccess("Connecting to RNode \(rnodeConfig.deviceName)...")
             } else {
-                // No enabled RNode -- disconnect if running
-                if let existingRNode = appServices.rnodeInterface {
-                    await existingRNode.disconnect()
-                    if let transport = await appServices.transport {
-                        await transport.removeInterface(id: existingRNode.id)
-                    }
-                    appServices.rnodeInterface = nil
-                }
+                await appServices.stopRNodeInterface()
             }
 
             hasPendingChanges = false
