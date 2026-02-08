@@ -181,6 +181,31 @@ public struct Message: Identifiable, Equatable {
             self.deliveryStatus = .sent
         }
     }
+
+    /// Create from MessageRecord (lightweight, no LXMessage unpacking).
+    ///
+    /// Uses database columns directly, avoiding expensive MessagePack
+    /// decode + SHA256 + Ed25519 verification per message.
+    public init(from record: MessageRecord, localHash: Data) {
+        self.id = record.messageId.map { String(format: "%02x", $0) }.joined()
+        self.content = String(data: record.content, encoding: .utf8) ?? ""
+        self.timestamp = Date(timeIntervalSince1970: record.timestamp)
+        self.isFromMe = record.sourceHash == localHash
+
+        // Map raw state value to DeliveryStatus
+        switch record.state {
+        case LXMessageState.sending.rawValue:
+            self.deliveryStatus = .sending
+        case LXMessageState.sent.rawValue:
+            self.deliveryStatus = .sent
+        case LXMessageState.delivered.rawValue:
+            self.deliveryStatus = .delivered
+        case LXMessageState.failed.rawValue:
+            self.deliveryStatus = .failed
+        default:
+            self.deliveryStatus = .sent
+        }
+    }
 }
 
 /// Message delivery status.
