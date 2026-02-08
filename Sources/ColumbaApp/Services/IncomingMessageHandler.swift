@@ -108,11 +108,22 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 self.logger.info("[LXMF_INBOUND] Message \(messageHashHex) saved to database OK")
 
                 // Extract icon appearance from LXMF Field 4
-                if let fields = message.fields,
-                   let iconValue = fields[IconAppearance.fieldKey],
-                   let icon = IconAppearance.fromLXMFFieldValue(iconValue) {
-                    try await self.messageRepository.updatePeerIcon(message.sourceHash, icon: icon)
-                    self.logger.info("[LXMF_INBOUND] Saved peer icon: \(icon.iconName) for \(sourceHashHex)")
+                if let fields = message.fields {
+                    let fieldKeys = fields.keys.map { String($0) }.joined(separator: ",")
+                    self.logger.info("[LXMF_INBOUND] Message has fields: keys=[\(fieldKeys)]")
+                    if let iconValue = fields[IconAppearance.fieldKey] {
+                        self.logger.info("[LXMF_INBOUND] Found Field 4 (icon) data: \(type(of: iconValue))")
+                        if let icon = IconAppearance.fromLXMFFieldValue(iconValue) {
+                            try await self.messageRepository.updatePeerIcon(message.sourceHash, icon: icon)
+                            self.logger.info("[LXMF_INBOUND] Saved peer icon: name=\(icon.iconName) fg=\(icon.foregroundColor) bg=\(icon.backgroundColor) for \(sourceHashHex)")
+                        } else {
+                            self.logger.error("[LXMF_INBOUND] Failed to parse icon from Field 4 value")
+                        }
+                    } else {
+                        self.logger.info("[LXMF_INBOUND] No Field 4 (icon) in message fields")
+                    }
+                } else {
+                    self.logger.info("[LXMF_INBOUND] Message has no fields (no icon data)")
                 }
 
                 // Post local push notification (respects user preferences)
