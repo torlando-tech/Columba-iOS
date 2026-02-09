@@ -8,6 +8,9 @@
 
 import SwiftUI
 import LXMFSwift
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Individual message bubble view.
 ///
@@ -39,13 +42,44 @@ struct MessageBubble: View {
 
             VStack(alignment: message.isFromMe ? .trailing : .leading, spacing: 4) {
                 // Message content bubble
-                Text(message.content)
-                    .font(.body)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(bubbleBackground)
-                    .clipShape(bubbleShape)
+                VStack(alignment: .leading, spacing: 6) {
+                    // Inline image
+                    if let imageData = message.imageData,
+                       let uiImage = UIImage(data: imageData) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: 250)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+
+                    // Text content (show if non-empty)
+                    if !message.content.isEmpty {
+                        Text(message.content)
+                            .font(.body)
+                            .foregroundStyle(.white)
+                    }
+
+                    // File attachment chips
+                    if let attachments = message.attachments, !attachments.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(attachments.enumerated()), id: \.offset) { _, attachment in
+                                fileChip(name: attachment.name, size: attachment.data.count)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(bubbleBackground)
+                .clipShape(bubbleShape)
+                .contextMenu {
+                    Button {
+                        UIPasteboard.general.string = message.content
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
 
                 // Timestamp and status row
                 HStack(spacing: 4) {
@@ -82,6 +116,33 @@ struct MessageBubble: View {
 
     private var bubbleShape: some Shape {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
+    }
+
+    // MARK: - File Chip
+
+    private func fileChip(name: String, size: Int) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "doc.fill")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.8))
+            Text(name)
+                .font(.caption)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+            Text(Self.formatFileSize(size))
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.6))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.1))
+        .clipShape(Capsule())
+    }
+
+    private static func formatFileSize(_ bytes: Int) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        if bytes < 1024 * 1024 { return "\(bytes / 1024) KB" }
+        return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
     }
 
     // MARK: - Delivery Status
@@ -126,12 +187,21 @@ struct MessageBubble: View {
 // MARK: - Message Model
 
 /// Message model for the messaging view.
+/// File attachment tuple for display.
+public struct FileAttachment: Equatable {
+    public let name: String
+    public let data: Data
+}
+
 public struct Message: Identifiable, Equatable {
     public let id: String
     public let content: String
     public let timestamp: Date
     public let isFromMe: Bool
     public var deliveryStatus: DeliveryStatus
+    public var imageData: Data?
+    public var imageFormat: String?
+    public var attachments: [FileAttachment]?
 
     /// Cached formatter for relative time strings.
     private static let relativeFormatter: RelativeDateTimeFormatter = {
@@ -151,13 +221,19 @@ public struct Message: Identifiable, Equatable {
         content: String,
         timestamp: Date = Date(),
         isFromMe: Bool,
-        deliveryStatus: DeliveryStatus = .sent
+        deliveryStatus: DeliveryStatus = .sent,
+        imageData: Data? = nil,
+        imageFormat: String? = nil,
+        attachments: [FileAttachment]? = nil
     ) {
         self.id = id
         self.content = content
         self.timestamp = timestamp
         self.isFromMe = isFromMe
         self.deliveryStatus = deliveryStatus
+        self.imageData = imageData
+        self.imageFormat = imageFormat
+        self.attachments = attachments
     }
 
     /// Create from LXMessage.
@@ -180,12 +256,35 @@ public struct Message: Identifiable, Equatable {
         default:
             self.deliveryStatus = .sent
         }
+
+        // Extract image field (0x06): [format_string, binary_data]
+        if let imageField = lxMessage.fields?[LXMessage.FIELD_IMAGE] as? [Any],
+           imageField.count >= 2,
+           let format = imageField[0] as? String,
+           let data = imageField[1] as? Data {
+            self.imageData = data
+            self.imageFormat = format
+        }
+
+        // Extract file attachments field (0x05): [[filename, data], ...]
+        if let filesField = lxMessage.fields?[LXMessage.FIELD_FILE_ATTACHMENTS] as? [Any] {
+            var atts: [FileAttachment] = []
+            for item in filesField {
+                if let pair = item as? [Any],
+                   pair.count >= 2,
+                   let name = pair[0] as? String,
+                   let data = pair[1] as? Data {
+                    atts.append(FileAttachment(name: name, data: data))
+                }
+            }
+            if !atts.isEmpty { self.attachments = atts }
+        }
     }
 
-    /// Create from MessageRecord (lightweight, no LXMessage unpacking).
+    /// Create from MessageRecord.
     ///
-    /// Uses database columns directly, avoiding expensive MessagePack
-    /// decode + SHA256 + Ed25519 verification per message.
+    /// Uses database columns directly for basic fields. For messages with
+    /// LXMF fields (images, attachments), unpacks from the stored wire format.
     public init(from record: MessageRecord, localHash: Data) {
         self.id = record.messageId.map { String(format: "%02x", $0) }.joined()
         self.content = String(data: record.content, encoding: .utf8) ?? ""
@@ -204,6 +303,31 @@ public struct Message: Identifiable, Equatable {
             self.deliveryStatus = .failed
         default:
             self.deliveryStatus = .sent
+        }
+
+        // Extract fields from packed wire format if available
+        if let lxMessage = try? LXMessage.unpackFromBytes(record.packedLxmf) {
+            // Extract image field (0x06)
+            if let imageField = lxMessage.fields?[LXMessage.FIELD_IMAGE] as? [Any],
+               imageField.count >= 2,
+               let format = imageField[0] as? String,
+               let data = imageField[1] as? Data {
+                self.imageData = data
+                self.imageFormat = format
+            }
+            // Extract file attachments field (0x05)
+            if let filesField = lxMessage.fields?[LXMessage.FIELD_FILE_ATTACHMENTS] as? [Any] {
+                var atts: [FileAttachment] = []
+                for item in filesField {
+                    if let pair = item as? [Any],
+                       pair.count >= 2,
+                       let name = pair[0] as? String,
+                       let data = pair[1] as? Data {
+                        atts.append(FileAttachment(name: name, data: data))
+                    }
+                }
+                if !atts.isEmpty { self.attachments = atts }
+            }
         }
     }
 }

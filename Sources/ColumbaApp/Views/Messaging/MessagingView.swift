@@ -7,6 +7,8 @@
 //
 
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 import LXMFSwift
 #if canImport(UIKit)
 import UIKit
@@ -30,6 +32,11 @@ struct MessagingView: View {
 
     @State private var viewModel: MessagingViewModel?
     @State private var messageText = ""
+    @State private var showPhotoPicker = false
+    @State private var showFilePicker = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var attachedImage: UIImage?
+    @State private var attachedFiles: [FileAttachment] = []
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -65,14 +72,47 @@ struct MessagingView: View {
                 // Input bar
                 MessageInputBar(
                     text: $messageText,
+                    attachedImage: $attachedImage,
+                    attachedFiles: $attachedFiles,
                     onSend: sendMessage,
-                    onImagePicker: {
-                        // Image picker action
-                    },
-                    onAttachment: {
-                        // Attachment action
-                    }
+                    onImagePicker: { showPhotoPicker = true },
+                    onAttachment: { showFilePicker = true }
                 )
+                .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+                .onChange(of: selectedPhotoItem) { _, newItem in
+                    guard let newItem else { return }
+                    Task {
+                        do {
+                            if let data = try await newItem.loadTransferable(type: Data.self) {
+                                if let image = UIImage(data: data) {
+                                    await MainActor.run {
+                                        attachedImage = image.resizedToFit(maxDimension: 1280)
+                                    }
+                                }
+                            }
+                        } catch {
+                            print("[PHOTO_PICKER] Failed to load image: \(error)")
+                        }
+                        await MainActor.run {
+                            selectedPhotoItem = nil
+                        }
+                    }
+                }
+                .fileImporter(
+                    isPresented: $showFilePicker,
+                    allowedContentTypes: [.data],
+                    allowsMultipleSelection: true
+                ) { result in
+                    if case .success(let urls) = result {
+                        for url in urls {
+                            guard url.startAccessingSecurityScopedResource() else { continue }
+                            defer { url.stopAccessingSecurityScopedResource() }
+                            if let data = try? Data(contentsOf: url) {
+                                attachedFiles.append(FileAttachment(name: url.lastPathComponent, data: data))
+                            }
+                        }
+                    }
+                }
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -158,9 +198,15 @@ struct MessagingView: View {
 
     private func sendMessage() {
         let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        let image = attachedImage
+        let files = attachedFiles
 
+        guard !text.isEmpty || image != nil || !files.isEmpty else { return }
+
+        // Clear input immediately
         messageText = ""
+        attachedImage = nil
+        attachedFiles = []
 
         // Haptic feedback
         #if os(iOS)
@@ -168,8 +214,25 @@ struct MessagingView: View {
         generator.impactOccurred()
         #endif
 
+        // Prepare image data (JPEG for smaller wire size, matching Sideband)
+        var imageData: Data?
+        var imageFormat: String?
+        if let image {
+            imageData = image.jpegData(compressionQuality: 0.75)
+            imageFormat = "jpeg"
+            print("[SEND_IMG] Image \(image.size.width)x\(image.size.height) -> JPEG \(imageData?.count ?? 0) bytes")
+        }
+
+        // Prepare file attachments
+        let fileAttachments: [(name: String, data: Data)]? = files.isEmpty ? nil : files.map { ($0.name, $0.data) }
+
         Task {
-            _ = await viewModel?.sendMessage(text: text)
+            _ = await viewModel?.sendMessage(
+                text: text,
+                imageData: imageData,
+                imageFormat: imageFormat,
+                attachments: fileAttachments
+            )
         }
     }
 
@@ -183,5 +246,22 @@ struct MessagingView: View {
         } else {
             proxy.scrollTo(lastMessage.id, anchor: .bottom)
         }
+    }
+}
+
+// MARK: - UIImage Resize Helper
+
+extension UIImage {
+    /// Resize image to fit within a maximum dimension while preserving aspect ratio.
+    /// Uses scale factor 1.0 to produce actual-pixel-sized output (matching Sideband behavior).
+    func resizedToFit(maxDimension: CGFloat) -> UIImage {
+        let ratio = min(maxDimension / size.width, maxDimension / size.height)
+        if ratio >= 1.0 { return self }
+        let newSize = CGSize(width: size.width * ratio, height: size.height * ratio)
+        UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
+        draw(in: CGRect(origin: .zero, size: newSize))
+        let result = UIGraphicsGetImageFromCurrentImageContext()!
+        UIGraphicsEndImageContext()
+        return result
     }
 }
