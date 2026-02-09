@@ -7,6 +7,9 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Message input bar with text field and action buttons.
 ///
@@ -20,6 +23,8 @@ struct MessageInputBar: View {
     // MARK: - Properties
 
     @Binding var text: String
+    @Binding var attachedImage: UIImage?
+    @Binding var attachedFiles: [FileAttachment]
     var onSend: () -> Void
     var onImagePicker: () -> Void
     var onAttachment: () -> Void
@@ -36,6 +41,8 @@ struct MessageInputBar: View {
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || attachedImage != nil
+        || !attachedFiles.isEmpty
     }
 
     // MARK: - Body
@@ -45,6 +52,40 @@ struct MessageInputBar: View {
             // Top separator
             Divider()
                 .background(Color.white.opacity(0.1))
+
+            // Attachment preview strip
+            if attachedImage != nil || !attachedFiles.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        // Image preview
+                        if let image = attachedImage {
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 60, height: 60)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                                Button {
+                                    withAnimation { attachedImage = nil }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 18))
+                                        .foregroundStyle(.white, .black.opacity(0.6))
+                                }
+                                .offset(x: 6, y: -6)
+                            }
+                        }
+
+                        // File chips
+                        ForEach(Array(attachedFiles.indices), id: \.self) { index in
+                            fileChipView(index: index)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+            }
 
             HStack(alignment: .bottom, spacing: 12) {
                 // Text field container
@@ -103,6 +144,34 @@ struct MessageInputBar: View {
             .background(.ultraThinMaterial)
         }
     }
+
+    // MARK: - File Chip View
+
+    private func fileChipView(index: Int) -> some View {
+        let fileName = attachedFiles[index].name
+        let chipBg = Color.white.opacity(0.1)
+        let iconColor = Color.white.opacity(0.7)
+        return HStack(spacing: 4) {
+            Image(systemName: "doc.fill")
+                .font(.caption2)
+                .foregroundColor(iconColor)
+            Text(fileName)
+                .font(.caption)
+                .foregroundColor(.white)
+                .lineLimit(1)
+            Button {
+                withAnimation { _ = attachedFiles.remove(at: index) }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption)
+                    .foregroundColor(iconColor)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(chipBg)
+        .clipShape(Capsule())
+    }
 }
 
 // MARK: - Scale Button Style
@@ -123,6 +192,8 @@ private struct ScaleButtonStyle: ButtonStyle {
         Spacer()
         MessageInputBar(
             text: .constant(""),
+            attachedImage: .constant(nil as UIImage?),
+            attachedFiles: .constant([]),
             onSend: {},
             onImagePicker: {},
             onAttachment: {}
@@ -137,6 +208,8 @@ private struct ScaleButtonStyle: ButtonStyle {
         Spacer()
         MessageInputBar(
             text: .constant("Hello, this is a test message"),
+            attachedImage: .constant(nil as UIImage?),
+            attachedFiles: .constant([]),
             onSend: {},
             onImagePicker: {},
             onAttachment: {}

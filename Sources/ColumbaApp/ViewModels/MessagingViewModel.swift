@@ -111,14 +111,31 @@ public final class MessagingViewModel {
         }
     }
 
-    /// Send a message with optimistic UI.
-    ///
-    /// - Parameter text: Message text to send
-    /// - Returns: True if message was sent successfully
+    /// Send a text-only message (convenience wrapper).
     @MainActor
     public func sendMessage(text: String) async -> Bool {
+        await sendMessage(text: text, imageData: nil, imageFormat: nil, attachments: nil)
+    }
+
+    /// Send a message with optional image and file attachments.
+    ///
+    /// - Parameters:
+    ///   - text: Message text (can be empty if attachments provided)
+    ///   - imageData: PNG/JPEG image bytes for FIELD_IMAGE
+    ///   - imageFormat: Image format string ("png" or "jpeg")
+    ///   - attachments: File attachments as (name, data) tuples for FIELD_FILE_ATTACHMENTS
+    /// - Returns: True if message was sent successfully
+    @MainActor
+    public func sendMessage(
+        text: String,
+        imageData: Data?,
+        imageFormat: String?,
+        attachments: [(name: String, data: Data)]?
+    ) async -> Bool {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty else { return false }
+        guard !trimmedText.isEmpty || imageData != nil || (attachments != nil && !attachments!.isEmpty) else {
+            return false
+        }
 
         guard let identity = appServices.identity else {
             errorMessage = "Identity not initialized"
@@ -138,9 +155,19 @@ public final class MessagingViewModel {
         let fallbackForLargeMessages: LXDeliveryMethod = (settingsMethod == "propagated") ? .propagated : .direct
 
         // Build fields with icon appearance if set
-        var fields: [UInt8: Any]? = nil
+        var fields: [UInt8: Any] = [:]
         if let icon = await settingsRepository.getIconAppearance() {
-            fields = [IconAppearance.fieldKey: icon.toLXMFFieldValue()]
+            fields[IconAppearance.fieldKey] = icon.toLXMFFieldValue()
+        }
+
+        // Add image field (FIELD_IMAGE = 0x06): [format_string, binary_data]
+        if let imageData, let imageFormat {
+            fields[LXMessage.FIELD_IMAGE] = [imageFormat, imageData] as [Any]
+        }
+
+        // Add file attachments field (FIELD_FILE_ATTACHMENTS = 0x05): [[name, data], ...]
+        if let attachments, !attachments.isEmpty {
+            fields[LXMessage.FIELD_FILE_ATTACHMENTS] = attachments.map { [$0.name, $0.data] as [Any] } as [Any]
         }
 
         // Create outbound LXMF message — always opportunistic first
@@ -149,7 +176,7 @@ public final class MessagingViewModel {
             sourceIdentity: identity,
             content: trimmedText.data(using: .utf8) ?? Data(),
             title: Data(),
-            fields: fields,
+            fields: fields.isEmpty ? nil : fields,
             desiredMethod: .opportunistic
         )
         lxMessage.fallbackMethod = fallbackForLargeMessages
@@ -158,13 +185,16 @@ public final class MessagingViewModel {
         let optimisticId = UUID().uuidString
         lxMessage.hash = optimisticId.data(using: .utf8)!
 
-        // Create UI message for immediate display
+        // Create UI message for immediate display (include attachments for preview)
         let optimisticMessage = Message(
             id: optimisticId,
             content: trimmedText,
             timestamp: Date(),
             isFromMe: true,
-            deliveryStatus: .sending
+            deliveryStatus: .sending,
+            imageData: imageData,
+            imageFormat: imageFormat,
+            attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) }
         )
 
         // Add to UI immediately
@@ -173,18 +203,25 @@ public final class MessagingViewModel {
         }
 
         do {
-            // Send via router
+            // Send via router (router saves to DB internally via Task.detached)
             try await router.handleOutbound(&lxMessage)
 
-            // Update UI with sent status
+            // Replace optimistic message with real one (using actual hash from pack)
+            let realId = lxMessage.hash.map { String(format: "%02x", $0) }.joined()
             if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    messages[index].deliveryStatus = .sent
+                    messages[index] = Message(
+                        id: realId,
+                        content: trimmedText,
+                        timestamp: Date(timeIntervalSince1970: lxMessage.timestamp),
+                        isFromMe: true,
+                        deliveryStatus: .sent,
+                        imageData: imageData,
+                        imageFormat: imageFormat,
+                        attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) }
+                    )
                 }
             }
-
-            // Save to database
-            try await repository.saveMessage(lxMessage)
 
             return true
         } catch {
@@ -206,18 +243,28 @@ public final class MessagingViewModel {
                     sourceIdentity: identity,
                     content: trimmedText.data(using: .utf8) ?? Data(),
                     title: Data(),
-                    fields: fields,
+                    fields: fields.isEmpty ? nil : fields,
                     desiredMethod: .propagated
                 )
 
                 do {
+                    // Router saves to DB internally
                     try await router.handleOutbound(&retryMessage)
+                    let realId = retryMessage.hash.map { String(format: "%02x", $0) }.joined()
                     if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                         withAnimation(.easeInOut(duration: 0.2)) {
-                            messages[index].deliveryStatus = .sent
+                            messages[index] = Message(
+                                id: realId,
+                                content: trimmedText,
+                                timestamp: Date(timeIntervalSince1970: retryMessage.timestamp),
+                                isFromMe: true,
+                                deliveryStatus: .sent,
+                                imageData: imageData,
+                                imageFormat: imageFormat,
+                                attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) }
+                            )
                         }
                     }
-                    try await repository.saveMessage(retryMessage)
                     return true
                 } catch {
                     logger.error("[MSG_VM] Relay retry also failed: \(error.localizedDescription)")
