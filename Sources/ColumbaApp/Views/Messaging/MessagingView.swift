@@ -180,17 +180,31 @@ struct MessagingView: View {
         }
     }
 
+    @State private var isSyncing = false
+
     private var trailingToolbar: some View {
         HStack(spacing: 16) {
             Button(action: {
                 Task {
+                    isSyncing = true
+                    defer { isSyncing = false }
+                    // Sync from propagation node first, then reload DB
+                    await appServices.propagationManager?.syncNow()
                     await viewModel?.loadMessages()
                 }
             }) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 16))
                     .foregroundStyle(.white)
+                    .rotationEffect(.degrees(isSyncing ? 360 : 0))
+                    .animation(
+                        isSyncing
+                            ? .linear(duration: 1).repeatForever(autoreverses: false)
+                            : .default,
+                        value: isSyncing
+                    )
             }
+            .disabled(isSyncing)
         }
     }
 

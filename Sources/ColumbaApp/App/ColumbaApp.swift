@@ -264,6 +264,15 @@ struct RootView: View {
 
             self.isInitialized = true
 
+            // DEBUG: Auto-trigger propagation sync on launch for testing
+            if ProcessInfo.processInfo.arguments.contains("--auto-sync") {
+                let services = appServices
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    await services.propagationManager?.syncNow()
+                }
+            }
+
         } catch {
             self.initError = error.localizedDescription
         }

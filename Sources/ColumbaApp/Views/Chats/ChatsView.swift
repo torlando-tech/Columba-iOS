@@ -83,9 +83,10 @@ struct ChatsView: View {
                             .foregroundColor(.white)
                     }
 
-                    // Refresh button
+                    // Refresh button — syncs from propagation node then reloads DB
                     Button {
                         Task {
+                            await appServices.propagationManager?.syncNow()
                             await viewModel?.refreshConversations()
                         }
                     } label: {
@@ -221,6 +222,7 @@ struct ChatsView: View {
             .padding(.bottom, 16)
         }
         .refreshable {
+            await appServices.propagationManager?.syncNow()
             await vm.refreshConversations()
         }
     }
@@ -251,9 +253,10 @@ struct ChatsView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 48)
 
-            // Refresh button
+            // Refresh button — syncs from propagation node then reloads DB
             Button {
                 Task {
+                    await appServices.propagationManager?.syncNow()
                     await viewModel?.refreshConversations()
                 }
             } label: {
