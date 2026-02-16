@@ -159,6 +159,12 @@ public final class PropagationNodeManager {
         if autoSelectEnabled {
             await autoSelectBestNode()
         }
+
+        // DEBUG: Auto-sync on first node discovery
+        if selectedNodeHash != nil && !isSyncing {
+            logger.info("[DEBUG] Auto-triggering sync on node discovery")
+            await syncNow()
+        }
     }
 
     // MARK: - Node Selection
@@ -208,21 +214,50 @@ public final class PropagationNodeManager {
     // MARK: - Sync
 
     /// Trigger an immediate sync from the propagation node.
+    ///
+    /// If no propagation node is selected yet, auto-selects the best available node first.
     public func syncNow() async {
         guard let router = appServices?.router else {
+            logger.error("[SYNC] Router not available")
             syncState.state = .linkFailed
             syncState.errorDescription = "Router not available"
             return
         }
 
+        logger.info("[SYNC] syncNow called. knownNodes=\(self.knownNodes.count), selectedNodeHash=\(self.selectedNodeHash != nil ? "set" : "nil")")
+
+        // Auto-select a propagation node if none is set
+        if selectedNodeHash == nil {
+            // Try online nodes first, then any node as fallback
+            if let best = knownNodes.first(where: { $0.isOnline }) {
+                await selectNode(hash: best.hash)
+                logger.info("[SYNC] Auto-selected online node: \(best.resolvedDisplayName) hops=\(best.hopCount)")
+            } else if let best = knownNodes.first {
+                // isOnline is a snapshot from discovery time; node may still be reachable
+                await selectNode(hash: best.hash)
+                logger.info("[SYNC] Auto-selected node (may be offline): \(best.resolvedDisplayName) hops=\(best.hopCount)")
+            }
+        }
+
+        guard let nodeHash = selectedNodeHash else {
+            syncState.state = .noPath
+            syncState.errorDescription = "No propagation node available"
+            logger.warning("[SYNC] No propagation nodes discovered, sync skipped")
+            return
+        }
+
+        let nodeHex = nodeHash.prefix(8).map { String(format: "%02x", $0) }.joined()
+        logger.info("[SYNC] Starting sync from propagation node \(nodeHex)")
+
         do {
             try await router.syncFromPropagationNode()
             syncState = await router.syncState
             lastSyncTime = syncState.lastSync
+            logger.info("[SYNC] Sync complete. newMessages=\(self.syncState.receivedMessages)")
         } catch {
             syncState.state = .transferFailed
             syncState.errorDescription = error.localizedDescription
-            logger.error("Sync failed: \(error.localizedDescription)")
+            logger.error("[SYNC] Sync failed: \(error.localizedDescription)")
         }
     }
 
