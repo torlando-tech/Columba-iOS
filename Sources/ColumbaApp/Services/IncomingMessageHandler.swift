@@ -86,9 +86,9 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             }
 
+            // Note: message is already saved to DB by LXMRouter before calling delegate.
+            // We only need to handle extra work the router doesn't do.
             do {
-                try await self.messageRepository.saveMessage(message)
-
                 // Extract icon appearance from LXMF Field 4
                 if let fields = message.fields,
                    let iconValue = fields[IconAppearance.fieldKey],
@@ -96,24 +96,24 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     try await self.messageRepository.updatePeerIcon(message.sourceHash, icon: icon)
                     self.logger.info("Saved peer icon: \(icon.iconName) for \(sourceHashHex)")
                 }
-
-                // Post local push notification (respects user preferences)
-                await NotificationService.shared.postMessageNotification(
-                    message,
-                    senderName: nil,
-                    database: self.database
-                )
-
-                // Post single notification after save so views reload with saved data
-                NotificationCenter.default.post(
-                    name: IncomingMessageHandler.messageReceivedNotification,
-                    object: nil,
-                    userInfo: ["sourceHash": sourceHash]
-                )
-                NotificationObserver.postNewMessage()
             } catch {
-                self.logger.error("[LXMF_INBOUND] FAILED to save message \(messageHashHex): \(error.localizedDescription)")
+                self.logger.error("[LXMF_INBOUND] Failed to update peer icon for \(messageHashHex): \(error.localizedDescription)")
             }
+
+            // Post local push notification (respects user preferences)
+            await NotificationService.shared.postMessageNotification(
+                message,
+                senderName: nil,
+                database: self.database
+            )
+
+            // Post notification so views reload with saved data
+            NotificationCenter.default.post(
+                name: IncomingMessageHandler.messageReceivedNotification,
+                object: nil,
+                userInfo: ["sourceHash": sourceHash]
+            )
+            NotificationObserver.postNewMessage()
         }
     }
 
