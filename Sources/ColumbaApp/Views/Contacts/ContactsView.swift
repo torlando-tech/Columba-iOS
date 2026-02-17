@@ -48,6 +48,15 @@ public struct ContactsView: View {
     /// Conversation to navigate to after "Start Chat".
     @State private var chatConversation: Conversation?
 
+    /// Whether the QR scanner is shown.
+    @State private var showQRScanner = false
+
+    /// Contact scanned from QR code or deep link, shown in AddContactSheet.
+    @State private var scannedContact: ScannedContact?
+
+    /// Pending deep link URL string to process.
+    var pendingDeepLink: Binding<String?>?
+
     /// Called when a contact is selected.
     public var onContactSelected: ((Contact) -> Void)?
 
@@ -56,10 +65,12 @@ public struct ContactsView: View {
     public init(
         appServices: AppServices,
         messageRepository: MessageRepository,
+        pendingDeepLink: Binding<String?>? = nil,
         onContactSelected: ((Contact) -> Void)? = nil
     ) {
         self.appServices = appServices
         self.messageRepository = messageRepository
+        self.pendingDeepLink = pendingDeepLink
         self.onContactSelected = onContactSelected
     }
 
@@ -128,6 +139,41 @@ public struct ContactsView: View {
                 )
             }
             await viewModel?.loadContacts()
+        }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $showQRScanner) {
+            if let vm = viewModel {
+                QRScannerView(
+                    onScanned: { hash, pubKey in
+                        showQRScanner = false
+                        scannedContact = ScannedContact(destinationHash: hash, publicKey: pubKey)
+                    },
+                    onCancel: {
+                        showQRScanner = false
+                    }
+                )
+                .ignoresSafeArea()
+            }
+        }
+        #endif
+        .sheet(item: $scannedContact) { contact in
+            if let vm = viewModel {
+                AddContactSheet(
+                    scannedContact: contact,
+                    viewModel: vm,
+                    onDismiss: { scannedContact = nil }
+                )
+                .presentationDetents([.medium, .large])
+            }
+        }
+        .onChange(of: pendingDeepLink?.wrappedValue) { _, newValue in
+            if let urlString = newValue, let parsed = ContactsViewModel.parseLXMA(urlString) {
+                pendingDeepLink?.wrappedValue = nil
+                scannedContact = ScannedContact(
+                    destinationHash: parsed.destinationHash,
+                    publicKey: parsed.publicKey
+                )
+            }
         }
     }
 
@@ -321,6 +367,14 @@ public struct ContactsView: View {
                     }
                 }
                 .disabled(vm.isAnnouncing)
+
+                // QR scan button
+                Button {
+                    showQRScanner = true
+                } label: {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.title3)
+                }
 
                 // Search button
                 Button {

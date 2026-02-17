@@ -515,6 +515,92 @@ public final class ContactsViewModel {
         }
     }
 
+    // MARK: - QR Code / Deep Link Support
+
+    /// Parse an lxma:// URI string into destination hash and public key.
+    ///
+    /// Format: `lxma://<32-hex-char-dest-hash>:<128-hex-char-pubkey>`
+    /// Returns nil on any validation failure.
+    public static func parseLXMA(_ urlString: String) -> (destinationHash: Data, publicKey: Data)? {
+        var s = urlString
+        // Strip scheme prefix
+        if s.hasPrefix("lxma://") {
+            s = String(s.dropFirst("lxma://".count))
+        } else {
+            return nil
+        }
+
+        let parts = s.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2 else { return nil }
+
+        let hashHex = String(parts[0])
+        let pubkeyHex = String(parts[1])
+
+        // Validate lengths: 32 hex chars = 16 bytes hash, 128 hex chars = 64 bytes pubkey
+        guard hashHex.count == 32, pubkeyHex.count == 128 else { return nil }
+
+        guard let hashData = Self.hexToData(hashHex),
+              let pubkeyData = Self.hexToData(pubkeyHex) else {
+            return nil
+        }
+
+        return (destinationHash: hashData, publicKey: pubkeyData)
+    }
+
+    /// Check if a contact with the given destination hash already exists.
+    public func contactExists(_ destinationHash: Data) -> Bool {
+        let hex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        return myContacts.contains(where: { $0.id == hex }) ||
+               networkAnnounces.contains(where: { $0.id == hex && $0.isFavorite })
+    }
+
+    /// Add a contact from a QR code scan or deep link.
+    @MainActor
+    public func addContactFromQR(destinationHash: Data, publicKey: Data, nickname: String?) async {
+        let hex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        guard !myContacts.contains(where: { $0.id == hex }) else { return }
+
+        do {
+            try await messageRepository.ensureConversation(
+                destinationHash,
+                displayName: nickname
+            )
+            try await messageRepository.setFavorite(destinationHash, isFavorite: true)
+
+            let contact = Contact(
+                id: hex,
+                displayName: nickname,
+                identityHash: destinationHash,
+                identityHashHex: hex,
+                badgeType: .peer,
+                hopCount: 0,
+                signalStrength: 3,
+                timestamp: Date(),
+                isOnline: false,
+                isFavorite: true,
+                isRelay: false
+            )
+            myContacts.append(contact)
+        } catch {
+            errorMessage = "Failed to add contact: \(error.localizedDescription)"
+        }
+    }
+
+    /// Convert a hex string to Data. Returns nil if the string contains invalid hex characters.
+    private static func hexToData(_ hex: String) -> Data? {
+        let chars = Array(hex)
+        guard chars.count % 2 == 0 else { return nil }
+
+        var data = Data(capacity: chars.count / 2)
+        for i in stride(from: 0, to: chars.count, by: 2) {
+            guard let byte = UInt8(String(chars[i...i+1]), radix: 16) else {
+                return nil
+            }
+            data.append(byte)
+        }
+        return data
+    }
+
     /// Mark network announces that already exist in my contacts.
     @MainActor
     private func markSavedContacts() {

@@ -72,6 +72,10 @@
 		046 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046; };
 		047 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047; };
 
+		/* QR Scanner */
+		049B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F049; };
+		04AB /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A; };
+
 		/* Interface Management */
 		030 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030; };
 		031 /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031; };
@@ -143,6 +147,10 @@
 
 		/* Identity Management View */
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
+
+		/* QR Scanner */
+		F049 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		F04A /* AddContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContactSheet.swift; sourceTree = "<group>"; };
 
 		/* RNode Configuration UI */
 		F045 /* LoRaPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoRaPresets.swift; sourceTree = "<group>"; };
@@ -277,6 +285,8 @@
 				F011 /* ContactCard.swift */,
 				F012 /* NetworkAnnouncesTab.swift */,
 				F032 /* NodeDetailsView.swift */,
+				F049 /* QRScannerView.swift */,
+				F04A /* AddContactSheet.swift */,
 			);
 			path = Contacts;
 			sourceTree = "<group>";
@@ -478,6 +488,8 @@
 				045 /* LoRaPresets.swift in Sources */,
 				046 /* BLEDevicePickerSheet.swift in Sources */,
 				047 /* RNodeConfigSheet.swift in Sources */,
+				049B /* QRScannerView.swift in Sources */,
+				04AB /* AddContactSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
