@@ -118,6 +118,7 @@ struct RootView: View {
             if newPhase == .active {
                 NotificationService.shared.clearBadge()
             }
+            appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
         }
     }
 
@@ -247,7 +248,11 @@ struct RootView: View {
             let repo = MessageRepository(database: db)
             self.messageRepository = repo
 
-            let handler = IncomingMessageHandler(messageRepository: repo, database: db)
+            // Initialize location sharing manager
+            let locManager = LocationSharingManager(appServices: appServices)
+            appServices.locationSharingManager = locManager
+
+            let handler = IncomingMessageHandler(messageRepository: repo, database: db, locationSharingManager: locManager)
             self.incomingMessageHandler = handler
             if let router = appServices.router {
                 await router.setDelegate(handler)

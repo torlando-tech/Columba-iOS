@@ -35,6 +35,9 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     /// Database for notification sender name lookups.
     private let database: LXMFDatabase?
 
+    /// Location sharing manager for incoming telemetry extraction.
+    public var locationSharingManager: LocationSharingManager?
+
     /// Logger for debugging message receipt.
     private let logger = Logger(subsystem: "com.columba.app", category: "IncomingMessageHandler")
 
@@ -45,9 +48,11 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     /// - Parameters:
     ///   - messageRepository: Repository for saving messages to database
     ///   - database: Database for sender name lookups in notifications
-    public init(messageRepository: MessageRepository, database: LXMFDatabase? = nil) {
+    ///   - locationSharingManager: Optional manager for extracting incoming telemetry
+    public init(messageRepository: MessageRepository, database: LXMFDatabase? = nil, locationSharingManager: LocationSharingManager? = nil) {
         self.messageRepository = messageRepository
         self.database = database
+        self.locationSharingManager = locationSharingManager
     }
 
     // MARK: - LXMRouterDelegate
@@ -98,6 +103,18 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             } catch {
                 self.logger.error("[LXMF_INBOUND] Failed to update peer icon for \(messageHashHex): \(error.localizedDescription)")
+            }
+
+            // Extract telemetry from LXMF Field 2 (FIELD_TELEMETRY)
+            if let fields = message.fields,
+               let telemetryData = fields[LXMessage.FIELD_TELEMETRY] as? Data,
+               let packet = TelemetryPacket.decode(from: telemetryData) {
+                self.locationSharingManager?.handleIncomingTelemetry(
+                    from: message.sourceHash,
+                    packet: packet,
+                    displayName: nil
+                )
+                self.logger.info("Extracted telemetry from \(sourceHashHex)")
             }
 
             // Post local push notification (respects user preferences)

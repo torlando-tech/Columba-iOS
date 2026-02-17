@@ -12,6 +12,8 @@ import CoreLocation
 
 @available(iOS 17.0, macOS 14.0, *)
 struct MapView: View {
+    var locationSharingManager: LocationSharingManager?
+
     #if os(iOS)
     @State private var centerOnUser = false
     @State private var metersPerPixel: Double = 1000
@@ -24,7 +26,8 @@ struct MapView: View {
             MapLibreMapView(
                 centerOnUser: $centerOnUser,
                 metersPerPixel: $metersPerPixel,
-                showsUserLocation: locationAuthorized
+                showsUserLocation: locationAuthorized,
+                peerLocations: locationSharingManager.map { Array($0.peerLocations.values) } ?? []
             )
             .ignoresSafeArea()
 
@@ -34,6 +37,20 @@ struct MapView: View {
                         .padding(.leading, 16)
                         .padding(.top, 60)
                     Spacer()
+
+                    // Peer count badge
+                    if let manager = locationSharingManager,
+                       !manager.peerLocations.isEmpty {
+                        Text("\(manager.peerLocations.count) peer\(manager.peerLocations.count == 1 ? "" : "s")")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.blue.opacity(0.7))
+                            .clipShape(Capsule())
+                            .padding(.trailing, 16)
+                            .padding(.top, 60)
+                    }
                 }
 
                 Spacer()

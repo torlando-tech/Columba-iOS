@@ -72,6 +72,9 @@
 		046 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046; };
 		047 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047; };
 
+		/* Location Sharing */
+		04BB /* LocationSharingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04B; };
+
 		/* QR Scanner */
 		049B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F049; };
 		04AB /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A; };
@@ -147,6 +150,9 @@
 
 		/* Identity Management View */
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
+
+		/* Location Sharing */
+		F04B /* LocationSharingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSharingManager.swift; sourceTree = "<group>"; };
 
 		/* QR Scanner */
 		F049 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
@@ -351,6 +357,7 @@
 				F041 /* AutoAnnounceManager.swift */,
 				F042 /* LocalIdentity.swift */,
 				F043 /* IdentityManager.swift */,
+				F04B /* LocationSharingManager.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -490,6 +497,7 @@
 				047 /* RNodeConfigSheet.swift in Sources */,
 				049B /* QRScannerView.swift in Sources */,
 				04AB /* AddContactSheet.swift in Sources */,
+				04BB /* LocationSharingManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
