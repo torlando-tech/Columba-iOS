@@ -137,8 +137,12 @@ public final class LocationSharingManager: NSObject {
             startSendTimer()
         }
 
-        // Send initial update immediately
+        // Send initial update once a location fix is available
         Task {
+            // Wait briefly for GPS to provide a fix if we just started
+            if locationManager.location == nil {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
             await sendLocationUpdateToPeer(peerHash)
         }
 
@@ -254,12 +258,19 @@ public final class LocationSharingManager: NSObject {
         locationManager.distanceFilter = Self.minMovement
 
         let status = locationManager.authorizationStatus
-        if status == .notDetermined {
+        switch status {
+        case .notDetermined:
+            // Dialog will appear; locationManagerDidChangeAuthorization
+            // will call startUpdatingLocation() once granted.
             locationManager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.startUpdatingLocation()
+            logger.info("Started location updates")
+        case .denied, .restricted:
+            logger.warning("Location permission denied or restricted")
+        @unknown default:
+            break
         }
-
-        locationManager.startUpdatingLocation()
-        logger.info("Started location updates")
     }
 
     private func stopLocationUpdates() {
@@ -434,10 +445,19 @@ extension LocationSharingManager: CLLocationManagerDelegate {
     public nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
             let status = manager.authorizationStatus
-            if status == .authorizedWhenInUse || status == .authorizedAlways {
+            switch status {
+            case .authorizedWhenInUse, .authorizedAlways:
                 if isSharingWithAnyone {
                     manager.startUpdatingLocation()
+                    logger.info("Location authorized, started updates")
                 }
+            case .denied, .restricted:
+                logger.warning("Location permission denied — stopping all sharing")
+                stopAllSharing()
+            case .notDetermined:
+                break
+            @unknown default:
+                break
             }
         }
     }
