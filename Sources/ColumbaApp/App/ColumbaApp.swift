@@ -28,16 +28,24 @@ struct ColumbaApp: App {
     /// Darwin notification observer for IPC from Network Extension.
     @State private var notificationObserver = NotificationObserver()
 
+    /// Pending lxma:// deep link URL to process.
+    @State private var pendingDeepLink: String?
+
     // MARK: - App Body
 
     var body: some Scene {
         WindowGroup {
             RootView(
                 settingsRepository: settingsRepository,
-                notificationObserver: notificationObserver
+                notificationObserver: notificationObserver,
+                pendingDeepLink: $pendingDeepLink
             )
             .preferredColorScheme(.dark)
             .tint(Theme.accentColor)
+            .onOpenURL { url in
+                guard url.scheme == "lxma" else { return }
+                pendingDeepLink = url.absoluteString
+            }
         }
     }
 }
@@ -54,6 +62,7 @@ struct RootView: View {
 
     let settingsRepository: SettingsRepository
     let notificationObserver: NotificationObserver
+    @Binding var pendingDeepLink: String?
 
     // MARK: - Services
 
@@ -87,6 +96,7 @@ struct RootView: View {
                     settingsRepository: settingsRepository,
                     notificationObserver: notificationObserver,
                     identityManager: identityManager,
+                    pendingDeepLink: $pendingDeepLink,
                     onIdentitySwitch: {
                         // Reset state so RootView re-initializes
                         isInitialized = false

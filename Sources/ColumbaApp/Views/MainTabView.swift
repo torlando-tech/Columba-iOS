@@ -25,6 +25,7 @@ struct MainTabView: View {
     let settingsRepository: SettingsRepository
     let notificationObserver: NotificationObserver
     let identityManager: IdentityManager
+    @Binding var pendingDeepLink: String?
     var onIdentitySwitch: (() -> Void)?
 
     // MARK: - State
@@ -49,7 +50,8 @@ struct MainTabView: View {
             // Contacts Tab
             ContactsView(
                 appServices: appServices,
-                messageRepository: messageRepository
+                messageRepository: messageRepository,
+                pendingDeepLink: $pendingDeepLink
             )
             .tabItem {
                 Label(Tab.contacts.title, systemImage: Tab.contacts.icon)
@@ -76,5 +78,10 @@ struct MainTabView: View {
             .tag(Tab.settings)
         }
         .tint(Theme.accentColor)
+        .onChange(of: pendingDeepLink) { _, newValue in
+            if newValue != nil {
+                selectedTab = .contacts
+            }
+        }
     }
 }
