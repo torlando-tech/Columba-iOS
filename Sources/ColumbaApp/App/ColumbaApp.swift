@@ -80,13 +80,32 @@ struct RootView: View {
     @State private var initError: String?
     @State private var isInitialized = false
     @State private var identitySwitchTrigger = UUID()
+    @State private var showOnboarding: Bool
     @Environment(\.scenePhase) private var scenePhase
+
+    init(settingsRepository: SettingsRepository, notificationObserver: NotificationObserver, pendingDeepLink: Binding<String?>) {
+        self.settingsRepository = settingsRepository
+        self.notificationObserver = notificationObserver
+        self._pendingDeepLink = pendingDeepLink
+        // Migrate existing users so they skip onboarding
+        OnboardingViewModel.migrateExistingUsers()
+        self._showOnboarding = State(initialValue: !OnboardingViewModel.hasCompletedOnboarding)
+    }
 
     // MARK: - Body
 
     var body: some View {
         Group {
-            if let error = initError {
+            if showOnboarding {
+                OnboardingView(
+                    identityManager: identityManager,
+                    settingsRepository: settingsRepository,
+                    onComplete: {
+                        showOnboarding = false
+                        identitySwitchTrigger = UUID()
+                    }
+                )
+            } else if let error = initError {
                 errorView(error)
             } else if isInitialized,
                       let repo = messageRepository {
@@ -112,7 +131,9 @@ struct RootView: View {
             }
         }
         .task(id: identitySwitchTrigger) {
-            await initializeServices()
+            if !showOnboarding {
+                await initializeServices()
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
@@ -205,15 +226,8 @@ struct RootView: View {
             // 1. Migration check (first launch after update)
             await identityManager.migrateFromSingleIdentityIfNeeded(settingsRepository: settingsRepository)
 
-            // 2. Get or create active identity
-            var activeLocal = await identityManager.getActiveIdentity()
-            if activeLocal == nil {
-                let newId = try await identityManager.createIdentity(displayName: "Anonymous Peer")
-                let (switched, _) = try await identityManager.switchToIdentity(newId.identityHash)
-                activeLocal = switched
-            }
-
-            guard let active = activeLocal else {
+            // 2. Get active identity (created during onboarding)
+            guard let active = await identityManager.getActiveIdentity() else {
                 throw AppServicesError.identityNotInitialized
             }
 

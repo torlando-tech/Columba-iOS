@@ -75,6 +75,16 @@
 		/* Location Sharing */
 		04BB /* LocationSharingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04B; };
 
+		/* Onboarding */
+		04CB /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04C; };
+		04DB /* WelcomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04D; };
+		04EB /* IdentityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04E; };
+		04FB /* ConnectivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04F; };
+		050B /* PermissionsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F050; };
+		051B /* CompletePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F051; };
+		052B /* OnboardingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F052; };
+		053B /* TcpCommunityServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F053; };
+
 		/* QR Scanner */
 		049B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F049; };
 		04AB /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A; };
@@ -150,6 +160,16 @@
 
 		/* Identity Management View */
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
+
+		/* Onboarding */
+		F04C /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		F04D /* WelcomePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomePage.swift; sourceTree = "<group>"; };
+		F04E /* IdentityPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityPage.swift; sourceTree = "<group>"; };
+		F04F /* ConnectivityPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectivityPage.swift; sourceTree = "<group>"; };
+		F050 /* PermissionsPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsPage.swift; sourceTree = "<group>"; };
+		F051 /* CompletePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompletePage.swift; sourceTree = "<group>"; };
+		F052 /* OnboardingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingViewModel.swift; sourceTree = "<group>"; };
+		F053 /* TcpCommunityServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TcpCommunityServer.swift; sourceTree = "<group>"; };
 
 		/* Location Sharing */
 		F04B /* LocationSharingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSharingManager.swift; sourceTree = "<group>"; };
@@ -244,6 +264,7 @@
 			isa = PBXGroup;
 			children = (
 				F045 /* LoRaPresets.swift */,
+				F053 /* TcpCommunityServer.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -257,6 +278,7 @@
 				F006 /* SettingsViewModel.swift */,
 				F030 /* InterfaceManagementViewModel.swift */,
 				F034 /* NetworkStatusViewModel.swift */,
+				F052 /* OnboardingViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -271,6 +293,7 @@
 				GSET /* Settings */,
 				GCOMP /* Components */,
 				GMAP /* Map */,
+				GONB /* Onboarding */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -370,6 +393,19 @@
 				F039 /* materialdesignicons.ttf */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		GONB /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				F04C /* OnboardingView.swift */,
+				F04D /* WelcomePage.swift */,
+				F04E /* IdentityPage.swift */,
+				F04F /* ConnectivityPage.swift */,
+				F050 /* PermissionsPage.swift */,
+				F051 /* CompletePage.swift */,
+			);
+			path = Onboarding;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -498,6 +534,14 @@
 				049B /* QRScannerView.swift in Sources */,
 				04AB /* AddContactSheet.swift in Sources */,
 				04BB /* LocationSharingManager.swift in Sources */,
+				04CB /* OnboardingView.swift in Sources */,
+				04DB /* WelcomePage.swift in Sources */,
+				04EB /* IdentityPage.swift in Sources */,
+				04FB /* ConnectivityPage.swift in Sources */,
+				050B /* PermissionsPage.swift in Sources */,
+				051B /* CompletePage.swift in Sources */,
+				052B /* OnboardingViewModel.swift in Sources */,
+				053B /* TcpCommunityServer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
