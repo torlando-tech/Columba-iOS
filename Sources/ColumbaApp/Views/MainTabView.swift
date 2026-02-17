@@ -59,7 +59,7 @@ struct MainTabView: View {
             .tag(Tab.contacts)
 
             // Map Tab
-            MapView()
+            MapView(locationSharingManager: appServices.locationSharingManager)
                 .tabItem {
                     Label(Tab.map.title, systemImage: Tab.map.icon)
                 }

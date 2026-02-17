@@ -182,8 +182,28 @@ struct MessagingView: View {
 
     @State private var isSyncing = false
 
+    /// Whether we are currently sharing location with this conversation's peer.
+    private var isSharingLocation: Bool {
+        appServices.locationSharingManager?.isSharing(with: conversation.destinationHash) ?? false
+    }
+
     private var trailingToolbar: some View {
         HStack(spacing: 16) {
+            // Location sharing toggle
+            Button(action: {
+                guard let locManager = appServices.locationSharingManager else { return }
+                if locManager.isSharing(with: conversation.destinationHash) {
+                    locManager.stopSharing(with: conversation.destinationHash)
+                } else {
+                    locManager.startSharing(with: conversation.destinationHash)
+                }
+            }) {
+                Image(systemName: isSharingLocation ? "location.fill" : "location.slash")
+                    .font(.system(size: 16))
+                    .foregroundStyle(isSharingLocation ? .green : .white)
+            }
+
+            // Sync button
             Button(action: {
                 Task {
                     isSyncing = true

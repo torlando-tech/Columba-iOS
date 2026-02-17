@@ -81,6 +81,9 @@ public final class AppServices {
     /// Auto announce manager for periodic network announces.
     public private(set) var autoAnnounceManager: AutoAnnounceManager?
 
+    /// Location sharing manager for telemetry exchange with peers.
+    public var locationSharingManager: LocationSharingManager?
+
     // MARK: - Observable Properties
 
     /// Connection state (observable for UI binding).
