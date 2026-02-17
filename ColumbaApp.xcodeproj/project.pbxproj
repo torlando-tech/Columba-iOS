@@ -72,6 +72,15 @@
 		046 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046; };
 		047 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047; };
 
+		/* RNode Wizard */
+		054B /* RNodeWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F054; };
+		055B /* DeviceDiscoveryStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F055; };
+		056B /* RegionSelectionStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F056; };
+		057B /* ModemPresetStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F057; };
+		058B /* FrequencySlotStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F058; };
+		059B /* ReviewConfigStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F059; };
+		05AB /* RNodeWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05A; };
+
 		/* Location Sharing */
 		04BB /* LocationSharingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04B; };
 
@@ -183,6 +192,15 @@
 		F046 /* BLEDevicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEDevicePickerSheet.swift; sourceTree = "<group>"; };
 		F047 /* RNodeConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeConfigSheet.swift; sourceTree = "<group>"; };
 
+		/* RNode Wizard */
+		F054 /* RNodeWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeWizardView.swift; sourceTree = "<group>"; };
+		F055 /* DeviceDiscoveryStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDiscoveryStep.swift; sourceTree = "<group>"; };
+		F056 /* RegionSelectionStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegionSelectionStep.swift; sourceTree = "<group>"; };
+		F057 /* ModemPresetStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModemPresetStep.swift; sourceTree = "<group>"; };
+		F058 /* FrequencySlotStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrequencySlotStep.swift; sourceTree = "<group>"; };
+		F059 /* ReviewConfigStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewConfigStep.swift; sourceTree = "<group>"; };
+		F05A /* RNodeWizardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeWizardViewModel.swift; sourceTree = "<group>"; };
+
 		/* Interface Management */
 		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
 		F031 /* InterfaceManagementScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementScreen.swift; sourceTree = "<group>"; };
@@ -279,6 +297,7 @@
 				F030 /* InterfaceManagementViewModel.swift */,
 				F034 /* NetworkStatusViewModel.swift */,
 				F052 /* OnboardingViewModel.swift */,
+				F05A /* RNodeWizardViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -342,8 +361,22 @@
 				F044 /* IdentityManagerView.swift */,
 				F046 /* BLEDevicePickerSheet.swift */,
 				F047 /* RNodeConfigSheet.swift */,
+				GRNW /* RNodeWizard */,
 			);
 			path = Settings;
+			sourceTree = "<group>";
+		};
+		GRNW /* RNodeWizard */ = {
+			isa = PBXGroup;
+			children = (
+				F054 /* RNodeWizardView.swift */,
+				F055 /* DeviceDiscoveryStep.swift */,
+				F056 /* RegionSelectionStep.swift */,
+				F057 /* ModemPresetStep.swift */,
+				F058 /* FrequencySlotStep.swift */,
+				F059 /* ReviewConfigStep.swift */,
+			);
+			path = RNodeWizard;
 			sourceTree = "<group>";
 		};
 		GCOMP /* Components */ = {
@@ -542,6 +575,13 @@
 				051B /* CompletePage.swift in Sources */,
 				052B /* OnboardingViewModel.swift in Sources */,
 				053B /* TcpCommunityServer.swift in Sources */,
+				054B /* RNodeWizardView.swift in Sources */,
+				055B /* DeviceDiscoveryStep.swift in Sources */,
+				056B /* RegionSelectionStep.swift in Sources */,
+				057B /* ModemPresetStep.swift in Sources */,
+				058B /* FrequencySlotStep.swift in Sources */,
+				059B /* ReviewConfigStep.swift in Sources */,
+				05AB /* RNodeWizardViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

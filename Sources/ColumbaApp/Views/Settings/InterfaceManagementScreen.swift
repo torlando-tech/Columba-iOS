@@ -116,7 +116,7 @@ struct InterfaceManagementScreen: View {
                 } else if viewModel.configType == .ble {
                     BLEInterfaceConfigSheet(viewModel: viewModel)
                 } else if viewModel.configType == .rnode {
-                    RNodeConfigSheet(viewModel: viewModel)
+                    RNodeWizardView(viewModel: viewModel)
                 } else {
                     TCPInterfaceConfigSheet(viewModel: viewModel)
                 }
