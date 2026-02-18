@@ -72,6 +72,19 @@
 		046 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046; };
 		047 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047; };
 
+		/* Data Migration */
+		05BB /* MigrationData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05B; };
+		05CB /* MigrationCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05C; };
+		05DB /* MigrationExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05D; };
+		05EB /* MigrationImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05E; };
+		05FB /* MigrationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05F; };
+		060B /* MigrationScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F060; };
+
+		/* Offline Maps */
+		061B /* OfflineMapManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F061; };
+		062B /* OfflineMapDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F062; };
+		063B /* OfflineMapsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F063; };
+
 		/* RNode Wizard */
 		054B /* RNodeWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F054; };
 		055B /* DeviceDiscoveryStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F055; };
@@ -201,6 +214,19 @@
 		F059 /* ReviewConfigStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewConfigStep.swift; sourceTree = "<group>"; };
 		F05A /* RNodeWizardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeWizardViewModel.swift; sourceTree = "<group>"; };
 
+		/* Data Migration */
+		F05B /* MigrationData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationData.swift; sourceTree = "<group>"; };
+		F05C /* MigrationCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationCrypto.swift; sourceTree = "<group>"; };
+		F05D /* MigrationExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationExporter.swift; sourceTree = "<group>"; };
+		F05E /* MigrationImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationImporter.swift; sourceTree = "<group>"; };
+		F05F /* MigrationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationViewModel.swift; sourceTree = "<group>"; };
+		F060 /* MigrationScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationScreen.swift; sourceTree = "<group>"; };
+
+		/* Offline Maps */
+		F061 /* OfflineMapManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapManager.swift; sourceTree = "<group>"; };
+		F062 /* OfflineMapDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapDownloadView.swift; sourceTree = "<group>"; };
+		F063 /* OfflineMapsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapsScreen.swift; sourceTree = "<group>"; };
+
 		/* Interface Management */
 		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
 		F031 /* InterfaceManagementScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementScreen.swift; sourceTree = "<group>"; };
@@ -283,6 +309,7 @@
 			children = (
 				F045 /* LoRaPresets.swift */,
 				F053 /* TcpCommunityServer.swift */,
+				F05B /* MigrationData.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -298,6 +325,7 @@
 				F034 /* NetworkStatusViewModel.swift */,
 				F052 /* OnboardingViewModel.swift */,
 				F05A /* RNodeWizardViewModel.swift */,
+				F05F /* MigrationViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -361,6 +389,7 @@
 				F044 /* IdentityManagerView.swift */,
 				F046 /* BLEDevicePickerSheet.swift */,
 				F047 /* RNodeConfigSheet.swift */,
+				F060 /* MigrationScreen.swift */,
 				GRNW /* RNodeWizard */,
 			);
 			path = Settings;
@@ -395,6 +424,8 @@
 			children = (
 				F021 /* MapView.swift */,
 				F048 /* MapLibreMapView.swift */,
+				F062 /* OfflineMapDownloadView.swift */,
+				F063 /* OfflineMapsScreen.swift */,
 			);
 			path = Map;
 			sourceTree = "<group>";
@@ -414,6 +445,10 @@
 				F042 /* LocalIdentity.swift */,
 				F043 /* IdentityManager.swift */,
 				F04B /* LocationSharingManager.swift */,
+				F05C /* MigrationCrypto.swift */,
+				F05D /* MigrationExporter.swift */,
+				F05E /* MigrationImporter.swift */,
+				F061 /* OfflineMapManager.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -582,6 +617,15 @@
 				058B /* FrequencySlotStep.swift in Sources */,
 				059B /* ReviewConfigStep.swift in Sources */,
 				05AB /* RNodeWizardViewModel.swift in Sources */,
+				05BB /* MigrationData.swift in Sources */,
+				05CB /* MigrationCrypto.swift in Sources */,
+				05DB /* MigrationExporter.swift in Sources */,
+				05EB /* MigrationImporter.swift in Sources */,
+				05FB /* MigrationViewModel.swift in Sources */,
+				060B /* MigrationScreen.swift in Sources */,
+				061B /* OfflineMapManager.swift in Sources */,
+				062B /* OfflineMapDownloadView.swift in Sources */,
+				063B /* OfflineMapsScreen.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

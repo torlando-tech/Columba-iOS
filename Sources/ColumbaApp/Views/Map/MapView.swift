@@ -20,8 +20,11 @@ struct MapView: View {
     @State private var locationAuthorized = false
     @State private var locationManager = CLLocationManager()
     @State private var authorizationDelegate: LocationAuthorizationDelegate?
+    @State private var showOfflineMaps = false
+    @State private var offlineMapManager = OfflineMapManager()
 
     var body: some View {
+        NavigationStack {
         ZStack {
             MapLibreMapView(
                 centerOnUser: $centerOnUser,
@@ -57,16 +60,30 @@ struct MapView: View {
 
                 HStack {
                     Spacer()
-                    Button {
-                        requestLocationAndCenter()
-                    } label: {
-                        Image(systemName: "location.fill")
-                            .font(.system(size: 20))
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Circle())
-                            .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                    VStack(spacing: 8) {
+                        Button {
+                            showOfflineMaps = true
+                        } label: {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.system(size: 20))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.ultraThinMaterial)
+                                .clipShape(Circle())
+                                .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                        }
+
+                        Button {
+                            requestLocationAndCenter()
+                        } label: {
+                            Image(systemName: "location.fill")
+                                .font(.system(size: 20))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.ultraThinMaterial)
+                                .clipShape(Circle())
+                                .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                        }
                     }
                     .padding(.trailing, 16)
                     .padding(.bottom, 8)
@@ -77,6 +94,10 @@ struct MapView: View {
         .onAppear {
             checkLocationAuthorization()
         }
+        .navigationDestination(isPresented: $showOfflineMaps) {
+            OfflineMapsScreen(mapManager: offlineMapManager)
+        }
+        } // NavigationStack
     }
 
     private func checkLocationAuthorization() {

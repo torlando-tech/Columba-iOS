@@ -35,6 +35,7 @@ struct SettingsView: View {
     @State private var showManageIdentities = false
     @State private var showInterfaceManagement = false
     @State private var showNetworkStatus = false
+    @State private var showDataMigration = false
     @State private var interfaceRepository: InterfaceRepository?
 
     // MARK: - Body
@@ -67,6 +68,9 @@ struct SettingsView: View {
 
                         // Map Sources
                         mapSourcesCard(vm)
+
+                        // Data Migration
+                        dataMigrationCard(vm)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -100,6 +104,12 @@ struct SettingsView: View {
                         appServices: appServices,
                         settingsRepository: settingsRepository,
                         onIdentitySwitch: onIdentitySwitch
+                    )
+                }
+                .navigationDestination(isPresented: $showDataMigration) {
+                    MigrationScreen(
+                        identityManager: identityManager,
+                        settingsRepository: settingsRepository
                     )
                 }
             } else {
@@ -706,6 +716,27 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.error)
                 }
             }
+        }
+    }
+
+    // MARK: - Data Migration Card
+
+    private func dataMigrationCard(_ vm: SettingsViewModel) -> some View {
+        ExpandableSettingsCard(
+            icon: "arrow.up.arrow.down.circle",
+            title: "Data Migration",
+            isExpanded: .constant(false)
+        ) {
+            EmptyView()
+        }
+        .onTapGesture {
+            showDataMigration = true
+        }
+        .overlay(alignment: .trailing) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.trailing, 16)
         }
     }
 
