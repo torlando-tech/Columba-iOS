@@ -162,6 +162,17 @@ public final class AppServices {
         return columbaDir.appendingPathComponent(filename).path
     }
 
+    /// File path for ratchet key storage for a specific identity.
+    ///
+    /// - Parameter identityHash: Hex hash of the identity
+    /// - Returns: Full path to the ratchet persistence file
+    private static func ratchetStoragePath(for identityHash: String) -> String {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let columbaDir = appSupport.appendingPathComponent("Columba", isDirectory: true)
+        try? FileManager.default.createDirectory(at: columbaDir, withIntermediateDirectories: true)
+        return columbaDir.appendingPathComponent("ratchets_\(identityHash)").path
+    }
+
     /// File path for path table database persistence.
     private static var pathTableFilePath: String {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -313,9 +324,15 @@ public final class AppServices {
         self.deliveryDestination = newDestination
         await newTransport.registerDestination(newDestination)
 
+        // 6b. Enable ratchets for forward secrecy
+        let identityHashHex = newIdentity.hexHash
+        let ratchetPath = Self.ratchetStoragePath(for: identityHashHex)
+        try await newDestination.enableRatchets(storagePath: ratchetPath)
+
         // 7. Set transport on router for message delivery (before interfaces, so
         //    router is ready to receive packets as soon as any interface connects)
         await newRouter.setTransport(newTransport)
+        await newRouter.setRatchetManager(newDestination.ratchetManager)
 
         // 8. Parse server address and create TCP interface (non-fatal — app works offline)
         if let (host, port) = parseHostPort(tcpServerAddress) {
@@ -402,8 +419,13 @@ public final class AppServices {
         self.deliveryDestination = newDestination
         await newTransport.registerDestination(newDestination)
 
+        // 6b. Enable ratchets for forward secrecy
+        let ratchetPath = Self.ratchetStoragePath(for: identityHash)
+        try await newDestination.enableRatchets(storagePath: ratchetPath)
+
         // 7. Set transport on router
         await newRouter.setTransport(newTransport)
+        await newRouter.setRatchetManager(newDestination.ratchetManager)
 
         // 8. Parse server address and create TCP interface
         if let (host, port) = parseHostPort(tcpServerAddress) {
@@ -998,8 +1020,15 @@ public final class AppServices {
         // Set the display name as app data on the destination
         destination.appData = displayName.data(using: .utf8)
 
+        // Rotate ratchet if interval elapsed, and include in announce
+        var ratchetPub: Data? = nil
+        if let mgr = destination.ratchetManager {
+            await mgr.rotateIfNeeded()
+            ratchetPub = await mgr.currentRatchetPublicBytes()
+        }
+
         // Create and build the announce packet
-        let announce = Announce(destination: destination)
+        let announce = Announce(destination: destination, ratchet: ratchetPub)
         let packet = try announce.buildPacket()
 
         // Send the announce via transport
