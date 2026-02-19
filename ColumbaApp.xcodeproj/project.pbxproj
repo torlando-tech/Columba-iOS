@@ -131,9 +131,21 @@
 		038 /* IconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F038; };
 		039 /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039; };
 
+		/* Voice Call */
+		068B /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F068; };
+		069B /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = F069; };
+		06AB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06A; };
+		06BB /* CodecSelectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06B; };
+		06CB /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06C; };
+		06DB /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06D; };
+		06EB /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06E; };
+		06F0 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06F; };
+		0700 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070; };
+
 		/* Package Dependencies */
 		023 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P001; };
 		049 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = P002; };
+		06FB /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P003; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -255,6 +267,17 @@
 		F037 /* ProfileIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileIcon.swift; sourceTree = "<group>"; };
 		F038 /* IconPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconPickerView.swift; sourceTree = "<group>"; };
 		F039 /* materialdesignicons.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = materialdesignicons.ttf; sourceTree = "<group>"; };
+
+		/* Voice Call */
+		F068 /* CallManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
+		F069 /* CodecProfileInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
+		F06A /* CallControlButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
+		F06B /* CodecSelectionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecSelectionSheet.swift; sourceTree = "<group>"; };
+		F06C /* IncomingCallScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingCallScreen.swift; sourceTree = "<group>"; };
+		F06D /* PttButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PttButton.swift; sourceTree = "<group>"; };
+		F06E /* VoiceCallScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
+		F06F /* CallKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
+		F070 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -263,6 +286,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				023 /* LXMFSwift in Frameworks */,
+				06FB /* LXSTSwift in Frameworks */,
 				049 /* MapLibre in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -324,6 +348,7 @@
 				F045 /* LoRaPresets.swift */,
 				F053 /* TcpCommunityServer.swift */,
 				F05B /* MigrationData.swift */,
+				F069 /* CodecProfileInfo.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -348,6 +373,7 @@
 			isa = PBXGroup;
 			children = (
 				F007 /* MainTabView.swift */,
+				GCALL /* Call */,
 				GCHATS /* Chats */,
 				GCONT /* Contacts */,
 				GMSG /* Messaging */,
@@ -357,6 +383,18 @@
 				GONB /* Onboarding */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		GCALL /* Call */ = {
+			isa = PBXGroup;
+			children = (
+				F06A /* CallControlButton.swift */,
+				F06B /* CodecSelectionSheet.swift */,
+				F06C /* IncomingCallScreen.swift */,
+				F06D /* PttButton.swift */,
+				F06E /* VoiceCallScreen.swift */,
+			);
+			path = Call;
 			sourceTree = "<group>";
 		};
 		GCHATS /* Chats */ = {
@@ -465,6 +503,9 @@
 				F05D /* MigrationExporter.swift */,
 				F05E /* MigrationImporter.swift */,
 				F061 /* OfflineMapManager.swift */,
+				F068 /* CallManager.swift */,
+				F06F /* CallKitManager.swift */,
+				F070 /* AudioManager.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -510,6 +551,7 @@
 			name = ColumbaApp;
 			packageProductDependencies = (
 				P001 /* LXMFSwift */,
+				P003 /* LXSTSwift */,
 				P002 /* MapLibre */,
 			);
 			productName = ColumbaApp;
@@ -542,6 +584,7 @@
 			mainGroup = ROOT;
 			packageReferences = (
 				PKGREF /* XCRemoteSwiftPackageReference "LXMFSwift" */,
+				PKGREF3 /* XCLocalSwiftPackageReference "LXSTSwift" */,
 				PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
 			);
 			productRefGroup = PRODS /* Products */;
@@ -646,6 +689,15 @@
 				065B /* ThemeManager.swift in Sources */,
 				066B /* AppearanceCard.swift in Sources */,
 				067B /* CustomThemeEditorView.swift in Sources */,
+				068B /* CallManager.swift in Sources */,
+				069B /* CodecProfileInfo.swift in Sources */,
+				06AB /* CallControlButton.swift in Sources */,
+				06BB /* CodecSelectionSheet.swift in Sources */,
+				06CB /* IncomingCallScreen.swift in Sources */,
+				06DB /* PttButton.swift in Sources */,
+				06EB /* VoiceCallScreen.swift in Sources */,
+				06F0 /* CallKitManager.swift in Sources */,
+				0700 /* AudioManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -857,6 +909,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../LXMFSwift;
 		};
+		PKGREF3 /* XCLocalSwiftPackageReference "LXSTSwift" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../LXSTSwift;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -874,6 +930,10 @@
 		P001 /* LXMFSwift */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LXMFSwift;
+		};
+		P003 /* LXSTSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LXSTSwift;
 		};
 		P002 /* MapLibre */ = {
 			isa = XCSwiftPackageProductDependency;
