@@ -15,6 +15,7 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../LXMFSwift"),
+        .package(path: "../LXSTSwift"),
         .package(url: "https://github.com/maplibre/maplibre-gl-native-distribution", from: "6.9.0"),
     ],
     targets: [
@@ -22,6 +23,7 @@ let package = Package(
             name: "ColumbaApp",
             dependencies: [
                 "LXMFSwift",
+                "LXSTSwift",
                 .product(name: "MapLibre", package: "maplibre-gl-native-distribution"),
             ],
             path: "Sources/ColumbaApp"
