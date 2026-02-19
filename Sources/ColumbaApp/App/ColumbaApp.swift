@@ -82,6 +82,8 @@ struct RootView: View {
     @State private var isInitialized = false
     @State private var identitySwitchTrigger = UUID()
     @State private var showOnboarding: Bool
+    @State private var showIncomingCall = false
+    @State private var showActiveCallFromIncoming = false
     @Environment(\.scenePhase) private var scenePhase
 
     init(settingsRepository: SettingsRepository, notificationObserver: NotificationObserver, pendingDeepLink: Binding<String?>) {
@@ -127,6 +129,29 @@ struct RootView: View {
                         identitySwitchTrigger = UUID()
                     }
                 )
+                .fullScreenCover(isPresented: $showIncomingCall) {
+                    if let cm = appServices.callManager {
+                        IncomingCallScreen(callManager: cm, onAnswer: {
+                            showIncomingCall = false
+                            showActiveCallFromIncoming = true
+                        })
+                    }
+                }
+                .fullScreenCover(isPresented: $showActiveCallFromIncoming) {
+                    if let cm = appServices.callManager {
+                        VoiceCallScreen(
+                            callManager: cm,
+                            peerName: cm.peerName ?? cm.peerHash ?? "Unknown",
+                            destinationHash: Data()
+                        )
+                    }
+                }
+                .onChange(of: appServices.callManager?.callState) { _, newState in
+                    if let newState, case .ringing = newState,
+                       appServices.callManager?.isIncoming == true {
+                        showIncomingCall = true
+                    }
+                }
             } else {
                 loadingView
             }

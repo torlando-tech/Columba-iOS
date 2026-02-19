@@ -10,6 +10,7 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 import LXMFSwift
+import LXSTSwift
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -37,6 +38,8 @@ struct MessagingView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var attachedImage: UIImage?
     @State private var attachedFiles: [FileAttachment] = []
+    @State private var showCodecPicker = false
+    @State private var showCallScreen = false
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -144,6 +147,25 @@ struct MessagingView: View {
             }
         }
         #endif
+        .sheet(isPresented: $showCodecPicker) {
+            CodecSelectionSheet { profile in
+                showCallScreen = true
+                appServices.callManager?.initiateCall(
+                    destinationHash: conversation.destinationHash,
+                    profile: profile,
+                    peerDisplayName: conversation.displayName
+                )
+            }
+        }
+        .fullScreenCover(isPresented: $showCallScreen) {
+            if let cm = appServices.callManager {
+                VoiceCallScreen(
+                    callManager: cm,
+                    peerName: conversation.peerName,
+                    destinationHash: conversation.destinationHash
+                )
+            }
+        }
         .task {
             // Initialize view model
             if viewModel == nil {
@@ -189,6 +211,15 @@ struct MessagingView: View {
 
     private var trailingToolbar: some View {
         HStack(spacing: 16) {
+            // Voice call button
+            if appServices.callManager != nil {
+                Button(action: { showCodecPicker = true }) {
+                    Image(systemName: "phone.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white)
+                }
+            }
+
             // Location sharing toggle
             Button(action: {
                 guard let locManager = appServices.locationSharingManager else { return }
