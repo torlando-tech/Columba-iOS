@@ -11,6 +11,7 @@
 
 import Foundation
 import LXMFSwift
+import LXSTSwift
 import ReticulumSwift
 import os.log
 
@@ -83,6 +84,9 @@ public final class AppServices {
 
     /// Location sharing manager for telemetry exchange with peers.
     public var locationSharingManager: LocationSharingManager?
+
+    /// Call manager for LXST voice call UI integration.
+    public var callManager: CallManager?
 
     // MARK: - Observable Properties
 
@@ -372,6 +376,11 @@ public final class AppServices {
         self.autoAnnounceManager = announceManager
         announceManager.start()
 
+        // 12. Initialize call manager
+        let cm = CallManager()
+        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable)
+        self.callManager = cm
+
         logger.info("Initialization complete")
     }
 
@@ -463,6 +472,11 @@ public final class AppServices {
         let announceManager = AutoAnnounceManager(appServices: self)
         self.autoAnnounceManager = announceManager
         announceManager.start()
+
+        // 12. Initialize call manager
+        let cm = CallManager()
+        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable)
+        self.callManager = cm
 
         logger.info("Initialization complete (identity: \(identityHash))")
     }
@@ -867,6 +881,9 @@ public final class AppServices {
         stateObserverTask?.cancel()
         stateObserverTask = nil
 
+        // Stop call manager
+        await callManager?.shutdown()
+
         // Stop auto-announce manager
         autoAnnounceManager?.stop()
 
@@ -1037,7 +1054,39 @@ public final class AppServices {
         logger.info("Announce sent successfully for destination: \(destination.hexHash)")
     }
 
+    /// Send an announce for the LXST telephony destination.
+    ///
+    /// This broadcasts the device's telephony endpoint to the network, allowing
+    /// remote peers to discover our LXST destination hash and initiate voice calls.
+    /// The display name is included as application data.
+    ///
+    /// - Parameter displayName: Display name to broadcast
+    /// - Throws: AppServicesError if transport or call manager not initialized
+    public func sendTelephonyAnnounce(displayName: String) async throws {
+        guard let transport = transport else {
+            throw AppServicesError.transportNotConnected
+        }
+
+        guard let destination = callManager?.telephonyDestination else {
+            logger.info("Telephony announce skipped: CallManager not initialized")
+            return
+        }
+
+        // Set the display name as app data on the telephony destination
+        destination.appData = displayName.data(using: .utf8)
+
+        // Build and send the announce packet (no ratchet for telephony)
+        let announce = Announce(destination: destination)
+        let packet = try announce.buildPacket()
+        try await transport.send(packet: packet)
+
+        logger.info("Telephony announce sent for destination: \(destination.hexHash)")
+    }
+
     /// Auto-announce on interface connect using the stored display name.
+    ///
+    /// Sends both the LXMF delivery announce and the LXST telephony announce
+    /// so peers can discover us for both messaging and voice calls.
     private func autoAnnounce() async {
         let displayName = await SettingsRepository().getDisplayName()
         do {
@@ -1045,6 +1094,13 @@ public final class AppServices {
             logger.info("Auto-announce completed on interface connect")
         } catch {
             logger.warning("Auto-announce failed: \(error.localizedDescription)")
+        }
+
+        // Also announce telephony destination for incoming calls
+        do {
+            try await sendTelephonyAnnounce(displayName: displayName)
+        } catch {
+            logger.warning("Telephony auto-announce failed: \(error.localizedDescription)")
         }
     }
 }
