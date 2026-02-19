@@ -97,6 +97,20 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
         }
     }
 
+    /// Update the caller name for an active call.
+    ///
+    /// Used when the caller's identity is resolved after the initial incoming call report.
+    ///
+    /// - Parameters:
+    ///   - uuid: Unique identifier for this call
+    ///   - name: Resolved caller name
+    func updateCallerName(uuid: UUID, name: String) {
+        let update = CXCallUpdate()
+        update.localizedCallerName = name
+        provider.reportCall(with: uuid, updated: update)
+        logger.info("Updated caller name for \(uuid): \(name)")
+    }
+
     /// Report that an outgoing call has started connecting.
     ///
     /// Call this when the user initiates an outgoing call. The system shows

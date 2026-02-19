@@ -81,6 +81,9 @@
 	<array>
 		<string>bluetooth-central</string>
 		<string>location</string>
+		<string>voip</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Columba uses the microphone for voice calls over the mesh network.</string>
 </dict>
 </plist>

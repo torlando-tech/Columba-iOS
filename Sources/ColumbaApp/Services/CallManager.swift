@@ -8,6 +8,7 @@
 
 import AVFoundation
 import Foundation
+import LXMFSwift
 import LXSTSwift
 import ReticulumSwift
 import os.log
@@ -75,6 +76,7 @@ public final class CallManager {
     private var telephone: Telephone?
     private var transport: ReticuLumTransport?
     private var pathTable: PathTable?
+    private var database: LXMFDatabase?
     private var durationTask: Task<Void, Never>?
     private var endedDismissTask: Task<Void, Never>?
     private let logger = Logger(subsystem: "com.columba.app", category: "CallManager")
@@ -87,11 +89,19 @@ public final class CallManager {
     /// 1. Creates the Telephone actor (which registers its destination with transport)
     /// 2. Registers a destination link callback so incoming links are routed to Telephone
     /// 3. Wires up ringing/established/ended callbacks for UI state updates
-    func initialize(identity: Identity, transport: ReticuLumTransport, pathTable: PathTable?) async {
+    func initialize(identity: Identity, transport: ReticuLumTransport, pathTable: PathTable?, database: LXMFDatabase?) async {
         self.pathTable = pathTable
         self.transport = transport
+        self.database = database
         let phone = await Telephone(identity: identity, transport: transport)
         self.telephone = phone
+
+        // Set decoded audio callback so remote audio frames reach AudioManager
+        await phone.setDecodedAudioCallback { [weak self] samples, rate, channels in
+            await MainActor.run {
+                self?.playReceivedAudio(samples)
+            }
+        }
 
         // Register destination link callback with transport so incoming links
         // to the LXST telephony destination are routed to our Telephone actor.
@@ -116,6 +126,11 @@ public final class CallManager {
                 self.peerHash = remoteIdentity.hexHash
                 self.callState = .ringing
                 self.logger.info("Call ringing from: \(remoteIdentity.hexHash)")
+
+                // Resolve contact name for incoming calls
+                if self.isIncoming {
+                    self.resolveContactName(remoteIdentity: remoteIdentity)
+                }
 
                 // Report outgoing call connecting state to CallKit
                 #if os(iOS)
@@ -434,10 +449,8 @@ public final class CallManager {
             // Gate: in PTT mode, only send while PTT button is held
             if self.isPttMode && !self.isPttActive { return }
 
-            // TODO: Forward PCM samples to Telephone actor for codec encoding.
-            // Once Telephone exposes a sendAudioFrame([Float]) method, call:
-            //   Task { await self.telephone?.sendAudioFrame(samples) }
-            // For now, frames are captured but not transmitted.
+            // Forward PCM samples to Telephone actor for codec encoding and transmission
+            Task { await self.telephone?.sendAudioFrame(samples) }
         }
 
         // Apply current speaker setting
@@ -501,6 +514,63 @@ public final class CallManager {
         audioManager = nil
         currentCallUUID = nil
         isHangingUpFromCallKit = false
+    }
+
+    /// Resolve a contact name from the database or path table for an incoming caller.
+    ///
+    /// Tries in order:
+    /// 1. Conversation display name from LXMFDatabase (keyed by LXMF delivery hash)
+    /// 2. Announce display name from PathTable (keyed by LXMF delivery hash)
+    /// 3. Truncated hex hash fallback
+    ///
+    /// Updates CallKit with the resolved name if available.
+    private func resolveContactName(remoteIdentity: Identity) {
+        // Compute the LXMF delivery destination hash for this identity
+        // (conversations and path entries are keyed by this hash, not the raw identity hash)
+        let deliveryHash = Destination.hash(
+            identity: remoteIdentity,
+            appName: "lxmf",
+            aspects: ["delivery"]
+        )
+
+        // 1. Try conversation display name from database
+        if let record = try? database?.getConversation(hash: deliveryHash),
+           let name = record.displayName, !name.isEmpty {
+            self.peerName = name
+        }
+
+        // 2. Try path table announce name
+        if self.peerName == nil {
+            Task {
+                if let entry = await pathTable?.lookup(destinationHash: deliveryHash),
+                   let name = entry.displayName, !name.isEmpty {
+                    await MainActor.run {
+                        if self.peerName == nil {
+                            self.peerName = name
+                            // Update CallKit with async-resolved name
+                            #if os(iOS)
+                            if self.isIncoming, let uuid = self.currentCallUUID {
+                                self.callKitManager?.updateCallerName(uuid: uuid, name: name)
+                            }
+                            #endif
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback: truncated hash
+        if self.peerName == nil {
+            let hexPrefix = remoteIdentity.hexHash.prefix(8).uppercased()
+            self.peerName = "Peer " + hexPrefix
+        }
+
+        // Update CallKit with resolved name
+        #if os(iOS)
+        if self.isIncoming, let uuid = self.currentCallUUID, let name = self.peerName {
+            callKitManager?.updateCallerName(uuid: uuid, name: name)
+        }
+        #endif
     }
 
     /// Resolve a destination hash to a known Identity via the path table.
