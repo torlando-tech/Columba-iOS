@@ -9,15 +9,6 @@
 import SwiftUI
 import LXMFSwift
 
-// MARK: - App Theme
-
-/// App theming constants.
-enum AppTheme {
-    /// Primary accent color (matches Columba Android).
-    /// Hex: #6750A4 (light purple/violet)
-    static let accentColor = Color(red: 0.404, green: 0.314, blue: 0.643)
-}
-
 // MARK: - Contacts View
 
 /// Main contacts screen with tabs and search.
@@ -130,7 +121,7 @@ public struct ContactsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .tint(AppTheme.accentColor)
+        .tint(Theme.accentColor)
         .task {
             if viewModel == nil {
                 viewModel = ContactsViewModel(
@@ -308,13 +299,13 @@ public struct ContactsView: View {
             if title.contains("RELAY") {
                 Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
                     .font(.caption)
-                    .foregroundStyle(AppTheme.accentColor)
+                    .foregroundStyle(Theme.accentColor)
             }
 
             Text(title)
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundStyle(title.contains("RELAY") ? AppTheme.accentColor : Color.gray)
+                .foregroundStyle(title.contains("RELAY") ? Theme.accentColor : Color.gray)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)

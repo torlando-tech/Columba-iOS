@@ -39,7 +39,6 @@ struct ChatsView: View {
     // MARK: - Theme Colors
 
     private let backgroundColor = Color.black
-    private let accentColor = Theme.accentColor
 
     // MARK: - Body
 
@@ -110,7 +109,7 @@ struct ChatsView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .tint(accentColor)
+        .tint(Theme.accentColor)
         .task {
             // Initialize view model with dependencies
             if viewModel == nil {
@@ -173,7 +172,7 @@ struct ChatsView: View {
                     isSearchFocused = false
                 }
             }
-            .foregroundColor(accentColor)
+            .foregroundColor(Theme.accentColor)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
@@ -233,12 +232,12 @@ struct ChatsView: View {
             // Icon
             ZStack {
                 Circle()
-                    .fill(accentColor.opacity(0.15))
+                    .fill(Theme.accentColor.opacity(0.15))
                     .frame(width: 100, height: 100)
 
                 Image(systemName: "envelope.open")
                     .font(.system(size: 44, weight: .light))
-                    .foregroundColor(accentColor)
+                    .foregroundColor(Theme.accentColor)
             }
 
             // Title
@@ -268,7 +267,7 @@ struct ChatsView: View {
                 .foregroundColor(.white)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 12)
-                .background(accentColor)
+                .background(Theme.accentColor)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding(.top, 8)
@@ -282,7 +281,7 @@ struct ChatsView: View {
             Color.black.opacity(0.3)
 
             ProgressView()
-                .progressViewStyle(CircularProgressViewStyle(tint: accentColor))
+                .progressViewStyle(CircularProgressViewStyle(tint: Theme.accentColor))
                 .scaleEffect(1.2)
         }
         .ignoresSafeArea()

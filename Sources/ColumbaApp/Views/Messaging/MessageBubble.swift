@@ -24,13 +24,7 @@ struct MessageBubble: View {
 
     let message: Message
 
-    // MARK: - Theme
-
-    /// Purple accent color matching Android Columba (Hex: #6750A4)
-    private let accentColor = Color(red: 0.404, green: 0.314, blue: 0.643)
-
-    /// Darker background for received messages
-    private let receivedBackground = Color(white: 0.15)
+    // MARK: - Theme (delegates to Theme/ThemeManager)
 
     // MARK: - Body
 
@@ -104,9 +98,9 @@ struct MessageBubble: View {
     @ViewBuilder
     private var bubbleBackground: some View {
         if message.isFromMe {
-            accentColor.opacity(0.85)
+            Theme.sentBubbleColor.opacity(0.85)
         } else {
-            receivedBackground
+            Theme.receivedBubbleColor
                 .overlay(
                     RoundedRectangle(cornerRadius: 18)
                         .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
@@ -174,7 +168,7 @@ struct MessageBubble: View {
                 Image(systemName: "checkmark")
             }
             .font(.caption2)
-            .foregroundStyle(accentColor)
+            .foregroundStyle(Theme.accentColor)
 
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
