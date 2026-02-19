@@ -51,6 +51,11 @@ struct SettingsView: View {
                         // Delivery & Retrieval
                         deliveryRetrievalCard(vm)
 
+                        // Appearance
+                        AppearanceCard(
+                            isExpanded: Binding(get: { vm.isAppearanceExpanded }, set: { vm.isAppearanceExpanded = $0 })
+                        )
+
                         // Identity
                         identityCard(vm)
 

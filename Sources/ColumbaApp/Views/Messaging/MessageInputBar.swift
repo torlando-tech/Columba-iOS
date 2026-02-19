@@ -31,11 +31,7 @@ struct MessageInputBar: View {
 
     @FocusState private var isFocused: Bool
 
-    /// Purple accent color matching Android Columba (Hex: #6750A4)
-    private let accentColor = Color(red: 0.404, green: 0.314, blue: 0.643)
-
-    /// Darker background for text field
-    private let textFieldBackground = Color(white: 0.12)
+    // MARK: - Theme (delegates to Theme/ThemeManager)
 
     // MARK: - Computed Properties
 
@@ -99,7 +95,7 @@ struct MessageInputBar: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                 }
-                .background(textFieldBackground)
+                .background(Theme.backgroundTertiary)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -132,7 +128,7 @@ struct MessageInputBar: View {
                     }) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 32))
-                            .foregroundStyle(canSend ? accentColor : Color.gray.opacity(0.5))
+                            .foregroundStyle(canSend ? Theme.accentColor : Color.gray.opacity(0.5))
                             .symbolRenderingMode(.hierarchical)
                     }
                     .buttonStyle(ScaleButtonStyle())

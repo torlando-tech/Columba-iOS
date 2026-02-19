@@ -40,8 +40,9 @@ struct ColumbaApp: App {
                 notificationObserver: notificationObserver,
                 pendingDeepLink: $pendingDeepLink
             )
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(ThemeManager.shared.resolvedColorScheme)
             .tint(Theme.accentColor)
+            .id(ThemeManager.shared.themeVersion)
             .onOpenURL { url in
                 guard url.scheme == "lxma" else { return }
                 pendingDeepLink = url.absoluteString

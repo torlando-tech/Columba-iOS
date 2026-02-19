@@ -70,7 +70,7 @@ struct NetworkAnnouncesTab: View {
                     .font(.body)
             }
             .buttonStyle(.bordered)
-            .tint(AppTheme.accentColor)
+            .tint(Theme.accentColor)
             .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -117,7 +117,7 @@ struct NetworkAnnouncesTab: View {
                         .padding(.vertical, 6)
                         .background {
                             if viewModel.announceFilter == filter {
-                                Capsule().fill(AppTheme.accentColor)
+                                Capsule().fill(Theme.accentColor)
                             } else {
                                 Capsule().fill(Color.white.opacity(0.08))
                             }

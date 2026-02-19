@@ -89,7 +89,7 @@ struct ContactCard: View {
             if isSelectedRelay {
                 ZStack {
                     Circle()
-                        .fill(Color(red: 0.404, green: 0.314, blue: 0.643))
+                        .fill(Theme.accentColor)
                         .frame(width: 20, height: 20)
                     Image(systemName: "antenna.radiowaves.left.and.right")
                         .font(.system(size: 10, weight: .bold))

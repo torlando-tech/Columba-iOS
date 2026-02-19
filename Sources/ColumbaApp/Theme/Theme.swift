@@ -11,27 +11,25 @@ import SwiftUI
 /// App theming namespace.
 ///
 /// Provides centralized access to colors, materials, and style modifiers.
+/// Color properties delegate to `ThemeManager.shared` for dynamic theming.
+@available(iOS 17.0, macOS 14.0, *)
 enum Theme {
-    // MARK: - Colors
+    // MARK: - Dynamic Colors (delegate to ThemeManager)
 
-    /// Primary accent color (purple/magenta).
-    ///
-    /// Hex: #9C27B0 (vibrant purple)
-    static let accentColor = Color(red: 0.612, green: 0.153, blue: 0.690)
+    /// Primary accent color.
+    @MainActor static var accentColor: Color { ThemeManager.shared.accentColor }
 
     /// Secondary accent for highlights.
-    ///
-    /// Hex: #E040FB (magenta/pink)
-    static let secondaryAccent = Color(red: 0.878, green: 0.251, blue: 0.984)
+    @MainActor static var secondaryAccent: Color { ThemeManager.shared.secondaryAccent }
 
-    /// Primary background color for dark theme.
-    static let backgroundPrimary = Color(red: 0.067, green: 0.067, blue: 0.078)
+    /// Primary background color.
+    @MainActor static var backgroundPrimary: Color { ThemeManager.shared.backgroundPrimary }
 
     /// Secondary background for cards and elevated surfaces.
-    static let backgroundSecondary = Color(red: 0.110, green: 0.110, blue: 0.118)
+    @MainActor static var backgroundSecondary: Color { ThemeManager.shared.backgroundSecondary }
 
     /// Tertiary background for subtle elevation.
-    static let backgroundTertiary = Color(red: 0.157, green: 0.157, blue: 0.173)
+    @MainActor static var backgroundTertiary: Color { ThemeManager.shared.backgroundTertiary }
 
     /// Primary text color (high emphasis).
     static let textPrimary = Color.white.opacity(0.87)
@@ -46,29 +44,27 @@ enum Theme {
     static let divider = Color.white.opacity(0.12)
 
     /// Success/online color.
-    static let success = Color(red: 0.298, green: 0.686, blue: 0.314)
+    @MainActor static var success: Color { ThemeManager.shared.success }
 
     /// Warning color.
-    static let warning = Color(red: 1.0, green: 0.757, blue: 0.027)
+    @MainActor static var warning: Color { ThemeManager.shared.warning }
 
     /// Error/offline color.
-    static let error = Color(red: 0.957, green: 0.263, blue: 0.212)
+    @MainActor static var error: Color { ThemeManager.shared.error }
+
+    /// Sent message bubble color.
+    @MainActor static var sentBubbleColor: Color { ThemeManager.shared.sentBubbleColor }
+
+    /// Received message bubble color.
+    @MainActor static var receivedBubbleColor: Color { ThemeManager.shared.receivedBubbleColor }
 
     // MARK: - Gradients
 
     /// Accent gradient for buttons and highlights.
-    static let accentGradient = LinearGradient(
-        colors: [accentColor, secondaryAccent],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    @MainActor static var accentGradient: LinearGradient { ThemeManager.shared.accentGradient }
 
     /// Dark gradient for backgrounds.
-    static let backgroundGradient = LinearGradient(
-        colors: [backgroundPrimary, backgroundSecondary],
-        startPoint: .top,
-        endPoint: .bottom
-    )
+    @MainActor static var backgroundGradient: LinearGradient { ThemeManager.shared.backgroundGradient }
 
     // MARK: - Corner Radii
 

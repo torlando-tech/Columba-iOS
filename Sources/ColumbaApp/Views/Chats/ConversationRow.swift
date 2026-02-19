@@ -31,7 +31,6 @@ struct ConversationRow: View {
 
     // MARK: - Theme Colors
 
-    private let accentColor = Color(red: 0.404, green: 0.314, blue: 0.643) // #6750A4
     private let cardBackground = Color.white.opacity(0.08)
     private let cardBorder = Color.white.opacity(0.12)
 
@@ -88,7 +87,7 @@ struct ConversationRow: View {
             fallbackHash: conversation.destinationHash,
             size: 48
         )
-        .shadow(color: accentColor.opacity(0.4), radius: 8, x: 0, y: 4)
+        .shadow(color: Theme.accentColor.opacity(0.4), radius: 8, x: 0, y: 4)
     }
 
     /// Favorite/star button with animation.

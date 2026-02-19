@@ -92,6 +92,7 @@ public final class SettingsViewModel {
     public var isLocationSharingExpanded: Bool = false
     public var isMapSourcesExpanded: Bool = false
     public var isDeliveryRetrievalExpanded: Bool = false
+    public var isAppearanceExpanded: Bool = false
 
     // MARK: - Network Settings
 

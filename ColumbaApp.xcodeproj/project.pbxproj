@@ -85,6 +85,12 @@
 		062B /* OfflineMapDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F062; };
 		063B /* OfflineMapsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F063; };
 
+		/* Theme Customizer */
+		064B /* ThemeColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F064; };
+		065B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065; };
+		066B /* AppearanceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F066; };
+		067B /* CustomThemeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F067; };
+
 		/* RNode Wizard */
 		054B /* RNodeWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F054; };
 		055B /* DeviceDiscoveryStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F055; };
@@ -227,6 +233,12 @@
 		F062 /* OfflineMapDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapDownloadView.swift; sourceTree = "<group>"; };
 		F063 /* OfflineMapsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapsScreen.swift; sourceTree = "<group>"; };
 
+		/* Theme Customizer */
+		F064 /* ThemeColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeColors.swift; sourceTree = "<group>"; };
+		F065 /* ThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeManager.swift; sourceTree = "<group>"; };
+		F066 /* AppearanceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceCard.swift; sourceTree = "<group>"; };
+		F067 /* CustomThemeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomThemeEditorView.swift; sourceTree = "<group>"; };
+
 		/* Interface Management */
 		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
 		F031 /* InterfaceManagementScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementScreen.swift; sourceTree = "<group>"; };
@@ -300,6 +312,8 @@
 			isa = PBXGroup;
 			children = (
 				F002 /* Theme.swift */,
+				F064 /* ThemeColors.swift */,
+				F065 /* ThemeManager.swift */,
 			);
 			path = Theme;
 			sourceTree = "<group>";
@@ -390,6 +404,8 @@
 				F046 /* BLEDevicePickerSheet.swift */,
 				F047 /* RNodeConfigSheet.swift */,
 				F060 /* MigrationScreen.swift */,
+				F066 /* AppearanceCard.swift */,
+				F067 /* CustomThemeEditorView.swift */,
 				GRNW /* RNodeWizard */,
 			);
 			path = Settings;
@@ -626,6 +642,10 @@
 				061B /* OfflineMapManager.swift in Sources */,
 				062B /* OfflineMapDownloadView.swift in Sources */,
 				063B /* OfflineMapsScreen.swift in Sources */,
+				064B /* ThemeColors.swift in Sources */,
+				065B /* ThemeManager.swift in Sources */,
+				066B /* AppearanceCard.swift in Sources */,
+				067B /* CustomThemeEditorView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
