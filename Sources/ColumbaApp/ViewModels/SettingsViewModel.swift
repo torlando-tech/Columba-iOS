@@ -361,6 +361,8 @@ public final class SettingsViewModel {
 
         do {
             try await appServices.sendAnnounce(displayName: identity.displayName)
+            // Also announce telephony destination for incoming calls
+            try? await appServices.sendTelephonyAnnounce(displayName: identity.displayName)
             announceSuccess = true
             recordAnnounceTime()
             // Clear success after a delay
@@ -386,6 +388,8 @@ public final class SettingsViewModel {
 
         do {
             try await appServices.sendAnnounce(displayName: identity.displayName)
+            // Also announce telephony destination for incoming calls
+            try? await appServices.sendTelephonyAnnounce(displayName: identity.displayName)
             manualAnnounceSuccess = true
             recordAnnounceTime()
             Task {
