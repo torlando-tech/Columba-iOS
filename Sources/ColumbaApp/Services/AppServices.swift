@@ -378,7 +378,7 @@ public final class AppServices {
 
         // 12. Initialize call manager
         let cm = CallManager()
-        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable)
+        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
         self.callManager = cm
 
         logger.info("Initialization complete")
@@ -475,7 +475,7 @@ public final class AppServices {
 
         // 12. Initialize call manager
         let cm = CallManager()
-        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable)
+        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
         self.callManager = cm
 
         logger.info("Initialization complete (identity: \(identityHash))")
