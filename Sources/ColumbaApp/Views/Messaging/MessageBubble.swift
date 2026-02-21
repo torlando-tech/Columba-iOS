@@ -308,6 +308,10 @@ public struct Message: Identifiable, Equatable {
                let data = imageField[1] as? Data {
                 self.imageData = data
                 self.imageFormat = format
+            } else if lxMessage.fields?[LXMessage.FIELD_IMAGE] != nil {
+                // Image field exists but failed extraction — log for diagnosis
+                let rawField = lxMessage.fields![LXMessage.FIELD_IMAGE]!
+                print("[IMAGE_DEBUG] Field 0x06 present but extraction failed: type=\(type(of: rawField)), value=\(String(describing: rawField).prefix(200))")
             }
             // Extract file attachments field (0x05)
             if let filesField = lxMessage.fields?[LXMessage.FIELD_FILE_ATTACHMENTS] as? [Any] {
