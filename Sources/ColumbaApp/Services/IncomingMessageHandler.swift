@@ -41,6 +41,28 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     /// Logger for debugging message receipt.
     private let logger = Logger(subsystem: "com.columba.app", category: "IncomingMessageHandler")
 
+    /// File-based debug log for message field diagnostics (survives syslog drops).
+    private static let debugLogURL: URL = {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("field_debug.log")
+    }()
+
+    private func debugLog(_ msg: String) {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(ts)] \(msg)\n"
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: Self.debugLogURL.path) {
+                if let handle = try? FileHandle(forWritingTo: Self.debugLogURL) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    handle.closeFile()
+                }
+            } else {
+                try? data.write(to: Self.debugLogURL)
+            }
+        }
+    }
+
     // MARK: - Initialization
 
     /// Create handler with message repository.
@@ -69,6 +91,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
         let sourceHashHex = message.sourceHash.prefix(4).map { String(format: "%02x", $0) }.joined()
         let messageHashHex = message.hash.prefix(4).map { String(format: "%02x", $0) }.joined()
         logger.info("Received message from \(sourceHashHex) hash=\(messageHashHex)")
+        debugLog("=== RECEIVED from=\(sourceHashHex) hash=\(messageHashHex) contentLen=\(message.content.count) method=\(String(describing: message.method))")
 
         let sourceHash = message.sourceHash
 
@@ -105,16 +128,58 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 self.logger.error("[LXMF_INBOUND] Failed to update peer icon for \(messageHashHex): \(error.localizedDescription)")
             }
 
+            // Log all received fields for debugging
+            if let fields = message.fields {
+                let fieldDesc = fields.map { "0x\(String(format: "%02x", $0.key))=\(type(of: $0.value))" }.joined(separator: ", ")
+                let msg = "[FIELDS] count=\(fields.count) [\(fieldDesc)]"
+                self.logger.log(level: .error, "\(msg, privacy: .public)")
+                self.debugLog(msg)
+                for (key, val) in fields {
+                    if let d = val as? Data {
+                        let hex = d.prefix(32).map { String(format: "%02x", $0) }.joined()
+                        let detail = "[FIELDS] key=0x\(String(format: "%02x", key)) Data(\(d.count)B) hex=\(hex)"
+                        self.debugLog(detail)
+                    } else {
+                        let detail = "[FIELDS] key=0x\(String(format: "%02x", key)) value=\(String(describing: val))"
+                        self.debugLog(detail)
+                    }
+                }
+            } else {
+                self.debugLog("[FIELDS] message.fields is nil")
+            }
+
             // Extract telemetry from LXMF Field 2 (FIELD_TELEMETRY)
-            if let fields = message.fields,
-               let telemetryData = fields[LXMessage.FIELD_TELEMETRY] as? Data,
-               let packet = TelemetryPacket.decode(from: telemetryData) {
-                self.locationSharingManager?.handleIncomingTelemetry(
-                    from: message.sourceHash,
-                    packet: packet,
-                    displayName: nil
-                )
-                self.logger.info("Extracted telemetry from \(sourceHashHex)")
+            if let fields = message.fields {
+                // Extract icon appearance for map marker (may already be saved to DB above)
+                var peerIcon: IconAppearance? = nil
+                if let iconValue = fields[IconAppearance.fieldKey] {
+                    peerIcon = IconAppearance.fromLXMFFieldValue(iconValue)
+                }
+                // Fall back to DB-stored icon if not in this message
+                if peerIcon == nil {
+                    peerIcon = try? await self.messageRepository.getPeerIcon(message.sourceHash)
+                }
+
+                let rawValue = fields[LXMessage.FIELD_TELEMETRY]
+                if let telemetryData = rawValue as? Data {
+                    let hex = telemetryData.prefix(32).map { String(format: "%02x", $0) }.joined()
+                    self.debugLog("[TELEMETRY] Got Data(\(telemetryData.count)B) hex=\(hex)")
+                    if let packet = TelemetryPacket.decode(from: telemetryData) {
+                        self.locationSharingManager?.handleIncomingTelemetry(
+                            from: message.sourceHash,
+                            packet: packet,
+                            displayName: nil,
+                            iconAppearance: peerIcon
+                        )
+                        self.debugLog("[TELEMETRY] Extracted lat=\(packet.location?.latitude ?? 0) lon=\(packet.location?.longitude ?? 0) from \(sourceHashHex)")
+                    } else {
+                        self.debugLog("[TELEMETRY] DECODE FAILED from \(telemetryData.count) bytes hex=\(hex)")
+                    }
+                } else if rawValue != nil {
+                    self.debugLog("[TELEMETRY] Field 0x02 is NOT Data, actual type: \(type(of: rawValue!))")
+                } else {
+                    self.debugLog("[TELEMETRY] Field 0x02 not present in fields")
+                }
             }
 
             // Post local push notification (respects user preferences)
