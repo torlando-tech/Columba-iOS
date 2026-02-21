@@ -39,6 +39,7 @@ struct MessagingView: View {
     @State private var attachedImage: UIImage?
     @State private var attachedFiles: [FileAttachment] = []
     @State private var showCodecPicker = false
+    @State private var isNearBottom = true
     @State private var showCallScreen = false
     @Environment(\.dismiss) private var dismiss
 
@@ -51,6 +52,18 @@ struct MessagingView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 12) {
+                            // Load-more trigger at top
+                            if !vm.allMessagesLoaded {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .onAppear {
+                                        Task {
+                                            await vm.loadMoreMessages()
+                                        }
+                                    }
+                            }
+
                             ForEach(vm.messages) { message in
                                 MessageBubble(message: message)
                                     .id(message.id)
@@ -59,13 +72,22 @@ struct MessagingView: View {
                                         removal: .opacity
                                     ))
                             }
+
+                            // Invisible anchor at bottom to track scroll position
+                            Color.clear
+                                .frame(height: 1)
+                                .id("bottom-anchor")
+                                .onAppear { isNearBottom = true }
+                                .onDisappear { isNearBottom = false }
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                     }
                     .scrollDismissesKeyboard(.interactively)
-                    .onChange(of: vm.messages.count) { _, _ in
-                        scrollToBottom(proxy: proxy)
+                    .onChange(of: vm.messages.last?.id) { _, _ in
+                        if isNearBottom {
+                            scrollToBottom(proxy: proxy)
+                        }
                     }
                     .onAppear {
                         scrollToBottom(proxy: proxy, animated: false)
