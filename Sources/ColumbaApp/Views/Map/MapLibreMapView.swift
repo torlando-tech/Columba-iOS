@@ -9,6 +9,7 @@
 #if os(iOS)
 import SwiftUI
 import MapLibre
+import LXMFSwift
 
 @available(iOS 17.0, *)
 struct MapLibreMapView: UIViewRepresentable {
@@ -81,6 +82,12 @@ struct MapLibreMapView: UIViewRepresentable {
                 }
                 existing.title = peer.displayName ?? peer.shortHash
                 existing.subtitle = peer.isStale ? "Stale" : nil
+                existing.isStale = peer.isStale
+                if let icon = peer.iconAppearance {
+                    existing.iconName = icon.iconName
+                    existing.iconForegroundColor = icon.foregroundColor
+                    existing.iconBackgroundColor = icon.backgroundColor
+                }
             } else {
                 // Add new annotation
                 let annotation = PeerPointAnnotation()
@@ -90,6 +97,11 @@ struct MapLibreMapView: UIViewRepresentable {
                 annotation.peerHash = peer.id
                 annotation.displayInitial = String((peer.displayName ?? peer.shortHash).prefix(1)).uppercased()
                 annotation.isStale = peer.isStale
+                if let icon = peer.iconAppearance {
+                    annotation.iconName = icon.iconName
+                    annotation.iconForegroundColor = icon.foregroundColor
+                    annotation.iconBackgroundColor = icon.backgroundColor
+                }
                 mapView.addAnnotation(annotation)
                 coordinator.peerAnnotations[peer.id] = annotation
             }
@@ -134,8 +146,14 @@ struct MapLibreMapView: UIViewRepresentable {
                 annotationView?.frame = CGRect(x: 0, y: 0, width: 32, height: 32)
             }
 
-            // Create marker circle with initial
-            let markerColor: UIColor = peerAnnotation.isStale ? .gray : .systemBlue
+            // Create marker circle with MDI icon or initial fallback
+            let markerColor: UIColor
+            if let bgHex = peerAnnotation.iconBackgroundColor {
+                markerColor = peerAnnotation.isStale ? .gray : UIColor(hexRGB: bgHex)
+            } else {
+                markerColor = peerAnnotation.isStale ? .gray : .systemBlue
+            }
+
             let circle = UIView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
             circle.backgroundColor = markerColor
             circle.layer.cornerRadius = 16
@@ -147,10 +165,23 @@ struct MapLibreMapView: UIViewRepresentable {
             circle.layer.shadowOpacity = 0.3
 
             let label = UILabel(frame: circle.bounds)
-            label.text = peerAnnotation.displayInitial
             label.textAlignment = .center
-            label.textColor = .white
-            label.font = .systemFont(ofSize: 14, weight: .bold)
+
+            if let iconName = peerAnnotation.iconName,
+               let char = MaterialDesignIcons.character(for: iconName),
+               let mdiFont = UIFont(name: MaterialDesignIcons.fontName, size: 18) {
+                label.text = String(char)
+                label.font = mdiFont
+                if let fgHex = peerAnnotation.iconForegroundColor {
+                    label.textColor = UIColor(hexRGB: fgHex)
+                } else {
+                    label.textColor = .white
+                }
+            } else {
+                label.text = peerAnnotation.displayInitial
+                label.font = .systemFont(ofSize: 14, weight: .bold)
+                label.textColor = .white
+            }
             circle.addSubview(label)
 
             // Replace subviews
@@ -164,10 +195,29 @@ struct MapLibreMapView: UIViewRepresentable {
 
 // MARK: - Peer Point Annotation
 
+// MARK: - UIColor hex extension
+
+private extension UIColor {
+    convenience init(hexRGB hex: String) {
+        let cleaned = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        var value: UInt64 = 0
+        Scanner(string: cleaned).scanHexInt64(&value)
+        self.init(
+            red: CGFloat((value >> 16) & 0xFF) / 255.0,
+            green: CGFloat((value >> 8) & 0xFF) / 255.0,
+            blue: CGFloat(value & 0xFF) / 255.0,
+            alpha: 1.0
+        )
+    }
+}
+
 /// Custom annotation class carrying peer metadata.
 final class PeerPointAnnotation: MLNPointAnnotation {
     var peerHash: Data = Data()
     var displayInitial: String = "?"
     var isStale: Bool = false
+    var iconName: String?
+    var iconForegroundColor: String?
+    var iconBackgroundColor: String?
 }
 #endif

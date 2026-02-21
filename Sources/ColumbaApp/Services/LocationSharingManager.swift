@@ -12,6 +12,9 @@ import CoreLocation
 import LXMFSwift
 import ReticulumSwift
 import os.log
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - PeerLocation
 
@@ -43,6 +46,9 @@ public struct PeerLocation: Identifiable, Equatable {
 
     /// When this location was received.
     public var lastUpdate: Date
+
+    /// Icon appearance from LXMF Field 0x04 (MDI icon + colors).
+    public var iconAppearance: IconAppearance?
 
     /// True if older than 5 minutes.
     public var isStale: Bool {
@@ -193,7 +199,8 @@ public final class LocationSharingManager: NSObject {
     ///   - peerHash: Source destination hash
     ///   - packet: Decoded telemetry packet
     ///   - displayName: Optional display name for the peer
-    public func handleIncomingTelemetry(from peerHash: Data, packet: TelemetryPacket, displayName: String?) {
+    ///   - iconAppearance: Optional MDI icon appearance from LXMF Field 0x04
+    public func handleIncomingTelemetry(from peerHash: Data, packet: TelemetryPacket, displayName: String?, iconAppearance: IconAppearance? = nil) {
         guard let location = packet.location else { return }
 
         if location.isCeased {
@@ -204,6 +211,9 @@ public final class LocationSharingManager: NSObject {
             return
         }
 
+        // Preserve existing icon if new message doesn't include one
+        let resolvedIcon = iconAppearance ?? peerLocations[peerHash]?.iconAppearance
+
         let peerLoc = PeerLocation(
             id: peerHash,
             displayName: displayName,
@@ -213,7 +223,8 @@ public final class LocationSharingManager: NSObject {
             speed: location.speed,
             bearing: location.bearing,
             accuracy: location.accuracy,
-            lastUpdate: Date(timeIntervalSince1970: TimeInterval(location.lastUpdate))
+            lastUpdate: Date(timeIntervalSince1970: TimeInterval(location.lastUpdate)),
+            iconAppearance: resolvedIcon
         )
 
         peerLocations[peerHash] = peerLoc
