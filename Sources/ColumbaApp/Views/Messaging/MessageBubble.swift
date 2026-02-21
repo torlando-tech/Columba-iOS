@@ -189,7 +189,7 @@ public struct FileAttachment: Equatable {
 
 public struct Message: Identifiable, Equatable {
     public let id: String
-    public let content: String
+    public var content: String
     public let timestamp: Date
     public let isFromMe: Bool
     public var deliveryStatus: DeliveryStatus
@@ -306,6 +306,13 @@ public struct Message: Identifiable, Equatable {
 
         // Extract fields from packed wire format if available
         if let lxMessage = try? LXMessage.unpackFromBytes(record.packedLxmf) {
+            // Re-extract content from unpacked message if DB column was empty
+            if self.content.isEmpty {
+                let unpacked = String(data: lxMessage.content, encoding: .utf8) ?? ""
+                if !unpacked.isEmpty {
+                    self.content = unpacked
+                }
+            }
             // Extract image field (0x06)
             if let imageField = lxMessage.fields?[LXMessage.FIELD_IMAGE] as? [Any],
                imageField.count >= 2,

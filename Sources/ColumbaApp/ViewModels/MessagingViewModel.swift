@@ -28,8 +28,17 @@ public final class MessagingViewModel {
     /// True while loading messages from database.
     public var isLoading: Bool = false
 
+    /// True while loading older messages (pagination).
+    public var isLoadingMore: Bool = false
+
+    /// True when all messages have been loaded (no more pages).
+    public var allMessagesLoaded: Bool = false
+
     /// Error message if operation failed, nil otherwise.
     public var errorMessage: String? = nil
+
+    /// Page size for message fetching.
+    private static let pageSize = 50
 
     // MARK: - Dependencies
 
@@ -88,7 +97,7 @@ public final class MessagingViewModel {
 
     // MARK: - Public Methods
 
-    /// Load messages for this conversation.
+    /// Load the most recent page of messages for this conversation.
     @MainActor
     public func loadMessages() async {
         isLoading = true
@@ -98,11 +107,11 @@ public final class MessagingViewModel {
             // Ensure conversation exists
             try await repository.ensureConversation(conversationHash, displayName: displayName)
 
-            // Fetch lightweight records (no MessagePack/SHA256/Ed25519 per message)
-            let records = try await repository.fetchMessageRecords(for: conversationHash)
-            messages = records.reversed()
-                .map { Message(from: $0, localHash: appServices.localIdentityHash) }
-                .filter { !$0.isEmpty }
+            // Fetch most recent page
+            let records = try await repository.fetchMessageRecords(
+                for: conversationHash, limit: Self.pageSize, offset: 0)
+            messages = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+            allMessagesLoaded = records.count < Self.pageSize
 
             // Mark as read
             try await repository.markConversationRead(conversationHash)
@@ -110,6 +119,31 @@ public final class MessagingViewModel {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Load older messages when scrolling up.
+    @MainActor
+    public func loadMoreMessages() async {
+        guard !isLoadingMore, !allMessagesLoaded else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        do {
+            let offset = messages.count
+            let records = try await repository.fetchMessageRecords(
+                for: conversationHash, limit: Self.pageSize, offset: offset)
+            if records.isEmpty {
+                allMessagesLoaded = true
+                return
+            }
+            let older = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+            messages.insert(contentsOf: older, at: 0)
+            if records.count < Self.pageSize {
+                allMessagesLoaded = true
+            }
+        } catch {
+            logger.error("Failed to load more messages: \(error.localizedDescription)")
         }
     }
 
