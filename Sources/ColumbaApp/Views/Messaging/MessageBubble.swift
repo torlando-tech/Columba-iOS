@@ -209,6 +209,11 @@ public struct Message: Identifiable, Equatable {
         Self.relativeFormatter.localizedString(for: timestamp, relativeTo: Date())
     }
 
+    /// True if message has no visible content (telemetry-only messages).
+    public var isEmpty: Bool {
+        content.isEmpty && imageData == nil && (attachments == nil || attachments!.isEmpty)
+    }
+
     /// Create a new message.
     public init(
         id: String = UUID().uuidString,
