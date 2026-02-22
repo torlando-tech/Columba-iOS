@@ -115,14 +115,17 @@ struct InterfaceManagementScreen: View {
                     AutoInterfaceConfigSheet(viewModel: viewModel)
                 } else if viewModel.configType == .ble {
                     BLEInterfaceConfigSheet(viewModel: viewModel)
-                } else if viewModel.configType == .rnode {
-                    RNodeWizardView(viewModel: viewModel)
                 } else {
                     TCPInterfaceConfigSheet(viewModel: viewModel)
                 }
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        }
+        // RNode wizard uses fullScreenCover because the iOS BLE pairing dialog
+        // dismisses regular sheets. fullScreenCover survives system alerts.
+        .fullScreenCover(isPresented: $viewModel.showRNodeWizard) {
+            RNodeWizardView(viewModel: viewModel)
         }
         .alert("Delete Interface?", isPresented: $viewModel.showDeleteConfirmation) {
             Button("Cancel", role: .cancel) {
