@@ -62,6 +62,9 @@ public final class InterfaceManagementViewModel {
     /// Whether the add/edit dialog is shown
     public var showConfigSheet: Bool = false
 
+    /// Whether the RNode wizard is shown (uses fullScreenCover to survive BLE pairing dialog)
+    public var showRNodeWizard: Bool = false
+
     /// Interface being edited (nil for new interface)
     public var editingInterface: InterfaceEntity?
 
@@ -207,19 +210,28 @@ public final class InterfaceManagementViewModel {
         // Set default name based on type
         configName = type.displayName
 
-        showConfigSheet = true
+        if type == .rnode {
+            showRNodeWizard = true
+        } else {
+            showConfigSheet = true
+        }
     }
 
     /// Show config form for editing an existing interface.
     public func showEditInterface(_ interface: InterfaceEntity) {
         editingInterface = interface
         populateConfigForm(from: interface)
-        showConfigSheet = true
+        if interface.type == .rnode {
+            showRNodeWizard = true
+        } else {
+            showConfigSheet = true
+        }
     }
 
     /// Dismiss the config sheet.
     public func dismissConfigSheet() {
         showConfigSheet = false
+        showRNodeWizard = false
         editingInterface = nil
         resetConfigForm()
     }
