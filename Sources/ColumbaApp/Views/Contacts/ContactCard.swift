@@ -27,8 +27,8 @@ struct ContactCard: View {
     /// Contact to display.
     let contact: Contact
 
-    /// Whether to show the globe icon (for network announces).
-    var showGlobeIcon: Bool = false
+    /// Whether to show the interface type icon (for network announces).
+    var showInterfaceIcon: Bool = false
 
     /// Whether this card is the currently selected relay (shows hub badge on avatar).
     var isSelectedRelay: Bool = false
@@ -201,11 +201,9 @@ struct ContactCard: View {
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.5))
 
-            // Globe icon for network announces
-            if showGlobeIcon {
-                Image(systemName: "globe")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.5))
+            // Interface type icon for network announces
+            if showInterfaceIcon {
+                interfaceIconView
             }
         }
     }
@@ -219,6 +217,22 @@ struct ContactCard: View {
                     .fill(index < contact.signalStrength ? signalColor : Color.gray.opacity(0.3))
                     .frame(width: 4, height: CGFloat(6 + index * 3))
             }
+        }
+    }
+
+    // MARK: - Interface Icon
+
+    @ViewBuilder
+    private var interfaceIconView: some View {
+        if contact.interfaceIcon == "bluetooth",
+           let ch = MaterialDesignIcons.character(for: "bluetooth") {
+            Text(String(ch))
+                .font(.custom(MaterialDesignIcons.fontName, size: 12))
+                .foregroundStyle(.blue.opacity(0.7))
+        } else {
+            Image(systemName: contact.interfaceIcon)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.5))
         }
     }
 
@@ -286,7 +300,7 @@ struct ContactCard: View {
                     isFavorite: false,
                     isRelay: false
                 ),
-                showGlobeIcon: true
+                showInterfaceIcon: true
             )
 
             ContactCard(
