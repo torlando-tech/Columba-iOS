@@ -875,6 +875,27 @@ public final class AppServices {
         }
     }
 
+    // MARK: - BLE Connection Info
+
+    #if canImport(CoreBluetooth)
+    /// Get snapshot of all BLE peer connection info for UI display.
+    public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
+        guard let ble = bleInterface else { return [] }
+        return await ble.getConnectionInfos()
+    }
+
+    /// Disconnect a specific BLE peer.
+    public func disconnectBLEPeer(identityHex: String) async {
+        guard let ble = bleInterface else { return }
+        await ble.disconnectPeer(identityHex: identityHex)
+    }
+
+    /// Whether BLE interface is currently active.
+    public var isBLEActive: Bool {
+        bleInterface != nil
+    }
+    #endif
+
     // MARK: - Shutdown
 
     /// Shutdown all services gracefully.

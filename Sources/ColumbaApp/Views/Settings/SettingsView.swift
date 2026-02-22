@@ -35,6 +35,7 @@ struct SettingsView: View {
     @State private var showManageIdentities = false
     @State private var showInterfaceManagement = false
     @State private var showNetworkStatus = false
+    @State private var showBLEConnections = false
     @State private var showDataMigration = false
     @State private var interfaceRepository: InterfaceRepository?
 
@@ -102,6 +103,9 @@ struct SettingsView: View {
                 }
                 .navigationDestination(isPresented: $showNetworkStatus) {
                     NetworkStatusView(appServices: appServices)
+                }
+                .navigationDestination(isPresented: $showBLEConnections) {
+                    BLEConnectionsView(appServices: appServices)
                 }
                 .navigationDestination(isPresented: $showManageIdentities) {
                     IdentityManagerView(
@@ -204,6 +208,28 @@ struct SettingsView: View {
                         Image(systemName: "gearshape")
                             .font(.system(size: 14, weight: .medium))
                         Text("Manage Interfaces")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.backgroundTertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                }
+
+                // BLE Connections Button
+                Button(action: {
+                    showBLEConnections = true
+                }) {
+                    HStack(spacing: 8) {
+                        if let ch = MaterialDesignIcons.character(for: "bluetooth") {
+                            Text(String(ch))
+                                .font(.custom(MaterialDesignIcons.fontName, size: 14))
+                        } else {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        Text("BLE Connections")
                             .font(.system(size: 15, weight: .medium))
                     }
                     .foregroundStyle(Theme.textPrimary)
