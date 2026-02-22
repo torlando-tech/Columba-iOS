@@ -97,6 +97,7 @@
 		06F0 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06F /* CallKitManager.swift */; };
 		06FB /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P003 /* LXSTSwift */; };
 		0700 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070 /* AudioManager.swift */; };
+		071B /* BLEConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F071 /* BLEConnectionsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -188,6 +189,7 @@
 		F06E /* VoiceCallScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
 		F06F /* CallKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
 		F070 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
+		F071 /* BLEConnectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEConnectionsView.swift; sourceTree = "<group>"; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -341,6 +343,7 @@
 				F060 /* MigrationScreen.swift */,
 				F066 /* AppearanceCard.swift */,
 				F067 /* CustomThemeEditorView.swift */,
+				F071 /* BLEConnectionsView.swift */,
 				GRNW /* RNodeWizard */,
 			);
 			path = Settings;
@@ -609,6 +612,7 @@
 				06EB /* VoiceCallScreen.swift in Sources */,
 				06F0 /* CallKitManager.swift in Sources */,
 				0700 /* AudioManager.swift in Sources */,
+				071B /* BLEConnectionsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
