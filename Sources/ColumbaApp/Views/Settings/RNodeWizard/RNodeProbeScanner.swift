@@ -222,9 +222,28 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        diag("Disconnected, error=\(error?.localizedDescription ?? "none")")
+        diag("Disconnected, error=\(error?.localizedDescription ?? "none"), pairingTriggered=\(pairingTriggered), hasSentDetect=\(hasSentDetectProbe)")
+
+        // After BLE pairing completes, the peripheral often disconnects and reconnects.
+        // If pairing was triggered (or we never got to send detect), auto-reconnect
+        // to retry the detect probe on the now-bonded connection.
+        if pairingTriggered || !hasSentDetectProbe {
+            diag("Auto-reconnecting after pairing disconnect...")
+            hasSentDetectProbe = false
+            nusDiscovered = false
+            rxCharacteristic = nil
+            txCharacteristic = nil
+            pairingTriggered = false
+            connectingPeripheral = peripheral
+            peripheral.delegate = self
+            onProbeResult?(.connecting)
+            centralManager.connect(peripheral, options: nil)
+            return
+        }
+
         connectingPeripheral = nil
         rxCharacteristic = nil
+        txCharacteristic = nil
     }
 }
 

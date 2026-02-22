@@ -165,11 +165,13 @@ final class RNodeWizardViewModel {
     }
 
     /// The effective TX power (always editable, defaults to 17 dBm).
+    /// Capped to 17 dBm by default because most RNode hardware (SX1276)
+    /// maxes at 17 dBm. SX1262 can do 22 dBm. Users can override in advanced.
     var effectiveTxPower: UInt8 {
         if let tx = UInt8(customTxPower), tx > 0 {
             return tx
         }
-        return selectedRegion?.parameters.maxTxPower ?? 17
+        return min(selectedRegion?.parameters.maxTxPower ?? 17, 17)
     }
 
     /// The effective spreading factor.

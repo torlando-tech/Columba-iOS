@@ -184,7 +184,7 @@ struct ReviewConfigStep: View {
                     } else {
                         readOnlyRow(label: "Frequency", value: "\(wizard.calculatedFrequency) Hz")
                         readOnlyRow(label: "Bandwidth", value: "\(wizard.effectiveBandwidth) Hz")
-                        customField(title: "TX Power (dBm)", text: $wizard.customTxPower, placeholder: "\(wizard.selectedRegion?.parameters.maxTxPower ?? 17)")
+                        customField(title: "TX Power (dBm)", text: $wizard.customTxPower, placeholder: "\(wizard.effectiveTxPower)")
                         readOnlyRow(label: "Spreading Factor", value: "\(wizard.effectiveSpreadingFactor)")
                         readOnlyRow(label: "Coding Rate", value: "4/\(wizard.effectiveCodingRate)")
                     }
