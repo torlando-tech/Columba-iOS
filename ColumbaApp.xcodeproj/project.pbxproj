@@ -98,6 +98,7 @@
 		06FB /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P003 /* LXSTSwift */; };
 		0700 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070 /* AudioManager.swift */; };
 		071B /* BLEConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F071 /* BLEConnectionsView.swift */; };
+		072B /* RNodeProbeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F072 /* RNodeProbeScanner.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -190,6 +191,7 @@
 		F06F /* CallKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
 		F070 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 		F071 /* BLEConnectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEConnectionsView.swift; sourceTree = "<group>"; };
+		F072 /* RNodeProbeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeProbeScanner.swift; sourceTree = "<group>"; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -324,6 +326,7 @@
 				F057 /* ModemPresetStep.swift */,
 				F058 /* FrequencySlotStep.swift */,
 				F059 /* ReviewConfigStep.swift */,
+				F072 /* RNodeProbeScanner.swift */,
 			);
 			path = RNodeWizard;
 			sourceTree = "<group>";
@@ -589,6 +592,7 @@
 				057B /* ModemPresetStep.swift in Sources */,
 				058B /* FrequencySlotStep.swift in Sources */,
 				059B /* ReviewConfigStep.swift in Sources */,
+				072B /* RNodeProbeScanner.swift in Sources */,
 				05AB /* RNodeWizardViewModel.swift in Sources */,
 				05BB /* MigrationData.swift in Sources */,
 				05CB /* MigrationCrypto.swift in Sources */,
