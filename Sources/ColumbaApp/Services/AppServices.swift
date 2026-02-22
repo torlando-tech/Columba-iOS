@@ -307,6 +307,7 @@ public final class AppServices {
         // 3. Create transport with path table
         let newTransport = ReticuLumTransport(pathTable: newPathTable)
         self.transport = newTransport
+        await configureTransportCallbacks(newTransport)
 
         // 4. Create persistent LXMF database
         let dbPath = Self.databaseFilePath
@@ -407,6 +408,7 @@ public final class AppServices {
         // 3. Create transport with path table
         let newTransport = ReticuLumTransport(pathTable: newPathTable)
         self.transport = newTransport
+        await configureTransportCallbacks(newTransport)
 
         // 4. Create persistent LXMF database (per-identity)
         let dbPath = Self.databaseFilePath(for: identityHash)
@@ -814,6 +816,7 @@ public final class AppServices {
         if transport == nil, let pt = pathTable {
             let newTransport = ReticuLumTransport(pathTable: pt)
             self.transport = newTransport
+            await configureTransportCallbacks(newTransport)
         }
 
         // 4. Database
@@ -998,6 +1001,7 @@ public final class AppServices {
         // Create new transport with path table
         let newTransport = ReticuLumTransport(pathTable: newPathTable)
         self.transport = newTransport
+        await configureTransportCallbacks(newTransport)
 
         // Re-register delivery destination if it exists
         if let dest = deliveryDestination {
@@ -1107,6 +1111,14 @@ public final class AppServices {
         try await transport.send(packet: packet)
 
         logger.info("Telephony announce sent for destination: \(destination.hexHash)")
+    }
+
+    /// Wire transport callbacks that need app-layer context.
+    private func configureTransportCallbacks(_ transport: ReticuLumTransport) async {
+        await transport.setOnInterfaceAdded { [weak self] _ in
+            guard let self else { return }
+            await self.autoAnnounce()
+        }
     }
 
     /// Auto-announce on interface connect using the stored display name.
