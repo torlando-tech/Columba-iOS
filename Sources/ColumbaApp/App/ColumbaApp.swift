@@ -298,16 +298,36 @@ struct RootView: View {
                 await router.setDelegate(handler)
             }
 
-            // 7. Start AutoInterface if configured (non-blocking)
-            if let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface }),
-               case .autoInterface(let config) = autoEntity.config {
-                let groupId = config.groupId ?? "reticulum"
-                let services = appServices
-                Task {
-                    do {
-                        try await services.startAutoInterface(groupId: groupId)
-                    } catch {
-                        // Non-fatal
+            // 7. Start all enabled interfaces (non-blocking)
+            let services = appServices
+            for iface in enabledInterfaces {
+                switch iface.type {
+                case .tcpClient:
+                    // Already connected via appServices.initialize() above
+                    break
+                case .tcpServer:
+                    break
+                case .autoInterface:
+                    if case .autoInterface(let config) = iface.config {
+                        let groupId = config.groupId ?? "reticulum"
+                        Task {
+                            try? await services.startAutoInterface(groupId: groupId)
+                        }
+                    }
+                case .ble:
+                    #if canImport(CoreBluetooth)
+                    Task {
+                        try? await services.startBLEInterface()
+                    }
+                    #endif
+                case .rnode:
+                    if case .rnode(let config) = iface.config {
+                        Task {
+                            try? await services.startRNodeInterface(
+                                config: config,
+                                name: iface.name
+                            )
+                        }
                     }
                 }
             }
