@@ -9,6 +9,7 @@
 import SwiftUI
 import LXMFSwift
 import UserNotifications
+import os
 
 /// App Group identifier for shared data between app and extensions.
 public let appGroupIdentifier = "group.com.columba.ios"
@@ -248,6 +249,8 @@ struct RootView: View {
     // MARK: - Initialization
 
     private func initializeServices() async {
+        let bootLogger = Logger(subsystem: "com.columba.app", category: "Startup")
+        bootLogger.error("[STARTUP] initializeServices() ENTERED, showOnboarding=\(self.showOnboarding, privacy: .public)")
         do {
             // 1. Migration check (first launch after update)
             await identityManager.migrateFromSingleIdentityIfNeeded(settingsRepository: settingsRepository)
@@ -263,6 +266,8 @@ struct RootView: View {
             // 4. Load interface configurations
             let interfaceRepo = InterfaceRepository()
             let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
+            let startupLogger = Logger(subsystem: "com.columba.app", category: "Startup")
+            startupLogger.error("[STARTUP] Enabled interfaces: \(enabledInterfaces.map { "\($0.type):\($0.name):\($0.enabled)" }.joined(separator: ", "), privacy: .public)")
 
             let serverAddress: String
             if let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient }),
@@ -322,12 +327,20 @@ struct RootView: View {
                     #endif
                 case .rnode:
                     if case .rnode(let config) = iface.config {
+                        startupLogger.error("[STARTUP] Starting RNode: device=\(config.deviceName, privacy: .public), freq=\(config.frequency, privacy: .public)")
                         Task {
-                            try? await services.startRNodeInterface(
-                                config: config,
-                                name: iface.name
-                            )
+                            do {
+                                try await services.startRNodeInterface(
+                                    config: config,
+                                    name: iface.name
+                                )
+                                startupLogger.error("[STARTUP] RNode started successfully")
+                            } catch {
+                                startupLogger.error("[STARTUP] RNode start FAILED: \(error.localizedDescription, privacy: .public)")
+                            }
                         }
+                    } else {
+                        startupLogger.error("[STARTUP] RNode interface has no config!")
                     }
                 }
             }

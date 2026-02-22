@@ -84,6 +84,14 @@ struct MessagingView: View {
                         .padding(.vertical, 12)
                     }
                     .scrollDismissesKeyboard(.interactively)
+                    .onTapGesture {
+                        #if canImport(UIKit)
+                        UIApplication.shared.sendAction(
+                            #selector(UIResponder.resignFirstResponder),
+                            to: nil, from: nil, for: nil
+                        )
+                        #endif
+                    }
                     .onChange(of: vm.messages.last?.id) { _, _ in
                         if isNearBottom {
                             scrollToBottom(proxy: proxy)
