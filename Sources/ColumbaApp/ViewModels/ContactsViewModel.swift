@@ -37,6 +37,17 @@ public struct Contact: Identifiable, Sendable, Hashable {
     public var iconName: String?
     public var iconFgColor: String?
     public var iconBgColor: String?
+    public let interfaceId: String?
+
+    /// Icon identifier for the interface this announce was received on.
+    /// Returns "bluetooth" (MDI name) for BLE, SF Symbol names for others.
+    public var interfaceIcon: String {
+        guard let iface = interfaceId else { return "globe" }
+        if iface.hasPrefix("ble") { return "bluetooth" }
+        if iface.hasPrefix("rnode") { return "antenna.radiowaves.left.and.right" }
+        if iface.hasPrefix("auto") { return "wifi" }
+        return "globe" // tcp and others
+    }
 
     /// Display name with fallback to "Unknown Peer".
     public var resolvedDisplayName: String {
@@ -89,6 +100,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.timestamp = entry.timestamp
         self.isOnline = Date() < entry.expires
         self.isFavorite = false
+        self.interfaceId = entry.interfaceId
 
         // Detect propagation nodes via aspect check or appData parsing
         if entry.isLXMFPropagationNode {
@@ -121,6 +133,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.iconName = record.iconName
         self.iconFgColor = record.iconFgColor
         self.iconBgColor = record.iconBgColor
+        self.interfaceId = nil
     }
 
     public init(
@@ -134,7 +147,8 @@ public struct Contact: Identifiable, Sendable, Hashable {
         timestamp: Date,
         isOnline: Bool,
         isFavorite: Bool,
-        isRelay: Bool
+        isRelay: Bool,
+        interfaceId: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -147,6 +161,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.isOnline = isOnline
         self.isFavorite = isFavorite
         self.isRelay = isRelay
+        self.interfaceId = interfaceId
     }
 }
 

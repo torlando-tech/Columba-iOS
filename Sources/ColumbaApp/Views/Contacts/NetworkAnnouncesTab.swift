@@ -139,7 +139,7 @@ struct NetworkAnnouncesTab: View {
                 ForEach(viewModel.filteredNetworkAnnounces) { contact in
                     ContactCard(
                         contact: contact,
-                        showGlobeIcon: true,
+                        showInterfaceIcon: true,
                         onFavoriteToggle: {
                             Task { await viewModel.addToContacts(contact) }
                         },

@@ -273,7 +273,7 @@ public struct ContactsView: View {
                     ForEach(group.contacts) { contact in
                         ContactCard(
                             contact: contact,
-                            showGlobeIcon: false,
+                            showInterfaceIcon: false,
                             isSelectedRelay: group.title.contains("RELAY"),
                             onFavoriteToggle: {
                                 vm.toggleFavorite(for: contact.id)
