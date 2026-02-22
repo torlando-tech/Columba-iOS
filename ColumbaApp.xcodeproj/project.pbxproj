@@ -3,167 +3,109 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
-		/* App */
-		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001; };
-
-		/* Theme */
-		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002; };
-
-		/* ViewModels */
-		003 /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003; };
-		004 /* ContactsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F004; };
-		005 /* MessagingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F005; };
-		006 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006; };
-
-		/* Views */
-		007 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007; };
-
-		/* Views/Chats */
-		008 /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008; };
-		009 /* ConversationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F009; };
-
-		/* Views/Contacts */
-		010 /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F010; };
-		011 /* ContactCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011; };
-		012 /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012; };
-		032 /* NodeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F032; };
-
-		/* Views/Messaging */
-		013 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013; };
-		014 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014; };
-		015 /* MessageInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F015; };
-
-		/* Views/Settings */
-		016 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016; };
-		017 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017; };
-		018 /* ExpandableSettingsCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F018; };
-
-		/* Views/Components */
-		019 /* Identicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F019; };
-		020 /* IdenticonGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F020; };
-
-		/* Views/Map */
-		021 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021; };
-		048 /* MapLibreMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F048; };
-
-		/* Resources */
-		022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022; };
-
-		/* Services */
-		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024; };
-		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025; };
-		026 /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026; };
-		027 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027; };
-		028 /* IncomingMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F028; };
-		029 /* InterfaceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F029; };
-		033 /* PropagationNodeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F033; };
-		040 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F040; };
-		041 /* AutoAnnounceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041; };
-		042 /* LocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F042; };
-		043 /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043; };
-		044 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044; };
-
-		/* RNode Configuration UI */
-		045 /* LoRaPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F045; };
-		046 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046; };
-		047 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047; };
-
-		/* Data Migration */
-		05BB /* MigrationData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05B; };
-		05CB /* MigrationCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05C; };
-		05DB /* MigrationExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05D; };
-		05EB /* MigrationImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05E; };
-		05FB /* MigrationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05F; };
-		060B /* MigrationScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F060; };
-
-		/* Offline Maps */
-		061B /* OfflineMapManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F061; };
-		062B /* OfflineMapDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F062; };
-		063B /* OfflineMapsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F063; };
-
-		/* Theme Customizer */
-		064B /* ThemeColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F064; };
-		065B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065; };
-		066B /* AppearanceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F066; };
-		067B /* CustomThemeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F067; };
-
-		/* RNode Wizard */
-		054B /* RNodeWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F054; };
-		055B /* DeviceDiscoveryStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F055; };
-		056B /* RegionSelectionStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F056; };
-		057B /* ModemPresetStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F057; };
-		058B /* FrequencySlotStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F058; };
-		059B /* ReviewConfigStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F059; };
-		05AB /* RNodeWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05A; };
-
-		/* Location Sharing */
-		04BB /* LocationSharingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04B; };
-
-		/* Onboarding */
-		04CB /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04C; };
-		04DB /* WelcomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04D; };
-		04EB /* IdentityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04E; };
-		04FB /* ConnectivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04F; };
-		050B /* PermissionsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F050; };
-		051B /* CompletePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F051; };
-		052B /* OnboardingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F052; };
-		053B /* TcpCommunityServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F053; };
-
-		/* QR Scanner */
-		049B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F049; };
-		04AB /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A; };
-
-		/* Interface Management */
-		030 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030; };
-		031 /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031; };
-
-		/* Network Status */
-		034 /* NetworkStatusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F034; };
-		035 /* NetworkStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F035; };
-
-		/* Profile Icons */
-		036 /* MaterialDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F036; };
-		037 /* ProfileIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F037; };
-		038 /* IconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F038; };
-		039 /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039; };
-
-		/* Voice Call */
-		068B /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F068; };
-		069B /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = F069; };
-		06AB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06A; };
-		06BB /* CodecSelectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06B; };
-		06CB /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06C; };
-		06DB /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06D; };
-		06EB /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06E; };
-		06F0 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06F; };
-		0700 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070; };
-
-		/* Package Dependencies */
-		023 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P001; };
-		049 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = P002; };
-		06FB /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P003; };
+		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* ColumbaApp.swift */; };
+		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
+		003 /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* ChatsViewModel.swift */; };
+		004 /* ContactsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F004 /* ContactsViewModel.swift */; };
+		005 /* MessagingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F005 /* MessagingViewModel.swift */; };
+		006 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006 /* SettingsViewModel.swift */; };
+		007 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007 /* MainTabView.swift */; };
+		008 /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* ChatsView.swift */; };
+		009 /* ConversationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F009 /* ConversationRow.swift */; };
+		010 /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F010 /* ContactsView.swift */; };
+		011 /* ContactCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011 /* ContactCard.swift */; };
+		012 /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012 /* NetworkAnnouncesTab.swift */; };
+		013 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013 /* MessagingView.swift */; };
+		014 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014 /* MessageBubble.swift */; };
+		015 /* MessageInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F015 /* MessageInputBar.swift */; };
+		016 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016 /* SettingsView.swift */; };
+		017 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
+		018 /* ExpandableSettingsCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F018 /* ExpandableSettingsCard.swift */; };
+		019 /* Identicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F019 /* Identicon.swift */; };
+		020 /* IdenticonGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F020 /* IdenticonGenerator.swift */; };
+		021 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* MapView.swift */; };
+		022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022 /* Assets.xcassets */; };
+		023 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P001 /* LXMFSwift */; };
+		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
+		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
+		026 /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsRepository.swift */; };
+		027 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027 /* NotificationObserver.swift */; };
+		028 /* IncomingMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F028 /* IncomingMessageHandler.swift */; };
+		029 /* InterfaceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F029 /* InterfaceRepository.swift */; };
+		030 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030 /* InterfaceManagementViewModel.swift */; };
+		031 /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031 /* InterfaceManagementScreen.swift */; };
+		032 /* NodeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F032 /* NodeDetailsView.swift */; };
+		033 /* PropagationNodeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F033 /* PropagationNodeManager.swift */; };
+		034 /* NetworkStatusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F034 /* NetworkStatusViewModel.swift */; };
+		035 /* NetworkStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F035 /* NetworkStatusView.swift */; };
+		036 /* MaterialDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F036 /* MaterialDesignIcons.swift */; };
+		037 /* ProfileIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F037 /* ProfileIcon.swift */; };
+		038 /* IconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F038 /* IconPickerView.swift */; };
+		039 /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039 /* materialdesignicons.ttf */; };
+		040 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F040 /* NotificationService.swift */; };
+		041 /* AutoAnnounceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041 /* AutoAnnounceManager.swift */; };
+		042 /* LocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F042 /* LocalIdentity.swift */; };
+		043 /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043 /* IdentityManager.swift */; };
+		044 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044 /* IdentityManagerView.swift */; };
+		045 /* LoRaPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F045 /* LoRaPresets.swift */; };
+		046 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046 /* BLEDevicePickerSheet.swift */; };
+		047 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047 /* RNodeConfigSheet.swift */; };
+		048 /* MapLibreMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F048 /* MapLibreMapView.swift */; };
+		049 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = P002 /* MapLibre */; };
+		049B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F049 /* QRScannerView.swift */; };
+		04AB /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A /* AddContactSheet.swift */; };
+		04BB /* LocationSharingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04B /* LocationSharingManager.swift */; };
+		04CB /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04C /* OnboardingView.swift */; };
+		04DB /* WelcomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04D /* WelcomePage.swift */; };
+		04EB /* IdentityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04E /* IdentityPage.swift */; };
+		04FB /* ConnectivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04F /* ConnectivityPage.swift */; };
+		050B /* PermissionsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F050 /* PermissionsPage.swift */; };
+		051B /* CompletePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F051 /* CompletePage.swift */; };
+		052B /* OnboardingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F052 /* OnboardingViewModel.swift */; };
+		053B /* TcpCommunityServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F053 /* TcpCommunityServer.swift */; };
+		054B /* RNodeWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F054 /* RNodeWizardView.swift */; };
+		055B /* DeviceDiscoveryStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F055 /* DeviceDiscoveryStep.swift */; };
+		056B /* RegionSelectionStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F056 /* RegionSelectionStep.swift */; };
+		057B /* ModemPresetStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F057 /* ModemPresetStep.swift */; };
+		058B /* FrequencySlotStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F058 /* FrequencySlotStep.swift */; };
+		059B /* ReviewConfigStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F059 /* ReviewConfigStep.swift */; };
+		05AB /* RNodeWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05A /* RNodeWizardViewModel.swift */; };
+		05BB /* MigrationData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05B /* MigrationData.swift */; };
+		05CB /* MigrationCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05C /* MigrationCrypto.swift */; };
+		05DB /* MigrationExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05D /* MigrationExporter.swift */; };
+		05EB /* MigrationImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05E /* MigrationImporter.swift */; };
+		05FB /* MigrationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05F /* MigrationViewModel.swift */; };
+		060B /* MigrationScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F060 /* MigrationScreen.swift */; };
+		061B /* OfflineMapManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F061 /* OfflineMapManager.swift */; };
+		062B /* OfflineMapDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F062 /* OfflineMapDownloadView.swift */; };
+		063B /* OfflineMapsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F063 /* OfflineMapsScreen.swift */; };
+		064B /* ThemeColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F064 /* ThemeColors.swift */; };
+		065B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065 /* ThemeManager.swift */; };
+		066B /* AppearanceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F066 /* AppearanceCard.swift */; };
+		067B /* CustomThemeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F067 /* CustomThemeEditorView.swift */; };
+		068B /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F068 /* CallManager.swift */; };
+		069B /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = F069 /* CodecProfileInfo.swift */; };
+		06AB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06A /* CallControlButton.swift */; };
+		06BB /* CodecSelectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06B /* CodecSelectionSheet.swift */; };
+		06CB /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06C /* IncomingCallScreen.swift */; };
+		06DB /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06D /* PttButton.swift */; };
+		06EB /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06E /* VoiceCallScreen.swift */; };
+		06F0 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06F /* CallKitManager.swift */; };
+		06FB /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P003 /* LXSTSwift */; };
+		0700 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070 /* AudioManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
-
-		/* App */
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
-
-		/* Theme */
 		F002 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
-
-		/* ViewModels */
 		F003 /* ChatsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsViewModel.swift; sourceTree = "<group>"; };
 		F004 /* ContactsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsViewModel.swift; sourceTree = "<group>"; };
 		F005 /* MessagingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingViewModel.swift; sourceTree = "<group>"; };
 		F006 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
-
-		/* Views */
 		F007 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		F008 /* ChatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsView.swift; sourceTree = "<group>"; };
 		F009 /* ConversationRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationRow.swift; sourceTree = "<group>"; };
@@ -179,29 +121,36 @@
 		F019 /* Identicon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Identicon.swift; sourceTree = "<group>"; };
 		F020 /* IdenticonGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdenticonGenerator.swift; sourceTree = "<group>"; };
 		F021 /* MapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapView.swift; sourceTree = "<group>"; };
-		F048 /* MapLibreMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLibreMapView.swift; sourceTree = "<group>"; };
-
-		/* Resources */
 		F022 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-
-		/* Services */
 		F024 /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
 		F025 /* MessageRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRepository.swift; sourceTree = "<group>"; };
 		F026 /* SettingsRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRepository.swift; sourceTree = "<group>"; };
 		F027 /* NotificationObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationObserver.swift; sourceTree = "<group>"; };
 		F028 /* IncomingMessageHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingMessageHandler.swift; sourceTree = "<group>"; };
 		F029 /* InterfaceRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceRepository.swift; sourceTree = "<group>"; };
+		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
+		F031 /* InterfaceManagementScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementScreen.swift; sourceTree = "<group>"; };
+		F032 /* NodeDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeDetailsView.swift; sourceTree = "<group>"; };
 		F033 /* PropagationNodeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropagationNodeManager.swift; sourceTree = "<group>"; };
+		F034 /* NetworkStatusViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkStatusViewModel.swift; sourceTree = "<group>"; };
+		F035 /* NetworkStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkStatusView.swift; sourceTree = "<group>"; };
+		F036 /* MaterialDesignIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaterialDesignIcons.swift; sourceTree = "<group>"; };
+		F037 /* ProfileIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileIcon.swift; sourceTree = "<group>"; };
+		F038 /* IconPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconPickerView.swift; sourceTree = "<group>"; };
+		F039 /* materialdesignicons.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = materialdesignicons.ttf; sourceTree = "<group>"; };
 		F040 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		F041 /* AutoAnnounceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnounceManager.swift; sourceTree = "<group>"; };
 		F042 /* LocalIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalIdentity.swift; sourceTree = "<group>"; };
 		F043 /* IdentityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManager.swift; sourceTree = "<group>"; };
-
-		/* Identity Management View */
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
-
-		/* Onboarding */
+		F045 /* LoRaPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoRaPresets.swift; sourceTree = "<group>"; };
+		F046 /* BLEDevicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEDevicePickerSheet.swift; sourceTree = "<group>"; };
+		F047 /* RNodeConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeConfigSheet.swift; sourceTree = "<group>"; };
+		F048 /* MapLibreMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLibreMapView.swift; sourceTree = "<group>"; };
+		F049 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		F04A /* AddContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContactSheet.swift; sourceTree = "<group>"; };
+		F04B /* LocationSharingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSharingManager.swift; sourceTree = "<group>"; };
 		F04C /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		F04D /* WelcomePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomePage.swift; sourceTree = "<group>"; };
 		F04E /* IdentityPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityPage.swift; sourceTree = "<group>"; };
@@ -210,20 +159,6 @@
 		F051 /* CompletePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompletePage.swift; sourceTree = "<group>"; };
 		F052 /* OnboardingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingViewModel.swift; sourceTree = "<group>"; };
 		F053 /* TcpCommunityServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TcpCommunityServer.swift; sourceTree = "<group>"; };
-
-		/* Location Sharing */
-		F04B /* LocationSharingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSharingManager.swift; sourceTree = "<group>"; };
-
-		/* QR Scanner */
-		F049 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
-		F04A /* AddContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContactSheet.swift; sourceTree = "<group>"; };
-
-		/* RNode Configuration UI */
-		F045 /* LoRaPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoRaPresets.swift; sourceTree = "<group>"; };
-		F046 /* BLEDevicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEDevicePickerSheet.swift; sourceTree = "<group>"; };
-		F047 /* RNodeConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeConfigSheet.swift; sourceTree = "<group>"; };
-
-		/* RNode Wizard */
 		F054 /* RNodeWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeWizardView.swift; sourceTree = "<group>"; };
 		F055 /* DeviceDiscoveryStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDiscoveryStep.swift; sourceTree = "<group>"; };
 		F056 /* RegionSelectionStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegionSelectionStep.swift; sourceTree = "<group>"; };
@@ -231,44 +166,19 @@
 		F058 /* FrequencySlotStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrequencySlotStep.swift; sourceTree = "<group>"; };
 		F059 /* ReviewConfigStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewConfigStep.swift; sourceTree = "<group>"; };
 		F05A /* RNodeWizardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeWizardViewModel.swift; sourceTree = "<group>"; };
-
-		/* Data Migration */
 		F05B /* MigrationData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationData.swift; sourceTree = "<group>"; };
 		F05C /* MigrationCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationCrypto.swift; sourceTree = "<group>"; };
 		F05D /* MigrationExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationExporter.swift; sourceTree = "<group>"; };
 		F05E /* MigrationImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationImporter.swift; sourceTree = "<group>"; };
 		F05F /* MigrationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationViewModel.swift; sourceTree = "<group>"; };
 		F060 /* MigrationScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationScreen.swift; sourceTree = "<group>"; };
-
-		/* Offline Maps */
 		F061 /* OfflineMapManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapManager.swift; sourceTree = "<group>"; };
 		F062 /* OfflineMapDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapDownloadView.swift; sourceTree = "<group>"; };
 		F063 /* OfflineMapsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineMapsScreen.swift; sourceTree = "<group>"; };
-
-		/* Theme Customizer */
 		F064 /* ThemeColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeColors.swift; sourceTree = "<group>"; };
 		F065 /* ThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeManager.swift; sourceTree = "<group>"; };
 		F066 /* AppearanceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceCard.swift; sourceTree = "<group>"; };
 		F067 /* CustomThemeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomThemeEditorView.swift; sourceTree = "<group>"; };
-
-		/* Interface Management */
-		F030 /* InterfaceManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementViewModel.swift; sourceTree = "<group>"; };
-		F031 /* InterfaceManagementScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfaceManagementScreen.swift; sourceTree = "<group>"; };
-
-		/* Node Details */
-		F032 /* NodeDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeDetailsView.swift; sourceTree = "<group>"; };
-
-		/* Network Status */
-		F034 /* NetworkStatusViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkStatusViewModel.swift; sourceTree = "<group>"; };
-		F035 /* NetworkStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkStatusView.swift; sourceTree = "<group>"; };
-
-		/* Profile Icons */
-		F036 /* MaterialDesignIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaterialDesignIcons.swift; sourceTree = "<group>"; };
-		F037 /* ProfileIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileIcon.swift; sourceTree = "<group>"; };
-		F038 /* IconPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconPickerView.swift; sourceTree = "<group>"; };
-		F039 /* materialdesignicons.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = materialdesignicons.ttf; sourceTree = "<group>"; };
-
-		/* Voice Call */
 		F068 /* CallManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
 		F069 /* CodecProfileInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
 		F06A /* CallControlButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
@@ -278,6 +188,7 @@
 		F06E /* VoiceCallScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
 		F06F /* CallKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
 		F070 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
+		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -294,95 +205,12 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		ROOT = {
-			isa = PBXGroup;
-			children = (
-				SRCS /* Sources */,
-				PRODS /* Products */,
-			);
-			sourceTree = "<group>";
-		};
-		PRODS /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				PROD /* ColumbaApp.app */,
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		SRCS /* Sources */ = {
-			isa = PBXGroup;
-			children = (
-				GAPP /* App */,
-				GTHM /* Theme */,
-				GMOD /* Models */,
-				GVM /* ViewModels */,
-				GVIEWS /* Views */,
-				GSVC /* Services */,
-				GRES /* Resources */,
-			);
-			path = Sources/ColumbaApp;
-			sourceTree = "<group>";
-		};
 		GAPP /* App */ = {
 			isa = PBXGroup;
 			children = (
 				F001 /* ColumbaApp.swift */,
 			);
 			path = App;
-			sourceTree = "<group>";
-		};
-		GTHM /* Theme */ = {
-			isa = PBXGroup;
-			children = (
-				F002 /* Theme.swift */,
-				F064 /* ThemeColors.swift */,
-				F065 /* ThemeManager.swift */,
-			);
-			path = Theme;
-			sourceTree = "<group>";
-		};
-		GMOD /* Models */ = {
-			isa = PBXGroup;
-			children = (
-				F045 /* LoRaPresets.swift */,
-				F053 /* TcpCommunityServer.swift */,
-				F05B /* MigrationData.swift */,
-				F069 /* CodecProfileInfo.swift */,
-			);
-			path = Models;
-			sourceTree = "<group>";
-		};
-		GVM /* ViewModels */ = {
-			isa = PBXGroup;
-			children = (
-				F003 /* ChatsViewModel.swift */,
-				F004 /* ContactsViewModel.swift */,
-				F005 /* MessagingViewModel.swift */,
-				F006 /* SettingsViewModel.swift */,
-				F030 /* InterfaceManagementViewModel.swift */,
-				F034 /* NetworkStatusViewModel.swift */,
-				F052 /* OnboardingViewModel.swift */,
-				F05A /* RNodeWizardViewModel.swift */,
-				F05F /* MigrationViewModel.swift */,
-			);
-			path = ViewModels;
-			sourceTree = "<group>";
-		};
-		GVIEWS /* Views */ = {
-			isa = PBXGroup;
-			children = (
-				F007 /* MainTabView.swift */,
-				GCALL /* Call */,
-				GCHATS /* Chats */,
-				GCONT /* Contacts */,
-				GMSG /* Messaging */,
-				GSET /* Settings */,
-				GCOMP /* Components */,
-				GMAP /* Map */,
-				GONB /* Onboarding */,
-			);
-			path = Views;
 			sourceTree = "<group>";
 		};
 		GCALL /* Call */ = {
@@ -406,6 +234,17 @@
 			path = Chats;
 			sourceTree = "<group>";
 		};
+		GCOMP /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				F019 /* Identicon.swift */,
+				F020 /* IdenticonGenerator.swift */,
+				F036 /* MaterialDesignIcons.swift */,
+				F037 /* ProfileIcon.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
 		GCONT /* Contacts */ = {
 			isa = PBXGroup;
 			children = (
@@ -419,6 +258,28 @@
 			path = Contacts;
 			sourceTree = "<group>";
 		};
+		GMAP /* Map */ = {
+			isa = PBXGroup;
+			children = (
+				F021 /* MapView.swift */,
+				F048 /* MapLibreMapView.swift */,
+				F062 /* OfflineMapDownloadView.swift */,
+				F063 /* OfflineMapsScreen.swift */,
+			);
+			path = Map;
+			sourceTree = "<group>";
+		};
+		GMOD /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				F045 /* LoRaPresets.swift */,
+				F053 /* TcpCommunityServer.swift */,
+				F05B /* MigrationData.swift */,
+				F069 /* CodecProfileInfo.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
 		GMSG /* Messaging */ = {
 			isa = PBXGroup;
 			children = (
@@ -427,6 +288,42 @@
 				F015 /* MessageInputBar.swift */,
 			);
 			path = Messaging;
+			sourceTree = "<group>";
+		};
+		GONB /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				F04C /* OnboardingView.swift */,
+				F04D /* WelcomePage.swift */,
+				F04E /* IdentityPage.swift */,
+				F04F /* ConnectivityPage.swift */,
+				F050 /* PermissionsPage.swift */,
+				F051 /* CompletePage.swift */,
+			);
+			path = Onboarding;
+			sourceTree = "<group>";
+		};
+		GRES /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				F022 /* Assets.xcassets */,
+				F023 /* Info.plist */,
+				F039 /* materialdesignicons.ttf */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		GRNW /* RNodeWizard */ = {
+			isa = PBXGroup;
+			children = (
+				F054 /* RNodeWizardView.swift */,
+				F055 /* DeviceDiscoveryStep.swift */,
+				F056 /* RegionSelectionStep.swift */,
+				F057 /* ModemPresetStep.swift */,
+				F058 /* FrequencySlotStep.swift */,
+				F059 /* ReviewConfigStep.swift */,
+			);
+			path = RNodeWizard;
 			sourceTree = "<group>";
 		};
 		GSET /* Settings */ = {
@@ -447,41 +344,6 @@
 				GRNW /* RNodeWizard */,
 			);
 			path = Settings;
-			sourceTree = "<group>";
-		};
-		GRNW /* RNodeWizard */ = {
-			isa = PBXGroup;
-			children = (
-				F054 /* RNodeWizardView.swift */,
-				F055 /* DeviceDiscoveryStep.swift */,
-				F056 /* RegionSelectionStep.swift */,
-				F057 /* ModemPresetStep.swift */,
-				F058 /* FrequencySlotStep.swift */,
-				F059 /* ReviewConfigStep.swift */,
-			);
-			path = RNodeWizard;
-			sourceTree = "<group>";
-		};
-		GCOMP /* Components */ = {
-			isa = PBXGroup;
-			children = (
-				F019 /* Identicon.swift */,
-				F020 /* IdenticonGenerator.swift */,
-				F036 /* MaterialDesignIcons.swift */,
-				F037 /* ProfileIcon.swift */,
-			);
-			path = Components;
-			sourceTree = "<group>";
-		};
-		GMAP /* Map */ = {
-			isa = PBXGroup;
-			children = (
-				F021 /* MapView.swift */,
-				F048 /* MapLibreMapView.swift */,
-				F062 /* OfflineMapDownloadView.swift */,
-				F063 /* OfflineMapsScreen.swift */,
-			);
-			path = Map;
 			sourceTree = "<group>";
 		};
 		GSVC /* Services */ = {
@@ -510,27 +372,76 @@
 			path = Services;
 			sourceTree = "<group>";
 		};
-		GRES /* Resources */ = {
+		GTHM /* Theme */ = {
 			isa = PBXGroup;
 			children = (
-				F022 /* Assets.xcassets */,
-				F023 /* Info.plist */,
-				F039 /* materialdesignicons.ttf */,
+				F002 /* Theme.swift */,
+				F064 /* ThemeColors.swift */,
+				F065 /* ThemeManager.swift */,
 			);
-			path = Resources;
+			path = Theme;
 			sourceTree = "<group>";
 		};
-		GONB /* Onboarding */ = {
+		GVIEWS /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				F04C /* OnboardingView.swift */,
-				F04D /* WelcomePage.swift */,
-				F04E /* IdentityPage.swift */,
-				F04F /* ConnectivityPage.swift */,
-				F050 /* PermissionsPage.swift */,
-				F051 /* CompletePage.swift */,
+				F007 /* MainTabView.swift */,
+				GCALL /* Call */,
+				GCHATS /* Chats */,
+				GCONT /* Contacts */,
+				GMSG /* Messaging */,
+				GSET /* Settings */,
+				GCOMP /* Components */,
+				GMAP /* Map */,
+				GONB /* Onboarding */,
 			);
-			path = Onboarding;
+			path = Views;
+			sourceTree = "<group>";
+		};
+		GVM /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				F003 /* ChatsViewModel.swift */,
+				F004 /* ContactsViewModel.swift */,
+				F005 /* MessagingViewModel.swift */,
+				F006 /* SettingsViewModel.swift */,
+				F030 /* InterfaceManagementViewModel.swift */,
+				F034 /* NetworkStatusViewModel.swift */,
+				F052 /* OnboardingViewModel.swift */,
+				F05A /* RNodeWizardViewModel.swift */,
+				F05F /* MigrationViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		PRODS /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				PROD /* ColumbaApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		ROOT = {
+			isa = PBXGroup;
+			children = (
+				SRCS /* Sources/ColumbaApp */,
+				PRODS /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		SRCS /* Sources/ColumbaApp */ = {
+			isa = PBXGroup;
+			children = (
+				GAPP /* App */,
+				GTHM /* Theme */,
+				GMOD /* Models */,
+				GVM /* ViewModels */,
+				GVIEWS /* Views */,
+				GSVC /* Services */,
+				GRES /* Resources */,
+			);
+			path = Sources/ColumbaApp;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -538,7 +449,7 @@
 /* Begin PBXNativeTarget section */
 		TARG /* ColumbaApp */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = BCLST;
+			buildConfigurationList = BCLST /* Build configuration list for PBXNativeTarget "ColumbaApp" */;
 			buildPhases = (
 				SRCBP /* Sources */,
 				FWBP /* Frameworks */,
@@ -573,7 +484,7 @@
 					};
 				};
 			};
-			buildConfigurationList = PBCLST;
+			buildConfigurationList = PBCLST /* Build configuration list for PBXProject "ColumbaApp" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -583,8 +494,8 @@
 			);
 			mainGroup = ROOT;
 			packageReferences = (
-				PKGREF /* XCRemoteSwiftPackageReference "LXMFSwift" */,
-				PKGREF3 /* XCLocalSwiftPackageReference "LXSTSwift" */,
+				PKGREF /* XCLocalSwiftPackageReference "../LXMFSwift" */,
+				PKGREF3 /* XCLocalSwiftPackageReference "../LXSTSwift" */,
 				PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
 			);
 			productRefGroup = PRODS /* Products */;
@@ -830,7 +741,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = G9NF2Y844G;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
@@ -859,7 +770,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = G9NF2Y844G;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
@@ -884,15 +795,6 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		PBCLST /* Build configuration list for PBXProject "ColumbaApp" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				DBG /* Debug */,
-				REL /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		BCLST /* Build configuration list for PBXNativeTarget "ColumbaApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -902,14 +804,23 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		PBCLST /* Build configuration list for PBXProject "ColumbaApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DBG /* Debug */,
+				REL /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		PKGREF /* XCRemoteSwiftPackageReference "LXMFSwift" */ = {
+		PKGREF /* XCLocalSwiftPackageReference "../LXMFSwift" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../LXMFSwift;
 		};
-		PKGREF3 /* XCLocalSwiftPackageReference "LXSTSwift" */ = {
+		PKGREF3 /* XCLocalSwiftPackageReference "../LXSTSwift" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../LXSTSwift;
 		};
@@ -931,17 +842,16 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = LXMFSwift;
 		};
+		P002 /* MapLibre */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
+			productName = MapLibre;
+		};
 		P003 /* LXSTSwift */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LXSTSwift;
 		};
-		P002 /* MapLibre */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = PKGREF2;
-			productName = MapLibre;
-		};
 /* End XCSwiftPackageProductDependency section */
-
 	};
 	rootObject = PROJ /* Project object */;
 }
