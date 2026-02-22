@@ -74,12 +74,13 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Columba uses background location to share your position with peers on the mesh network.</string>
 	<key>NSBluetoothWhenInUseUsageDescription</key>
-	<string>Columba uses Bluetooth to connect to RNode devices for off-grid mesh networking.</string>
+	<string>Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Columba uses Bluetooth to connect to RNode devices for off-grid mesh networking.</string>
+	<string>Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
 		<string>location</string>
 		<string>voip</string>
 	</array>

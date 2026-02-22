@@ -682,19 +682,24 @@ public final class AppServices {
     #if canImport(CoreBluetooth)
     /// Start the BLE interface for Bluetooth peer-to-peer networking.
     public func startBLEInterface() async throws {
+        logger.info("[BLE_DIAG] startBLEInterface() called")
+
         // Stop existing BLE interface if running
         await stopBLEInterface()
 
         // Ensure base stack exists
         if transport == nil {
+            logger.info("[BLE_DIAG] No transport, initializing base stack")
             try await initializeBaseStack()
         }
 
         guard let transport = transport, let identity = identity else {
+            logger.error("[BLE_DIAG] Transport or identity nil after init")
             throw AppServicesError.transportNotConnected
         }
 
         let identityHash = identity.hash
+        logger.info("[BLE_DIAG] Identity hash: \(identityHash.map { String(format: "%02x", $0) }.joined().prefix(16), privacy: .public)")
 
         let config = InterfaceConfig(
             id: "ble0",
@@ -711,7 +716,7 @@ public final class AppServices {
         self.bleInterface = newBLEInterface
 
         try await transport.addBLEInterface(newBLEInterface)
-        logger.info("BLEInterface started")
+        logger.info("[BLE_DIAG] BLEInterface started successfully")
     }
 
     /// Stop the BLE interface.

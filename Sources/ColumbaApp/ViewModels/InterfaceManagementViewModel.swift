@@ -167,10 +167,13 @@ public final class InterfaceManagementViewModel {
         isLoading = false
     }
 
-    /// Toggle interface enabled state.
+    /// Toggle interface enabled state and immediately apply.
     public func toggleInterface(_ interface: InterfaceEntity, enabled: Bool) {
         repository.toggleInterface(id: interface.id, enabled: enabled)
         hasPendingChanges = true
+        Task { @MainActor in
+            await applyChanges()
+        }
     }
 
     /// Delete an interface.
@@ -255,6 +258,11 @@ public final class InterfaceManagementViewModel {
 
         hasPendingChanges = true
         dismissConfigSheet()
+
+        // Auto-apply so the interface starts/stops immediately
+        Task { @MainActor in
+            await applyChanges()
+        }
     }
 
     // MARK: - Apply Changes
@@ -309,15 +317,21 @@ public final class InterfaceManagementViewModel {
                 await appServices.stopAutoInterface()
             }
 
-            // Handle BLE interface
+            // Handle BLE interface (separate try-catch so BLE errors don't kill TCP/RNode)
             #if canImport(CoreBluetooth)
             let bleEntity = enabledInterfaces.first(where: { $0.type == .ble })
-            if bleEntity != nil {
+            if let bleEntity = bleEntity {
                 print("[INTERFACE_VM] Starting BLE interface")
-                interfaceStatus[bleEntity!.id] = .connecting
-                try await appServices.startBLEInterface()
-                interfaceStatus[bleEntity!.id] = .connected
-                showSuccess("BLE interface started")
+                interfaceStatus[bleEntity.id] = .connecting
+                do {
+                    try await appServices.startBLEInterface()
+                    interfaceStatus[bleEntity.id] = .connected
+                    showSuccess("BLE interface started")
+                } catch {
+                    print("[INTERFACE_VM] BLE start failed: \(error)")
+                    interfaceStatus[bleEntity.id] = .error
+                    showError("BLE failed: \(error.localizedDescription)")
+                }
             } else {
                 await appServices.stopBLEInterface()
             }

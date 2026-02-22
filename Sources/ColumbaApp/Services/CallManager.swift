@@ -533,27 +533,35 @@ public final class CallManager {
             aspects: ["delivery"]
         )
 
-        // 1. Try conversation display name from database
-        if let record = try? database?.getConversation(hash: deliveryHash),
-           let name = record.displayName, !name.isEmpty {
-            self.peerName = name
-        }
-
-        // 2. Try path table announce name
-        if self.peerName == nil {
-            Task {
-                if let entry = await pathTable?.lookup(destinationHash: deliveryHash),
-                   let name = entry.displayName, !name.isEmpty {
-                    await MainActor.run {
-                        if self.peerName == nil {
-                            self.peerName = name
-                            // Update CallKit with async-resolved name
-                            #if os(iOS)
-                            if self.isIncoming, let uuid = self.currentCallUUID {
-                                self.callKitManager?.updateCallerName(uuid: uuid, name: name)
-                            }
-                            #endif
+        // 1. Try conversation display name from database, then path table announce name
+        Task {
+            // Database lookup (actor-isolated)
+            if let record = try? await database?.getConversation(hash: deliveryHash),
+               let name = record.displayName, !name.isEmpty {
+                await MainActor.run {
+                    if self.peerName == nil || self.peerName?.hasPrefix("Peer ") == true {
+                        self.peerName = name
+                        #if os(iOS)
+                        if self.isIncoming, let uuid = self.currentCallUUID {
+                            self.callKitManager?.updateCallerName(uuid: uuid, name: name)
                         }
+                        #endif
+                    }
+                }
+                return
+            }
+
+            // 2. Try path table announce name
+            if let entry = await pathTable?.lookup(destinationHash: deliveryHash),
+               let name = entry.displayName, !name.isEmpty {
+                await MainActor.run {
+                    if self.peerName == nil || self.peerName?.hasPrefix("Peer ") == true {
+                        self.peerName = name
+                        #if os(iOS)
+                        if self.isIncoming, let uuid = self.currentCallUUID {
+                            self.callKitManager?.updateCallerName(uuid: uuid, name: name)
+                        }
+                        #endif
                     }
                 }
             }
