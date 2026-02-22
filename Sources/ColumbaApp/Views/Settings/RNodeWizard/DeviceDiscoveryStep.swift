@@ -20,7 +20,20 @@ struct DeviceDiscoveryStep: View {
     @State private var isScanning = false
     @State private var discoveredDevices: [DiscoveredDevice] = []
     @State private var lastUpdateTime: [UUID: Date] = [:]
-    @State private var scanTransport: BLETransport?
+
+    /// Peripheral references keyed by peripheral UUID.
+    @State private var peripheralRefs: [UUID: CBPeripheral] = [:]
+
+    // Verification state
+    @State private var pairingDeviceName: String?
+    @State private var pairingError: String?
+    @State private var detectTimeoutTask: Task<Void, Never>?
+
+    /// Lightweight BLE scanner — no restore identifier, no auto-reconnect.
+    @State private var scanner: RNodeProbeScanner?
+
+    /// Debug log lines shown in UI for diagnosing probe issues.
+    @State private var debugLog: [String] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,9 +48,15 @@ struct DeviceDiscoveryStep: View {
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(.white)
 
-                Text("Make sure your RNode is powered on and in range.")
+                Text("Make sure your RNode is powered on and in **pairing mode**.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+
+                Text("Hold the USR button for 5 seconds to enter pairing mode.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.accentColor)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }
@@ -63,6 +82,40 @@ struct DeviceDiscoveryStep: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             .padding(.bottom, 16)
+
+            // Pairing error
+            if let error = pairingError {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.error)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(Theme.error)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity)
+                .background(Theme.error.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+
+            // Debug log (temporary — shows probe events in-app)
+            if !debugLog.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(debugLog.suffix(6), id: \.self) { line in
+                        Text(line)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Theme.textDisabled)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.black.opacity(0.3))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
 
             // Device list
             if discoveredDevices.isEmpty && !isScanning {
@@ -98,20 +151,25 @@ struct DeviceDiscoveryStep: View {
         }
         .onDisappear {
             stopScanning()
+            detectTimeoutTask?.cancel()
+            detectTimeoutTask = nil
         }
     }
 
     // MARK: - Device Card
 
     private func deviceCard(_ device: DiscoveredDevice) -> some View {
-        Button {
+        let isPairing = pairingDeviceName == device.name
+        let isPaired = wizard.selectedDeviceName == device.name && wizard.devicePaired
+
+        return Button {
             selectDevice(device)
         } label: {
             HStack(spacing: 12) {
                 // Radio icon
                 Image(systemName: "radio")
                     .font(.title2)
-                    .foregroundStyle(isSelected(device) ? Theme.accentColor : Theme.textSecondary)
+                    .foregroundStyle(isPaired ? Theme.accentColor : Theme.textSecondary)
                     .frame(width: 40)
 
                 // Device info
@@ -120,35 +178,48 @@ struct DeviceDiscoveryStep: View {
                         .font(.headline)
                         .foregroundStyle(Theme.textPrimary)
 
-                    Text("Bluetooth LE")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
+                    if isPairing {
+                        Text("Connecting...")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if isPaired {
+                        Text("Ready")
+                            .font(.caption)
+                            .foregroundStyle(Theme.success)
+                    } else {
+                        Text("Bluetooth LE")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
                 }
 
                 Spacer()
 
-                // RSSI indicator
-                rssiIndicator(rssi: device.rssi)
+                if isPairing {
+                    ProgressView()
+                        .tint(.orange)
+                        .scaleEffect(0.8)
+                } else {
+                    // RSSI indicator
+                    rssiIndicator(rssi: device.rssi)
+                }
 
                 // Selection checkmark
-                if isSelected(device) {
+                if isPaired {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.title3)
                         .foregroundStyle(Theme.accentColor)
                 }
             }
             .padding(14)
-            .background(isSelected(device) ? Theme.accentColor.opacity(0.1) : Theme.backgroundSecondary)
+            .background(isPaired ? Theme.accentColor.opacity(0.1) : Theme.backgroundSecondary)
             .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
-                    .stroke(isSelected(device) ? Theme.accentColor : Color.clear, lineWidth: 1.5)
+                    .stroke(isPaired ? Theme.accentColor : Color.clear, lineWidth: 1.5)
             )
         }
-    }
-
-    private func isSelected(_ device: DiscoveredDevice) -> Bool {
-        wizard.selectedDeviceName == device.name
+        .disabled(isPairing)
     }
 
     // MARK: - RSSI Indicator
@@ -185,18 +256,30 @@ struct DeviceDiscoveryStep: View {
     // MARK: - Scan Control
 
     private func startScanning() {
-        let transport = BLETransport(deviceName: nil)
-        transport.onPeripheralDiscovered = { peripheral, rssi in
+        // Reuse existing scanner if available
+        if let existing = scanner {
+            existing.startScan()
+            isScanning = true
+            return
+        }
+
+        let probe = RNodeProbeScanner()
+        probe.onDiscovered = { peripheral, rssi in
             handleDiscovery(peripheral: peripheral, rssi: rssi)
         }
-        scanTransport = transport
+        probe.onProbeResult = { result in
+            addDebug("probe: \(result)")
+            handleProbeResult(result)
+        }
+        scanner = probe
         isScanning = true
-        transport.connect()
+        addDebug("scanner created, starting scan")
+        probe.startScan()
     }
 
     private func stopScanning() {
-        scanTransport?.disconnect()
-        scanTransport = nil
+        scanner?.shutdown()
+        scanner = nil
         isScanning = false
     }
 
@@ -206,10 +289,15 @@ struct DeviceDiscoveryStep: View {
 
     private func handleDiscovery(peripheral: CBPeripheral, rssi: NSNumber) {
         guard let name = peripheral.name, !name.isEmpty else { return }
+        // Only show RNode devices
+        guard name.hasPrefix("RNode") else { return }
 
         let peripheralId = peripheral.identifier
         let rssiInt = rssi.intValue
         let now = Date()
+
+        // Store peripheral reference for later probe
+        peripheralRefs[peripheralId] = peripheral
 
         if let index = discoveredDevices.firstIndex(where: { $0.peripheralId == peripheralId }) {
             if let lastUpdate = lastUpdateTime[peripheralId],
@@ -230,8 +318,86 @@ struct DeviceDiscoveryStep: View {
         discoveredDevices.sort { $0.rssi > $1.rssi }
     }
 
+    // MARK: - Debug
+
+    private func addDebug(_ msg: String) {
+        let ts = Date().formatted(.dateTime.hour().minute().second())
+        debugLog.append("[\(ts)] \(msg)")
+        if debugLog.count > 20 { debugLog.removeFirst() }
+    }
+
+    // MARK: - Device Selection & Probe
+
     private func selectDevice(_ device: DiscoveredDevice) {
+        // If already verified, do nothing
+        if wizard.selectedDeviceName == device.name && wizard.devicePaired { return }
+
+        // Cancel any in-progress verification
+        detectTimeoutTask?.cancel()
+        detectTimeoutTask = nil
+
         wizard.selectedDeviceName = device.name
+        wizard.devicePaired = false
+        pairingError = nil
+        pairingDeviceName = device.name
+
+        // Look up the CBPeripheral reference from the scan
+        guard let peripheral = peripheralRefs[device.peripheralId],
+              let probe = scanner else {
+            let hasRef = peripheralRefs[device.peripheralId] != nil
+            let hasScanner = scanner != nil
+            addDebug("select failed: ref=\(hasRef) scanner=\(hasScanner)")
+            pairingError = "Device no longer available. Try scanning again."
+            pairingDeviceName = nil
+            return
+        }
+
+        // Start probe with 8-second timeout
+        addDebug("probing \(device.name) id=\(device.peripheralId.uuidString.prefix(8))")
+        probe.probe(peripheral)
+
+        detectTimeoutTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
+            if !wizard.devicePaired && pairingDeviceName != nil {
+                pairingDeviceName = nil
+                pairingError = "RNode not responding. Make sure it is powered on."
+                probe.cancelProbe()
+            }
+        }
+    }
+
+    private func handleProbeResult(_ result: RNodeProbeScanner.ProbeResult) {
+        switch result {
+        case .connecting, .connected, .servicesFound, .characteristicsReady, .detectSent, .detectWriteConfirmed:
+            break // Progress — waiting for detect response
+
+        case .detectResponseReceived:
+            // RNode firmware responded — device is verified!
+            detectTimeoutTask?.cancel()
+            detectTimeoutTask = nil
+            pairingDeviceName = nil
+            wizard.devicePaired = true
+            // Resume scanning for potential re-selection
+            scanner?.cancelProbe()
+
+        case .detectWriteFailed(let error):
+            detectTimeoutTask?.cancel()
+            detectTimeoutTask = nil
+            pairingDeviceName = nil
+            pairingError = "Write failed: \(error)"
+            wizard.devicePaired = false
+            scanner?.cancelProbe()
+
+        case .failed(let message):
+            detectTimeoutTask?.cancel()
+            detectTimeoutTask = nil
+            pairingDeviceName = nil
+            pairingError = message
+            wizard.devicePaired = false
+            // Resume scanning
+            scanner?.cancelProbe()
+        }
     }
 }
 

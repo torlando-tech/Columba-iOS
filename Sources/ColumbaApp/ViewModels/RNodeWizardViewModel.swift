@@ -55,6 +55,7 @@ final class RNodeWizardViewModel {
     // MARK: - Step 1: Device
 
     var selectedDeviceName: String = ""
+    var devicePaired: Bool = false
 
     // MARK: - Step 2: Region
 
@@ -115,7 +116,7 @@ final class RNodeWizardViewModel {
     var canProceed: Bool {
         switch currentStep {
         case .device:
-            return !selectedDeviceName.isEmpty
+            return !selectedDeviceName.isEmpty && devicePaired
         case .region:
             return selectedRegion != nil || selectedCommunityPreset != nil || isCustomMode
         case .modem:
@@ -163,9 +164,9 @@ final class RNodeWizardViewModel {
         return selectedModemPreset.parameters.bandwidth
     }
 
-    /// The effective TX power.
+    /// The effective TX power (always editable, defaults to 17 dBm).
     var effectiveTxPower: UInt8 {
-        if isCustomMode, let tx = UInt8(customTxPower) {
+        if let tx = UInt8(customTxPower), tx > 0 {
             return tx
         }
         return selectedRegion?.parameters.maxTxPower ?? 17
@@ -313,6 +314,7 @@ final class RNodeWizardViewModel {
         isEditing = true
         interfaceName = name
         selectedDeviceName = deviceName
+        devicePaired = true // already paired when editing existing config
         customFrequency = String(frequency)
         customBandwidth = String(bandwidth)
         customTxPower = String(txPower)
