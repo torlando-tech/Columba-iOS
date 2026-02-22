@@ -19,8 +19,13 @@ import UIKit
 ///
 /// Layout:
 /// - Navigation bar: back, peer name with status, action icons
-/// - ScrollView with message bubbles
-/// - MessageInputBar pinned at bottom
+/// - ScrollView with message bubbles (fills screen)
+/// - MessageInputBar as a safeAreaInset at the bottom
+///
+/// The safeAreaInset pattern is the SwiftUI-canonical approach for messaging views:
+/// it extends the scroll view's bottom safe area by the input bar height, so iOS
+/// automatically moves the input bar above the keyboard and the scroll view's
+/// visible area is correctly sized — no manual keyboard height tracking needed.
 @available(iOS 17.0, macOS 14.0, *)
 struct MessagingView: View {
     // MARK: - Dependencies
@@ -46,9 +51,8 @@ struct MessagingView: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if let vm = viewModel {
-                // Messages scroll view
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 12) {
@@ -83,6 +87,53 @@ struct MessagingView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                     }
+                    // Input bar as a safe area inset: iOS automatically moves it above
+                    // the keyboard and adjusts the scroll view's visible area to match.
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        MessageInputBar(
+                            text: $messageText,
+                            attachedImage: $attachedImage,
+                            attachedFiles: $attachedFiles,
+                            onSend: sendMessage,
+                            onImagePicker: { showPhotoPicker = true },
+                            onAttachment: { showFilePicker = true }
+                        )
+                        .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+                        .onChange(of: selectedPhotoItem) { _, newItem in
+                            guard let newItem else { return }
+                            Task {
+                                do {
+                                    if let data = try await newItem.loadTransferable(type: Data.self) {
+                                        if let image = UIImage(data: data) {
+                                            await MainActor.run {
+                                                attachedImage = image.resizedToFit(maxDimension: 1280)
+                                            }
+                                        }
+                                    }
+                                } catch {
+                                    print("[PHOTO_PICKER] Failed to load image: \(error)")
+                                }
+                                await MainActor.run {
+                                    selectedPhotoItem = nil
+                                }
+                            }
+                        }
+                        .fileImporter(
+                            isPresented: $showFilePicker,
+                            allowedContentTypes: [.data],
+                            allowsMultipleSelection: true
+                        ) { result in
+                            if case .success(let urls) = result {
+                                for url in urls {
+                                    guard url.startAccessingSecurityScopedResource() else { continue }
+                                    defer { url.stopAccessingSecurityScopedResource() }
+                                    if let data = try? Data(contentsOf: url) {
+                                        attachedFiles.append(FileAttachment(name: url.lastPathComponent, data: data))
+                                    }
+                                }
+                            }
+                        }
+                    }
                     .scrollDismissesKeyboard(.interactively)
                     .onTapGesture {
                         #if canImport(UIKit)
@@ -92,58 +143,29 @@ struct MessagingView: View {
                         )
                         #endif
                     }
+                    // Scroll to bottom when a new message arrives (if already near bottom)
                     .onChange(of: vm.messages.last?.id) { _, _ in
                         if isNearBottom {
                             scrollToBottom(proxy: proxy)
                         }
                     }
+                    // Scroll to bottom when the keyboard appears so the latest message
+                    // stays visible above the keyboard.
+                    #if canImport(UIKit)
+                    .task {
+                        for await _ in NotificationCenter.default.notifications(
+                            named: UIResponder.keyboardWillShowNotification
+                        ) {
+                            guard isNearBottom else { continue }
+                            // Brief delay lets the keyboard animation begin before we scroll,
+                            // so the scroll lands in the right position.
+                            try? await Task.sleep(for: .milliseconds(100))
+                            scrollToBottom(proxy: proxy)
+                        }
+                    }
+                    #endif
                     .onAppear {
                         scrollToBottom(proxy: proxy, animated: false)
-                    }
-                }
-
-                // Input bar
-                MessageInputBar(
-                    text: $messageText,
-                    attachedImage: $attachedImage,
-                    attachedFiles: $attachedFiles,
-                    onSend: sendMessage,
-                    onImagePicker: { showPhotoPicker = true },
-                    onAttachment: { showFilePicker = true }
-                )
-                .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
-                .onChange(of: selectedPhotoItem) { _, newItem in
-                    guard let newItem else { return }
-                    Task {
-                        do {
-                            if let data = try await newItem.loadTransferable(type: Data.self) {
-                                if let image = UIImage(data: data) {
-                                    await MainActor.run {
-                                        attachedImage = image.resizedToFit(maxDimension: 1280)
-                                    }
-                                }
-                            }
-                        } catch {
-                            print("[PHOTO_PICKER] Failed to load image: \(error)")
-                        }
-                        await MainActor.run {
-                            selectedPhotoItem = nil
-                        }
-                    }
-                }
-                .fileImporter(
-                    isPresented: $showFilePicker,
-                    allowedContentTypes: [.data],
-                    allowsMultipleSelection: true
-                ) { result in
-                    if case .success(let urls) = result {
-                        for url in urls {
-                            guard url.startAccessingSecurityScopedResource() else { continue }
-                            defer { url.stopAccessingSecurityScopedResource() }
-                            if let data = try? Data(contentsOf: url) {
-                                attachedFiles.append(FileAttachment(name: url.lastPathComponent, data: data))
-                            }
-                        }
                     }
                 }
             } else {
@@ -197,7 +219,6 @@ struct MessagingView: View {
             }
         }
         .task {
-            // Initialize view model
             if viewModel == nil {
                 viewModel = MessagingViewModel(
                     conversationHash: conversation.destinationHash,
@@ -269,7 +290,6 @@ struct MessagingView: View {
                 Task {
                     isSyncing = true
                     defer { isSyncing = false }
-                    // Sync from propagation node first, then reload DB
                     await appServices.propagationManager?.syncNow()
                     await viewModel?.loadMessages()
                 }
@@ -298,18 +318,15 @@ struct MessagingView: View {
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 
-        // Clear input immediately
         messageText = ""
         attachedImage = nil
         attachedFiles = []
 
-        // Haptic feedback
         #if os(iOS)
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
         #endif
 
-        // Prepare image data (JPEG for smaller wire size, matching Sideband)
         var imageData: Data?
         var imageFormat: String?
         if let image {
@@ -318,7 +335,6 @@ struct MessagingView: View {
             print("[SEND_IMG] Image \(image.size.width)x\(image.size.height) -> JPEG \(imageData?.count ?? 0) bytes")
         }
 
-        // Prepare file attachments
         let fileAttachments: [(name: String, data: Data)]? = files.isEmpty ? nil : files.map { ($0.name, $0.data) }
 
         Task {
@@ -332,14 +348,12 @@ struct MessagingView: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
-        guard let lastMessage = viewModel?.messages.last else { return }
-
         if animated {
             withAnimation(.easeOut(duration: 0.3)) {
-                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                proxy.scrollTo("bottom-anchor", anchor: .bottom)
             }
         } else {
-            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+            proxy.scrollTo("bottom-anchor", anchor: .bottom)
         }
     }
 }
