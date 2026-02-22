@@ -134,6 +134,7 @@ struct MessagingView: View {
                             }
                         }
                     }
+                    .defaultScrollAnchor(.bottom)
                     .scrollDismissesKeyboard(.interactively)
                     .onTapGesture {
                         #if canImport(UIKit)
@@ -164,9 +165,6 @@ struct MessagingView: View {
                         }
                     }
                     #endif
-                    .onAppear {
-                        scrollToBottom(proxy: proxy, animated: false)
-                    }
                 }
             } else {
                 ProgressView()
@@ -220,14 +218,22 @@ struct MessagingView: View {
         }
         .task {
             if viewModel == nil {
-                viewModel = MessagingViewModel(
+                // Load messages before setting viewModel so the ScrollView first
+                // appears with content already populated. This lets .defaultScrollAnchor(.bottom)
+                // work correctly — if viewModel were set first, the ScrollView would
+                // appear with an empty LazyVStack, anchor to the bottom of nothing,
+                // then messages would populate from the top.
+                let vm = MessagingViewModel(
                     conversationHash: conversation.destinationHash,
                     repository: messageRepository,
                     appServices: appServices,
                     displayName: conversation.displayName
                 )
+                await vm.loadMessages()
+                viewModel = vm
+            } else {
+                await viewModel?.loadMessages()
             }
-            await viewModel?.loadMessages()
         }
     }
 
