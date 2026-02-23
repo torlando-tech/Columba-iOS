@@ -13,8 +13,9 @@ import UniformTypeIdentifiers
 struct MigrationScreen: View {
     @State private var viewModel: MigrationViewModel
     @State private var showFileImporter = false
-    @State private var showShareSheet = false
-    @State private var exportFileURL: URL?
+    @State private var showFileExporter = false
+    @State private var exportDocument: ColumbaBackupDocument?
+    @State private var exportFileName = "columba_backup.columba"
 
     init(identityManager: IdentityManager, settingsRepository: SettingsRepository) {
         _viewModel = State(initialValue: MigrationViewModel(
@@ -55,13 +56,16 @@ struct MigrationScreen: View {
         ) { result in
             handleFileImport(result)
         }
-        #if os(iOS)
-        .sheet(isPresented: $showShareSheet) {
-            if let url = exportFileURL {
-                ShareSheet(items: [url])
+        .fileExporter(
+            isPresented: $showFileExporter,
+            document: exportDocument,
+            contentType: columbaUTType,
+            defaultFilename: exportFileName
+        ) { result in
+            if case .failure(let error) = result {
+                viewModel.state = .error(message: "Save failed: \(error.localizedDescription)")
             }
         }
-        #endif
     }
 
     // MARK: - Export Section
@@ -130,13 +134,16 @@ struct MigrationScreen: View {
                     }
 
                     Button {
-                        exportFileURL = url
-                        showShareSheet = true
+                        if let data = try? Data(contentsOf: url) {
+                            exportDocument = ColumbaBackupDocument(data: data)
+                            exportFileName = url.lastPathComponent
+                            showFileExporter = true
+                        }
                     } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: "square.and.arrow.up")
+                            Image(systemName: "folder.badge.plus")
                                 .font(.system(size: 14, weight: .medium))
-                            Text("Share Backup File")
+                            Text("Save Backup File")
                                 .font(.system(size: 15, weight: .medium))
                         }
                         .foregroundStyle(.white)
@@ -598,4 +605,24 @@ struct MigrationScreen: View {
     }
 }
 
-// Note: ShareSheet is defined in MyIdentityView.swift
+// MARK: - FileDocument wrapper for .fileExporter
+
+@available(iOS 17.0, macOS 14.0, *)
+struct ColumbaBackupDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [UTType(filenameExtension: "columba") ?? .data] }
+
+    let data: Data
+
+    init(data: Data) { self.data = data }
+
+    init(configuration: ReadConfiguration) throws {
+        guard let fileData = configuration.file.regularFileContents else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        self.data = fileData
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
