@@ -74,6 +74,9 @@ final class RNodeProbeScanner: NSObject {
     /// Set when we want didDisconnectPeripheral to auto-reconnect (e.g., TX notify
     /// timed out on first connect — ESP32 sometimes needs a second attempt).
     private var needsReconnect = false
+    /// Set after we auto-retry following a sent-but-unanswered detect probe.
+    /// Prevents infinite retry loops — only one detect-retry per probe() call.
+    private var detectRetried = false
     /// Incremented on each probe() call and each auto-reconnect. Async closures
     /// capture their generation and no-op if it no longer matches, preventing
     /// stale 3s notify timeouts from firing on subsequent reconnect attempts.
@@ -153,6 +156,7 @@ final class RNodeProbeScanner: NSObject {
         pairingAttempted = false
         nusDiscovered = false
         needsReconnect = false
+        detectRetried = false
         probeGeneration += 1
         onProbeResult?(.connecting)
         diag("Connecting to \(peripheral.name ?? "?")")
@@ -258,7 +262,17 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
             diag("Ignoring disconnect for \(peripheral.name ?? "?") — not our target")
             return
         }
-        diag("Disconnected, error=\(error?.localizedDescription ?? "none"), pairingTriggered=\(pairingTriggered), hasSentDetect=\(hasSentDetectProbe)")
+        diag("Disconnected, error=\(error?.localizedDescription ?? "none"), pairingTriggered=\(pairingTriggered), hasSentDetect=\(hasSentDetectProbe), detectRetried=\(detectRetried)")
+
+        // If we sent the detect probe but the firmware disconnected before responding
+        // (common on first connect after forgetting — bond is established during the
+        // 6s CCCD wait, then firmware times out before we get the detect response),
+        // schedule one auto-retry. The second connect confirms CCCD in ~60ms and
+        // the detect response arrives immediately.
+        if hasSentDetectProbe && !detectRetried {
+            needsReconnect = true
+            detectRetried = true
+        }
 
         // Auto-reconnect when:
         // (a) pairing was triggered — iOS may disconnect after bonding, then we retry
