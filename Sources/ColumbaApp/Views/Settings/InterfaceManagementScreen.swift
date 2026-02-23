@@ -50,33 +50,33 @@ struct InterfaceManagementScreen: View {
                 }
                 .padding(16)
             }
-
-            // FAB
-            VStack {
-                Spacer()
+            // FAB bottom inset — scroll content stays clear of the FAB
+            .safeAreaInset(edge: .bottom) {
                 HStack {
                     Spacer()
                     addButton
                 }
+                .padding(16)
             }
-            .padding(16)
-
-            // Messages
-            VStack {
-                Spacer()
-                if let error = viewModel.errorMessage {
-                    messageCard(error, isError: true)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+            // Toast top inset — appears above scroll content, respects nav bar
+            .safeAreaInset(edge: .top) {
+                VStack(spacing: 0) {
+                    if let error = viewModel.errorMessage {
+                        messageCard(error, isError: true)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                    }
+                    if let success = viewModel.successMessage {
+                        messageCard(success, isError: false)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                    }
                 }
-                if let success = viewModel.successMessage {
-                    messageCard(success, isError: false)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+                .animation(.easeInOut, value: viewModel.errorMessage)
+                .animation(.easeInOut, value: viewModel.successMessage)
             }
-            .padding(16)
-            .padding(.bottom, 80)
-            .animation(.easeInOut, value: viewModel.errorMessage)
-            .animation(.easeInOut, value: viewModel.successMessage)
         }
         .navigationTitle("Network Interfaces")
         #if os(iOS)
