@@ -67,6 +67,17 @@ final class RNodeProbeScanner: NSObject {
     private var hasSentDetectProbe = false
     private var pairingTriggered = false
     private var nusDiscovered = false
+    /// True after the first pairing-required error is seen. Persists across
+    /// auto-reconnects so we skip the encrypted-char reads that caused the
+    /// pairing loop and go straight to TX-notify → detect on the next connect.
+    private var pairingAttempted = false
+    /// Set when we want didDisconnectPeripheral to auto-reconnect (e.g., TX notify
+    /// timed out on first connect — ESP32 sometimes needs a second attempt).
+    private var needsReconnect = false
+    /// Incremented on each probe() call and each auto-reconnect. Async closures
+    /// capture their generation and no-op if it no longer matches, preventing
+    /// stale 3s notify timeouts from firing on subsequent reconnect attempts.
+    private var probeGeneration = 0
     private let logger = Logger(subsystem: "com.columba.app", category: "RNodeProbe")
 
     /// File-based diagnostic log (readable via idevice tools).
@@ -129,12 +140,20 @@ final class RNodeProbeScanner: NSObject {
 
     /// Connect to a peripheral and send the RNode detect probe.
     func probe(_ peripheral: CBPeripheral) {
+        // Cancel any existing probe (could be connecting to a different device)
+        if let existing = connectingPeripheral, existing != peripheral {
+            diag("Cancelling previous probe for \(existing.name ?? "?")")
+            centralManager.cancelPeripheralConnection(existing)
+        }
         centralManager.stopScan()
         connectingPeripheral = peripheral
         peripheral.delegate = self
         hasSentDetectProbe = false
         pairingTriggered = false
+        pairingAttempted = false
         nusDiscovered = false
+        needsReconnect = false
+        probeGeneration += 1
         onProbeResult?(.connecting)
         diag("Connecting to \(peripheral.name ?? "?")")
         centralManager.connect(peripheral, options: nil)
@@ -143,11 +162,15 @@ final class RNodeProbeScanner: NSObject {
     /// Cancel any in-progress probe and resume scanning.
     func cancelProbe() {
         diag("cancelProbe called, connectingPeripheral=\(connectingPeripheral?.name ?? "nil"), isScanning=\(isScanning)")
+        probeGeneration += 1  // invalidate any pending closures
         if let p = connectingPeripheral {
             centralManager.cancelPeripheralConnection(p)
             connectingPeripheral = nil
         }
         rxCharacteristic = nil
+        txCharacteristic = nil
+        nusDiscovered = false
+        hasSentDetectProbe = false
         if isScanning {
             centralManager.scanForPeripherals(
                 withServices: nil,
@@ -207,14 +230,23 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        diag("Connected to \(peripheral.name ?? "?")")
+        // Ignore stale connections for peripherals we're no longer probing.
+        guard peripheral == connectingPeripheral else {
+            diag("Ignoring connect for \(peripheral.name ?? "?") — not our probe target, cancelling")
+            central.cancelPeripheralConnection(peripheral)
+            return
+        }
+        diag("Connected to \(peripheral.name ?? "?") pairingAttempted=\(pairingAttempted)")
         onProbeResult?(.connected)
-        // Discover ALL services — we need to find characteristics that require
-        // encryption to trigger iOS BLE pairing (not just NUS).
+        // Always discover all services — discoverServices(nil) uses iOS's cached
+        // GATT profile (~0.4s), while discoverServices([specificUUID]) bypasses
+        // the cache and forces a fresh BLE exchange (~11s), exceeding the RNode
+        // firmware's idle connection timeout.
         peripheral.discoverServices(nil)
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        guard peripheral == connectingPeripheral else { return }
         let desc = error?.localizedDescription ?? "Unknown"
         diag("Failed to connect: \(desc)")
         connectingPeripheral = nil
@@ -222,13 +254,19 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        guard peripheral == connectingPeripheral else {
+            diag("Ignoring disconnect for \(peripheral.name ?? "?") — not our target")
+            return
+        }
         diag("Disconnected, error=\(error?.localizedDescription ?? "none"), pairingTriggered=\(pairingTriggered), hasSentDetect=\(hasSentDetectProbe)")
 
-        // After BLE pairing completes, the peripheral often disconnects and reconnects.
-        // If pairing was triggered (or we never got to send detect), auto-reconnect
-        // to retry the detect probe on the now-bonded connection.
-        if pairingTriggered || !hasSentDetectProbe {
-            diag("Auto-reconnecting after pairing disconnect...")
+        // Auto-reconnect when:
+        // (a) pairing was triggered — iOS may disconnect after bonding, then we retry
+        // (b) needsReconnect — TX notify timed out on first connect (ESP32 quirk),
+        //     retry once and it usually works the second time.
+        if pairingTriggered || needsReconnect {
+            let wasPairing = pairingTriggered
+            needsReconnect = false
             hasSentDetectProbe = false
             nusDiscovered = false
             rxCharacteristic = nil
@@ -236,14 +274,26 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
             pairingTriggered = false
             connectingPeripheral = peripheral
             peripheral.delegate = self
+            probeGeneration += 1
+            let gen = probeGeneration
             onProbeResult?(.connecting)
-            centralManager.connect(peripheral, options: nil)
+            // When pairing was triggered, delay the reconnect so iOS has time to
+            // process the bond before we try again. Immediate reconnects can race
+            // with the pairing negotiation and cause the dialog to loop.
+            let delay: TimeInterval = wasPairing ? 2.0 : 0.0
+            diag("Auto-reconnecting in \(delay)s after \(wasPairing ? "pairing" : "notify timeout") disconnect...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self, self.probeGeneration == gen else { return }
+                self.centralManager.connect(peripheral, options: nil)
+            }
             return
         }
 
+        probeGeneration += 1  // invalidate any pending closures
         connectingPeripheral = nil
         rxCharacteristic = nil
         txCharacteristic = nil
+        nusDiscovered = false
     }
 }
 
@@ -253,6 +303,7 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
 extension RNodeProbeScanner: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard peripheral == connectingPeripheral else { return }
         if let error = error {
             diag("Service discovery failed: \(error.localizedDescription)")
             onProbeResult?(.failed("Service discovery failed"))
@@ -272,15 +323,21 @@ extension RNodeProbeScanner: CBPeripheralDelegate {
             return
         }
 
-        // Discover characteristics for ALL services — reading non-NUS
-        // characteristics may trigger iOS BLE pairing if they require encryption.
+        // Discover characteristics — on first connect probe ALL services to trigger
+        // iOS BLE pairing if needed; on reconnect skip non-NUS services (encryption
+        // already probed) to avoid unnecessary latency.
         for service in services {
+            if pairingAttempted && service.uuid != nusServiceUUID {
+                diag("Skipping char discovery for \(service.uuid.uuidString) on reconnect")
+                continue
+            }
             diag("Discovering chars for service \(service.uuid.uuidString)...")
             peripheral.discoverCharacteristics(nil, for: service)
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard peripheral == connectingPeripheral else { return }
         if let error = error {
             diag("Char discovery failed for \(service.uuid): \(error.localizedDescription)")
             return
@@ -309,25 +366,36 @@ extension RNodeProbeScanner: CBPeripheralDelegate {
             onProbeResult?(.characteristicsReady)
         }
 
-        // Try reading ALL readable characteristics on any service.
-        // If any requires encryption, iOS will trigger the pairing dialog.
-        for char in chars {
-            if char.properties.contains(.read) {
-                diag("Reading \(char.uuid.uuidString) (service \(service.uuid.uuidString)) to probe encryption...")
-                peripheral.readValue(for: char)
+        // Try reading ALL readable characteristics on any service to trigger
+        // the iOS BLE pairing dialog — but only on the FIRST connect attempt.
+        // After pairing has been attempted, skip these reads so the auto-reconnect
+        // goes straight to TX-notify → detect without re-triggering the dialog loop.
+        if !pairingAttempted {
+            for char in chars {
+                if char.properties.contains(.read) {
+                    diag("Reading \(char.uuid.uuidString) (service \(service.uuid.uuidString)) to probe encryption...")
+                    peripheral.readValue(for: char)
+                }
             }
         }
 
         // If NUS is discovered and we've already attempted reads on other services,
         // check if we should proceed directly (no pairing needed).
         if nusDiscovered && !pairingTriggered {
-            // Give a short delay for pairing dialog to appear, then proceed
+            // Capture the generation so stale closures from previous connection
+            // attempts don't fire when we reconnect (same peripheral object reused).
+            let gen = probeGeneration
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self = self, !self.hasSentDetectProbe, self.nusDiscovered else { return }
-                self.diag("No pairing triggered — enabling TX notifications and sending detect")
+                guard let self = self, self.probeGeneration == gen,
+                      !self.hasSentDetectProbe, self.nusDiscovered else { return }
+                self.diag("No pairing triggered — enabling TX notifications")
                 if let tx = self.txCharacteristic {
                     peripheral.setNotifyValue(true, for: tx)
+                    // Wait for didUpdateNotificationStateFor to confirm CCCD before
+                    // sending detect — the firmware sends its DETECT_RESP as a
+                    // notification, so CCCD must be confirmed before we send the probe.
                 } else {
+                    // No TX char — send detect directly (won't receive response)
                     self.sendDetectProbe()
                 }
             }
@@ -336,8 +404,15 @@ extension RNodeProbeScanner: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error = error {
-            diag("Write failed: \(error.localizedDescription)")
-            onProbeResult?(.detectWriteFailed(error.localizedDescription))
+            let errStr = error.localizedDescription
+            diag("Write failed: \(errStr)")
+            // Auth/encryption errors mean iOS is negotiating a bond — the pairing flow
+            // will handle recovery via didUpdateNotificationStateFor. Don't cancel.
+            if errStr.contains("Authentication") || errStr.contains("Encryption") || errStr.contains("auth") {
+                diag("Write auth error — pairing in progress, ignoring")
+                return
+            }
+            onProbeResult?(.detectWriteFailed(errStr))
         } else {
             diag("Write confirmed OK")
             onProbeResult?(.detectWriteConfirmed)
@@ -346,14 +421,29 @@ extension RNodeProbeScanner: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         if let error = error {
-            diag("Notification setup failed for \(characteristic.uuid): \(error.localizedDescription)")
-            onProbeResult?(.failed("Notification setup failed: \(error.localizedDescription)"))
+            let errStr = error.localizedDescription
+            diag("Notification setup failed for \(characteristic.uuid): \(errStr)")
+            if errStr.contains("Authentication") || errStr.contains("Encryption") || errStr.contains("auth") {
+                // TX notify requires a BLE bond (pairing). Set both flags:
+                // - pairingTriggered: so didDisconnectPeripheral delays 2s then reconnects
+                // - pairingAttempted: so subsequent connections skip the DIS/Battery reads
+                //   (they don't require auth — only the notify does)
+                diag("Notify requires auth — pairingTriggered=true, pairingAttempted=\(pairingAttempted)")
+                pairingTriggered = true
+                if !pairingAttempted {
+                    pairingAttempted = true
+                    // Notify UI once so the pairing hint appears
+                    onProbeResult?(.failed("Pairing required — enter PIN on dialog"))
+                }
+            } else {
+                onProbeResult?(.failed("Notification setup failed: \(errStr)"))
+            }
             return
         }
         diag("Notifications \(characteristic.isNotifying ? "enabled" : "disabled") for \(characteristic.uuid)")
 
-        // TX notifications confirmed — now safe to send detect probe
-        if characteristic.uuid == nusTxCharUUID && characteristic.isNotifying {
+        // TX notifications confirmed — send detect probe if not already sent
+        if characteristic.uuid == nusTxCharUUID && characteristic.isNotifying && !hasSentDetectProbe {
             diag("TX notifications ready — sending detect probe")
             sendDetectProbe()
         }
@@ -366,9 +456,22 @@ extension RNodeProbeScanner: CBPeripheralDelegate {
             // "Insufficient Authentication" or "Insufficient Encryption" means iOS
             // should be initiating pairing — mark it so we wait.
             if errStr.contains("Authentication") || errStr.contains("Encryption") || errStr.contains("auth") {
-                diag(">>> Pairing should be triggered by iOS! Waiting for user to enter PIN...")
+                diag(">>> Pairing triggered by iOS! (pairingAttempted=\(pairingAttempted))")
                 pairingTriggered = true
-                onProbeResult?(.failed("Pairing required — enter PIN on dialog"))
+                if !pairingAttempted {
+                    pairingAttempted = true
+                    onProbeResult?(.failed("Pairing required — enter PIN on dialog"))
+                }
+                // Schedule a retry in case iOS upgrades the connection in-place
+                // without disconnecting (no didDisconnect callback in that case).
+                let gen = probeGeneration
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    guard let self = self, self.probeGeneration == gen,
+                          !self.hasSentDetectProbe,
+                          let p = self.connectingPeripheral, let tx = self.txCharacteristic else { return }
+                    self.diag("Retrying TX notify after read auth error")
+                    p.setNotifyValue(true, for: tx)
+                }
             }
             return
         }
