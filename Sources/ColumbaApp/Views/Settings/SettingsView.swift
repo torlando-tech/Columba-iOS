@@ -770,21 +770,28 @@ struct SettingsView: View {
     // MARK: - Data Migration Card
 
     private func dataMigrationCard(_ vm: SettingsViewModel) -> some View {
-        ExpandableSettingsCard(
-            icon: "arrow.up.arrow.down.circle",
-            title: "Data Migration",
-            isExpanded: .constant(false)
-        ) {
-            EmptyView()
-        }
-        .onTapGesture {
+        Button {
             showDataMigration = true
-        }
-        .overlay(alignment: .trailing) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.trailing, 16)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "arrow.up.arrow.down.circle")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Theme.accentColor)
+                    .frame(width: 24, height: 24)
+
+                Text("Data Migration")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .glassCard()
         }
     }
 
