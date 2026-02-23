@@ -83,6 +83,28 @@ struct DeviceDiscoveryStep: View {
             }
             .padding(.bottom, 16)
 
+            // Pairing hint — shown while connecting so user knows what to expect
+            if pairingDeviceName != nil {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundStyle(Theme.accentColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("When the Bluetooth pairing dialog appears, tap **Pair**.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                        Text("If the RNode isn't responding, hold the left (USR) button for 5 seconds to enter pairing mode.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.accentColor.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+
             // Pairing error
             if let error = pairingError {
                 HStack(spacing: 8) {
@@ -315,7 +337,11 @@ struct DeviceDiscoveryStep: View {
             ))
             lastUpdateTime[peripheralId] = now
         }
-        discoveredDevices.sort { $0.rssi > $1.rssi }
+        // Don't re-sort while a probe is in progress — avoids devices swapping
+        // positions mid-pairing when two devices have similar RSSI.
+        if pairingDeviceName == nil {
+            discoveredDevices.sort { $0.rssi > $1.rssi }
+        }
     }
 
     // MARK: - Debug
@@ -357,7 +383,8 @@ struct DeviceDiscoveryStep: View {
         probe.probe(peripheral)
 
         detectTimeoutTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            // 20s to allow for: connect + reads + notify retry (3s) + reconnect + detect
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
             guard !Task.isCancelled else { return }
             if !wizard.devicePaired && pairingDeviceName != nil {
                 pairingDeviceName = nil
@@ -390,6 +417,29 @@ struct DeviceDiscoveryStep: View {
             scanner?.cancelProbe()
 
         case .failed(let message):
+            if message.contains("Pairing required") {
+                // iOS is showing the BLE pairing dialog. Keep "Connecting..." visible.
+                // Cancel the original 8s timeout — the full pairing + bond + detect
+                // flow takes longer. Give 30s for the user to interact.
+                detectTimeoutTask?.cancel()
+                let probe = scanner
+                detectTimeoutTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 30_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    if !wizard.devicePaired && pairingDeviceName != nil {
+                        pairingDeviceName = nil
+                        pairingError = "Pairing timed out. Please try again."
+                        wizard.devicePaired = false
+                        probe?.cancelProbe()
+                    }
+                }
+                // Stay connected — do NOT call cancelProbe() here. Disconnecting while
+                // iOS is negotiating the bond causes it to re-show the pairing dialog
+                // on the next connect, creating the loop. RNodeProbeScanner will auto-
+                // reconnect via didDisconnectPeripheral if iOS drops us after bonding,
+                // and will retry TX notify after 2s if iOS upgrades in-place.
+                return
+            }
             detectTimeoutTask?.cancel()
             detectTimeoutTask = nil
             pairingDeviceName = nil

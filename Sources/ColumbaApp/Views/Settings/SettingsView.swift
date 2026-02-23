@@ -38,6 +38,9 @@ struct SettingsView: View {
     @State private var showBLEConnections = false
     @State private var showDataMigration = false
     @State private var interfaceRepository: InterfaceRepository?
+    /// Persisted across body re-evaluations so showRNodeWizard=true is not lost
+    /// when SettingsView re-renders due to connection status polling changes.
+    @State private var interfaceViewModel: InterfaceManagementViewModel?
 
     // MARK: - Body
 
@@ -92,13 +95,8 @@ struct SettingsView: View {
                     MyIdentityView(viewModel: vm)
                 }
                 .navigationDestination(isPresented: $showInterfaceManagement) {
-                    if let repo = interfaceRepository {
-                        InterfaceManagementScreen(
-                            viewModel: InterfaceManagementViewModel(
-                                repository: repo,
-                                appServices: appServices
-                            )
-                        )
+                    if let vm = interfaceViewModel {
+                        InterfaceManagementScreen(viewModel: vm)
                     }
                 }
                 .navigationDestination(isPresented: $showNetworkStatus) {
@@ -124,6 +122,20 @@ struct SettingsView: View {
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        // RNode wizard fullScreenCover is anchored HERE (on NavigationStack root) rather
+        // than on InterfaceManagementScreen.  This prevents the wizard from being
+        // dismissed when SettingsView re-renders due to connection-status polling:
+        // previously, the viewModel was created inline in .navigationDestination, so
+        // each re-render produced a fresh InterfaceManagementViewModel with
+        // showRNodeWizard=false, which immediately dismissed the fullScreenCover.
+        .fullScreenCover(isPresented: Binding(
+            get: { interfaceViewModel?.showRNodeWizard ?? false },
+            set: { interfaceViewModel?.showRNodeWizard = $0 }
+        )) {
+            if let vm = interfaceViewModel {
+                RNodeWizardView(viewModel: vm)
             }
         }
         .task {
@@ -200,7 +212,12 @@ struct SettingsView: View {
                 // Manage Interfaces Button
                 Button(action: {
                     if interfaceRepository == nil {
-                        interfaceRepository = InterfaceRepository()
+                        let repo = InterfaceRepository()
+                        interfaceRepository = repo
+                        interfaceViewModel = InterfaceManagementViewModel(
+                            repository: repo,
+                            appServices: appServices
+                        )
                     }
                     showInterfaceManagement = true
                 }) {
