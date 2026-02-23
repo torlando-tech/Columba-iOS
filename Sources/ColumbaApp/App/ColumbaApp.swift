@@ -9,6 +9,7 @@
 import SwiftUI
 import LXMFSwift
 import UserNotifications
+import BackgroundTasks
 import os
 
 /// App Group identifier for shared data between app and extensions.
@@ -31,6 +32,17 @@ struct ColumbaApp: App {
 
     /// Pending lxma:// deep link URL to process.
     @State private var pendingDeepLink: String?
+
+    // MARK: - Init
+
+    init() {
+        BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: "com.columba.app.sync",
+            using: nil
+        ) { task in
+            NotificationCenter.default.post(name: .columbaBackgroundSync, object: task)
+        }
+    }
 
     // MARK: - App Body
 
@@ -166,7 +178,14 @@ struct RootView: View {
             if newPhase == .active {
                 NotificationService.shared.clearBadge()
             }
+            if newPhase == .background {
+                scheduleBackgroundSync()
+            }
             appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .columbaBackgroundSync)) { note in
+            guard let task = note.object as? BGAppRefreshTask else { return }
+            handleBackgroundSync(task: task)
         }
     }
 
@@ -243,6 +262,26 @@ struct RootView: View {
                 }
                 .padding(.top, 10)
             }
+        }
+    }
+
+    // MARK: - Background Sync
+
+    private func scheduleBackgroundSync() {
+        let request = BGAppRefreshTaskRequest(identifier: "com.columba.app.sync")
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        try? BGTaskScheduler.shared.submit(request)
+    }
+
+    private func handleBackgroundSync(task: BGAppRefreshTask) {
+        scheduleBackgroundSync() // always reschedule first
+        let syncTask = Task {
+            await appServices.propagationManager?.syncNow()
+            task.setTaskCompleted(success: true)
+        }
+        task.expirationHandler = {
+            syncTask.cancel()
+            task.setTaskCompleted(success: false)
         }
     }
 
@@ -365,6 +404,12 @@ struct RootView: View {
             self.initError = error.localizedDescription
         }
     }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let columbaBackgroundSync = Notification.Name("com.columba.app.backgroundSync")
 }
 
 // MARK: - Tab Enum
