@@ -237,10 +237,20 @@ public final class SettingsViewModel {
             usesIdenticon: true
         )
 
-        // Load active identity name from IdentityManager
-        if let mgr = identityManager {
-            if let active = await mgr.getActiveIdentity() {
-                activeIdentityName = active.displayName
+        // Load active identity name — prefer settingsRepository (user-editable) over the
+        // LocalIdentity record, which may be stale (e.g. migrated as "Anonymous Peer").
+        let repoName = identity.displayName
+        if let mgr = identityManager, let active = await mgr.getActiveIdentity() {
+            let idName = active.displayName
+            // If the stored identity name looks like the migration default, use the repo name.
+            if idName.isEmpty || idName == "Anonymous Peer" {
+                activeIdentityName = repoName.isEmpty ? idName : repoName
+                // Repair the stored name so it stays in sync going forward.
+                if !repoName.isEmpty {
+                    await mgr.renameIdentity(active.identityHash, newName: repoName)
+                }
+            } else {
+                activeIdentityName = idName
             }
         }
 
@@ -345,6 +355,11 @@ public final class SettingsViewModel {
     public func saveDisplayName() async {
         savedDisplayName = identity.displayName
         await settingsRepository.setDisplayName(identity.displayName)
+        // Keep LocalIdentity.displayName in sync so the "Active:" label stays current.
+        if let mgr = identityManager, let active = await mgr.getActiveIdentity() {
+            await mgr.renameIdentity(active.identityHash, newName: identity.displayName)
+        }
+        activeIdentityName = identity.displayName
         saveSettings()
     }
 
