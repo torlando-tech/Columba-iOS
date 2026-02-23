@@ -291,7 +291,9 @@ final class RNodeWizardViewModel {
         selectedRegion = region
         selectedCommunityPreset = nil
         isCustomMode = false
-        frequencySlot = 0
+        // Apply region-specific default slot (matches Android Columba behaviour).
+        // Uses current modem bandwidth so the slot is valid for the selected preset.
+        frequencySlot = region.defaultFrequencySlot(bandwidth: selectedModemPreset.parameters.bandwidth)
     }
 
     /// Select custom mode (manual radio parameters).

@@ -167,7 +167,10 @@ struct RNodeConfigSheet: View {
             .onChange(of: selectedRegionalPreset) { _, preset in
                 if let preset {
                     viewModel.configFrequency = String(preset.parameters.frequency)
-                    viewModel.configTxPower = String(preset.parameters.maxTxPower)
+                    // Cap at 17 dBm — most RNode hardware (SX1276) maxes at 17 dBm.
+                    // maxTxPower is the regulatory ceiling (e.g., 30 dBm for US),
+                    // not a sensible default. Users can override in the field.
+                    viewModel.configTxPower = String(min(preset.parameters.maxTxPower, UInt8(17)))
                 }
             }
         }
