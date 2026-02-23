@@ -149,45 +149,88 @@ public enum LoRaRegion: String, CaseIterable, Identifiable {
         case .us915:
             return RegionalParameters(freqStart: 902_000_000, freqEnd: 928_000_000, maxTxPower: 30, dutyCycle: nil)
         case .eu868Low:
-            return RegionalParameters(freqStart: 863_000_000, freqEnd: 868_000_000, maxTxPower: 14, dutyCycle: 0.001)
+            // Sub-band L: 865–868 MHz, 1% duty cycle, 25 mW max
+            return RegionalParameters(freqStart: 865_000_000, freqEnd: 868_000_000, maxTxPower: 14, dutyCycle: 0.01)
         case .eu868Mid:
+            // Sub-band M: 868–868.6 MHz, 1% duty cycle (LoRaWAN default channels)
             return RegionalParameters(freqStart: 868_000_000, freqEnd: 868_600_000, maxTxPower: 14, dutyCycle: 0.01)
         case .eu868Primary:
+            // Broad EU 868 band (867–869.2 MHz) covering community deployments
             return RegionalParameters(freqStart: 867_000_000, freqEnd: 869_200_000, maxTxPower: 14, dutyCycle: 0.01)
         case .eu868QBand:
+            // Sub-band P: 869.4–869.65 MHz, 10% duty cycle, 500 mW max
             return RegionalParameters(freqStart: 869_400_000, freqEnd: 869_650_000, maxTxPower: 27, dutyCycle: 0.10)
         case .eu433:
             return RegionalParameters(freqStart: 433_050_000, freqEnd: 434_790_000, maxTxPower: 12, dutyCycle: 0.10)
         case .ru868:
-            return RegionalParameters(freqStart: 864_000_000, freqEnd: 869_200_000, maxTxPower: 20, dutyCycle: nil)
+            // 868.7–869.2 MHz (GKRCH narrow allocation)
+            return RegionalParameters(freqStart: 868_700_000, freqEnd: 869_200_000, maxTxPower: 20, dutyCycle: nil)
         case .ua868:
-            return RegionalParameters(freqStart: 863_000_000, freqEnd: 870_000_000, maxTxPower: 14, dutyCycle: nil)
+            // 868–868.6 MHz, 1% duty cycle
+            return RegionalParameters(freqStart: 868_000_000, freqEnd: 868_600_000, maxTxPower: 14, dutyCycle: 0.01)
         case .au915:
             return RegionalParameters(freqStart: 915_000_000, freqEnd: 928_000_000, maxTxPower: 30, dutyCycle: nil)
         case .nz865:
-            return RegionalParameters(freqStart: 864_000_000, freqEnd: 868_000_000, maxTxPower: 27, dutyCycle: nil)
+            // 864–868 MHz, 36 dBm (4W) allowed in NZ
+            return RegionalParameters(freqStart: 864_000_000, freqEnd: 868_000_000, maxTxPower: 36, dutyCycle: nil)
         case .jp920:
-            return RegionalParameters(freqStart: 920_000_000, freqEnd: 928_000_000, maxTxPower: 13, dutyCycle: nil)
+            // 920.8–927.8 MHz ARIB STD-T108, 16 dBm max
+            return RegionalParameters(freqStart: 920_800_000, freqEnd: 927_800_000, maxTxPower: 16, dutyCycle: nil)
         case .kr920:
-            return RegionalParameters(freqStart: 920_900_000, freqEnd: 923_300_000, maxTxPower: 14, dutyCycle: nil)
+            // 920–923 MHz
+            return RegionalParameters(freqStart: 920_000_000, freqEnd: 923_000_000, maxTxPower: 14, dutyCycle: nil)
         case .tw920:
-            return RegionalParameters(freqStart: 920_000_000, freqEnd: 925_000_000, maxTxPower: 14, dutyCycle: nil)
+            // 920–925 MHz LP0002, 27 dBm max
+            return RegionalParameters(freqStart: 920_000_000, freqEnd: 925_000_000, maxTxPower: 27, dutyCycle: nil)
         case .cn470:
             return RegionalParameters(freqStart: 470_000_000, freqEnd: 510_000_000, maxTxPower: 19, dutyCycle: nil)
         case .in865:
             return RegionalParameters(freqStart: 865_000_000, freqEnd: 867_000_000, maxTxPower: 30, dutyCycle: nil)
         case .th920:
-            return RegionalParameters(freqStart: 920_000_000, freqEnd: 925_000_000, maxTxPower: 27, dutyCycle: nil)
+            // 920–925 MHz NBTC, 16 dBm max
+            return RegionalParameters(freqStart: 920_000_000, freqEnd: 925_000_000, maxTxPower: 16, dutyCycle: nil)
         case .sg923:
-            return RegionalParameters(freqStart: 920_000_000, freqEnd: 925_000_000, maxTxPower: 20, dutyCycle: nil)
+            // 917–925 MHz IMDA
+            return RegionalParameters(freqStart: 917_000_000, freqEnd: 925_000_000, maxTxPower: 20, dutyCycle: nil)
         case .my919:
-            return RegionalParameters(freqStart: 919_000_000, freqEnd: 923_000_000, maxTxPower: 27, dutyCycle: nil)
+            // 919–924 MHz MCMC
+            return RegionalParameters(freqStart: 919_000_000, freqEnd: 924_000_000, maxTxPower: 27, dutyCycle: nil)
         case .ph915:
-            return RegionalParameters(freqStart: 915_000_000, freqEnd: 918_000_000, maxTxPower: 21, dutyCycle: nil)
+            // 915–918 MHz NTC, 20 dBm max
+            return RegionalParameters(freqStart: 915_000_000, freqEnd: 918_000_000, maxTxPower: 20, dutyCycle: nil)
         case .lora24:
-            return RegionalParameters(freqStart: 2_400_000_000, freqEnd: 2_500_000_000, maxTxPower: 10, dutyCycle: nil)
+            // 2400–2483.5 MHz worldwide ISM
+            return RegionalParameters(freqStart: 2_400_000_000, freqEnd: 2_483_500_000, maxTxPower: 10, dutyCycle: nil)
         case .br902:
             return RegionalParameters(freqStart: 902_000_000, freqEnd: 907_500_000, maxTxPower: 30, dutyCycle: nil)
+        }
+    }
+
+    /// Default frequency slot for this region, matching Android Columba's getDefaultSlot().
+    ///
+    /// Avoids well-known Meshtastic frequencies and picks the middle of the band
+    /// for regions with many slots. US/AU default to slot 50.
+    public func defaultFrequencySlot(bandwidth: UInt32) -> Int {
+        let numSlots = parameters.totalSlots(bandwidth: bandwidth)
+        guard numSlots > 1 else { return 0 }
+        switch self {
+        case .us915:        return min(50, numSlots - 1)
+        case .br902:        return min(10, numSlots - 1)
+        case .eu868Low:     return min(6,  numSlots - 1)
+        case .eu868Mid:     return min(1,  numSlots - 1)
+        case .eu868Primary: return min(4,  numSlots - 1)
+        case .eu868QBand:   return 0
+        case .eu433:        return min(3,  numSlots - 1)
+        case .ru868, .ua868: return 0
+        case .au915:        return min(50, numSlots - 1)
+        case .nz865:        return min(8,  numSlots - 1)
+        case .jp920:        return min(14, numSlots - 1)
+        case .kr920, .tw920, .th920: return min(10, numSlots - 1)
+        case .sg923, .my919: return min(16, numSlots - 1)
+        case .ph915:        return min(6,  numSlots - 1)
+        case .cn470:        return min(80, numSlots - 1)
+        case .in865:        return min(4,  numSlots - 1)
+        case .lora24:       return min(50, numSlots - 1)
         }
     }
 
