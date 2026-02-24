@@ -162,18 +162,18 @@ public final class AudioManager {
     /// Sets `.playAndRecord` category with `.voiceChat` mode, enables
     /// Bluetooth routing, and sets preferred buffer/sample rate.
     ///
-    /// - Parameter speakerEnabled: If true, route audio to the speaker instead of earpiece
+    /// Note: `.defaultToSpeaker` is NOT used here because it conflicts with
+    /// `.allowBluetoothA2DP` (Apple docs: combining them causes unexpected behavior).
+    /// Speaker routing is handled via `overrideOutputAudioPort(.speaker)` after
+    /// the session starts, which avoids this incompatibility.
     private func activateAudioSession(speakerEnabled: Bool) throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
 
-        var options: AVAudioSession.CategoryOptions = [
+        let options: AVAudioSession.CategoryOptions = [
             .allowBluetooth,
             .allowBluetoothA2DP
         ]
-        if speakerEnabled {
-            options.insert(.defaultToSpeaker)
-        }
 
         try session.setCategory(
             .playAndRecord,
@@ -403,7 +403,7 @@ public final class AudioManager {
             updateCurrentRoute()
             startDrainLoop()
 
-            logger.info("[AUDIO] Pipeline started: capture=\(inputFormat.sampleRate)Hz, playback=\(self.sampleRate)Hz, frame=\(self.frameTimeMs)ms")
+            logger.error("[AUDIO] Pipeline started: capture=\(inputFormat.sampleRate)Hz, playback=\(self.sampleRate)Hz, frame=\(self.frameTimeMs)ms")
 
         } catch {
             logger.error("[AUDIO] Failed to start pipeline: \(error.localizedDescription)")
@@ -429,6 +429,7 @@ public final class AudioManager {
         playerNode = nil
         isActive = false
         inputLevel = 0.0
+        playCount = 0
 
         removeSessionObservers()
         deactivateAudioSession()
@@ -470,9 +471,19 @@ public final class AudioManager {
     /// pipeline is connected. CallManager should call this with decoded PCM data.
     ///
     /// - Parameter samples: Float32 PCM samples at the configured sample rate
+    private var playCount: Int = 0
+
     func playDecodedAudio(_ samples: [Float]) {
         guard isActive, let player = playerNode, let eng = engine, eng.isRunning else {
+            playCount += 1
+            if playCount == 1 || playCount % 50 == 0 {
+                logger.error("[AUDIO] playDecodedAudio DROPPED #\(self.playCount, privacy: .public): isActive=\(self.isActive, privacy: .public) engine=\(self.engine != nil, privacy: .public) running=\(self.engine?.isRunning ?? false, privacy: .public)")
+            }
             return
+        }
+        playCount += 1
+        if playCount == 1 || playCount % 100 == 0 {
+            logger.error("[AUDIO] Scheduling playback buffer #\(self.playCount, privacy: .public): frames=\(samples.count / self.channels, privacy: .public) rate=\(self.sampleRate, privacy: .public)Hz")
         }
 
         guard let format = AVAudioFormat(
@@ -518,40 +529,54 @@ public final class AudioManager {
     /// samples accumulate for a full frame, extracts them, resamples if the
     /// device rate differs from the target rate, and invokes the callback.
     private func startDrainLoop() {
-        let spf = samplesPerFrame * channels
+        // outputSpf: how many target-rate samples the codec expects per frame
+        let outputSpf = samplesPerFrame * channels
+        // devRate/tgtRate are captured now (we're on MainActor); the hardware
+        // rate is fixed once the engine starts and won't change during the call.
+        let devRate = deviceSampleRate
+        let tgtRate = sampleRate
+        // inputSpf: how many device-rate samples from the ring buffer form exactly
+        // one target-rate frame after resampling. Draining this many samples
+        // and resampling produces exactly outputSpf samples for the codec.
+        let inputSpf: Int
+        if devRate > 0 && devRate != tgtRate {
+            inputSpf = max(1, Int((Double(outputSpf) * devRate / tgtRate).rounded()))
+        } else {
+            inputSpf = outputSpf
+        }
         let sleepNs = UInt64(frameTimeMs) * 500_000 // half frame time
         let ringBuf = captureBuffer
-        let targetRate = sampleRate
         let ch = channels
+
+        logger.error("[AUDIO] DrainLoop: deviceRate=\(devRate)Hz targetRate=\(tgtRate)Hz inputSpf=\(inputSpf) outputSpf=\(outputSpf)")
 
         drainTask = Task.detached { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
 
                 let available = ringBuf.count
-                if available >= spf {
-                    // Extract one frame from ring buffer
-                    var frame = [Float](repeating: 0, count: spf)
-                    for i in 0..<spf {
+                if available >= inputSpf {
+                    // Extract one device-rate frame from ring buffer
+                    var frame = [Float](repeating: 0, count: inputSpf)
+                    for i in 0..<inputSpf {
                         frame[i] = ringBuf.read() ?? 0
                     }
 
-                    // Resample if device sample rate differs from target
-                    let devRate = await MainActor.run { self.deviceSampleRate }
+                    // Resample to target rate — result is exactly outputSpf samples
                     let finalFrame: [Float]
-                    if devRate != targetRate {
+                    if devRate != tgtRate {
                         if ch == 1 {
                             finalFrame = Resampler.resample(
                                 frame,
                                 fromRate: Int(devRate),
-                                toRate: Int(targetRate)
+                                toRate: Int(tgtRate)
                             )
                         } else {
                             finalFrame = Resampler.resampleInterleaved(
                                 frame,
                                 channels: ch,
                                 fromRate: Int(devRate),
-                                toRate: Int(targetRate)
+                                toRate: Int(tgtRate)
                             )
                         }
                     } else {

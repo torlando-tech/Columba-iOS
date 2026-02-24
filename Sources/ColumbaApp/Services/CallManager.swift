@@ -103,6 +103,16 @@ public final class CallManager {
             }
         }
 
+        // Track negotiated profile so startAudio() uses the right codec parameters.
+        // PREFERRED_PROFILE arrives before ESTABLISHED, so activeProfile is correct
+        // by the time establishedCallback fires and startAudio() is called.
+        await phone.setProfileNegotiatedCallback { [weak self] profile in
+            await MainActor.run {
+                self?.activeProfile = profile
+                self?.logger.error("[CALL] Profile negotiated: \(profile.displayName, privacy: .public)")
+            }
+        }
+
         // Register destination link callback with transport so incoming links
         // to the LXST telephony destination are routed to our Telephone actor.
         // Without this, the transport accepts LINKREQUESTs and establishes links
@@ -457,7 +467,6 @@ public final class CallManager {
             Task { await self.telephone?.sendAudioFrame(samples) }
         }
 
-        // Apply current speaker setting
         manager.start(speakerEnabled: isSpeakerOn)
 
         logger.info("Audio pipeline started for profile: \(self.activeProfile.displayName)")
