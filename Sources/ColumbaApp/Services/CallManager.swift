@@ -111,7 +111,7 @@ public final class CallManager {
         self.telephonyDestination = telephonyDest
         let telephonyDestHash = telephonyDest.hash
         let hexPrefix = telephonyDestHash.prefix(8).map { String(format: "%02x", $0) }.joined()
-        logger.info("Registering LXST link callback for dest \(hexPrefix)")
+        logger.error("[CALL] Registering LXST link callback for dest \(hexPrefix, privacy: .public)")
 
         await transport.registerDestinationLinkCallback(for: telephonyDestHash) { [weak self] (link: Link) async in
             guard let self else { return }
@@ -125,7 +125,7 @@ public final class CallManager {
                 guard let self else { return }
                 self.peerHash = remoteIdentity.hexHash
                 self.callState = .ringing
-                self.logger.info("Call ringing from: \(remoteIdentity.hexHash)")
+                self.logger.error("[CALL] Ringing from: \(remoteIdentity.hexHash, privacy: .public)")
 
                 // Resolve contact name for incoming calls
                 if self.isIncoming {
@@ -147,7 +147,7 @@ public final class CallManager {
                 self.callState = .established
                 self.startDurationTimer()
                 self.startAudio()
-                self.logger.info("Call established with: \(remoteIdentity.hexHash)")
+                self.logger.error("[CALL] Established with: \(remoteIdentity.hexHash, privacy: .public)")
 
                 // Report call connected to CallKit
                 #if os(iOS)
@@ -178,7 +178,7 @@ public final class CallManager {
                 } else {
                     self.callState = .ended(reasonText)
                 }
-                self.logger.info("Call ended: \(reasonText)")
+                self.logger.error("[CALL] Ended: \(reasonText, privacy: .public)")
 
                 // Report call ended to CallKit
                 #if os(iOS)
@@ -206,7 +206,7 @@ public final class CallManager {
         logger.info("CallKit integration enabled")
         #endif
 
-        logger.info("CallManager initialized")
+        logger.error("[CALL] CallManager initialized")
     }
 
     // MARK: - Call Actions
@@ -241,7 +241,10 @@ public final class CallManager {
             do {
                 // We need the remote identity to call. Look it up from the path table
                 // by resolving the destination hash to a known identity.
+                let destHex = destinationHash.map { String(format: "%02x", $0) }.joined()
+                self.logger.error("[CALL] resolveIdentity for dest \(destHex, privacy: .public)")
                 guard let remoteIdentity = await resolveIdentity(for: destinationHash) else {
+                    self.logger.error("[CALL] resolveIdentity FAILED — peer not in path table")
                     await MainActor.run {
                         self.callState = .ended("Peer not found")
                         self.endedDismissTask?.cancel()
@@ -253,11 +256,12 @@ public final class CallManager {
                     }
                     return
                 }
+                self.logger.error("[CALL] resolveIdentity OK, calling Telephone.call()")
                 try await telephone.call(remoteIdentity: remoteIdentity, profile: profile)
             } catch {
                 await MainActor.run {
                     self.callState = .ended("Call Failed")
-                    self.logger.warning("Call initiation failed: \(error.localizedDescription)")
+                    self.logger.error("[CALL] Call initiation failed: \(error.localizedDescription, privacy: .public)")
                     self.endedDismissTask?.cancel()
                     self.endedDismissTask = Task { @MainActor [weak self] in
                         try? await Task.sleep(for: .seconds(1.5))
