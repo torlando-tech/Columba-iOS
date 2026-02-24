@@ -246,10 +246,7 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        logger.info("Audio session activated")
-        // Audio session is now active; audio can flow.
-        // The Telephone actor handles its own audio pipeline, but we ensure
-        // the session category is set correctly.
+        logger.info("Audio session activated by CallKit")
         configureAudioSession()
     }
 
