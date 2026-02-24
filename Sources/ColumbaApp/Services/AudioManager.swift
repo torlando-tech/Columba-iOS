@@ -75,11 +75,16 @@ public final class AudioManager {
     private var captureBuffer: AudioRingBuffer
     private var drainTask: Task<Void, Never>?
     private var deviceSampleRate: Double = 48000
+    /// Actual hardware output channel count (1 in voiceChat mode, ≥1 otherwise).
+    /// Set in start() from the engine's output node. Used to downmix decoded
+    /// stereo frames to mono when the hardware can't play stereo.
+    private var hwOutputChannels: Int = 1
     private let logger = Logger(subsystem: "com.columba.app", category: "AudioManager")
 
     /// Notification observers for audio session events.
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
+    private var engineConfigObserver: NSObjectProtocol?
 
     // MARK: - Computed
 
@@ -191,7 +196,11 @@ public final class AudioManager {
         try session.setPreferredSampleRate(sampleRate)
         try session.setActive(true, options: [])
 
-        logger.info("[AUDIO] Session activated: rate=\(self.sampleRate), ioBuf=\(self.ioBufferDuration)")
+        if speakerEnabled {
+            try session.overrideOutputAudioPort(.speaker)
+        }
+
+        logger.info("[AUDIO] Session activated: rate=\(self.sampleRate), ioBuf=\(self.ioBufferDuration), speaker=\(speakerEnabled)")
         #endif
     }
 
@@ -243,6 +252,10 @@ public final class AudioManager {
         if let observer = routeChangeObserver {
             NotificationCenter.default.removeObserver(observer)
             routeChangeObserver = nil
+        }
+        if let observer = engineConfigObserver {
+            NotificationCenter.default.removeObserver(observer)
+            engineConfigObserver = nil
         }
     }
 
@@ -298,11 +311,65 @@ public final class AudioManager {
         case .newDeviceAvailable:
             logger.info("[AUDIO] New output device available: \(self.currentRoute)")
         case .categoryChange:
-            logger.info("[AUDIO] Audio category changed")
+            logger.error("[AUDIO] Audio category changed")
+            // Category change can stop the playerNode via engine reconfiguration.
+            // Restart the player immediately as a belt-and-suspenders defense
+            // (AVAudioEngineConfigurationChangeNotification handles the engine-stop case).
+            if let player = playerNode, engine?.isRunning == true, !player.isPlaying {
+                player.play()
+                logger.error("[AUDIO] Restarted playerNode after category change")
+            }
         default:
             break
         }
         #endif
+    }
+
+    /// Handle AVAudioEngine configuration changes.
+    ///
+    /// Fired when the audio hardware changes while the engine is running — most
+    /// commonly caused by CallKit's `provider(_:didActivateAudioSession:)` calling
+    /// `setCategory` with different options after AudioManager has already started.
+    ///
+    /// Per Apple docs: "If the audio hardware changes, the engine will stop and all
+    /// connections between nodes will be broken." We must RECONNECT the player before
+    /// restarting — without this, `scheduleBuffer()` queues buffers to a disconnected
+    /// node and produces silence even though `isRunning` and `isPlaying` both appear true.
+    private func handleEngineConfigurationChange() {
+        guard let eng = engine, isActive else { return }
+        logger.error("[AUDIO] Config change: engineRunning=\(eng.isRunning, privacy: .public)")
+        do {
+            // Re-query hardware format — it may have changed (e.g. stereo→mono on route switch)
+            let outputFormat = eng.outputNode.outputFormat(forBus: 0)
+            let hwOut = outputFormat.channelCount > 0 ? Int(outputFormat.channelCount) : 1
+            hwOutputChannels = hwOut
+
+            // Reconnect player with the (possibly new) hardware format.
+            // ALL connections are broken by the config change — not just hardware-node connections.
+            if let player = playerNode {
+                eng.disconnectNodeOutput(player)
+                if let playbackFormat = AVAudioFormat(
+                    standardFormatWithSampleRate: sampleRate,
+                    channels: AVAudioChannelCount(hwOut)
+                ) {
+                    eng.connect(player, to: eng.mainMixerNode, format: playbackFormat)
+                    logger.error("[AUDIO] Reconnected player: \(hwOut, privacy: .public)ch \(self.sampleRate, privacy: .public)Hz")
+                }
+            }
+
+            if !eng.isRunning {
+                try eng.start()
+                logger.error("[AUDIO] Engine restarted after config change, hwOut=\(hwOut, privacy: .public)ch")
+            }
+            // Always call play() after reconnection — isPlaying state can be stale
+            // after a config change (node reports playing but output is disconnected).
+            if let player = playerNode {
+                player.play()
+                logger.error("[AUDIO] PlayerNode play() called after config change, isPlaying=\(player.isPlaying, privacy: .public)")
+            }
+        } catch {
+            logger.error("[AUDIO] Failed to restart after config change: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Update the currentRoute property from the active audio session route.
@@ -353,6 +420,18 @@ public final class AudioManager {
             let eng = AVAudioEngine()
             self.engine = eng
 
+            // Register for engine configuration changes BEFORE starting the engine.
+            // When the audio session category changes while the engine is running,
+            // iOS reconfigures the engine and stops the playerNode silently.
+            // We must restart the player to resume audio output.
+            engineConfigObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange,
+                object: eng,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.handleEngineConfigurationChange() }
+            }
+
             // --- Capture setup ---
             let inputNode = eng.inputNode
             let inputFormat = inputNode.outputFormat(forBus: 0)
@@ -360,6 +439,7 @@ public final class AudioManager {
 
             let spf = samplesPerFrame
             let ch = channels
+            let hwChannels = Int(inputFormat.channelCount)
             let ringBuf = captureBuffer
 
             // The tap callback runs on a real-time thread — no locks, no allocation
@@ -387,12 +467,23 @@ public final class AudioManager {
             }
 
             // --- Playback setup ---
+            // Detect hardware output channel count BEFORE starting the engine.
+            // voiceChat mode uses a mono voice-processing IO unit; attempting to
+            // schedule stereo buffers on a stereo player connection in this mode
+            // produces silence because the stereo→mono downmix is bypassed.
+            // Connect the player with the hardware's actual channel count so the
+            // format chain is compatible end-to-end. Stereo codec frames will be
+            // downmixed to mono in playDecodedAudio() when needed.
+            let outputFormat = eng.outputNode.outputFormat(forBus: 0)
+            let hwOut = outputFormat.channelCount > 0 ? Int(outputFormat.channelCount) : 1
+            hwOutputChannels = hwOut
+
             let player = AVAudioPlayerNode()
             eng.attach(player)
 
             guard let playbackFormat = AVAudioFormat(
                 standardFormatWithSampleRate: sampleRate,
-                channels: AVAudioChannelCount(channels)
+                channels: AVAudioChannelCount(hwOut)
             ) else {
                 logger.error("[AUDIO] Failed to create playback format")
                 return
@@ -408,9 +499,9 @@ public final class AudioManager {
             isActive = true
 
             updateCurrentRoute()
-            startDrainLoop()
+            startDrainLoop(hwChannels: hwChannels)
 
-            logger.error("[AUDIO] Pipeline started: capture=\(inputFormat.sampleRate)Hz, playback=\(self.sampleRate)Hz, frame=\(self.frameTimeMs)ms")
+            logger.error("[AUDIO] Pipeline started: capture=\(inputFormat.sampleRate)Hz \(hwChannels)ch, playback=\(self.sampleRate)Hz hwOut=\(hwOut)ch codec=\(self.channels)ch, frame=\(self.frameTimeMs)ms")
 
         } catch {
             logger.error("[AUDIO] Failed to start pipeline: \(error.localizedDescription)")
@@ -437,6 +528,7 @@ public final class AudioManager {
         isActive = false
         inputLevel = 0.0
         playCount = 0
+        hwOutputChannels = 1
 
         removeSessionObservers()
         deactivateAudioSession()
@@ -490,15 +582,36 @@ public final class AudioManager {
         }
         playCount += 1
         if playCount == 1 || playCount % 100 == 0 {
-            logger.error("[AUDIO] Scheduling playback buffer #\(self.playCount, privacy: .public): frames=\(samples.count / self.channels, privacy: .public) rate=\(self.sampleRate, privacy: .public)Hz")
+            logger.error("[AUDIO] Scheduling buffer #\(self.playCount, privacy: .public): frames=\(samples.count / self.channels, privacy: .public) rate=\(self.sampleRate, privacy: .public)Hz hwOut=\(self.hwOutputChannels, privacy: .public)ch playing=\(player.isPlaying, privacy: .public)")
+        }
+
+        // Downmix to hardware output channel count if needed.
+        // voiceChat mode forces mono hardware; scheduling stereo buffers on a
+        // mono-connected player produces silence. Downmix (e.g. stereo→mono by
+        // averaging channels) so the buffer format matches the player connection.
+        let playbackCh = hwOutputChannels
+        let inCh = channels
+        let playSamples: [Float]
+        if inCh > playbackCh {
+            // Average across all input channels to produce playbackCh channels.
+            let spf = samples.count / inCh
+            var mixed = [Float](repeating: 0, count: spf * playbackCh)
+            for i in 0..<spf {
+                var sum: Float = 0
+                for c in 0..<inCh { sum += samples[i * inCh + c] }
+                mixed[i] = sum / Float(inCh)  // playbackCh == 1 (mono)
+            }
+            playSamples = mixed
+        } else {
+            playSamples = samples
         }
 
         guard let format = AVAudioFormat(
             standardFormatWithSampleRate: sampleRate,
-            channels: AVAudioChannelCount(channels)
+            channels: AVAudioChannelCount(playbackCh)
         ) else { return }
 
-        let frameCount = samples.count / channels
+        let frameCount = playSamples.count / playbackCh
         guard frameCount > 0 else { return }
 
         guard let buffer = AVAudioPCMBuffer(
@@ -508,18 +621,18 @@ public final class AudioManager {
 
         buffer.frameLength = AVAudioFrameCount(frameCount)
 
-        if channels == 1 {
+        if playbackCh == 1 {
             let dest = buffer.floatChannelData![0]
-            samples.withUnsafeBufferPointer { src in
+            playSamples.withUnsafeBufferPointer { src in
                 guard let base = src.baseAddress else { return }
                 dest.initialize(from: base, count: frameCount)
             }
         } else {
             // Deinterleave into separate channel buffers
-            for ch in 0..<channels {
+            for ch in 0..<playbackCh {
                 let dest = buffer.floatChannelData![ch]
                 for i in 0..<frameCount {
-                    dest[i] = samples[i * channels + ch]
+                    dest[i] = playSamples[i * playbackCh + ch]
                 }
             }
         }
@@ -534,28 +647,41 @@ public final class AudioManager {
     ///
     /// Runs on a background task, polling at half-frame intervals. When enough
     /// samples accumulate for a full frame, extracts them, resamples if the
-    /// device rate differs from the target rate, and invokes the callback.
-    private func startDrainLoop() {
+    /// device rate differs from the target rate, upmixes if the hardware has
+    /// fewer channels than the codec (e.g. voiceChat forces mono but codec is
+    /// stereo), and invokes the callback.
+    ///
+    /// - Parameter hwChannels: Actual hardware channel count from inputNode format.
+    ///   May be less than `channels` (e.g. voiceChat mode forces mono).
+    private func startDrainLoop(hwChannels: Int) {
         // outputSpf: how many target-rate samples the codec expects per frame
         let outputSpf = samplesPerFrame * channels
         // devRate/tgtRate are captured now (we're on MainActor); the hardware
         // rate is fixed once the engine starts and won't change during the call.
         let devRate = deviceSampleRate
         let tgtRate = sampleRate
-        // inputSpf: how many device-rate samples from the ring buffer form exactly
-        // one target-rate frame after resampling. Draining this many samples
-        // and resampling produces exactly outputSpf samples for the codec.
-        let inputSpf: Int
-        if devRate > 0 && devRate != tgtRate {
-            inputSpf = max(1, Int((Double(outputSpf) * devRate / tgtRate).rounded()))
-        } else {
-            inputSpf = outputSpf
-        }
-        let sleepNs = UInt64(frameTimeMs) * 500_000 // half frame time
-        let ringBuf = captureBuffer
         let ch = channels
 
-        logger.error("[AUDIO] DrainLoop: deviceRate=\(devRate)Hz targetRate=\(tgtRate)Hz inputSpf=\(inputSpf) outputSpf=\(outputSpf)")
+        // perChannelInputSpf: device-rate samples per channel per codec frame.
+        // inputSpf: total HW samples to drain (= perChannelInputSpf × hwChannels).
+        //
+        // Key: use hwChannels (actual HW channels), NOT ch (codec channels).
+        // voiceChat mode forces the hardware to mono even if the codec wants
+        // stereo. If we used ch here, inputSpf would be 2× too large — we'd
+        // accumulate 120ms of mono audio and send it as "60ms stereo", causing
+        // double-speed / pitch-shifted playback on the remote peer.
+        let perChannelInputSpf: Int
+        if devRate > 0 && devRate != tgtRate {
+            perChannelInputSpf = max(1, Int((Double(samplesPerFrame) * devRate / tgtRate).rounded()))
+        } else {
+            perChannelInputSpf = samplesPerFrame
+        }
+        let inputSpf = perChannelInputSpf * hwChannels
+
+        let sleepNs = UInt64(frameTimeMs) * 500_000 // half frame time
+        let ringBuf = captureBuffer
+
+        logger.error("[AUDIO] DrainLoop: deviceRate=\(devRate)Hz targetRate=\(tgtRate)Hz hwCh=\(hwChannels) codecCh=\(ch) inputSpf=\(inputSpf) outputSpf=\(outputSpf)")
 
         drainTask = Task.detached { [weak self] in
             while !Task.isCancelled {
@@ -563,15 +689,39 @@ public final class AudioManager {
 
                 let available = ringBuf.count
                 if available >= inputSpf {
-                    // Extract one device-rate frame from ring buffer
+                    // Extract one HW-rate frame from ring buffer
                     var frame = [Float](repeating: 0, count: inputSpf)
                     for i in 0..<inputSpf {
                         frame[i] = ringBuf.read() ?? 0
                     }
 
-                    // Resample to target rate — result is exactly outputSpf samples
+                    // Produce outputSpf samples for the codec:
+                    //   1. Resample HW rate → target rate if they differ.
+                    //   2. Upmix HW channels → codec channels if HW has fewer.
+                    //      (e.g. mono HW → stereo codec: duplicate L→R)
                     let finalFrame: [Float]
-                    if devRate != tgtRate {
+                    if hwChannels < ch {
+                        // HW is mono (or lower channel count) but codec wants stereo.
+                        // Step 1: resample the mono frame to target rate.
+                        let monoResampled: [Float]
+                        if devRate != tgtRate {
+                            monoResampled = Resampler.resample(
+                                frame,
+                                fromRate: Int(devRate),
+                                toRate: Int(tgtRate)
+                            )
+                        } else {
+                            monoResampled = frame
+                        }
+                        // Step 2: duplicate mono to all codec channels (interleaved).
+                        var upMixed = [Float](repeating: 0, count: monoResampled.count * ch)
+                        for i in 0..<monoResampled.count {
+                            for c in 0..<ch {
+                                upMixed[i * ch + c] = monoResampled[i]
+                            }
+                        }
+                        finalFrame = upMixed
+                    } else if devRate != tgtRate {
                         if ch == 1 {
                             finalFrame = Resampler.resample(
                                 frame,
