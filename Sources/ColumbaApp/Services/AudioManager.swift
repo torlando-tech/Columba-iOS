@@ -108,9 +108,16 @@ public final class AudioManager {
         self.frameTimeMs = frameTimeMs
         self.ioBufferDuration = ioBufferDuration
 
-        // Ring buffer holds ~200ms of audio to absorb jitter
-        let ringSize = Int(sampleRate) * channels / 5
-        self.captureBuffer = AudioRingBuffer(capacity: max(ringSize, 4096))
+        // Ring buffer must hold at least one full device-rate frame.
+        // For low-sample-rate codecs (e.g. Codec2 at 8kHz) with long frames (320ms),
+        // inputSpf = samplesPerFrame * (devRate/codecRate) can be 15,000+ samples.
+        // Assuming 48kHz device (worst case), size to 4× that for jitter headroom.
+        let spf = Int(sampleRate) * frameTimeMs / 1000 * channels
+        let estimatedDevRate = 48000.0
+        let estimatedInputSpf = sampleRate < estimatedDevRate
+            ? Int((Double(spf) * estimatedDevRate / sampleRate).rounded())
+            : spf
+        self.captureBuffer = AudioRingBuffer(capacity: max(estimatedInputSpf * 4, 4096))
     }
 
     /// Create an AudioManager from a TelephonyProfile.
