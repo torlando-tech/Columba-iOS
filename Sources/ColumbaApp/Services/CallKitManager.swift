@@ -261,7 +261,7 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP, .defaultToSpeaker])
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
             try session.setActive(true, options: [])
             logger.info("Audio session configured for voice chat")
         } catch {
