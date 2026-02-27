@@ -160,9 +160,16 @@ struct RootView: View {
                     }
                 }
                 .onChange(of: appServices.callManager?.callState) { _, newState in
-                    if let newState, case .ringing = newState,
-                       appServices.callManager?.isIncoming == true {
-                        showIncomingCall = true
+                    guard let newState, appServices.callManager?.isIncoming == true else { return }
+                    // Show incoming call screen when we first learn about an incoming call
+                    // (.connecting = link just arrived, .ringing = caller identified)
+                    switch newState {
+                    case .connecting, .ringing:
+                        if !showIncomingCall {
+                            showIncomingCall = true
+                        }
+                    default:
+                        break
                     }
                 }
             } else {
@@ -343,8 +350,10 @@ struct RootView: View {
             }
 
             // 7. Start all enabled interfaces (non-blocking)
+            DiagLog.log("[STARTUP] Step 7: starting \(enabledInterfaces.count) enabled interfaces")
             let services = appServices
             for iface in enabledInterfaces {
+                DiagLog.log("[STARTUP] Starting interface: \(iface.type) name=\(iface.name)")
                 switch iface.type {
                 case .tcpClient:
                     // Already connected via appServices.initialize() above
@@ -355,7 +364,9 @@ struct RootView: View {
                     if case .autoInterface(let config) = iface.config {
                         let groupId = config.groupId ?? "reticulum"
                         Task {
+                            DiagLog.log("[STARTUP] AutoInterface starting, groupId=\(groupId)")
                             try? await services.startAutoInterface(groupId: groupId)
+                            DiagLog.log("[STARTUP] AutoInterface started")
                         }
                     }
                 case .ble:

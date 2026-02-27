@@ -121,9 +121,7 @@ public final class AutoAnnounceManager {
 
             let displayName = await SettingsRepository().getDisplayName()
             do {
-                try await services.sendAnnounce(displayName: displayName)
-                // Also announce telephony destination for incoming calls
-                try? await services.sendTelephonyAnnounce(displayName: displayName)
+                try await services.sendAllAnnounces(displayName: displayName)
                 logger.info("Auto-announce sent successfully")
 
                 // Record the announce time
