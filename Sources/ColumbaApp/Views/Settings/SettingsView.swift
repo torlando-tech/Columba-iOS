@@ -37,6 +37,7 @@ struct SettingsView: View {
     @State private var showNetworkStatus = false
     @State private var showBLEConnections = false
     @State private var showDataMigration = false
+    @State private var showMtuDiagnostic = false
     @State private var interfaceRepository: InterfaceRepository?
     /// Persisted across body re-evaluations so showRNodeWizard=true is not lost
     /// when SettingsView re-renders due to connection status polling changes.
@@ -118,6 +119,9 @@ struct SettingsView: View {
                         identityManager: identityManager,
                         settingsRepository: settingsRepository
                     )
+                }
+                .navigationDestination(isPresented: $showMtuDiagnostic) {
+                    MtuDiagnosticView(appServices: appServices)
                 }
             } else {
                 ProgressView()
@@ -247,6 +251,23 @@ struct SettingsView: View {
                                 .font(.system(size: 14, weight: .medium))
                         }
                         Text("BLE Connections")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.backgroundTertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                }
+
+                // MTU Diagnostic Button
+                Button(action: {
+                    showMtuDiagnostic = true
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.up.arrow.down.square")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("MTU Diagnostic")
                             .font(.system(size: 15, weight: .medium))
                     }
                     .foregroundStyle(Theme.textPrimary)
