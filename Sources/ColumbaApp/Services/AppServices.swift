@@ -20,7 +20,7 @@ import os.log
 /// AppServices initializes and holds all components needed for LXMF messaging:
 /// - **Identity**: Local Reticulum identity for signing/encryption
 /// - **LXMRouter**: LXMF message router for sending/receiving
-/// - **ReticuLumTransport**: Transport layer with path routing
+/// - **ReticulumTransport**: Transport layer with path routing
 /// - **TCPInterface**: TCP connection to server
 /// - **Destination**: LXMF delivery destination for receiving messages
 ///
@@ -53,7 +53,7 @@ public final class AppServices {
     public private(set) var router: LXMRouter?
 
     /// Transport layer for packet routing.
-    public private(set) var transport: ReticuLumTransport?
+    public private(set) var transport: ReticulumTransport?
 
     /// Path table for route lookups.
     public private(set) var pathTable: PathTable?
@@ -281,7 +281,7 @@ public final class AppServices {
     /// This async method sets up the complete LXMF stack:
     /// 1. Creates a new random Identity
     /// 2. Creates PathTable for route management
-    /// 3. Creates ReticuLumTransport with the PathTable
+    /// 3. Creates ReticulumTransport with the PathTable
     /// 4. Creates LXMFDatabase (in-memory for now)
     /// 5. Creates LXMRouter with identity and database
     /// 6. Creates and registers LXMF delivery Destination
@@ -305,7 +305,7 @@ public final class AppServices {
         self.pathTable = newPathTable
 
         // 3. Create transport with path table
-        let newTransport = ReticuLumTransport(pathTable: newPathTable)
+        let newTransport = ReticulumTransport(pathTable: newPathTable)
         self.transport = newTransport
         await configureTransportCallbacks(newTransport)
 
@@ -406,7 +406,7 @@ public final class AppServices {
         self.pathTable = newPathTable
 
         // 3. Create transport with path table
-        let newTransport = ReticuLumTransport(pathTable: newPathTable)
+        let newTransport = ReticulumTransport(pathTable: newPathTable)
         self.transport = newTransport
         await configureTransportCallbacks(newTransport)
 
@@ -814,7 +814,7 @@ public final class AppServices {
 
         // 3. Transport
         if transport == nil, let pt = pathTable {
-            let newTransport = ReticuLumTransport(pathTable: pt)
+            let newTransport = ReticulumTransport(pathTable: pt)
             self.transport = newTransport
             await configureTransportCallbacks(newTransport)
         }
@@ -999,7 +999,7 @@ public final class AppServices {
         logger.info("Created PathTable with persistence: \(pathDbPath)")
 
         // Create new transport with path table
-        let newTransport = ReticuLumTransport(pathTable: newPathTable)
+        let newTransport = ReticulumTransport(pathTable: newPathTable)
         self.transport = newTransport
         await configureTransportCallbacks(newTransport)
 
@@ -1114,7 +1114,7 @@ public final class AppServices {
     }
 
     /// Wire transport callbacks that need app-layer context.
-    private func configureTransportCallbacks(_ transport: ReticuLumTransport) async {
+    private func configureTransportCallbacks(_ transport: ReticulumTransport) async {
         await transport.setOnInterfaceAdded { [weak self] _ in
             guard let self else { return }
             await self.autoAnnounce()
