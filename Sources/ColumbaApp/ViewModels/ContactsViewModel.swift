@@ -481,9 +481,7 @@ public final class ContactsViewModel {
 
         do {
             let displayName = await SettingsRepository().getDisplayName()
-            try await appServices.sendAnnounce(displayName: displayName)
-            // Also announce telephony destination for incoming calls
-            try? await appServices.sendTelephonyAnnounce(displayName: displayName)
+            try await appServices.sendAllAnnounces(displayName: displayName)
             announceSuccess = true
             Task {
                 try? await Task.sleep(for: .seconds(3))

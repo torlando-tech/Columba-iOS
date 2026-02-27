@@ -15,6 +15,36 @@ import LXSTSwift
 import ReticulumSwift
 import os.log
 
+/// Simple file logger for diagnostics when idevicesyslog isn't available (WiFi-only device).
+/// Writes to Documents/diag.log which can be extracted via Xcode or devicectl.
+enum DiagLog {
+    private static let fileURL: URL = {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("diag.log")
+    }()
+
+    static func clear() {
+        try? "".write(to: fileURL, atomically: true, encoding: .utf8)
+    }
+
+    static func log(_ message: String) {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(ts)] \(message)\n"
+        NSLog("%@", message) // Also to ASL for USB capture
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                if let fh = try? FileHandle(forWritingTo: fileURL) {
+                    fh.seekToEndOfFile()
+                    fh.write(data)
+                    fh.closeFile()
+                }
+            } else {
+                try? data.write(to: fileURL)
+            }
+        }
+    }
+}
+
 /// Central LXMF service layer for the SwiftUI application.
 ///
 /// AppServices initializes and holds all components needed for LXMF messaging:
@@ -292,7 +322,8 @@ public final class AppServices {
     /// - Parameter tcpServerAddress: TCP server address (e.g., "tcp://10.0.0.1:4242" or "10.0.0.1:4242")
     /// - Throws: InterfaceError, DatabaseError, or other initialization errors
     public func initialize(tcpServerAddress: String) async throws {
-        logger.info("Starting initialize with TCP server: \(tcpServerAddress, privacy: .public)")
+        DiagLog.clear()
+        DiagLog.log("[INIT] Starting with TCP server: \(tcpServerAddress)")
 
         // 1. Load identity from persistent storage (try Keychain first, then file)
         let newIdentity: Identity = Self.loadOrCreateIdentity()
@@ -339,6 +370,14 @@ public final class AppServices {
         await newRouter.setTransport(newTransport)
         await newRouter.setRatchetManager(newDestination.ratchetManager)
 
+        // 7b. Initialize call manager BEFORE interfaces so that autoAnnounce()
+        //     (triggered by onInterfaceAdded) can send the telephony announce.
+        DiagLog.log("[INIT] Step 7b: creating CallManager")
+        let cm = CallManager()
+        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        self.callManager = cm
+        DiagLog.log("[INIT] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
+
         // 8. Parse server address and create TCP interface (non-fatal — app works offline)
         if let (host, port) = parseHostPort(tcpServerAddress) {
             let config = InterfaceConfig(
@@ -377,11 +416,6 @@ public final class AppServices {
         self.autoAnnounceManager = announceManager
         announceManager.start()
 
-        // 12. Initialize call manager
-        let cm = CallManager()
-        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
-        self.callManager = cm
-
         logger.info("Initialization complete")
     }
 
@@ -395,7 +429,8 @@ public final class AppServices {
     ///   - identityHash: Hex hash of the identity (used for DB filename)
     ///   - tcpServerAddress: TCP server address (e.g., "10.0.0.1:4242")
     public func initialize(identity: Identity, identityHash: String, tcpServerAddress: String) async throws {
-        logger.info("Starting initialize with provided identity: \(identityHash)")
+        DiagLog.clear()
+        DiagLog.log("[INIT2] Starting with identity: \(identityHash), tcp: \(tcpServerAddress)")
 
         self.identity = identity
         self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
@@ -438,6 +473,19 @@ public final class AppServices {
         await newRouter.setTransport(newTransport)
         await newRouter.setRatchetManager(newDestination.ratchetManager)
 
+        // 7b. Initialize call manager BEFORE interfaces so that autoAnnounce()
+        //     (triggered by onInterfaceAdded) can send the telephony announce.
+        DiagLog.log("[INIT2] Step 7b: creating CallManager")
+        let cm = CallManager()
+        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        self.callManager = cm
+        DiagLog.log("[INIT2] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
+        // Verify telephony destination is registered with transport
+        if let telDest = cm.telephonyDestination {
+            let isRegistered = await newTransport.isDestinationRegistered(telDest.hash)
+            DiagLog.log("[INIT2] telephony dest registered in transport: \(isRegistered)")
+        }
+
         // 8. Parse server address and create TCP interface
         if let (host, port) = parseHostPort(tcpServerAddress) {
             let config = InterfaceConfig(
@@ -475,12 +523,12 @@ public final class AppServices {
         self.autoAnnounceManager = announceManager
         announceManager.start()
 
-        // 12. Initialize call manager
-        let cm = CallManager()
-        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
-        self.callManager = cm
-
-        logger.info("Initialization complete (identity: \(identityHash))")
+        // Dump all registered destinations and link callbacks for diagnostics
+        let regDests = await newTransport.registeredDestinationHashes()
+        let regCallbacks = await newTransport.registeredLinkCallbackHashes()
+        DiagLog.log("[INIT2] Registered destinations: \(regDests)")
+        DiagLog.log("[INIT2] Registered link callbacks: \(regCallbacks)")
+        DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
 
     /// Switch to a different identity, tearing down and re-initializing the full stack.
@@ -870,6 +918,14 @@ public final class AppServices {
             propManager.startPeriodicSync()
         }
 
+        // Init call manager if needed (must be before interfaces so autoAnnounce
+        // can send telephony announce when onInterfaceAdded fires)
+        if callManager == nil, let transport = transport, let pt = pathTable, let db = database {
+            let cm = CallManager()
+            await cm.initialize(identity: existingIdentity, transport: transport, pathTable: pt, database: db)
+            self.callManager = cm
+        }
+
         // Init auto-announce manager if needed
         if autoAnnounceManager == nil {
             let announceManager = AutoAnnounceManager(appServices: self)
@@ -1084,6 +1140,31 @@ public final class AppServices {
         logger.info("Announce sent successfully for destination: \(destination.hexHash)")
     }
 
+    /// Send both the LXMF delivery announce and the LXST telephony announce.
+    ///
+    /// This is the single entry point for all announce triggers (app start,
+    /// contacts tab button, settings card button, auto-announce timer,
+    /// interface added callback). Both announces use the same display name.
+    ///
+    /// - Parameter displayName: Display name to broadcast
+    /// - Throws: AppServicesError if transport or destination not initialized
+    public func sendAllAnnounces(displayName: String) async throws {
+        // Send both announces independently — one failing shouldn't block the other
+        do {
+            try await sendAnnounce(displayName: displayName)
+            DiagLog.log("[ANNOUNCE] Delivery announce sent")
+        } catch {
+            DiagLog.log("[ANNOUNCE] Delivery announce failed: \(error.localizedDescription)")
+            throw error
+        }
+
+        do {
+            try await sendTelephonyAnnounce(displayName: displayName)
+        } catch {
+            DiagLog.log("[ANNOUNCE] Telephony announce failed: \(error.localizedDescription)")
+        }
+    }
+
     /// Send an announce for the LXST telephony destination.
     ///
     /// This broadcasts the device's telephony endpoint to the network, allowing
@@ -1092,25 +1173,29 @@ public final class AppServices {
     ///
     /// - Parameter displayName: Display name to broadcast
     /// - Throws: AppServicesError if transport or call manager not initialized
-    public func sendTelephonyAnnounce(displayName: String) async throws {
+    private func sendTelephonyAnnounce(displayName: String) async throws {
         guard let transport = transport else {
+            DiagLog.log("[TELEPHONY_ANNOUNCE] Skipped: transport not connected")
             throw AppServicesError.transportNotConnected
         }
 
         guard let destination = callManager?.telephonyDestination else {
-            logger.info("Telephony announce skipped: CallManager not initialized")
+            DiagLog.log("[TELEPHONY_ANNOUNCE] Skipped: CallManager not initialized (callManager=\(callManager == nil ? "nil" : "exists"))")
             return
         }
 
         // Set the display name as app data on the telephony destination
         destination.appData = displayName.data(using: .utf8)
+        DiagLog.log("[TELEPHONY_ANNOUNCE] Sending for dest \(destination.hexHash), fullName=\(destination.fullName)")
 
         // Build and send the announce packet (no ratchet for telephony)
         let announce = Announce(destination: destination)
         let packet = try announce.buildPacket()
+        let packetHex = packet.encode().prefix(32).map { String(format: "%02x", $0) }.joined()
+        DiagLog.log("[TELEPHONY_ANNOUNCE] Packet first 32 bytes: \(packetHex)")
         try await transport.send(packet: packet)
 
-        logger.info("Telephony announce sent for destination: \(destination.hexHash)")
+        DiagLog.log("[TELEPHONY_ANNOUNCE] Sent for dest \(destination.hexHash)")
     }
 
     /// Wire transport callbacks that need app-layer context.
@@ -1119,6 +1204,10 @@ public final class AppServices {
             guard let self else { return }
             await self.autoAnnounce()
         }
+        // Wire diagnostic logging from transport to DiagLog
+        await transport.setOnDiagnostic { msg in
+            DiagLog.log(msg)
+        }
     }
 
     /// Auto-announce on interface connect using the stored display name.
@@ -1126,19 +1215,13 @@ public final class AppServices {
     /// Sends both the LXMF delivery announce and the LXST telephony announce
     /// so peers can discover us for both messaging and voice calls.
     private func autoAnnounce() async {
+        DiagLog.log("[AUTO_ANNOUNCE] triggered by onInterfaceAdded, callManager=\(callManager == nil ? "nil" : "exists")")
         let displayName = await SettingsRepository().getDisplayName()
         do {
-            try await sendAnnounce(displayName: displayName)
-            logger.info("Auto-announce completed on interface connect")
+            try await sendAllAnnounces(displayName: displayName)
+            DiagLog.log("[AUTO_ANNOUNCE] completed successfully")
         } catch {
-            logger.warning("Auto-announce failed: \(error.localizedDescription)")
-        }
-
-        // Also announce telephony destination for incoming calls
-        do {
-            try await sendTelephonyAnnounce(displayName: displayName)
-        } catch {
-            logger.warning("Telephony auto-announce failed: \(error.localizedDescription)")
+            DiagLog.log("[AUTO_ANNOUNCE] failed: \(error.localizedDescription)")
         }
     }
 }
