@@ -245,7 +245,7 @@ class MtuDiagRunner {
             let pathTable = try PathTable(
                 databasePath: tmpDir.appendingPathComponent("paths.db").path
             )
-            let transport = ReticuLumTransport(pathTable: pathTable)
+            let transport = ReticulumTransport(pathTable: pathTable)
             let identity = Identity()
 
             // Create AutoInterface

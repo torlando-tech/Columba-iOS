@@ -28,7 +28,7 @@ struct InterfaceInfo: Identifiable {
 
 /// ViewModel for the Network Status screen.
 ///
-/// Polls ReticuLumTransport every second to get a snapshot of all registered
+/// Polls ReticulumTransport every second to get a snapshot of all registered
 /// interfaces, including AutoInterfacePeers, and exposes them as observable state.
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
