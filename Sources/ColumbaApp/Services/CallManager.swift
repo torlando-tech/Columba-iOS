@@ -45,6 +45,9 @@ public final class CallManager {
     var isPttActive: Bool = false
     var callDuration: TimeInterval = 0
     var peerName: String?
+
+    /// Debug diagnostic text shown on the call screen during development.
+    var debugAudioInfo: String = ""
     var peerHash: String?
     var isIncoming: Bool = false
 
@@ -70,6 +73,9 @@ public final class CallManager {
 
     /// Flag to prevent re-entrant hangup when CallKit triggers CXEndCallAction.
     private var isHangingUpFromCallKit = false
+
+    /// Flag to prevent re-entrant answer when CallKit triggers CXAnswerCallAction.
+    private var isAnsweringFromCallKit = false
 
     // MARK: - Internal
 
@@ -284,11 +290,49 @@ public final class CallManager {
     }
 
     /// Answer an incoming call.
+    ///
+    /// On iOS, routes through CallKit so the system properly activates the
+    /// audio session and dismisses its incoming call UI. If the answer
+    /// originates from CallKit (via CXAnswerCallAction), calls Telephone
+    /// directly to avoid a re-entrant loop.
     func answerCall() {
         guard let telephone else { return }
+
+        #if os(iOS)
+        // If this answer was triggered by CallKit's CXAnswerCallAction, go
+        // directly to Telephone to avoid a re-entrant loop.
+        if isAnsweringFromCallKit {
+            isAnsweringFromCallKit = false
+            logger.error("[CALL] answerCall (from CallKit) — calling telephone.answer()")
+            Task {
+                await telephone.answer()
+            }
+            return
+        }
+
+        // Route through CallKit so the system activates the audio session
+        // and dismisses the incoming call notification.
+        // CXAnswerCallAction will call back into answerFromCallKit().
+        if let uuid = currentCallUUID {
+            logger.error("[CALL] answerCall — routing through CallKit")
+            callKitManager?.answerCall(uuid: uuid)
+            return
+        }
+        #endif
+
+        // Fallback: direct answer (no CallKit or no UUID)
+        logger.error("[CALL] answerCall (direct) — calling telephone.answer()")
         Task {
             await telephone.answer()
         }
+    }
+
+    /// Called by CallKitManager when the system requests answering the call
+    /// (CXAnswerCallAction). Performs the actual Telephone answer without
+    /// re-entering CallKit.
+    func answerFromCallKit() {
+        isAnsweringFromCallKit = true
+        answerCall()
     }
 
     /// Hang up the current call.
@@ -491,7 +535,35 @@ public final class CallManager {
     ///   await callManager.playReceivedAudio(decodedSamples)
     ///
     /// - Parameter samples: Float32 PCM samples at the profile's sample rate
+    private var playReceivedCount = 0
     func playReceivedAudio(_ samples: [Float]) {
+        playReceivedCount += 1
+
+        // Compute peak for diagnostics
+        let peak = samples.reduce(Float(0)) { Swift.max($0, abs($1)) }
+
+        if playReceivedCount == 1 || playReceivedCount % 50 == 0 {
+            let am = audioManager
+            let engRunning = am?.engine?.isRunning ?? false
+            let playerPlaying = am?.playerNode?.isPlaying ?? false
+            logger.error("[CALL] playReceivedAudio #\(self.playReceivedCount, privacy: .public): \(samples.count, privacy: .public) samples, peak=\(peak, privacy: .public), audioManager=\(am != nil, privacy: .public) engRunning=\(engRunning, privacy: .public) playerPlaying=\(playerPlaying, privacy: .public) profile=\(self.activeProfile.displayName, privacy: .public) ch=\(self.activeProfile.opusProfile?.channels ?? -1, privacy: .public)")
+        }
+
+        // Update debug overlay every 10th frame
+        if playReceivedCount == 1 || playReceivedCount % 10 == 0 {
+            let st = OpusCodec.lastSelfTestResult
+            let di = OpusCodec.lastDecodeInfo
+            let pi = AudioPipeline.lastPipelineInfo
+            var lines: [String] = []
+            lines.append("RX#\(playReceivedCount) fpeak=\(String(format: "%.4f", peak)) n=\(samples.count)")
+            if !di.isEmpty { lines.append(di) }
+            lines.append("dec=\(OpusCodec.totalDecodes) maxPk=\(OpusCodec.maxPeakInt16)")
+            if !pi.isEmpty { lines.append(pi) }
+            if !st.isEmpty { lines.append(st) }
+            lines.append("profile=\(activeProfile.displayName)")
+            debugAudioInfo = lines.joined(separator: "\n")
+        }
+
         audioManager?.playDecodedAudio(samples)
     }
 
@@ -527,6 +599,7 @@ public final class CallManager {
         audioManager = nil
         currentCallUUID = nil
         isHangingUpFromCallKit = false
+        isAnsweringFromCallKit = false
     }
 
     /// Resolve a contact name from the database or path table for an incoming caller.

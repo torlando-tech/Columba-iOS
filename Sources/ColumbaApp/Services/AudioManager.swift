@@ -70,8 +70,8 @@ public final class AudioManager {
 
     // MARK: - Private State
 
-    private var engine: AVAudioEngine?
-    private var playerNode: AVAudioPlayerNode?
+    private(set) var engine: AVAudioEngine?
+    private(set) var playerNode: AVAudioPlayerNode?
     private var captureBuffer: AudioRingBuffer
     private var drainTask: Task<Void, Never>?
     private var deviceSampleRate: Double = 48000
@@ -196,11 +196,13 @@ public final class AudioManager {
         try session.setPreferredSampleRate(sampleRate)
         try session.setActive(true, options: [])
 
-        if speakerEnabled {
-            try session.overrideOutputAudioPort(.speaker)
-        }
+        // Always route to speaker for VoIP calls. The earpiece is inaudible
+        // unless the phone is held to the ear, and LXST calls are typically
+        // used in speakerphone/hands-free mode. Users can toggle to earpiece
+        // via the speaker button if needed.
+        try session.overrideOutputAudioPort(.speaker)
 
-        logger.info("[AUDIO] Session activated: rate=\(self.sampleRate), ioBuf=\(self.ioBufferDuration), speaker=\(speakerEnabled)")
+        logger.info("[AUDIO] Session activated: rate=\(self.sampleRate), ioBuf=\(self.ioBufferDuration), speaker=true (forced)")
         #endif
     }
 
@@ -311,13 +313,23 @@ public final class AudioManager {
         case .newDeviceAvailable:
             logger.info("[AUDIO] New output device available: \(self.currentRoute)")
         case .categoryChange:
-            logger.error("[AUDIO] Audio category changed")
-            // Category change can stop the playerNode via engine reconfiguration.
-            // Restart the player immediately as a belt-and-suspenders defense
-            // (AVAudioEngineConfigurationChangeNotification handles the engine-stop case).
-            if let player = playerNode, engine?.isRunning == true, !player.isPlaying {
+            updateCurrentRoute()
+            logger.error("[AUDIO] Audio category changed, route=\(self.currentRoute, privacy: .public), engineRunning=\(self.engine?.isRunning ?? false, privacy: .public), playerPlaying=\(self.playerNode?.isPlaying ?? false, privacy: .public)")
+            // Category change can break player→mixer connections silently.
+            // Do a full reconnection as defense (same as handleEngineConfigurationChange).
+            if let eng = engine, let player = playerNode, isActive {
+                eng.disconnectNodeOutput(player)
+                if let playbackFormat = AVAudioFormat(
+                    standardFormatWithSampleRate: sampleRate,
+                    channels: AVAudioChannelCount(hwOutputChannels)
+                ) {
+                    eng.connect(player, to: eng.mainMixerNode, format: playbackFormat)
+                }
+                if !eng.isRunning {
+                    try? eng.start()
+                }
                 player.play()
-                logger.error("[AUDIO] Restarted playerNode after category change")
+                logger.error("[AUDIO] Reconnected player after category change")
             }
         default:
             break
@@ -467,23 +479,19 @@ public final class AudioManager {
             }
 
             // --- Playback setup ---
-            // Detect hardware output channel count BEFORE starting the engine.
-            // voiceChat mode uses a mono voice-processing IO unit; attempting to
-            // schedule stereo buffers on a stereo player connection in this mode
-            // produces silence because the stereo→mono downmix is bypassed.
-            // Connect the player with the hardware's actual channel count so the
-            // format chain is compatible end-to-end. Stereo codec frames will be
-            // downmixed to mono in playDecodedAudio() when needed.
-            let outputFormat = eng.outputNode.outputFormat(forBus: 0)
-            let hwOut = outputFormat.channelCount > 0 ? Int(outputFormat.channelCount) : 1
-            hwOutputChannels = hwOut
+            // Force mono player connection. voiceChat mode uses a mono Voice
+            // Processing IO unit internally — even if outputNode reports stereo
+            // (e.g., speaker mode), the VP unit collapses to mono. Scheduling
+            // stereo buffers through a stereo connection in this mode produces
+            // silence. Force mono end-to-end for guaranteed compatibility.
+            hwOutputChannels = 1
 
             let player = AVAudioPlayerNode()
             eng.attach(player)
 
             guard let playbackFormat = AVAudioFormat(
                 standardFormatWithSampleRate: sampleRate,
-                channels: AVAudioChannelCount(hwOut)
+                channels: 1
             ) else {
                 logger.error("[AUDIO] Failed to create playback format")
                 return
@@ -501,7 +509,7 @@ public final class AudioManager {
             updateCurrentRoute()
             startDrainLoop(hwChannels: hwChannels)
 
-            logger.error("[AUDIO] Pipeline started: capture=\(inputFormat.sampleRate)Hz \(hwChannels)ch, playback=\(self.sampleRate)Hz hwOut=\(hwOut)ch codec=\(self.channels)ch, frame=\(self.frameTimeMs)ms")
+            logger.error("[AUDIO] Pipeline started: capture=\(inputFormat.sampleRate, privacy: .public)Hz \(hwChannels, privacy: .public)ch, playback=mono, codec=\(self.channels, privacy: .public)ch, frame=\(self.frameTimeMs, privacy: .public)ms, mixVol=\(eng.mainMixerNode.outputVolume, privacy: .public)")
 
         } catch {
             logger.error("[AUDIO] Failed to start pipeline: \(error.localizedDescription)")
@@ -576,42 +584,41 @@ public final class AudioManager {
         guard isActive, let player = playerNode, let eng = engine, eng.isRunning else {
             playCount += 1
             if playCount == 1 || playCount % 50 == 0 {
-                logger.error("[AUDIO] playDecodedAudio DROPPED #\(self.playCount, privacy: .public): isActive=\(self.isActive, privacy: .public) engine=\(self.engine != nil, privacy: .public) running=\(self.engine?.isRunning ?? false, privacy: .public)")
+                logger.error("[AUDIO] DROPPED #\(self.playCount, privacy: .public): isActive=\(self.isActive, privacy: .public) engine=\(self.engine != nil, privacy: .public) running=\(self.engine?.isRunning ?? false, privacy: .public)")
             }
             return
         }
         playCount += 1
-        if playCount == 1 || playCount % 100 == 0 {
-            logger.error("[AUDIO] Scheduling buffer #\(self.playCount, privacy: .public): frames=\(samples.count / self.channels, privacy: .public) rate=\(self.sampleRate, privacy: .public)Hz hwOut=\(self.hwOutputChannels, privacy: .public)ch playing=\(player.isPlaying, privacy: .public)")
-        }
 
-        // Downmix to hardware output channel count if needed.
-        // voiceChat mode forces mono hardware; scheduling stereo buffers on a
-        // mono-connected player produces silence. Downmix (e.g. stereo→mono by
-        // averaging channels) so the buffer format matches the player connection.
-        let playbackCh = hwOutputChannels
+        // Always downmix to mono for playback.
         let inCh = channels
-        let playSamples: [Float]
-        if inCh > playbackCh {
-            // Average across all input channels to produce playbackCh channels.
-            let spf = samples.count / inCh
-            var mixed = [Float](repeating: 0, count: spf * playbackCh)
-            for i in 0..<spf {
+        let monoCount = samples.count / max(inCh, 1)
+        var mono = [Float](repeating: 0, count: monoCount)
+        if inCh > 1 {
+            for i in 0..<monoCount {
                 var sum: Float = 0
                 for c in 0..<inCh { sum += samples[i * inCh + c] }
-                mixed[i] = sum / Float(inCh)  // playbackCh == 1 (mono)
+                mono[i] = sum / Float(inCh)
             }
-            playSamples = mixed
         } else {
-            playSamples = samples
+            mono = samples
+        }
+
+        let frameCount = monoCount
+
+        // Compute peak of decoded audio for diagnostics
+        let peak = mono.reduce(Float(0)) { Swift.max($0, abs($1)) }
+
+        if playCount == 1 || playCount % 100 == 0 {
+            let outputFmt = eng.outputNode.outputFormat(forBus: 0)
+            logger.error("[AUDIO] Sched #\(self.playCount, privacy: .public): inSamples=\(samples.count, privacy: .public) inCh=\(inCh, privacy: .public) monoFrames=\(frameCount, privacy: .public) decodedPeak=\(peak, privacy: .public) playing=\(player.isPlaying, privacy: .public) mixVol=\(eng.mainMixerNode.outputVolume, privacy: .public) hwRate=\(outputFmt.sampleRate, privacy: .public) hwCh=\(outputFmt.channelCount, privacy: .public)")
         }
 
         guard let format = AVAudioFormat(
             standardFormatWithSampleRate: sampleRate,
-            channels: AVAudioChannelCount(playbackCh)
+            channels: 1
         ) else { return }
 
-        let frameCount = playSamples.count / playbackCh
         guard frameCount > 0 else { return }
 
         guard let buffer = AVAudioPCMBuffer(
@@ -621,23 +628,12 @@ public final class AudioManager {
 
         buffer.frameLength = AVAudioFrameCount(frameCount)
 
-        if playbackCh == 1 {
-            let dest = buffer.floatChannelData![0]
-            playSamples.withUnsafeBufferPointer { src in
-                guard let base = src.baseAddress else { return }
-                dest.initialize(from: base, count: frameCount)
-            }
-        } else {
-            // Deinterleave into separate channel buffers
-            for ch in 0..<playbackCh {
-                let dest = buffer.floatChannelData![ch]
-                for i in 0..<frameCount {
-                    dest[i] = playSamples[i * playbackCh + ch]
-                }
-            }
+        let dest = buffer.floatChannelData![0]
+        mono.withUnsafeBufferPointer { src in
+            guard let base = src.baseAddress else { return }
+            dest.initialize(from: base, count: frameCount)
         }
 
-        // scheduleBuffer is thread-safe; completion handler is nil to avoid overhead
         player.scheduleBuffer(buffer, completionHandler: nil)
     }
 
