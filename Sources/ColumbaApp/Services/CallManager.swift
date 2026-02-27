@@ -77,10 +77,17 @@ public final class CallManager {
     /// Flag to prevent re-entrant answer when CallKit triggers CXAnswerCallAction.
     private var isAnsweringFromCallKit = false
 
+    /// Set to true when CallKit fires `didActivateAudioSession`.
+    /// For outgoing calls, this is set early (during CXStartCallAction).
+    /// For incoming calls, this is set after the user answers.
+    /// Used by `startAudio()` to decide whether to start the engine immediately
+    /// or defer until the session is activated.
+    private var audioSessionActivatedByCallKit = false
+
     // MARK: - Internal
 
     private var telephone: Telephone?
-    private var transport: ReticuLumTransport?
+    private var transport: ReticulumTransport?
     private var pathTable: PathTable?
     private var database: LXMFDatabase?
     private var durationTask: Task<Void, Never>?
@@ -95,17 +102,24 @@ public final class CallManager {
     /// 1. Creates the Telephone actor (which registers its destination with transport)
     /// 2. Registers a destination link callback so incoming links are routed to Telephone
     /// 3. Wires up ringing/established/ended callbacks for UI state updates
-    func initialize(identity: Identity, transport: ReticuLumTransport, pathTable: PathTable?, database: LXMFDatabase?) async {
+    func initialize(identity: Identity, transport: ReticulumTransport, pathTable: PathTable?, database: LXMFDatabase?) async {
         self.pathTable = pathTable
         self.transport = transport
         self.database = database
         let phone = await Telephone(identity: identity, transport: transport)
         self.telephone = phone
 
+        // Wire diagnostic logging
+        await phone.setDiagnostic { msg in DiagLog.log(msg) }
+
         // Set decoded audio callback so remote audio frames reach AudioManager
         await phone.setDecodedAudioCallback { [weak self] samples, rate, channels in
             await MainActor.run {
-                self?.playReceivedAudio(samples)
+                guard let self else { return }
+                if self.playReceivedCount == 0 {
+                    DiagLog.log("[AUDIO_RX] First decoded frame: \(samples.count) samples, rate=\(rate), ch=\(channels), audioManager=\(self.audioManager != nil)")
+                }
+                self.playReceivedAudio(samples)
             }
         }
 
@@ -131,8 +145,15 @@ public final class CallManager {
 
         await transport.registerDestinationLinkCallback(for: telephonyDestHash) { [weak self] (link: Link) async in
             guard let self else { return }
-            await MainActor.run {
-                self.handleIncomingLink(link)
+            // This callback fires BEFORE the link is fully established (pre-LRRTT).
+            // Only configure the link here — do NOT send data (no encryption keys yet).
+            // Set the link established callback to handle the incoming call once
+            // the link is active and we can safely send AVAILABLE/RINGING signals.
+            await link.setLinkEstablishedCallback { [weak self] (establishedLink: Link) async in
+                guard let self else { return }
+                await MainActor.run {
+                    self.handleIncomingLink(establishedLink)
+                }
             }
         }
 
@@ -160,14 +181,19 @@ public final class CallManager {
         await phone.setEstablishedCallback { [weak self] remoteIdentity in
             await MainActor.run {
                 guard let self else { return }
+                DiagLog.log("[CALL] establishedCallback fired, isIncoming=\(self.isIncoming), profile=\(self.activeProfile.displayName)")
                 self.callState = .established
                 self.startDurationTimer()
                 self.startAudio()
+                DiagLog.log("[CALL] startAudio() done, audioManager=\(self.audioManager != nil)")
                 self.logger.error("[CALL] Established with: \(remoteIdentity.hexHash, privacy: .public)")
 
-                // Report call connected to CallKit
+                // Report call connected to CallKit (outgoing calls ONLY).
+                // For incoming calls, CallKit already considers the call connected
+                // after CXAnswerCallAction is fulfilled. Calling reportOutgoingCall()
+                // for an incoming UUID confuses CallKit and can trigger CXEndCallAction.
                 #if os(iOS)
-                if let uuid = self.currentCallUUID {
+                if !self.isIncoming, let uuid = self.currentCallUUID {
                     self.callKitManager?.reportCallConnected(uuid: uuid)
                 }
                 #endif
@@ -342,12 +368,14 @@ public final class CallManager {
     /// (via CXEndCallAction), calls Telephone.hangup() directly.
     func hangup() {
         guard let telephone else { return }
+        DiagLog.log("[CALL] hangup() called, isHangingUpFromCallKit=\(isHangingUpFromCallKit), callState=\(String(describing: callState))")
 
         #if os(iOS)
         // If this hangup was triggered by CallKit's CXEndCallAction, go
         // directly to Telephone to avoid a re-entrant loop.
         if isHangingUpFromCallKit {
             isHangingUpFromCallKit = false
+            DiagLog.log("[CALL] hangup() via CallKit path")
             Task {
                 await telephone.hangup()
             }
@@ -357,12 +385,14 @@ public final class CallManager {
         // Route through CallKit so the system call UI is dismissed.
         // CXEndCallAction will call back into hangupFromCallKit().
         if let uuid = currentCallUUID {
+            DiagLog.log("[CALL] hangup() routing through CallKit")
             callKitManager?.endCall(uuid: uuid)
             return
         }
         #endif
 
         // Fallback: direct hangup (no CallKit or no UUID)
+        DiagLog.log("[CALL] hangup() direct (no CallKit)")
         Task {
             await telephone.hangup()
         }
@@ -373,13 +403,38 @@ public final class CallManager {
     /// re-entering CallKit.
     func hangupFromCallKit() {
         guard let telephone else { return }
+        DiagLog.log("[CALL] hangupFromCallKit() triggered")
         isHangingUpFromCallKit = true
         hangup()
+    }
+
+    /// Called by CallKitManager when the audio session is activated by the system.
+    ///
+    /// For **outgoing** calls this fires early (during CXStartCallAction), before
+    /// AudioManager exists — we just set the flag for later.
+    ///
+    /// For **incoming** calls this fires AFTER startAudio() has created the
+    /// AudioManager but deferred starting the engine. We start it now that
+    /// the session is truly active.
+    func handleAudioSessionActivated() {
+        audioSessionActivatedByCallKit = true
+        DiagLog.log("[CALL] handleAudioSessionActivated, audioManager=\(audioManager != nil), isActive=\(audioManager?.isActive ?? false)")
+
+        if let manager = audioManager, !manager.isActive {
+            // Deferred start: AudioManager was created but not started (incoming call).
+            // Now that CallKit activated the session, start the engine.
+            DiagLog.log("[AUDIO] Starting deferred AudioManager now that session is active")
+            manager.start(speakerEnabled: isSpeakerOn)
+        } else if let manager = audioManager, manager.isActive {
+            // Already running — restart capture in case session changed
+            manager.handleAudioSessionActivated()
+        }
     }
 
     /// Called by CallKitManager when the provider is reset (e.g., system
     /// force-stops all calls). Cleans up any active call state.
     func handleCallKitReset() {
+        DiagLog.log("[CALL] handleCallKitReset() triggered")
         logger.info("CallKit provider reset — cleaning up call state")
         stopAudio()
         stopDurationTimer()
@@ -401,9 +456,13 @@ public final class CallManager {
     /// native incoming call UI (including on the lock screen). The Telephone
     /// actor processes the link signaling in parallel.
     func handleIncomingLink(_ link: Link) {
-        guard let telephone else { return }
+        guard let telephone else {
+            DiagLog.log("[CALL] handleIncomingLink: telephone is nil!")
+            return
+        }
+        DiagLog.log("[CALL] handleIncomingLink: starting incoming call setup")
         self.isIncoming = true
-        self.callState = .ringing
+        self.callState = .connecting
 
         // Generate a UUID for CallKit tracking
         let callUUID = UUID()
@@ -491,8 +550,21 @@ public final class CallManager {
     /// Called when a call transitions to `.established`. Configures the audio
     /// pipeline based on the active telephony profile and wires up the capture
     /// callback with mute/PTT gating.
+    ///
+    /// For **outgoing** calls, `didActivateAudioSession` has already fired by this
+    /// point, so the engine starts immediately with an active audio session.
+    ///
+    /// For **incoming** calls, `didActivateAudioSession` hasn't fired yet — CallKit
+    /// activates the session asynchronously after CXAnswerCallAction. We create
+    /// the AudioManager and wire callbacks, but defer `start()` until
+    /// `handleAudioSessionActivated()` fires. This ensures the mic works because
+    /// the engine starts with an already-active session (same as outgoing).
     private func startAudio() {
-        guard audioManager == nil else { return }
+        guard audioManager == nil else {
+            DiagLog.log("[AUDIO] startAudio() skipped — already active")
+            return
+        }
+        DiagLog.log("[AUDIO] startAudio() creating AudioManager with profile=\(activeProfile.displayName), sessionActive=\(audioSessionActivatedByCallKit)")
 
         let manager = AudioManager(profile: activeProfile)
         self.audioManager = manager
@@ -511,7 +583,20 @@ public final class CallManager {
             Task { await self.telephone?.sendAudioFrame(samples) }
         }
 
+        #if os(iOS)
+        if audioSessionActivatedByCallKit {
+            // Session already active (outgoing calls, or rare fast incoming activation).
+            // Start engine immediately — mic will work.
+            manager.start(speakerEnabled: isSpeakerOn)
+            DiagLog.log("[AUDIO] startAudio() engine started immediately (session already active)")
+        } else {
+            // Incoming call: CallKit hasn't activated the session yet.
+            // Defer engine start to handleAudioSessionActivated().
+            DiagLog.log("[AUDIO] startAudio() deferring engine start until didActivateAudioSession")
+        }
+        #else
         manager.start(speakerEnabled: isSpeakerOn)
+        #endif
 
         logger.info("Audio pipeline started for profile: \(self.activeProfile.displayName)")
     }
@@ -600,6 +685,7 @@ public final class CallManager {
         currentCallUUID = nil
         isHangingUpFromCallKit = false
         isAnsweringFromCallKit = false
+        audioSessionActivatedByCallKit = false
     }
 
     /// Resolve a contact name from the database or path table for an incoming caller.

@@ -337,6 +337,86 @@ public final class AudioManager {
         #endif
     }
 
+    /// Restart the audio capture pipeline after CallKit activates the audio session.
+    ///
+    /// For incoming calls, `AudioManager.start()` runs BEFORE CallKit's
+    /// `didActivateAudioSession` fires. The AVAudioEngine input tap is installed
+    /// but the audio session isn't yet activated by CallKit, so the mic produces
+    /// no data. When CallKit activates the session, we must stop the engine,
+    /// remove the old tap, reinstall it (picking up the new session config),
+    /// and restart — this makes the mic start producing audio.
+    func handleAudioSessionActivated() {
+        guard isActive, let eng = engine else {
+            DiagLog.log("[AUDIO] handleAudioSessionActivated — not active, skipping")
+            return
+        }
+        DiagLog.log("[AUDIO] handleAudioSessionActivated — restarting capture pipeline")
+
+        // Stop engine so we can remove/reinstall the tap
+        eng.stop()
+        eng.inputNode.removeTap(onBus: 0)
+
+        // Re-query hardware format after session activation (may have changed)
+        let inputFormat = eng.inputNode.outputFormat(forBus: 0)
+        let hwChannels = Int(inputFormat.channelCount)
+        deviceSampleRate = inputFormat.sampleRate
+
+        // Reinstall capture tap with the now-active session
+        let spf = samplesPerFrame
+        let ch = channels
+        let ringBuf = captureBuffer
+
+        eng.inputNode.installTap(
+            onBus: 0,
+            bufferSize: AVAudioFrameCount(spf),
+            format: inputFormat
+        ) { buffer, _ in
+            guard let channelData = buffer.floatChannelData else { return }
+            let frameCount = Int(buffer.frameLength)
+            let srcChannels = Int(buffer.format.channelCount)
+
+            if ch == 1 {
+                let ptr = channelData[0]
+                for i in 0..<frameCount {
+                    ringBuf.write(ptr[i])
+                }
+            } else {
+                for i in 0..<frameCount {
+                    for c in 0..<min(srcChannels, ch) {
+                        ringBuf.write(channelData[c][i])
+                    }
+                }
+            }
+        }
+
+        // Reconnect player node (connections broken by stop)
+        if let player = playerNode {
+            eng.disconnectNodeOutput(player)
+            if let playbackFormat = AVAudioFormat(
+                standardFormatWithSampleRate: sampleRate,
+                channels: 1
+            ) {
+                eng.connect(player, to: eng.mainMixerNode, format: playbackFormat)
+            }
+        }
+
+        // Restart engine + player + drain loop
+        do {
+            try eng.start()
+            playerNode?.play()
+
+            // Restart drain loop with potentially new hw channel count
+            drainTask?.cancel()
+            startDrainLoop(hwChannels: hwChannels)
+
+            DiagLog.log("[AUDIO] Capture restarted after session activation: \(inputFormat.sampleRate)Hz \(hwChannels)ch")
+            logger.error("[AUDIO] Capture restarted after session activation: \(inputFormat.sampleRate, privacy: .public)Hz \(hwChannels, privacy: .public)ch")
+        } catch {
+            DiagLog.log("[AUDIO] Failed to restart after session activation: \(error.localizedDescription)")
+            logger.error("[AUDIO] Failed to restart after session activation: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// Handle AVAudioEngine configuration changes.
     ///
     /// Fired when the audio hardware changes while the engine is running — most
