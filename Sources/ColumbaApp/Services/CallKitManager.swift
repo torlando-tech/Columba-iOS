@@ -167,6 +167,28 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
         }
     }
 
+    /// Request the system to answer an incoming call.
+    ///
+    /// This goes through CXCallController so the system properly activates
+    /// the audio session and dismisses the incoming call notification.
+    ///
+    /// - Parameter uuid: Unique identifier for the call to answer
+    func answerCall(uuid: UUID) {
+        let action = CXAnswerCallAction(call: uuid)
+        let transaction = CXTransaction(action: action)
+        callController.request(transaction) { [weak self] error in
+            if let error = error {
+                self?.logger.warning("Failed to request answer call: \(error.localizedDescription)")
+                // Fallback: answer directly if CallKit rejects
+                Task { @MainActor [weak self] in
+                    self?.callManager?.answerFromCallKit()
+                }
+            } else {
+                self?.logger.info("Requested answer call: \(uuid)")
+            }
+        }
+    }
+
     /// Request the system to end a call.
     ///
     /// - Parameter uuid: Unique identifier for the call to end
@@ -211,9 +233,10 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
         // Configure audio session before answering
         configureAudioSession()
 
-        // Dispatch answer to CallManager on MainActor
+        // Dispatch answer to CallManager on MainActor.
+        // Use answerFromCallKit() to avoid re-entrant loop back to CallKit.
         Task { @MainActor [weak self] in
-            self?.callManager?.answerCall()
+            self?.callManager?.answerFromCallKit()
         }
 
         action.fulfill()
@@ -246,8 +269,11 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        logger.info("Audio session activated by CallKit")
-        configureAudioSession()
+        logger.error("[CALLKIT] didActivateAudioSession — deferring to AudioManager")
+        // Do NOT call configureAudioSession() here. AudioManager owns the session
+        // configuration once the call is established. Reconfiguring here fights
+        // with AudioManager's category/options and triggers a .categoryChange
+        // route notification that can disrupt the AVAudioEngine player connections.
     }
 
     public func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
@@ -261,7 +287,11 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
+            // Match AudioManager's options exactly to avoid triggering a
+            // .categoryChange route notification when AudioManager starts.
+            // Speaker routing is handled via overrideOutputAudioPort, not
+            // .defaultToSpeaker (which conflicts with .allowBluetoothA2DP).
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP])
             try session.setActive(true, options: [])
             logger.info("Audio session configured for voice chat")
         } catch {

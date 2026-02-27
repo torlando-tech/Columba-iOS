@@ -116,11 +116,15 @@ struct IncomingCallScreen: View {
             }
         }
         .onChange(of: callManager.callState) { _, newState in
-            if case .idle = newState {
+            switch newState {
+            case .idle, .ended:
                 dismiss()
-            }
-            if case .ended = newState {
-                dismiss()
+            case .connecting, .established:
+                // Call was answered (possibly via CallKit notification).
+                // Dismiss incoming screen and transition to active call screen.
+                onAnswer()
+            default:
+                break
             }
         }
     }
