@@ -88,9 +88,11 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
 
         provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
             if let error = error {
+                DiagLog.log("[CALLKIT] reportIncomingCall FAILED: \(error.localizedDescription)")
                 self?.logger.warning("Failed to report incoming call: \(error.localizedDescription)")
                 self?.activeCallUUID = nil
             } else {
+                DiagLog.log("[CALLKIT] reportIncomingCall OK: \(uuid)")
                 self?.logger.info("Reported incoming call: \(uuid)")
             }
             completion(error)
@@ -127,6 +129,7 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     ///
     /// - Parameter uuid: Unique identifier for this call
     func reportCallConnected(uuid: UUID) {
+        DiagLog.log("[CALLKIT] reportCallConnected: \(uuid)")
         provider.reportOutgoingCall(with: uuid, connectedAt: Date())
         logger.info("Reported call connected: \(uuid)")
     }
@@ -207,6 +210,7 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     // MARK: - CXProviderDelegate
 
     public func providerDidReset(_ provider: CXProvider) {
+        DiagLog.log("[CALLKIT] providerDidReset")
         logger.info("Provider did reset")
         activeCallUUID = nil
         // Notify CallManager to clean up any active call state
@@ -216,6 +220,7 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        DiagLog.log("[CALLKIT] CXStartCallAction: \(action.callUUID)")
         logger.info("CXStartCallAction for: \(action.callUUID)")
         activeCallUUID = action.callUUID
 
@@ -228,6 +233,7 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        DiagLog.log("[CALLKIT] CXAnswerCallAction: \(action.callUUID)")
         logger.info("CXAnswerCallAction for: \(action.callUUID)")
 
         // Configure audio session before answering
@@ -243,6 +249,7 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        DiagLog.log("[CALLKIT] CXEndCallAction: \(action.callUUID)")
         logger.info("CXEndCallAction for: \(action.callUUID)")
 
         // Dispatch hangup to CallManager on MainActor
@@ -255,6 +262,7 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+        DiagLog.log("[CALLKIT] CXSetMutedCallAction: muted=\(action.isMuted)")
         logger.info("CXSetMutedCallAction muted=\(action.isMuted) for: \(action.callUUID)")
 
         // Sync mute state to CallManager
@@ -269,14 +277,18 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        logger.error("[CALLKIT] didActivateAudioSession — deferring to AudioManager")
-        // Do NOT call configureAudioSession() here. AudioManager owns the session
-        // configuration once the call is established. Reconfiguring here fights
-        // with AudioManager's category/options and triggers a .categoryChange
-        // route notification that can disrupt the AVAudioEngine player connections.
+        DiagLog.log("[CALLKIT] didActivateAudioSession")
+        logger.error("[CALLKIT] didActivateAudioSession — notifying CallManager")
+        // Notify CallManager so AudioManager can restart its capture pipeline.
+        // For incoming calls, AudioManager.start() runs BEFORE this callback,
+        // so the mic input tap gets no data until the session is activated.
+        Task { @MainActor [weak self] in
+            self?.callManager?.handleAudioSessionActivated()
+        }
     }
 
     public func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        DiagLog.log("[CALLKIT] didDeactivateAudioSession")
         logger.info("Audio session deactivated")
         // Audio session deactivated after call ends.
         deactivateAudioSession()
