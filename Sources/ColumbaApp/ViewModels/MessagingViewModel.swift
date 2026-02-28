@@ -114,10 +114,12 @@ public final class MessagingViewModel {
 
             // Populate received interface from path table for received messages
             if let pathTable = appServices.pathTable {
-                let interfaceId = await pathTable.lookup(destinationHash: conversationHash)?.interfaceId
-                if let ifaceId = interfaceId {
+                let entry = await pathTable.lookup(destinationHash: conversationHash)
+                if let ifaceId = entry?.interfaceId, !ifaceId.isEmpty {
+                    // Look up the human-readable name from the interface config
+                    let ifaceName = await appServices.interfaceName(for: ifaceId) ?? ifaceId
                     for i in loaded.indices where !loaded[i].isFromMe {
-                        loaded[i].receivedInterface = ifaceId
+                        loaded[i].receivedInterface = ifaceName
                     }
                 }
             }
@@ -152,10 +154,11 @@ public final class MessagingViewModel {
             var older = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
 
             if let pathTable = appServices.pathTable {
-                let interfaceId = await pathTable.lookup(destinationHash: conversationHash)?.interfaceId
-                if let ifaceId = interfaceId {
+                let entry = await pathTable.lookup(destinationHash: conversationHash)
+                if let ifaceId = entry?.interfaceId, !ifaceId.isEmpty {
+                    let ifaceName = await appServices.interfaceName(for: ifaceId) ?? ifaceId
                     for i in older.indices where !older[i].isFromMe {
-                        older[i].receivedInterface = ifaceId
+                        older[i].receivedInterface = ifaceName
                     }
                 }
             }

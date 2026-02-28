@@ -118,6 +118,13 @@ public final class AppServices {
     /// Call manager for LXST voice call UI integration.
     public var callManager: CallManager?
 
+    // MARK: - Interface Lookup
+
+    /// Get a human-readable name for an interface ID.
+    public func interfaceName(for interfaceId: String) async -> String? {
+        await transport?.getInterfaceName(for: interfaceId)
+    }
+
     // MARK: - Observable Properties
 
     /// Connection state (observable for UI binding).
