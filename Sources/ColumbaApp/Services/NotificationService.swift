@@ -14,12 +14,27 @@ import LXMFSwift
 ///
 /// Reads notification preferences from UserDefaults (same keys as SettingsViewModel)
 /// and posts local notifications via UNUserNotificationCenter when messages arrive.
+/// Delegate that allows notifications to display while the app is in the foreground.
+@available(iOS 17.0, macOS 14.0, *)
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .badge])
+    }
+}
+
 @available(iOS 17.0, macOS 14.0, *)
 public final class NotificationService: Sendable {
 
     // MARK: - Singleton
 
     public static let shared = NotificationService()
+
+    /// Delegate for foreground notification display (must be retained).
+    nonisolated(unsafe) static let delegate = NotificationDelegate()
 
     // MARK: - Constants
 
@@ -50,6 +65,10 @@ public final class NotificationService: Sendable {
     @discardableResult
     public func requestPermission() async -> Bool {
         let center = UNUserNotificationCenter.current()
+        // Install delegate so notifications display in foreground
+        await MainActor.run {
+            center.delegate = Self.delegate
+        }
         do {
             let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
             if granted {

@@ -269,6 +269,16 @@ public final class SettingsViewModel {
     private func loadLocalSettings() {
         let defaults = UserDefaults.standard
 
+        // Register sane defaults so bool(forKey:) returns true for notifications
+        // even if the key was never explicitly written (e.g. pre-existing installs).
+        defaults.register(defaults: [
+            "notifications_enabled": true,
+            "show_message_previews": true,
+            "play_sounds": true,
+            "vibrate": true,
+            "auto_announce_enabled": true
+        ])
+
         blockUnknownSenders = defaults.bool(forKey: "block_unknown_senders")
         isNotificationsEnabled = defaults.bool(forKey: "notifications_enabled")
         showMessagePreviews = defaults.bool(forKey: "show_message_previews")

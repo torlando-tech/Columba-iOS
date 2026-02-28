@@ -395,10 +395,8 @@ struct RootView: View {
                 }
             }
 
-            // 8. Request notification permission if enabled
-            if UserDefaults.standard.bool(forKey: "notifications_enabled") {
-                await NotificationService.shared.requestPermission()
-            }
+            // 8. Request notification permission and install foreground delegate
+            await NotificationService.shared.requestPermission()
 
             self.isInitialized = true
 
