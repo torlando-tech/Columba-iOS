@@ -218,21 +218,18 @@ struct MessageDetailView: View {
     }
 
     private func receivedInterfaceCard(_ interfaceId: String) -> some View {
-        let (icon, name, subtitle): (String, String, String) = {
-            if interfaceId.hasPrefix("ble") {
-                return ("wave.3.right", "Bluetooth LE",
-                        "Received via BLE mesh interface")
-            } else if interfaceId.hasPrefix("rnode") {
-                return ("antenna.radiowaves.left.and.right", "RNode",
-                        "Received via RNode LoRa radio")
-            } else if interfaceId.hasPrefix("auto") {
-                return ("wifi", "AutoInterface (WiFi/LAN)",
-                        "Received via local network multicast")
-            } else if interfaceId.hasPrefix("tcp") {
-                return ("globe", "TCP",
-                        "Received via TCP transport")
+        let id = interfaceId.lowercased()
+        let (icon, name): (String, String) = {
+            if id.contains("ble") {
+                return ("wave.3.right", "Bluetooth LE")
+            } else if id.contains("rnode") {
+                return ("antenna.radiowaves.left.and.right", "RNode")
+            } else if id.contains("auto") {
+                return ("wifi", "AutoInterface (WiFi/LAN)")
+            } else if id.contains("tcp") {
+                return ("globe", "TCP")
             } else {
-                return ("network", interfaceId, "")
+                return ("globe", "Network")
             }
         }()
 
@@ -241,7 +238,7 @@ struct MessageDetailView: View {
             iconColor: .cyan,
             title: "Receiving Interface",
             content: name,
-            subtitle: subtitle
+            subtitle: interfaceId
         )
     }
 
