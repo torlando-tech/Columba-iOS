@@ -362,6 +362,9 @@ public struct Message: Identifiable, Equatable {
         self.rssi = record.rssi
         self.snr = record.snr
 
+        // Receiving interface from DB
+        self.receivedInterface = record.receivingInterface
+
         // Extract fields from packed wire format if available
         if let lxMessage = try? LXMessage.unpackFromBytes(record.packedLxmf) {
             // Re-extract content from unpacked message if DB column was empty

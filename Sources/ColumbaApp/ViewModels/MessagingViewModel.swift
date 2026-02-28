@@ -110,19 +110,7 @@ public final class MessagingViewModel {
             // Fetch most recent page
             let records = try await repository.fetchMessageRecords(
                 for: conversationHash, limit: Self.pageSize, offset: 0)
-            var loaded = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
-
-            // Populate received interface from path table for received messages
-            if let pathTable = appServices.pathTable {
-                let entry = await pathTable.lookup(destinationHash: conversationHash)
-                if let ifaceId = entry?.interfaceId, !ifaceId.isEmpty {
-                    // Look up the human-readable name from the interface config
-                    let ifaceName = await appServices.interfaceName(for: ifaceId) ?? ifaceId
-                    for i in loaded.indices where !loaded[i].isFromMe {
-                        loaded[i].receivedInterface = ifaceName
-                    }
-                }
-            }
+            let loaded = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
 
             messages = loaded
             allMessagesLoaded = records.count < Self.pageSize
@@ -151,17 +139,7 @@ public final class MessagingViewModel {
                 allMessagesLoaded = true
                 return
             }
-            var older = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
-
-            if let pathTable = appServices.pathTable {
-                let entry = await pathTable.lookup(destinationHash: conversationHash)
-                if let ifaceId = entry?.interfaceId, !ifaceId.isEmpty {
-                    let ifaceName = await appServices.interfaceName(for: ifaceId) ?? ifaceId
-                    for i in older.indices where !older[i].isFromMe {
-                        older[i].receivedInterface = ifaceName
-                    }
-                }
-            }
+            let older = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
 
             messages.insert(contentsOf: older, at: 0)
             if records.count < Self.pageSize {
