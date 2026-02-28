@@ -337,6 +337,24 @@ public final class MessagingViewModel {
         _ = await sendMessage(text: content)
     }
 
+    /// Delete a message from the conversation.
+    @MainActor
+    public func deleteMessage(messageId: String, messageHash: Data?) async {
+        // Remove from UI immediately
+        withAnimation {
+            messages.removeAll { $0.id == messageId }
+        }
+
+        // Delete from database if we have the hash
+        if let hash = messageHash {
+            do {
+                try await repository.deleteMessage(hash)
+            } catch {
+                logger.error("Failed to delete message: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// Check if a message is from the local user.
     public func isMessageFromMe(_ message: Message) -> Bool {
         message.isFromMe

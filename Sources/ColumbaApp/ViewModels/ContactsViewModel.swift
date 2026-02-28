@@ -17,6 +17,7 @@ import ReticulumSwift
 public enum ContactBadgeType: String, Sendable, Equatable, Hashable {
     case peer = "Peer"
     case relay = "RELAY"
+    case audio = "Audio"
 }
 
 // MARK: - Contact Model
@@ -38,6 +39,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
     public var iconFgColor: String?
     public var iconBgColor: String?
     public let interfaceId: String?
+    public let aspect: String?
 
     /// Icon identifier for the interface this announce was received on.
     /// Returns "bluetooth" (MDI name) for BLE, SF Symbol names for others.
@@ -47,6 +49,20 @@ public struct Contact: Identifiable, Sendable, Hashable {
         if iface.hasPrefix("rnode") { return "antenna.radiowaves.left.and.right" }
         if iface.hasPrefix("auto") { return "wifi" }
         return "globe" // tcp and others
+    }
+
+    /// Whether this is an LXST telephony (audio/voice call) announce.
+    public var isAudio: Bool {
+        aspect == "lxst.telephony"
+    }
+
+    /// Interface filter category for this contact.
+    public var interfaceFilterType: InterfaceFilter {
+        guard let iface = interfaceId else { return .tcp }
+        if iface.hasPrefix("ble") { return .ble }
+        if iface.hasPrefix("rnode") { return .rnode }
+        if iface.hasPrefix("auto") { return .wifi }
+        return .tcp
     }
 
     /// Display name with fallback to "Unknown Peer".
@@ -101,8 +117,9 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.isOnline = Date() < entry.expires
         self.isFavorite = false
         self.interfaceId = entry.interfaceId
+        self.aspect = entry.detectedAspect
 
-        // Detect propagation nodes via aspect check or appData parsing
+        // Detect announce type via aspect check or appData parsing
         if entry.isLXMFPropagationNode {
             self.badgeType = .relay
             self.isRelay = true
@@ -110,6 +127,9 @@ public struct Contact: Identifiable, Sendable, Hashable {
                   let _ = PropagationNodeInfo.parse(from: appData) {
             self.badgeType = .relay
             self.isRelay = true
+        } else if entry.isLXSTTelephony {
+            self.badgeType = .audio
+            self.isRelay = false
         } else {
             self.badgeType = .peer
             self.isRelay = false
@@ -134,6 +154,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.iconFgColor = record.iconFgColor
         self.iconBgColor = record.iconBgColor
         self.interfaceId = nil
+        self.aspect = nil
     }
 
     public init(
@@ -148,7 +169,8 @@ public struct Contact: Identifiable, Sendable, Hashable {
         isOnline: Bool,
         isFavorite: Bool,
         isRelay: Bool,
-        interfaceId: String? = nil
+        interfaceId: String? = nil,
+        aspect: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -162,6 +184,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.isFavorite = isFavorite
         self.isRelay = isRelay
         self.interfaceId = interfaceId
+        self.aspect = aspect
     }
 }
 
@@ -173,11 +196,21 @@ public enum ContactsTab: Int, Sendable, Equatable, Hashable {
     case network = 1
 }
 
-/// Filter for network announces by type.
+/// Filter for network announces by aspect type.
 public enum AnnounceFilter: String, Sendable, Equatable, Hashable, CaseIterable {
-    case peers = "Peers"
-    case relays = "Relays"
     case all = "All"
+    case peers = "Peers"
+    case audio = "Audio"
+    case relays = "Relays"
+}
+
+/// Filter for network announces by received interface.
+public enum InterfaceFilter: String, Sendable, Equatable, Hashable, CaseIterable {
+    case all = "All"
+    case tcp = "TCP"
+    case wifi = "WiFi"
+    case ble = "BLE"
+    case rnode = "RNode"
 }
 
 // MARK: - ViewModel
@@ -212,8 +245,11 @@ public final class ContactsViewModel {
     /// Search text.
     public var searchText: String = ""
 
-    /// Network announces filter (default: peers only).
-    public var announceFilter: AnnounceFilter = .peers
+    /// Network announces aspect filter.
+    public var announceFilter: AnnounceFilter = .all
+
+    /// Network announces interface filter.
+    public var interfaceFilter: InterfaceFilter = .all
 
     /// Currently selected relay node hash (from PropagationNodeManager).
     public var selectedRelayHash: Data?
@@ -241,18 +277,25 @@ public final class ContactsViewModel {
         }
     }
 
-    /// Filtered network announces based on search and type filter.
+    /// Filtered network announces based on search, aspect filter, and interface filter.
     public var filteredNetworkAnnounces: [Contact] {
         var results = networkAnnounces
 
-        // Apply type filter
+        // Apply aspect filter
         switch announceFilter {
-        case .peers:
-            results = results.filter { !$0.isRelay }
-        case .relays:
-            results = results.filter { $0.isRelay }
         case .all:
             break
+        case .peers:
+            results = results.filter { !$0.isRelay && !$0.isAudio }
+        case .audio:
+            results = results.filter { $0.isAudio }
+        case .relays:
+            results = results.filter { $0.isRelay }
+        }
+
+        // Apply interface filter
+        if interfaceFilter != .all {
+            results = results.filter { $0.interfaceFilterType == interfaceFilter }
         }
 
         // Apply search filter
@@ -336,9 +379,8 @@ public final class ContactsViewModel {
     /// Handle a new path entry from the stream.
     @MainActor
     private func handleNewPathEntry(_ entry: PathEntry) {
-        // Skip non-LXMF destinations by verifying the destination hash matches lxmf.delivery aspect
-        guard entry.isLXMFDestination else { return }
-        guard let appData = entry.appData, !appData.isEmpty else { return }
+        // Skip unknown destinations (only show LXMF, LXST, NomadNet)
+        guard entry.isKnownDestination else { return }
 
         var contact = Contact(from: entry)
 
@@ -350,7 +392,8 @@ public final class ContactsViewModel {
                 identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
                 badgeType: contact.badgeType, hopCount: contact.hopCount,
                 signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay
+                isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay,
+                interfaceId: contact.interfaceId, aspect: contact.aspect
             )
         }
 
@@ -381,11 +424,11 @@ public final class ContactsViewModel {
                 .filter { $0.isFavorite != 0 }
                 .map { Contact(from: $0) }
 
-            // Load network announces from path table (only LXMF destinations)
+            // Load network announces from path table (known destinations)
             if let pathTable = appServices.pathTable {
                 let entries = await pathTable.allEntries()
                 networkAnnounces = entries
-                    .filter { $0.isLXMFDestination && $0.appData != nil && !$0.appData!.isEmpty }
+                    .filter { $0.isKnownDestination }
                     .map { Contact(from: $0) }
                     .sorted { $0.timestamp > $1.timestamp }
             }
@@ -413,7 +456,7 @@ public final class ContactsViewModel {
         if let pathTable = appServices.pathTable {
             let entries = await pathTable.allEntries()
             networkAnnounces = entries
-                .filter { $0.isLXMFDestination && $0.appData != nil && !$0.appData!.isEmpty }
+                .filter { $0.isKnownDestination }
                 .map { Contact(from: $0) }
                 .sorted { $0.timestamp > $1.timestamp }
         }
@@ -452,7 +495,8 @@ public final class ContactsViewModel {
                     identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
                     badgeType: contact.badgeType, hopCount: contact.hopCount,
                     signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                    isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay
+                    isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay,
+                    interfaceId: contact.interfaceId, aspect: contact.aspect
                 )
                 myContacts[index] = updated
             } else {
@@ -466,7 +510,8 @@ public final class ContactsViewModel {
                         identityHash: c.identityHash, identityHashHex: c.identityHashHex,
                         badgeType: c.badgeType, hopCount: c.hopCount,
                         signalStrength: c.signalStrength, timestamp: c.timestamp,
-                        isOnline: c.isOnline, isFavorite: false, isRelay: c.isRelay
+                        isOnline: c.isOnline, isFavorite: false, isRelay: c.isRelay,
+                        interfaceId: c.interfaceId, aspect: c.aspect
                     )
                 }
             }
@@ -510,7 +555,8 @@ public final class ContactsViewModel {
                 identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
                 badgeType: contact.badgeType, hopCount: contact.hopCount,
                 signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay
+                isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay,
+                interfaceId: contact.interfaceId, aspect: contact.aspect
             )
             myContacts.append(saved)
 
@@ -522,7 +568,8 @@ public final class ContactsViewModel {
                     identityHash: c.identityHash, identityHashHex: c.identityHashHex,
                     badgeType: c.badgeType, hopCount: c.hopCount,
                     signalStrength: c.signalStrength, timestamp: c.timestamp,
-                    isOnline: c.isOnline, isFavorite: true, isRelay: c.isRelay
+                    isOnline: c.isOnline, isFavorite: true, isRelay: c.isRelay,
+                    interfaceId: c.interfaceId, aspect: c.aspect
                 )
             }
         } catch {
@@ -627,7 +674,8 @@ public final class ContactsViewModel {
                     identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
                     badgeType: contact.badgeType, hopCount: contact.hopCount,
                     signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                    isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay
+                    isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay,
+                    interfaceId: contact.interfaceId, aspect: contact.aspect
                 )
             }
             return contact
