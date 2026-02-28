@@ -24,6 +24,13 @@ struct MessageBubble: View {
 
     let message: Message
 
+    /// Callback for retry action (failed messages only).
+    var onRetry: (() -> Void)?
+    /// Callback for showing message details.
+    var onShowDetails: (() -> Void)?
+    /// Callback for deleting this message.
+    var onDelete: (() -> Void)?
+
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
     // MARK: - Body
@@ -68,10 +75,37 @@ struct MessageBubble: View {
                 .background(bubbleBackground)
                 .clipShape(bubbleShape)
                 .contextMenu {
-                    Button {
-                        UIPasteboard.general.string = message.content
-                    } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
+                    if message.deliveryStatus == .failed, let onRetry {
+                        Button {
+                            onRetry()
+                        } label: {
+                            Label("Retry", systemImage: "arrow.clockwise")
+                        }
+                    }
+
+                    if !message.content.isEmpty {
+                        Button {
+                            UIPasteboard.general.string = message.content
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
+                    }
+
+                    if let onShowDetails {
+                        Button {
+                            onShowDetails()
+                        } label: {
+                            Label("Details", systemImage: "info.circle")
+                        }
+                    }
+
+                    if let onDelete {
+                        Divider()
+                        Button(role: .destructive) {
+                            onDelete()
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
                     }
                 }
 
@@ -197,6 +231,12 @@ public struct Message: Identifiable, Equatable {
     public var imageFormat: String?
     public var attachments: [FileAttachment]?
 
+    // Metadata for message details
+    public var deliveryMethod: String?
+    public var rssi: Double?
+    public var snr: Double?
+    public var messageHash: Data?
+
     /// Cached formatter for relative time strings.
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -289,6 +329,7 @@ public struct Message: Identifiable, Equatable {
         self.content = String(data: record.content, encoding: .utf8) ?? ""
         self.timestamp = Date(timeIntervalSince1970: record.timestamp)
         self.isFromMe = record.sourceHash == localHash
+        self.messageHash = record.messageId
 
         // Map raw state value to DeliveryStatus
         switch record.state {
@@ -303,6 +344,22 @@ public struct Message: Identifiable, Equatable {
         default:
             self.deliveryStatus = .sent
         }
+
+        // Map delivery method
+        switch record.method {
+        case LXDeliveryMethod.opportunistic.rawValue:
+            self.deliveryMethod = "opportunistic"
+        case LXDeliveryMethod.direct.rawValue:
+            self.deliveryMethod = "direct"
+        case LXDeliveryMethod.propagated.rawValue:
+            self.deliveryMethod = "propagated"
+        default:
+            self.deliveryMethod = nil
+        }
+
+        // Signal quality
+        self.rssi = record.rssi
+        self.snr = record.snr
 
         // Extract fields from packed wire format if available
         if let lxMessage = try? LXMessage.unpackFromBytes(record.packedLxmf) {

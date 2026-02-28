@@ -142,6 +142,15 @@ struct ContactCard: View {
                     .padding(.vertical, 2)
                     .background(Color.pink)
                     .cornerRadius(4)
+            case .audio:
+                Text("Audio")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.purple)
+                    .cornerRadius(4)
             case .peer:
                 Text("Peer")
                     .font(.caption2)

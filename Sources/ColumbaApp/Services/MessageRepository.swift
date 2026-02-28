@@ -69,6 +69,14 @@ public actor MessageRepository {
         try await database.deleteConversation(hash: conversationHash)
     }
 
+    /// Delete a single message by its ID hash.
+    ///
+    /// - Parameter messageId: Message hash (32 bytes)
+    /// - Throws: DatabaseError if deletion fails
+    public func deleteMessage(_ messageId: Data) async throws {
+        try await database.deleteMessage(id: messageId)
+    }
+
     /// Ensure a conversation exists for a destination.
     ///
     /// Creates a new conversation record if one doesn't exist.

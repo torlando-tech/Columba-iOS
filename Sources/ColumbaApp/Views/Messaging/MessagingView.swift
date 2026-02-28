@@ -46,6 +46,8 @@ struct MessagingView: View {
     @State private var showCodecPicker = false
     @State private var isNearBottom = true
     @State private var showCallScreen = false
+    @State private var detailMessage: Message?
+    @State private var deleteConfirmMessage: Message?
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -69,12 +71,23 @@ struct MessagingView: View {
                             }
 
                             ForEach(vm.messages) { message in
-                                MessageBubble(message: message)
-                                    .id(message.id)
-                                    .transition(.asymmetric(
-                                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                                        removal: .opacity
-                                    ))
+                                MessageBubble(
+                                    message: message,
+                                    onRetry: message.deliveryStatus == .failed ? {
+                                        Task { await vm.retryMessage(messageId: message.id) }
+                                    } : nil,
+                                    onShowDetails: {
+                                        detailMessage = message
+                                    },
+                                    onDelete: {
+                                        deleteConfirmMessage = message
+                                    }
+                                )
+                                .id(message.id)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
                             }
 
                             // Invisible anchor at bottom to track scroll position
@@ -215,6 +228,27 @@ struct MessagingView: View {
                     destinationHash: conversation.destinationHash
                 )
             }
+        }
+        .sheet(item: $detailMessage) { message in
+            MessageDetailView(message: message)
+        }
+        .alert("Delete Message?", isPresented: Binding(
+            get: { deleteConfirmMessage != nil },
+            set: { if !$0 { deleteConfirmMessage = nil } }
+        )) {
+            Button("Cancel", role: .cancel) {
+                deleteConfirmMessage = nil
+            }
+            Button("Delete", role: .destructive) {
+                if let msg = deleteConfirmMessage {
+                    Task {
+                        await viewModel?.deleteMessage(messageId: msg.id, messageHash: msg.messageHash)
+                    }
+                    deleteConfirmMessage = nil
+                }
+            }
+        } message: {
+            Text("This message will be permanently deleted from this device.")
         }
         .task {
             if viewModel == nil {

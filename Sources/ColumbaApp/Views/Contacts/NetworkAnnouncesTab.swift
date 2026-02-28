@@ -81,12 +81,11 @@ struct NetworkAnnouncesTab: View {
 
     private var filteredEmptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: viewModel.announceFilter == .relays
-                  ? "server.rack" : "person.2")
+            Image(systemName: filteredEmptyIcon)
                 .font(.system(size: 48))
                 .foregroundStyle(.gray)
 
-            Text("No \(viewModel.announceFilter.rawValue) Found")
+            Text("No Matching Announces")
                 .font(.headline)
                 .foregroundStyle(.white)
 
@@ -99,36 +98,101 @@ struct NetworkAnnouncesTab: View {
         .padding()
     }
 
+    private var filteredEmptyIcon: String {
+        switch viewModel.announceFilter {
+        case .relays: return "server.rack"
+        case .audio: return "phone.down"
+        case .peers: return "person.2"
+        case .all: return "antenna.radiowaves.left.and.right.slash"
+        }
+    }
+
     // MARK: - Filter Bar
 
     private var filterBar: some View {
-        HStack(spacing: 8) {
-            ForEach(AnnounceFilter.allCases, id: \.self) { filter in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        viewModel.announceFilter = filter
-                    }
-                } label: {
-                    Text(filter.rawValue)
-                        .font(.subheadline)
-                        .fontWeight(viewModel.announceFilter == filter ? .semibold : .regular)
-                        .foregroundStyle(viewModel.announceFilter == filter ? .white : .gray)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background {
-                            if viewModel.announceFilter == filter {
-                                Capsule().fill(Theme.accentColor)
-                            } else {
-                                Capsule().fill(Color.white.opacity(0.08))
+        VStack(spacing: 6) {
+            // Aspect filter row
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(AnnounceFilter.allCases, id: \.self) { filter in
+                        filterCapsule(
+                            label: filter.rawValue,
+                            icon: aspectIcon(for: filter),
+                            isSelected: viewModel.announceFilter == filter
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                viewModel.announceFilter = filter
                             }
                         }
+                    }
+                    Spacer()
                 }
-                .buttonStyle(.plain)
             }
-            Spacer()
+
+            // Interface filter row
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(InterfaceFilter.allCases, id: \.self) { filter in
+                        filterCapsule(
+                            label: filter.rawValue,
+                            icon: interfaceIcon(for: filter),
+                            isSelected: viewModel.interfaceFilter == filter
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                viewModel.interfaceFilter = filter
+                            }
+                        }
+                    }
+                    Spacer()
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
+    }
+
+    private func filterCapsule(label: String, icon: String?, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.caption2)
+                }
+                Text(label)
+                    .font(.subheadline)
+                    .fontWeight(isSelected ? .semibold : .regular)
+            }
+            .foregroundStyle(isSelected ? .white : .gray)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background {
+                if isSelected {
+                    Capsule().fill(Theme.accentColor)
+                } else {
+                    Capsule().fill(Color.white.opacity(0.08))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func aspectIcon(for filter: AnnounceFilter) -> String? {
+        switch filter {
+        case .all: return nil
+        case .peers: return "person.2"
+        case .audio: return "phone"
+        case .relays: return "server.rack"
+        }
+    }
+
+    private func interfaceIcon(for filter: InterfaceFilter) -> String? {
+        switch filter {
+        case .all: return nil
+        case .tcp: return "globe"
+        case .wifi: return "wifi"
+        case .ble: return "wave.3.right"
+        case .rnode: return "antenna.radiowaves.left.and.right"
+        }
     }
 
     // MARK: - Announces List

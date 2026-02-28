@@ -21,6 +21,7 @@
 		012 /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012 /* NetworkAnnouncesTab.swift */; };
 		013 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013 /* MessagingView.swift */; };
 		014 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014 /* MessageBubble.swift */; };
+		073 /* MessageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F073 /* MessageDetailView.swift */; };
 		015 /* MessageInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F015 /* MessageInputBar.swift */; };
 		016 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016 /* SettingsView.swift */; };
 		017 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
@@ -192,6 +193,7 @@
 		F070 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 		F071 /* BLEConnectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEConnectionsView.swift; sourceTree = "<group>"; };
 		F072 /* RNodeProbeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeProbeScanner.swift; sourceTree = "<group>"; };
+		F073 /* MessageDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageDetailView.swift; sourceTree = "<group>"; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -290,6 +292,7 @@
 				F013 /* MessagingView.swift */,
 				F014 /* MessageBubble.swift */,
 				F015 /* MessageInputBar.swift */,
+				F073 /* MessageDetailView.swift */,
 			);
 			path = Messaging;
 			sourceTree = "<group>";
@@ -544,6 +547,7 @@
 				012 /* NetworkAnnouncesTab.swift in Sources */,
 				013 /* MessagingView.swift in Sources */,
 				014 /* MessageBubble.swift in Sources */,
+				073 /* MessageDetailView.swift in Sources */,
 				015 /* MessageInputBar.swift in Sources */,
 				016 /* SettingsView.swift in Sources */,
 				017 /* MyIdentityView.swift in Sources */,
