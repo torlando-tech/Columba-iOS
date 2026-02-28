@@ -587,29 +587,46 @@ public final class AppServices {
 
                 // Read actor-isolated properties OFF the main thread
                 let interface = await MainActor.run { self.tcpInterface }
+                let autoIface = await MainActor.run { self.autoInterface }
+                let rnodeIface = await MainActor.run { self.rnodeInterface }
+                let bleIface = await MainActor.run { self.bleInterface }
 
-                guard let interface = interface else {
-                    await MainActor.run {
-                        if self.isConnected {
-                            self.isConnected = false
-                            self.connectionError = nil
-                            self.isReconnecting = false
-                        }
-                    }
-                    try? await Task.sleep(for: .seconds(2))
-                    continue
+                // Check TCP state
+                let tcpState: InterfaceState = await interface?.state ?? .disconnected
+                let errorDesc = await interface?.lastErrorDescription
+                let tcpConnected = tcpState == .connected
+
+                // Check non-TCP interfaces
+                let autoConnected: Bool
+                if let auto = autoIface {
+                    autoConnected = await auto.peerCount > 0
+                } else {
+                    autoConnected = false
+                }
+                let rnodeConnected: Bool
+                if let rnode = rnodeIface {
+                    rnodeConnected = await rnode.state == .connected
+                } else {
+                    rnodeConnected = false
+                }
+                let bleConnected: Bool
+                if let ble = bleIface {
+                    bleConnected = await ble.state == .connected
+                } else {
+                    bleConnected = false
                 }
 
-                // Await actor state off main thread
-                let ifState = await interface.state
-                let errorDesc = await interface.lastErrorDescription
+                let anyConnected = tcpConnected || autoConnected || rnodeConnected || bleConnected
+                let tcpReconnecting = {
+                    if case .reconnecting = tcpState { return true }
+                    return false
+                }()
 
                 // Batch all UI mutations into a single MainActor.run
                 let shouldAnnounce: Bool = await MainActor.run {
                     var needsAnnounce = false
 
-                    switch ifState {
-                    case .connected:
+                    if anyConnected {
                         if !self.isConnected {
                             self.isConnected = true
                             self.connectionError = nil
@@ -621,22 +638,17 @@ public final class AppServices {
                             lastReportedError = nil
                             self.connectionError = nil
                         }
-                    case .reconnecting(let attempt):
+                    } else if tcpReconnecting {
                         if self.isConnected || !self.isReconnecting {
                             self.isConnected = false
                             self.isReconnecting = true
-                            self.logger.info("Connection state changed: reconnecting (attempt \(attempt))")
+                            self.logger.info("Connection state changed: reconnecting")
                         }
                         if let desc = errorDesc, desc != lastReportedError {
                             lastReportedError = desc
                             self.connectionError = desc
                         }
-                    case .connecting:
-                        if self.isConnected {
-                            self.isConnected = false
-                            self.logger.info("Connection state changed: connecting")
-                        }
-                    case .disconnected:
+                    } else {
                         if self.isConnected || self.isReconnecting {
                             self.isConnected = false
                             self.isReconnecting = false

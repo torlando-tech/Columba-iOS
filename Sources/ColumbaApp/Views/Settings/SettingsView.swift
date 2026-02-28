@@ -147,6 +147,12 @@ struct SettingsView: View {
                 )
             }
             await viewModel?.loadSettings()
+
+            // Poll connection state every 2s so the card stays live
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                await viewModel?.refreshConnectionState()
+            }
         }
     }
 
