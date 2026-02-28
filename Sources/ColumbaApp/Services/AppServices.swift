@@ -339,6 +339,7 @@ public final class AppServices {
         let newTransport = ReticulumTransport(pathTable: newPathTable)
         self.transport = newTransport
         await configureTransportCallbacks(newTransport)
+        await newTransport.registerPathRequestHandler()
 
         // 4. Create persistent LXMF database
         let dbPath = Self.databaseFilePath
@@ -444,6 +445,7 @@ public final class AppServices {
         let newTransport = ReticulumTransport(pathTable: newPathTable)
         self.transport = newTransport
         await configureTransportCallbacks(newTransport)
+        await newTransport.registerPathRequestHandler()
 
         // 4. Create persistent LXMF database (per-identity)
         let dbPath = Self.databaseFilePath(for: identityHash)
@@ -1149,20 +1151,25 @@ public final class AppServices {
     /// - Parameter displayName: Display name to broadcast
     /// - Throws: AppServicesError if transport or destination not initialized
     public func sendAllAnnounces(displayName: String) async throws {
-        // Send both announces independently — one failing shouldn't block the other
+        // Send both announces independently — one failing shouldn't block the other.
+        var firstError: Error?
+
         do {
             try await sendAnnounce(displayName: displayName)
             DiagLog.log("[ANNOUNCE] Delivery announce sent")
         } catch {
             DiagLog.log("[ANNOUNCE] Delivery announce failed: \(error.localizedDescription)")
-            throw error
+            firstError = error
         }
 
         do {
             try await sendTelephonyAnnounce(displayName: displayName)
         } catch {
             DiagLog.log("[ANNOUNCE] Telephony announce failed: \(error.localizedDescription)")
+            if firstError == nil { firstError = error }
         }
+
+        if let firstError { throw firstError }
     }
 
     /// Send an announce for the LXST telephony destination.
@@ -1210,15 +1217,28 @@ public final class AppServices {
         }
     }
 
+    /// Timestamp of the last successful auto-announce (debounce duplicate triggers).
+    private var lastAutoAnnounce: Date = .distantPast
+
     /// Auto-announce on interface connect using the stored display name.
     ///
     /// Sends both the LXMF delivery announce and the LXST telephony announce
     /// so peers can discover us for both messaging and voice calls.
+    ///
+    /// Debounced to at most once per 5 seconds — AutoInterface peers fire
+    /// onInterfaceAdded from both the peer callback and the state-change
+    /// delegate, so this prevents redundant announces.
     private func autoAnnounce() async {
-        DiagLog.log("[AUTO_ANNOUNCE] triggered by onInterfaceAdded, callManager=\(callManager == nil ? "nil" : "exists")")
+        let now = Date()
+        guard now.timeIntervalSince(lastAutoAnnounce) > 5.0 else {
+            DiagLog.log("[AUTO_ANNOUNCE] debounced (last announce \(String(format: "%.1f", now.timeIntervalSince(lastAutoAnnounce)))s ago)")
+            return
+        }
+        DiagLog.log("[AUTO_ANNOUNCE] triggered, callManager=\(callManager == nil ? "nil" : "exists")")
         let displayName = await SettingsRepository().getDisplayName()
         do {
             try await sendAllAnnounces(displayName: displayName)
+            lastAutoAnnounce = Date()
             DiagLog.log("[AUTO_ANNOUNCE] completed successfully")
         } catch {
             DiagLog.log("[AUTO_ANNOUNCE] failed: \(error.localizedDescription)")
