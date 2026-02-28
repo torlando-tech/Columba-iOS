@@ -44,6 +44,9 @@ struct MessagingView: View {
     @State private var attachedImage: UIImage?
     @State private var attachedFiles: [FileAttachment] = []
     @State private var showCodecPicker = false
+    @State private var showQualityPicker = false
+    @State private var pendingRawImage: UIImage?
+    @State private var selectedImagePreset: SettingsViewModel.ImageQualityPreset = .high
     @State private var isNearBottom = true
     @State private var showCallScreen = false
     @State private var detailMessage: Message?
@@ -119,7 +122,11 @@ struct MessagingView: View {
                                     if let data = try await newItem.loadTransferable(type: Data.self) {
                                         if let image = UIImage(data: data) {
                                             await MainActor.run {
-                                                attachedImage = image.resizedToFit(maxDimension: 1280)
+                                                // Store raw image and show quality picker
+                                                pendingRawImage = image
+                                                selectedImagePreset = UserDefaults.standard.string(forKey: "image_quality_preset")
+                                                    .flatMap { SettingsViewModel.ImageQualityPreset(rawValue: $0) } ?? .high
+                                                showQualityPicker = true
                                             }
                                         }
                                     }
@@ -210,6 +217,26 @@ struct MessagingView: View {
             }
         }
         #endif
+        .sheet(isPresented: $showQualityPicker) {
+            ImageQualityPickerSheet(
+                selectedPreset: $selectedImagePreset,
+                onConfirm: {
+                    if let raw = pendingRawImage {
+                        attachedImage = raw.resizedToFit(maxDimension: selectedImagePreset.maxDimension)
+                        // Remember choice for next time
+                        UserDefaults.standard.set(selectedImagePreset.rawValue, forKey: "image_quality_preset")
+                    }
+                    pendingRawImage = nil
+                    showQualityPicker = false
+                },
+                onCancel: {
+                    pendingRawImage = nil
+                    showQualityPicker = false
+                }
+            )
+            .presentationDetents([.height(340)])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(isPresented: $showCodecPicker) {
             CodecSelectionSheet { profile in
                 showCallScreen = true
@@ -370,9 +397,9 @@ struct MessagingView: View {
         var imageData: Data?
         var imageFormat: String?
         if let image {
-            imageData = image.jpegData(compressionQuality: 0.75)
+            imageData = image.compressToPreset(selectedImagePreset)
             imageFormat = "jpeg"
-            print("[SEND_IMG] Image \(image.size.width)x\(image.size.height) -> JPEG \(imageData?.count ?? 0) bytes")
+            print("[SEND_IMG] Image \(image.size.width)x\(image.size.height) preset=\(selectedImagePreset.rawValue) -> JPEG \(imageData?.count ?? 0) bytes")
         }
 
         let fileAttachments: [(name: String, data: Data)]? = files.isEmpty ? nil : files.map { ($0.name, $0.data) }
@@ -398,6 +425,79 @@ struct MessagingView: View {
     }
 }
 
+// MARK: - Image Quality Picker Sheet
+
+@available(iOS 17.0, macOS 14.0, *)
+private struct ImageQualityPickerSheet: View {
+    @Binding var selectedPreset: SettingsViewModel.ImageQualityPreset
+    var onConfirm: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Image Quality")
+                .font(.headline)
+                .foregroundStyle(.white)
+                .padding(.top, 8)
+
+            VStack(spacing: 8) {
+                ForEach(SettingsViewModel.ImageQualityPreset.allCases) { preset in
+                    Button {
+                        selectedPreset = preset
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: selectedPreset == preset ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 20))
+                                .foregroundStyle(selectedPreset == preset ? Theme.accentColor : .gray)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(preset.rawValue)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.white)
+                                Text(preset.description)
+                                    .font(.caption)
+                                    .foregroundStyle(.gray)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            selectedPreset == preset
+                                ? Theme.accentColor.opacity(0.15)
+                                : Color.clear
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+
+            HStack(spacing: 12) {
+                Button("Cancel") { onCancel() }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.gray)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.backgroundTertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                Button("Attach") { onConfirm() }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+        .background(Theme.backgroundSecondary)
+    }
+}
+
 // MARK: - UIImage Resize Helper
 
 extension UIImage {
@@ -412,5 +512,18 @@ extension UIImage {
         let result = UIGraphicsGetImageFromCurrentImageContext()!
         UIGraphicsEndImageContext()
         return result
+    }
+
+    /// Compress image to fit within a quality preset's target size.
+    /// Resizes first, then iteratively reduces JPEG quality until within budget.
+    func compressToPreset(_ preset: SettingsViewModel.ImageQualityPreset) -> Data? {
+        let resized = resizedToFit(maxDimension: preset.maxDimension)
+        var quality = preset.initialQuality
+        var data = resized.jpegData(compressionQuality: quality)
+        while let d = data, d.count > preset.targetSizeBytes, quality > preset.minQuality {
+            quality -= 0.10
+            data = resized.jpegData(compressionQuality: max(quality, preset.minQuality))
+        }
+        return data
     }
 }

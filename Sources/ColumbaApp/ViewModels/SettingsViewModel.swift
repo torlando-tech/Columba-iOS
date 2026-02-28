@@ -82,6 +82,61 @@ public final class SettingsViewModel {
         public var id: String { rawValue }
     }
 
+    /// Image quality presets matching Android Columba.
+    public enum ImageQualityPreset: String, CaseIterable, Identifiable {
+        case low = "Low"
+        case medium = "Medium"
+        case high = "High"
+        case original = "Original"
+
+        public var id: String { rawValue }
+
+        public var maxDimension: CGFloat {
+            switch self {
+            case .low: return 320
+            case .medium: return 800
+            case .high: return 2048
+            case .original: return 8192
+            }
+        }
+
+        public var targetSizeBytes: Int {
+            switch self {
+            case .low: return 32_768
+            case .medium: return 131_072
+            case .high: return 524_288
+            case .original: return 26_214_400
+            }
+        }
+
+        public var initialQuality: CGFloat {
+            switch self {
+            case .low: return 0.60
+            case .medium: return 0.75
+            case .high: return 0.90
+            case .original: return 0.95
+            }
+        }
+
+        public var minQuality: CGFloat {
+            switch self {
+            case .low: return 0.30
+            case .medium: return 0.40
+            case .high: return 0.50
+            case .original: return 0.90
+            }
+        }
+
+        public var description: String {
+            switch self {
+            case .low: return "32KB max - optimized for LoRa and low-bandwidth links"
+            case .medium: return "128KB max - balanced quality for mesh networks"
+            case .high: return "512KB max - good quality for general use"
+            case .original: return "25MB max - minimal compression, full quality"
+            }
+        }
+    }
+
     // MARK: - Card Expansion State
 
     public var isNetworkExpanded: Bool = false
@@ -93,6 +148,7 @@ public final class SettingsViewModel {
     public var isMapSourcesExpanded: Bool = false
     public var isDeliveryRetrievalExpanded: Bool = false
     public var isAppearanceExpanded: Bool = false
+    public var isImageQualityExpanded: Bool = false
 
     // MARK: - Network Settings
 
@@ -184,6 +240,10 @@ public final class SettingsViewModel {
 
     /// Sync error message.
     public var syncError: String?
+
+    // MARK: - Image Quality Settings
+
+    public var imageQualityPreset: ImageQualityPreset = .high
 
     // MARK: - Map Settings
 
@@ -298,6 +358,11 @@ public final class SettingsViewModel {
             selectedMapSource = source
         }
 
+        if let qualityRaw = defaults.string(forKey: "image_quality_preset"),
+           let preset = ImageQualityPreset(rawValue: qualityRaw) {
+            imageQualityPreset = preset
+        }
+
         // Set defaults for first launch and persist them
         if !defaults.bool(forKey: "settings_initialized") {
             isNotificationsEnabled = true
@@ -328,6 +393,7 @@ public final class SettingsViewModel {
         defaults.set(sharePreciseLocation, forKey: "share_precise_location")
         defaults.set(locationUpdateInterval, forKey: "location_update_interval")
         defaults.set(selectedMapSource.rawValue, forKey: "map_source")
+        defaults.set(imageQualityPreset.rawValue, forKey: "image_quality_preset")
     }
 
     /// Refresh connection state from AppServices.
