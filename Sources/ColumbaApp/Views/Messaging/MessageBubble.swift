@@ -236,6 +236,7 @@ public struct Message: Identifiable, Equatable {
     public var rssi: Double?
     public var snr: Double?
     public var messageHash: Data?
+    public var receivedInterface: String?
 
     /// Cached formatter for relative time strings.
     private static let relativeFormatter: RelativeDateTimeFormatter = {

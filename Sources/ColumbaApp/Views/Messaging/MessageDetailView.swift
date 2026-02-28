@@ -140,6 +140,11 @@ struct MessageDetailView: View {
             deliveryMethodCard(method)
         }
 
+        // Receiving interface
+        if let iface = message.receivedInterface {
+            receivedInterfaceCard(iface)
+        }
+
         // RSSI
         if let rssi = message.rssi {
             rssiCard(rssi)
@@ -208,6 +213,34 @@ struct MessageDetailView: View {
             iconColor: .purple,
             title: "Delivery Method",
             content: title,
+            subtitle: subtitle
+        )
+    }
+
+    private func receivedInterfaceCard(_ interfaceId: String) -> some View {
+        let (icon, name, subtitle): (String, String, String) = {
+            if interfaceId.hasPrefix("ble") {
+                return ("wave.3.right", "Bluetooth LE",
+                        "Received via BLE mesh interface")
+            } else if interfaceId.hasPrefix("rnode") {
+                return ("antenna.radiowaves.left.and.right", "RNode",
+                        "Received via RNode LoRa radio")
+            } else if interfaceId.hasPrefix("auto") {
+                return ("wifi", "AutoInterface (WiFi/LAN)",
+                        "Received via local network multicast")
+            } else if interfaceId.hasPrefix("tcp") {
+                return ("globe", "TCP",
+                        "Received via TCP transport")
+            } else {
+                return ("network", interfaceId, "")
+            }
+        }()
+
+        return InfoCard(
+            icon: icon,
+            iconColor: .cyan,
+            title: "Receiving Interface",
+            content: name,
             subtitle: subtitle
         )
     }

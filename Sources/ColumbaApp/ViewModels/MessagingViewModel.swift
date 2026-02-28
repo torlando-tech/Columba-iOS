@@ -110,7 +110,19 @@ public final class MessagingViewModel {
             // Fetch most recent page
             let records = try await repository.fetchMessageRecords(
                 for: conversationHash, limit: Self.pageSize, offset: 0)
-            messages = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+            var loaded = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+
+            // Populate received interface from path table for received messages
+            if let pathTable = appServices.pathTable {
+                let interfaceId = await pathTable.lookup(destinationHash: conversationHash)?.interfaceId
+                if let ifaceId = interfaceId {
+                    for i in loaded.indices where !loaded[i].isFromMe {
+                        loaded[i].receivedInterface = ifaceId
+                    }
+                }
+            }
+
+            messages = loaded
             allMessagesLoaded = records.count < Self.pageSize
 
             // Mark as read
@@ -137,7 +149,17 @@ public final class MessagingViewModel {
                 allMessagesLoaded = true
                 return
             }
-            let older = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+            var older = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+
+            if let pathTable = appServices.pathTable {
+                let interfaceId = await pathTable.lookup(destinationHash: conversationHash)?.interfaceId
+                if let ifaceId = interfaceId {
+                    for i in older.indices where !older[i].isFromMe {
+                        older[i].receivedInterface = ifaceId
+                    }
+                }
+            }
+
             messages.insert(contentsOf: older, at: 0)
             if records.count < Self.pageSize {
                 allMessagesLoaded = true
