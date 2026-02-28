@@ -125,6 +125,9 @@ public final class AppServices {
         await transport?.getInterfaceName(for: interfaceId)
     }
 
+    // resolveReceivedInterface removed — interface is now stored per-message in the DB
+    // via MessageRecord.receivingInterface, populated from packet.receivingInterface at delivery time.
+
     // MARK: - Observable Properties
 
     /// Connection state (observable for UI binding).
