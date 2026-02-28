@@ -108,24 +108,6 @@ struct VoiceCallScreen: View {
             Text("")
         }
 
-        // Debug audio diagnostics
-        if !callManager.debugAudioInfo.isEmpty {
-            Text(callManager.debugAudioInfo)
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                .foregroundStyle(.green)
-                .padding(.top, 4)
-                .padding(.horizontal, 16)
-                .multilineTextAlignment(.center)
-
-            Button("Copy Diag") {
-                #if os(iOS)
-                UIPasteboard.general.string = callManager.debugAudioInfo
-                #endif
-            }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.yellow)
-            .padding(.top, 4)
-        }
     }
 
     private var controlsRow: some View {
