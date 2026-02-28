@@ -199,6 +199,27 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
         }
     }
 
+    /// Called when a delivery proof is received for a sent message.
+    ///
+    /// Updates UI to show double checkmark (delivered status).
+    ///
+    /// - Parameters:
+    ///   - router: The router managing the message
+    ///   - messageHash: The hash of the delivered message
+    public func router(_ router: LXMRouter, didConfirmDelivery messageHash: Data) {
+        let hashHex = messageHash.prefix(8).map { String(format: "%02x", $0) }.joined()
+        logger.info("Delivery confirmed for message \(hashHex)")
+
+        // Post in-process notification to refresh open conversation view.
+        // No sourceHash filter — all open MessagingViewModels will reload
+        // and pick up the .delivered state from DB (double checkmark).
+        NotificationCenter.default.post(
+            name: IncomingMessageHandler.messageReceivedNotification,
+            object: nil
+        )
+        NotificationObserver.postNewMessage()
+    }
+
     /// Called when an outbound message state changes.
     ///
     /// Logs the state change for debugging. The database update is handled
