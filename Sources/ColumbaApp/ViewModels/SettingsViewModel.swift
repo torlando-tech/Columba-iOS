@@ -97,7 +97,7 @@ public final class SettingsViewModel {
     // MARK: - Network Settings
 
     public var isConnected: Bool = false
-    public var connectedInterface: String = "TCP (127.0.0.1:4242)"
+    public var connectedInterface: String = ""
     public var isReconnecting: Bool = false
     public var reconnectError: String?
 
@@ -214,15 +214,6 @@ public final class SettingsViewModel {
     /// Load settings from repository and AppServices.
     @MainActor
     public func loadSettings() async {
-        // Load TCP server address from InterfaceRepository (single source of truth)
-        let interfaceRepo = InterfaceRepository()
-        if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
-           case .tcpClient(let config) = tcpEntity.config {
-            connectedInterface = "TCP (\(config.targetHost):\(String(config.targetPort)))"
-        } else {
-            connectedInterface = "No TCP interface"
-        }
-
         // Load display name from repository
         identity.displayName = await settingsRepository.getDisplayName()
         savedDisplayName = identity.displayName
@@ -257,8 +248,8 @@ public final class SettingsViewModel {
         // Load icon appearance
         iconAppearance = await settingsRepository.getIconAppearance()
 
-        // Update connection state from AppServices
-        isConnected = appServices.isConnected
+        // Update connection state
+        await refreshConnectionState()
 
         // Load delivery/retrieval settings
         defaultDeliveryMethod = await settingsRepository.getDefaultDeliveryMethod()
@@ -327,6 +318,40 @@ public final class SettingsViewModel {
         defaults.set(sharePreciseLocation, forKey: "share_precise_location")
         defaults.set(locationUpdateInterval, forKey: "location_update_interval")
         defaults.set(selectedMapSource.rawValue, forKey: "map_source")
+    }
+
+    /// Refresh connection state from AppServices.
+    ///
+    /// Reads isConnected and builds the active interface string.
+    /// Called from loadSettings() and periodically by the view.
+    @MainActor
+    public func refreshConnectionState() async {
+        isConnected = appServices.isConnected
+        isReconnecting = appServices.isReconnecting
+        reconnectError = appServices.connectionError
+
+        // Build connected interface string from all active interfaces
+        var activeInterfaces: [String] = []
+        if let tcp = appServices.tcpInterface, await tcp.state == .connected {
+            let interfaceRepo = InterfaceRepository()
+            if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
+               case .tcpClient(let config) = tcpEntity.config {
+                activeInterfaces.append("TCP (\(config.targetHost):\(String(config.targetPort)))")
+            } else {
+                activeInterfaces.append("TCP")
+            }
+        }
+        if let auto = appServices.autoInterface, await auto.peerCount > 0 {
+            let count = await auto.peerCount
+            activeInterfaces.append("AutoInterface (\(count) peer\(count == 1 ? "" : "s"))")
+        }
+        if let rnode = appServices.rnodeInterface, await rnode.state == .connected {
+            activeInterfaces.append("RNode")
+        }
+        if let ble = appServices.bleInterface, await ble.state == .connected {
+            activeInterfaces.append("Bluetooth LE")
+        }
+        connectedInterface = activeInterfaces.isEmpty ? "No active interface" : activeInterfaces.joined(separator: ", ")
     }
 
     /// Sync auto-announce manager state with current settings.
