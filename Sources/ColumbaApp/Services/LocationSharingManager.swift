@@ -61,6 +61,40 @@ public struct PeerLocation: Identifiable, Equatable {
     }
 }
 
+// MARK: - SharingDuration
+
+/// Duration options for location sharing (matches Android Columba SharingDuration).
+public enum SharingDuration: String, CaseIterable, Identifiable {
+    case fifteenMinutes = "15 min"
+    case oneHour = "1 hour"
+    case fourHours = "4 hours"
+    case untilMidnight = "Until midnight"
+    case indefinite = "Until I stop"
+
+    public var id: String { rawValue }
+
+    /// Calculate the end date for this sharing duration.
+    ///
+    /// - Parameter start: When sharing starts (defaults to now)
+    /// - Returns: End date, or nil for indefinite
+    public func calculateEndDate(from start: Date = Date()) -> Date? {
+        switch self {
+        case .fifteenMinutes:
+            return start.addingTimeInterval(15 * 60)
+        case .oneHour:
+            return start.addingTimeInterval(60 * 60)
+        case .fourHours:
+            return start.addingTimeInterval(4 * 60 * 60)
+        case .untilMidnight:
+            var cal = Calendar.current
+            cal.timeZone = .current
+            return cal.nextDate(after: start, matching: DateComponents(hour: 0, minute: 0, second: 0), matchingPolicy: .nextTime)
+        case .indefinite:
+            return nil
+        }
+    }
+}
+
 // MARK: - LocationSharingManager
 
 /// Manages bidirectional location sharing with peers via LXMF telemetry.
@@ -89,11 +123,15 @@ public final class LocationSharingManager: NSObject {
     /// Weak reference to AppServices (avoids retain cycle).
     private weak var appServices: AppServices?
 
+    /// Per-peer expiration date. nil value = indefinite.
+    public private(set) var peerExpirations: [Data: Date?] = [:]
+
     // MARK: - Private State
 
     private let logger = Logger(subsystem: "com.columba.app", category: "LocationSharing")
     private let locationManager = CLLocationManager()
     private var sendTimer: Timer?
+    private var expirationTimer: Timer?
     private var lastSentLocation: CLLocation?
     private var lastSentTime: Date?
     private var isInBackground = false
@@ -131,17 +169,22 @@ public final class LocationSharingManager: NSObject {
 
     // MARK: - Public API
 
-    /// Start sharing location with a peer.
+    /// Start sharing location with a peer for a specified duration.
     ///
-    /// - Parameter peerHash: 16-byte destination hash of the peer
-    public func startSharing(with peerHash: Data) {
+    /// - Parameters:
+    ///   - peerHash: 16-byte destination hash of the peer
+    ///   - duration: How long to share (default: indefinite)
+    public func startSharing(with peerHash: Data, duration: SharingDuration = .indefinite) {
         activePeers.insert(peerHash)
+        peerExpirations[peerHash] = duration.calculateEndDate()
         persistActivePeers()
 
         if activePeers.count == 1 {
             startLocationUpdates()
             startSendTimer()
         }
+
+        startExpirationTimer()
 
         // Send initial update once a location fix is available
         Task {
@@ -153,7 +196,7 @@ public final class LocationSharingManager: NSObject {
         }
 
         let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
-        logger.info("Started sharing location with \(hex)")
+        logger.info("Started sharing location with \(hex), duration=\(duration.rawValue)")
     }
 
     /// Stop sharing location with a peer, sending cease signal.
@@ -161,6 +204,7 @@ public final class LocationSharingManager: NSObject {
     /// - Parameter peerHash: 16-byte destination hash of the peer
     public func stopSharing(with peerHash: Data) {
         activePeers.remove(peerHash)
+        peerExpirations.removeValue(forKey: peerHash)
         persistActivePeers()
 
         // Send cease signal
@@ -171,6 +215,7 @@ public final class LocationSharingManager: NSObject {
         if activePeers.isEmpty {
             stopLocationUpdates()
             stopSendTimer()
+            stopExpirationTimer()
         }
 
         let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
@@ -259,6 +304,7 @@ public final class LocationSharingManager: NSObject {
         stopAllSharing()
         stopLocationUpdates()
         stopSendTimer()
+        stopExpirationTimer()
     }
 
     // MARK: - Location Manager
@@ -305,6 +351,39 @@ public final class LocationSharingManager: NSObject {
     private func stopSendTimer() {
         sendTimer?.invalidate()
         sendTimer = nil
+    }
+
+    // MARK: - Expiration Timer
+
+    private func startExpirationTimer() {
+        guard expirationTimer == nil else { return }
+        // Check every 30 seconds for expired sessions
+        expirationTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.checkExpiredSessions()
+            }
+        }
+    }
+
+    private func stopExpirationTimer() {
+        expirationTimer?.invalidate()
+        expirationTimer = nil
+    }
+
+    private func checkExpiredSessions() {
+        let now = Date()
+        let expiredPeers = activePeers.filter { peer in
+            if let endDate = peerExpirations[peer], let end = endDate {
+                return now >= end
+            }
+            return false
+        }
+
+        for peer in expiredPeers {
+            let hex = peer.prefix(4).map { String(format: "%02x", $0) }.joined()
+            logger.info("Location sharing expired for \(hex)")
+            stopSharing(with: peer)
+        }
     }
 
     // MARK: - Sending

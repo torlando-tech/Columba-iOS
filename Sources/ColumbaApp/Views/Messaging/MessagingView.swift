@@ -278,17 +278,14 @@ struct MessagingView: View {
         } message: {
             Text("This message will be permanently deleted from this device.")
         }
-        .confirmationDialog(
-            "Share Location",
-            isPresented: $showLocationConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Share My Location") {
-                appServices.locationSharingManager?.startSharing(with: conversation.destinationHash)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Your live location will be sent periodically to this contact until you stop sharing.")
+        .sheet(isPresented: $showLocationConfirm) {
+            LocationShareSheet(onStart: { duration in
+                appServices.locationSharingManager?.startSharing(
+                    with: conversation.destinationHash,
+                    duration: duration
+                )
+            })
+            .presentationDetents([.medium])
         }
         .task {
             if viewModel == nil {
@@ -538,5 +535,78 @@ extension UIImage {
             data = resized.jpegData(compressionQuality: max(quality, preset.minQuality))
         }
         return data
+    }
+}
+
+// MARK: - Location Share Sheet
+
+/// Bottom sheet for selecting location sharing duration before starting.
+private struct LocationShareSheet: View {
+    let onStart: (SharingDuration) -> Void
+    @State private var selected: SharingDuration = .oneHour
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 20) {
+            // Handle bar
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(Color.secondary.opacity(0.4))
+                .frame(width: 36, height: 5)
+                .padding(.top, 8)
+
+            Spacer().frame(height: 8)
+
+            Text("Share Location")
+                .font(.title3.bold())
+
+            Text("Your live location will be sent\nperiodically to this contact.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal)
+
+            // Duration options
+            VStack(spacing: 0) {
+                ForEach(SharingDuration.allCases) { duration in
+                    Button {
+                        selected = duration
+                    } label: {
+                        HStack {
+                            Text(duration.rawValue)
+                                .foregroundStyle(.white)
+                            Spacer()
+                            if selected == duration {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.blue)
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                    }
+                    if duration != SharingDuration.allCases.last {
+                        Divider().padding(.leading, 16)
+                    }
+                }
+            }
+            .background(Color(.systemGray6))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal)
+
+            Button {
+                onStart(selected)
+                dismiss()
+            } label: {
+                Text("Start Sharing")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.horizontal)
+
+            Spacer()
+        }
     }
 }
