@@ -110,7 +110,9 @@ public final class MessagingViewModel {
             // Fetch most recent page
             let records = try await repository.fetchMessageRecords(
                 for: conversationHash, limit: Self.pageSize, offset: 0)
-            let loaded = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+            let loaded = records.reversed()
+                .map { Message(from: $0, localHash: appServices.localIdentityHash) }
+                .filter { !$0.isEmpty }  // Hide telemetry-only messages (e.g. location sharing)
 
             messages = loaded
             allMessagesLoaded = records.count < Self.pageSize
@@ -139,7 +141,9 @@ public final class MessagingViewModel {
                 allMessagesLoaded = true
                 return
             }
-            let older = records.reversed().map { Message(from: $0, localHash: appServices.localIdentityHash) }
+            let older = records.reversed()
+                .map { Message(from: $0, localHash: appServices.localIdentityHash) }
+                .filter { !$0.isEmpty }  // Hide telemetry-only messages
 
             messages.insert(contentsOf: older, at: 0)
             if records.count < Self.pageSize {
