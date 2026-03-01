@@ -51,6 +51,7 @@ struct MessagingView: View {
     @State private var showCallScreen = false
     @State private var detailMessage: Message?
     @State private var deleteConfirmMessage: Message?
+    @State private var showLocationConfirm = false
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -277,6 +278,18 @@ struct MessagingView: View {
         } message: {
             Text("This message will be permanently deleted from this device.")
         }
+        .confirmationDialog(
+            "Share Location",
+            isPresented: $showLocationConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Share My Location") {
+                appServices.locationSharingManager?.startSharing(with: conversation.destinationHash)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your live location will be sent periodically to this contact until you stop sharing.")
+        }
         .task {
             if viewModel == nil {
                 // Load messages before setting viewModel so the ScrollView first
@@ -344,7 +357,7 @@ struct MessagingView: View {
                 if locManager.isSharing(with: conversation.destinationHash) {
                     locManager.stopSharing(with: conversation.destinationHash)
                 } else {
-                    locManager.startSharing(with: conversation.destinationHash)
+                    showLocationConfirm = true
                 }
             }) {
                 Image(systemName: isSharingLocation ? "location.fill" : "location.slash")
