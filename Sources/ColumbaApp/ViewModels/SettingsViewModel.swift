@@ -137,6 +137,11 @@ public final class SettingsViewModel {
         }
     }
 
+    // MARK: - Transport Mode
+
+    public var isTransportEnabled: Bool = false
+    public var isTransportExpanded: Bool = false
+
     // MARK: - Card Expansion State
 
     public var isNetworkExpanded: Bool = false
@@ -349,6 +354,7 @@ public final class SettingsViewModel {
         announceIntervalHours = storedInterval > 0 ? storedInterval : 3
         let lastTs = defaults.double(forKey: "last_announce_time")
         lastAnnounceTime = lastTs > 0 ? Date(timeIntervalSince1970: lastTs) : nil
+        isTransportEnabled = defaults.bool(forKey: "transport_enabled")
         isLocationSharingEnabled = defaults.bool(forKey: "location_sharing_enabled")
         sharePreciseLocation = defaults.bool(forKey: "share_precise_location")
         locationUpdateInterval = defaults.integer(forKey: "location_update_interval")
@@ -389,6 +395,7 @@ public final class SettingsViewModel {
         defaults.set(vibrate, forKey: "vibrate")
         defaults.set(isAutoAnnounceEnabled, forKey: "auto_announce_enabled")
         defaults.set(announceIntervalHours, forKey: "announce_interval_hours")
+        defaults.set(isTransportEnabled, forKey: "transport_enabled")
         defaults.set(isLocationSharingEnabled, forKey: "location_sharing_enabled")
         defaults.set(sharePreciseLocation, forKey: "share_precise_location")
         defaults.set(locationUpdateInterval, forKey: "location_update_interval")
