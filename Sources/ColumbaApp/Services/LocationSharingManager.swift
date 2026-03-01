@@ -257,14 +257,6 @@ public final class LocationSharingManager: NSObject {
     public func handleIncomingTelemetry(from peerHash: Data, packet: TelemetryPacket, displayName: String?, iconAppearance: IconAppearance? = nil) {
         guard let location = packet.location else { return }
 
-        if location.isCeased {
-            // Peer stopped sharing — remove marker
-            peerLocations.removeValue(forKey: peerHash)
-            let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
-            logger.info("Peer \(hex) ceased location sharing")
-            return
-        }
-
         // Preserve existing icon if new message doesn't include one
         let resolvedIcon = iconAppearance ?? peerLocations[peerHash]?.iconAppearance
 
