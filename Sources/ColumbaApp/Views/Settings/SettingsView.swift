@@ -52,6 +52,9 @@ struct SettingsView: View {
                         // Network
                         networkCard(vm)
 
+                        // Transport Mode
+                        transportModeCard(vm)
+
                         // Delivery & Retrieval
                         deliveryRetrievalCard(vm)
 
@@ -262,6 +265,44 @@ struct SettingsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                 }
 
+            }
+        }
+    }
+
+    // MARK: - Transport Mode Card
+
+    private func transportModeCard(_ vm: SettingsViewModel) -> some View {
+        ExpandableSettingsCard(
+            icon: "point.3.connected.trianglepath.dotted",
+            title: "Transport Mode",
+            isExpanded: Binding(get: { vm.isTransportExpanded }, set: { vm.isTransportExpanded = $0 }),
+            toggle: Binding(get: { vm.isTransportEnabled }, set: { newValue in
+                vm.isTransportEnabled = newValue
+                vm.saveSettings()
+                Task {
+                    if newValue {
+                        await appServices.transport?.setTransportEnabled(true, identity: appServices.identity)
+                    } else {
+                        await appServices.transport?.setTransportEnabled(false)
+                    }
+                }
+            })
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Act as a relay node, forwarding announces and routing packets for other devices on the network.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                if vm.isTransportEnabled {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Theme.warning)
+                        Text("Increases battery and data usage.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.warning)
+                    }
+                }
             }
         }
     }

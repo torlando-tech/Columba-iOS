@@ -928,6 +928,11 @@ public final class AppServices {
             }
         }
 
+        // Apply persisted transport mode setting
+        if let transport = transport, UserDefaults.standard.bool(forKey: "transport_enabled") {
+            await transport.setTransportEnabled(true, identity: existingIdentity)
+        }
+
         // Start state observer if not running
         if stateObserverTask == nil {
             startStateObserver()
