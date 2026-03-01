@@ -432,7 +432,12 @@ public final class SettingsViewModel {
             activeInterfaces.append("RNode")
         }
         if let ble = appServices.bleInterface, await ble.state == .connected {
-            activeInterfaces.append("Bluetooth LE")
+            let count = await ble.peerCount
+            if count > 0 {
+                activeInterfaces.append("Bluetooth LE (\(count) peer\(count == 1 ? "" : "s"))")
+            } else {
+                activeInterfaces.append("Bluetooth LE")
+            }
         }
         connectedInterface = activeInterfaces.isEmpty ? "No active interface" : activeInterfaces.joined(separator: ", ")
     }
