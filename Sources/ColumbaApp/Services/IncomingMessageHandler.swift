@@ -148,6 +148,29 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 self.debugLog("[FIELDS] message.fields is nil")
             }
 
+            // Check for FIELD_COLUMBA_META (0x70) cease signal (Android Columba format)
+            var isCeaseMessage = false
+            if let fields = message.fields,
+               let metaRaw = fields[LXMessage.FIELD_COLUMBA_META] {
+                // Field may arrive as Data (bytes) or String depending on msgpack unpacking
+                let metaStr: String?
+                if let d = metaRaw as? Data {
+                    metaStr = String(data: d, encoding: .utf8)
+                } else if let s = metaRaw as? String {
+                    metaStr = s
+                } else {
+                    metaStr = nil
+                }
+                if let metaStr {
+                    self.debugLog("[COLUMBA_META] \(metaStr)")
+                    if metaStr.contains("\"cease\"") {
+                        isCeaseMessage = true
+                        self.locationSharingManager?.handleIncomingCease(from: message.sourceHash)
+                        self.debugLog("[COLUMBA_META] Cease signal from \(sourceHashHex)")
+                    }
+                }
+            }
+
             // Extract telemetry from LXMF Field 2 (FIELD_TELEMETRY)
             if let fields = message.fields {
                 // Extract icon appearance for map marker (may already be saved to DB above)
@@ -182,12 +205,17 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             }
 
-            // Post local push notification (respects user preferences)
-            await NotificationService.shared.postMessageNotification(
-                message,
-                senderName: nil,
-                database: self.database
-            )
+            // Post local push notification (respects user preferences).
+            // Skip telemetry-only and cease messages to avoid notification spam.
+            let isTelemetryOnly = message.content.isEmpty
+                && message.fields?[LXMessage.FIELD_TELEMETRY] != nil
+            if !isTelemetryOnly && !isCeaseMessage {
+                await NotificationService.shared.postMessageNotification(
+                    message,
+                    senderName: nil,
+                    database: self.database
+                )
+            }
 
             // Post notification so views reload with saved data
             NotificationCenter.default.post(

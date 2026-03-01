@@ -245,6 +245,15 @@ public final class LocationSharingManager: NSObject {
     ///   - packet: Decoded telemetry packet
     ///   - displayName: Optional display name for the peer
     ///   - iconAppearance: Optional MDI icon appearance from LXMF Field 0x04
+    /// Handle incoming cease signal from Android Columba (FIELD_COLUMBA_META with {"cease": true}).
+    ///
+    /// - Parameter peerHash: Source destination hash
+    public func handleIncomingCease(from peerHash: Data) {
+        peerLocations.removeValue(forKey: peerHash)
+        let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
+        logger.info("Peer \(hex) ceased location sharing (COLUMBA_META)")
+    }
+
     public func handleIncomingTelemetry(from peerHash: Data, packet: TelemetryPacket, displayName: String?, iconAppearance: IconAppearance? = nil) {
         guard let location = packet.location else { return }
 
@@ -474,12 +483,10 @@ public final class LocationSharingManager: NSObject {
             return
         }
 
-        let cease = LocationTelemetry.ceaseSignal()
-        let packet = TelemetryPacket(timestamp: 0, location: cease)
-        let telemetryData = packet.encode()
-
+        // Match Android Columba format: FIELD_COLUMBA_META (0x70) with JSON {"cease": true}
+        let ceaseJSON = "{\"cease\": true}"
         var fields: [UInt8: Any] = [:]
-        fields[LXMessage.FIELD_TELEMETRY] = telemetryData
+        fields[LXMessage.FIELD_COLUMBA_META] = ceaseJSON.data(using: .utf8)!
 
         var lxMessage = LXMessage(
             destinationHash: peerHash,
