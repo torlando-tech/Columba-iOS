@@ -540,6 +540,12 @@ public final class AppServices {
         let regCallbacks = await newTransport.registeredLinkCallbackHashes()
         DiagLog.log("[INIT2] Registered destinations: \(regDests)")
         DiagLog.log("[INIT2] Registered link callbacks: \(regCallbacks)")
+        // Apply persisted transport mode setting
+        if UserDefaults.standard.bool(forKey: "transport_enabled") {
+            await newTransport.setTransportEnabled(true, identity: identity)
+            DiagLog.log("[INIT2] Transport mode enabled")
+        }
+
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
 
@@ -1120,6 +1126,11 @@ public final class AppServices {
             if let dest = deliveryDestination {
                 try await router.registerDeliveryDestination(dest)
             }
+        }
+
+        // Apply persisted transport mode setting
+        if UserDefaults.standard.bool(forKey: "transport_enabled") {
+            await newTransport.setTransportEnabled(true, identity: existingIdentity)
         }
 
         // Restart state observer
