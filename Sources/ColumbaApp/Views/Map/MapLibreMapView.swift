@@ -19,30 +19,19 @@ struct MapLibreMapView: UIViewRepresentable {
     var peerLocations: [PeerLocation]
     var httpEnabled: Bool
 
-    /// Online style from OpenFreeMap.
-    private static let onlineStyleURL = URL(string: "https://tiles.openfreemap.org/styles/liberty")!
-
-    /// Minimal offline-only style with no HTTP tile sources.
-    private static let offlineStyleURL: URL = {
-        // MapLibre needs a valid style JSON. Use a blank style that only renders
-        // offline packs (MBTiles/cache) already downloaded.
-        let blankStyle: [String: Any] = [
-            "version": 8,
-            "name": "Offline",
-            "sources": [:] as [String: Any],
-            "layers": [
-                ["id": "background", "type": "background", "paint": ["background-color": "#1a1a2e"]]
-            ]
-        ]
-        let data = try! JSONSerialization.data(withJSONObject: blankStyle)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("offline_style.json")
-        try? data.write(to: url, options: .atomic)
-        return url
-    }()
+    /// Style URL from OpenFreeMap — used for both online and offline modes.
+    /// MLNOfflineStorage caches the style JSON + tiles during region download,
+    /// so loading this URL offline serves everything from the local cache.
+    private static let styleURL = URL(string: "https://tiles.openfreemap.org/styles/liberty")!
 
     func makeUIView(context: Context) -> MLNMapView {
-        let styleURL = httpEnabled ? Self.onlineStyleURL : Self.offlineStyleURL
-        let mapView = MLNMapView(frame: .zero, styleURL: styleURL)
+        // Set up network delegate to block HTTP when toggle is off.
+        // MLNOfflineStorage serves cached tiles before this delegate is called,
+        // so only uncached tile requests are blocked.
+        context.coordinator.httpEnabled = httpEnabled
+        MLNNetworkConfiguration.sharedManager.delegate = context.coordinator
+
+        let mapView = MLNMapView(frame: .zero, styleURL: Self.styleURL)
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         mapView.showsUserLocation = showsUserLocation
         mapView.delegate = context.coordinator
@@ -61,11 +50,8 @@ struct MapLibreMapView: UIViewRepresentable {
     func updateUIView(_ mapView: MLNMapView, context: Context) {
         mapView.showsUserLocation = showsUserLocation
 
-        // Switch style when HTTP toggle changes
-        let expectedURL = httpEnabled ? Self.onlineStyleURL : Self.offlineStyleURL
-        if mapView.styleURL != expectedURL {
-            mapView.styleURL = expectedURL
-        }
+        // Update network blocking state when HTTP toggle changes
+        context.coordinator.httpEnabled = httpEnabled
 
         if centerOnUser {
             DispatchQueue.main.async {
@@ -138,15 +124,30 @@ struct MapLibreMapView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, MLNMapViewDelegate {
+    final class Coordinator: NSObject, MLNMapViewDelegate, MLNNetworkConfigurationDelegate {
         @Binding var metersPerPixel: Double
         private var didCenterOnFirstLocation = false
+
+        /// Whether HTTP tile fetching is allowed.
+        var httpEnabled = true
 
         /// Tracks peer annotations by hash for efficient updates.
         var peerAnnotations: [Data: PeerPointAnnotation] = [:]
 
         init(metersPerPixel: Binding<Double>) {
             _metersPerPixel = metersPerPixel
+        }
+
+        // MARK: - MLNNetworkConfigurationDelegate
+
+        /// Block network requests when HTTP maps are disabled.
+        /// MLNOfflineStorage serves cached tiles before this is called,
+        /// so only truly uncached tile requests reach here.
+        func willSend(_ request: NSMutableURLRequest) -> NSMutableURLRequest {
+            if !httpEnabled {
+                request.timeoutInterval = 0.001
+            }
+            return request
         }
 
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
