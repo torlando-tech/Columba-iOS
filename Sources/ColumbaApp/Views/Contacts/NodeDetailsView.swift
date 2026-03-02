@@ -45,8 +45,9 @@ struct NodeDetailsView: View {
                 headerSection
                 if propagationInfo != nil {
                     setAsRelayButton
+                } else {
+                    startChatButton
                 }
-                startChatButton
                 detailsSection
                 if propagationInfo != nil {
                     propagationDetailsSection

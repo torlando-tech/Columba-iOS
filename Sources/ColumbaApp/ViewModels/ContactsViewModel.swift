@@ -316,12 +316,19 @@ public final class ContactsViewModel {
     /// in network announces or my contacts.
     public var currentRelayContact: Contact? {
         guard let selectedHash = selectedRelayHash else { return nil }
-        // Check network announces first (relays are usually discovered there)
-        if let relay = networkAnnounces.first(where: { $0.identityHash == selectedHash }) {
-            return relay
-        }
-        // Fall back to my contacts
-        return myContacts.first(where: { $0.identityHash == selectedHash })
+        // Find from network announces or my contacts
+        let c = networkAnnounces.first(where: { $0.identityHash == selectedHash })
+            ?? myContacts.first(where: { $0.identityHash == selectedHash })
+        guard let c else { return nil }
+        // Always force relay badge for the selected relay
+        return Contact(
+            id: c.id, displayName: c.displayName,
+            identityHash: c.identityHash, identityHashHex: c.identityHashHex,
+            badgeType: .relay, hopCount: c.hopCount,
+            signalStrength: c.signalStrength, timestamp: c.timestamp,
+            isOnline: c.isOnline, isFavorite: c.isFavorite, isRelay: true,
+            interfaceId: c.interfaceId, aspect: c.aspect
+        )
     }
 
     /// My contacts grouped with selected relay at top.
@@ -515,6 +522,9 @@ public final class ContactsViewModel {
                     )
                 }
             }
+        } else if let contact = networkAnnounces.first(where: { $0.id == contactId }) {
+            // Not in myContacts yet (e.g. selected relay) — save it
+            Task { await addToContacts(contact) }
         }
     }
 

@@ -190,7 +190,9 @@ public final class ChatsViewModel {
 
         do {
             let records = try await repository.fetchConversations()
-            conversations = records.map { Conversation(from: $0) }
+            conversations = records
+                .filter { $0.lastMessagePreview != nil }
+                .map { Conversation(from: $0) }
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -205,7 +207,9 @@ public final class ChatsViewModel {
 
         do {
             let records = try await repository.fetchConversations()
-            conversations = records.map { Conversation(from: $0) }
+            conversations = records
+                .filter { $0.lastMessagePreview != nil }
+                .map { Conversation(from: $0) }
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

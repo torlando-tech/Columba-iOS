@@ -112,6 +112,7 @@ public struct ContactsView: View {
                 }
                 .onAppear {
                     vm.startListening()
+                    vm.syncRelayState()
                 }
                 .onDisappear {
                     vm.stopListening()

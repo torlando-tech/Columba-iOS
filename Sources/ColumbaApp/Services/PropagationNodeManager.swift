@@ -198,6 +198,7 @@ public final class PropagationNodeManager {
         await appServices?.router?.setPropagationStampCost(stampCost)
 
         logger.info("Selected propagation node: \(self.selectedNodeName ?? "unknown")")
+        await savePreferences()
     }
 
     /// Clear the selected relay node.
@@ -209,6 +210,7 @@ public final class PropagationNodeManager {
         await appServices?.router?.setPropagationStampCost(0)
 
         logger.info("Cleared propagation node selection")
+        await savePreferences()
     }
 
     // MARK: - Sync
