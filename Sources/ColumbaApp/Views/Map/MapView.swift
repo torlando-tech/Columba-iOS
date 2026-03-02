@@ -6,14 +6,19 @@
 //
 
 import SwiftUI
+import LXMFSwift
 #if os(iOS)
 import CoreLocation
 #endif
 
 @available(iOS 17.0, macOS 14.0, *)
 struct MapView: View {
-    var locationSharingManager: LocationSharingManager?
+    var appServices: AppServices
     var mapHttpEnabled: Bool = true
+
+    private var locationSharingManager: LocationSharingManager? {
+        appServices.locationSharingManager
+    }
 
     #if os(iOS)
     @State private var centerOnUser = false
@@ -23,6 +28,8 @@ struct MapView: View {
     @State private var authorizationDelegate: LocationAuthorizationDelegate?
     @State private var showOfflineMaps = false
     @State private var offlineMapManager = OfflineMapManager()
+    @State private var showShareSheet = false
+    @State private var contacts: [ConversationRecord] = []
 
     var body: some View {
         NavigationStack {
@@ -61,7 +68,33 @@ struct MapView: View {
                 Spacer()
 
                 HStack {
+                    // Share / Stop Location button
+                    let isSharing = locationSharingManager?.isSharingWithAnyone ?? false
+                    Button {
+                        if isSharing {
+                            locationSharingManager?.stopAllSharing()
+                        } else {
+                            Task { await loadContacts() }
+                            showShareSheet = true
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: isSharing ? "location.slash.fill" : "location.fill")
+                                .font(.system(size: 14))
+                            Text(isSharing ? "Stop Sharing" : "Share Location")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .foregroundStyle(isSharing ? .red : .white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(isSharing ? .red.opacity(0.15) : .blue.opacity(0.85))
+                        .clipShape(Capsule())
+                        .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                    }
+                    .padding(.leading, 16)
+
                     Spacer()
+
                     VStack(spacing: 8) {
                         Button {
                             showOfflineMaps = true
@@ -101,7 +134,25 @@ struct MapView: View {
         .navigationDestination(isPresented: $showOfflineMaps) {
             OfflineMapsScreen(mapManager: offlineMapManager)
         }
+        .sheet(isPresented: $showShareSheet) {
+            ShareLocationSheet(
+                contacts: contacts,
+                activePeers: locationSharingManager?.activePeers ?? [],
+                onStartSharing: { selected, duration in
+                    for hash in selected {
+                        locationSharingManager?.startSharing(with: hash, duration: duration)
+                    }
+                }
+            )
+            .presentationDetents([.large])
+        }
         } // NavigationStack
+    }
+
+    private func loadContacts() async {
+        guard let db = appServices.database else { return }
+        let repo = MessageRepository(database: db)
+        contacts = (try? await repo.fetchConversations()) ?? []
     }
 
     private func checkLocationAuthorization() {
@@ -151,6 +202,179 @@ struct MapView: View {
     }
     #endif
 }
+
+// MARK: - Share Location Bottom Sheet
+
+#if os(iOS)
+@available(iOS 17.0, macOS 14.0, *)
+private struct ShareLocationSheet: View {
+    let contacts: [ConversationRecord]
+    let activePeers: Set<Data>
+    let onStartSharing: (Set<Data>, SharingDuration) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+    @State private var selectedHashes: Set<Data> = []
+    @State private var selectedDuration: SharingDuration = {
+        if let raw = UserDefaults.standard.string(forKey: "default_sharing_duration"),
+           let d = SharingDuration.allCases.first(where: { $0.rawValue == raw }) {
+            return d
+        }
+        return .oneHour
+    }()
+
+    private var filteredContacts: [ConversationRecord] {
+        let unique = Dictionary(grouping: contacts, by: \.destinationHash)
+            .compactMapValues(\.first).values
+            .sorted { ($0.lastMessageTimestamp) > ($1.lastMessageTimestamp) }
+
+        if searchText.isEmpty { return Array(unique) }
+        return unique.filter {
+            ($0.displayName ?? "").localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Handle bar
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(Color.secondary.opacity(0.4))
+                .frame(width: 36, height: 5)
+                .padding(.top, 8)
+
+            Text("Share Your Location")
+                .font(.title3.bold())
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.top, 16)
+
+            // Search
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search contacts", text: $searchText)
+                    .textFieldStyle(.plain)
+            }
+            .padding(10)
+            .background(Color(.systemGray5))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            // Selected chips
+            if !selectedHashes.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(contacts.filter { selectedHashes.contains($0.destinationHash) }, id: \.destinationHash) { contact in
+                            HStack(spacing: 4) {
+                                Text(contact.displayName ?? contact.destinationHash.prefix(4).map { String(format: "%02x", $0) }.joined())
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textPrimary)
+                                Button {
+                                    selectedHashes.remove(contact.destinationHash)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Theme.accentColor.opacity(0.15))
+                            .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .padding(.top, 8)
+            }
+
+            // Contact list
+            List {
+                ForEach(filteredContacts, id: \.destinationHash) { contact in
+                    let hash = contact.destinationHash
+                    let isSelected = selectedHashes.contains(hash)
+                    let alreadySharing = activePeers.contains(hash)
+                    Button {
+                        if isSelected {
+                            selectedHashes.remove(hash)
+                        } else {
+                            selectedHashes.insert(hash)
+                        }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(contact.displayName ?? hash.prefix(4).map { String(format: "%02x", $0) }.joined())
+                                    .foregroundStyle(Theme.textPrimary)
+                                if alreadySharing {
+                                    Text("Already sharing")
+                                        .font(.caption2)
+                                        .foregroundStyle(.green)
+                                }
+                            }
+                            Spacer()
+                            if isSelected {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Theme.accentColor)
+                            } else {
+                                Image(systemName: "circle")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+
+            Divider()
+
+            // Duration picker
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Duration")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Theme.textSecondary)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(SharingDuration.allCases) { duration in
+                            Button {
+                                selectedDuration = duration
+                            } label: {
+                                Text(duration.rawValue)
+                                    .font(.subheadline)
+                                    .foregroundStyle(selectedDuration == duration ? .white : Theme.textPrimary)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .background(selectedDuration == duration ? Theme.accentColor : Color(.systemGray5))
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            // Start button
+            Button {
+                onStartSharing(selectedHashes, selectedDuration)
+                dismiss()
+            } label: {
+                Text("Start Sharing")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(selectedHashes.isEmpty ? Color.gray : Theme.accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .disabled(selectedHashes.isEmpty)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+        .background(Theme.backgroundPrimary)
+    }
+}
+#endif
 
 // MARK: - Scale Bar
 
@@ -235,7 +459,7 @@ private final class LocationAuthorizationDelegate: NSObject, CLLocationManagerDe
 #if DEBUG
 @available(iOS 17.0, macOS 14.0, *)
 #Preview {
-    MapView()
+    MapView(appServices: AppServices())
         .preferredColorScheme(.dark)
 }
 #endif
