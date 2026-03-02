@@ -8,9 +8,12 @@
 
 import SwiftUI
 import LXMFSwift
+import os.log
 #if canImport(UIKit)
 import UIKit
 #endif
+
+private let logger = Logger(subsystem: "com.columba.app", category: "MessageBubble")
 
 /// Individual message bubble view.
 ///
@@ -383,7 +386,7 @@ public struct Message: Identifiable, Equatable {
                 self.imageFormat = format
             } else if let rawField = lxMessage.fields?[LXMessage.FIELD_IMAGE] {
                 // Image field exists but failed extraction — log for diagnosis
-                print("[IMAGE_DEBUG] Field 0x06 present but extraction failed: type=\(type(of: rawField)), value=\(String(describing: rawField).prefix(200))")
+                logger.warning("Image field 0x06 present but extraction failed: type=\(String(describing: type(of: rawField))), value=\(String(describing: rawField).prefix(200))")
             }
             // Extract file attachments field (0x05)
             if let filesField = lxMessage.fields?[LXMessage.FIELD_FILE_ATTACHMENTS] as? [Any] {

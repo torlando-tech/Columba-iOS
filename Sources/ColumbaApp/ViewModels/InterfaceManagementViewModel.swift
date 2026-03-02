@@ -9,6 +9,9 @@
 import Foundation
 import SwiftUI
 import ReticulumSwift
+import os.log
+
+private let logger = Logger(subsystem: "com.columba.app", category: "InterfaceManagementVM")
 
 // MARK: - Interface Management ViewModel
 
@@ -299,19 +302,19 @@ public final class InterfaceManagementViewModel {
         if let tcpIf = tcpEntity,
            case .tcpClient(let config) = tcpIf.config {
             let serverAddress = "\(config.targetHost):\(config.targetPort)"
-            print("[INTERFACE_VM] Applying TCP: \(serverAddress)")
+            logger.info("Applying TCP: \(serverAddress)")
             activeInterfaceId = tcpIf.id
             interfaceStatus[tcpIf.id] = .connecting
             do {
                 try await appServices.reconnectTCPOnly(host: config.targetHost, port: config.targetPort)
                 showSuccess("Connecting to \(config.targetHost):\(config.targetPort)...")
             } catch {
-                print("[INTERFACE_VM] TCP failed: \(error)")
+                logger.error("TCP failed: \(error)")
                 interfaceStatus[tcpIf.id] = .error
                 showError("TCP failed: \(error.localizedDescription)")
             }
         } else if tcpEntity == nil && appServices.tcpInterface != nil {
-            print("[INTERFACE_VM] Stopping TCP")
+            logger.info("Stopping TCP")
             await appServices.stopTCPInterface()
             activeInterfaceId = nil
         }
@@ -322,13 +325,13 @@ public final class InterfaceManagementViewModel {
            case .autoInterface(let config) = autoIf.config {
             if appServices.autoInterface == nil {
                 let groupId = config.groupId ?? "reticulum"
-                print("[INTERFACE_VM] Starting AutoInterface: \(groupId)")
+                logger.info("Starting AutoInterface: \(groupId)")
                 interfaceStatus[autoIf.id] = .connecting
                 do {
                     try await appServices.startAutoInterface(groupId: groupId)
                     interfaceStatus[autoIf.id] = .connected
                 } catch {
-                    print("[INTERFACE_VM] Auto failed: \(error)")
+                    logger.error("AutoInterface failed: \(error)")
                     interfaceStatus[autoIf.id] = .error
                 }
             }
@@ -341,13 +344,13 @@ public final class InterfaceManagementViewModel {
         let bleEntity = enabledInterfaces.first(where: { $0.type == .ble })
         if let bleEntity = bleEntity {
             if appServices.bleInterface == nil {
-                print("[INTERFACE_VM] Starting BLE")
+                logger.info("Starting BLE")
                 interfaceStatus[bleEntity.id] = .connecting
                 do {
                     try await appServices.startBLEInterface()
                     interfaceStatus[bleEntity.id] = .connected
                 } catch {
-                    print("[INTERFACE_VM] BLE failed: \(error)")
+                    logger.error("BLE failed: \(error)")
                     interfaceStatus[bleEntity.id] = .error
                     showError("BLE failed: \(error.localizedDescription)")
                 }
@@ -362,12 +365,12 @@ public final class InterfaceManagementViewModel {
         if let rnodeIf = rnodeEntity,
            case .rnode(let rnodeConfig) = rnodeIf.config {
             if appServices.rnodeInterface == nil {
-                print("[INTERFACE_VM] Starting RNode: \(rnodeConfig.deviceName)")
+                logger.info("Starting RNode: \(rnodeConfig.deviceName)")
                 interfaceStatus[rnodeIf.id] = .connecting
                 do {
                     try await appServices.startRNodeInterface(config: rnodeConfig, name: rnodeIf.name)
                 } catch {
-                    print("[INTERFACE_VM] RNode failed: \(error)")
+                    logger.error("RNode failed: \(error)")
                     interfaceStatus[rnodeIf.id] = .error
                     showError("RNode failed: \(error.localizedDescription)")
                 }
