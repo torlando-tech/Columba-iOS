@@ -52,6 +52,7 @@ struct MessagingView: View {
     @State private var detailMessage: Message?
     @State private var deleteConfirmMessage: Message?
     @State private var showLocationConfirm = false
+    @State private var isSavedContact: Bool = false
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -296,6 +297,11 @@ struct MessagingView: View {
             .presentationDetents([.medium])
         }
         .task {
+            if let record = try? await messageRepository.fetchConversation(conversation.destinationHash) {
+                isSavedContact = record.isFavorite != 0
+            } else {
+                isSavedContact = conversation.isFavorite
+            }
             if viewModel == nil {
                 // Load messages before setting viewModel so the ScrollView first
                 // appears with content already populated. This lets .defaultScrollAnchor(.bottom)
@@ -370,27 +376,48 @@ struct MessagingView: View {
                     .foregroundStyle(isSharingLocation ? .green : .white)
             }
 
-            // Sync button
-            Button(action: {
-                Task {
-                    isSyncing = true
-                    defer { isSyncing = false }
-                    await appServices.propagationManager?.syncNow()
-                    await viewModel?.loadMessages()
+            // More options menu
+            Menu {
+                Button {
+                    Task {
+                        isSyncing = true
+                        defer { isSyncing = false }
+                        await appServices.propagationManager?.syncNow()
+                        await viewModel?.loadMessages()
+                    }
+                } label: {
+                    Label("Sync Messages", systemImage: "arrow.clockwise")
                 }
-            }) {
-                Image(systemName: "arrow.clockwise")
+
+                Button {
+                    Task {
+                        let newValue = !isSavedContact
+                        if newValue {
+                            try? await messageRepository.ensureConversation(
+                                conversation.destinationHash,
+                                displayName: conversation.displayName
+                            )
+                        }
+                        try? await messageRepository.setFavorite(conversation.destinationHash, isFavorite: newValue)
+                        await MainActor.run {
+                            isSavedContact = newValue
+                            NotificationCenter.default.post(
+                                name: IncomingMessageHandler.messageReceivedNotification,
+                                object: nil
+                            )
+                        }
+                    }
+                } label: {
+                    Label(
+                        isSavedContact ? "Remove from Contacts" : "Add to Contacts",
+                        systemImage: isSavedContact ? "star.slash" : "star"
+                    )
+                }
+            } label: {
+                Image(systemName: "ellipsis")
                     .font(.system(size: 16))
                     .foregroundStyle(.white)
-                    .rotationEffect(.degrees(isSyncing ? 360 : 0))
-                    .animation(
-                        isSyncing
-                            ? .linear(duration: 1).repeatForever(autoreverses: false)
-                            : .default,
-                        value: isSyncing
-                    )
             }
-            .disabled(isSyncing)
         }
     }
 
