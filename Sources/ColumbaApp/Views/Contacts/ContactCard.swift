@@ -39,6 +39,18 @@ struct ContactCard: View {
     /// Called when card is tapped.
     var onTap: (() -> Void)?
 
+    /// Called when "Pin/Unpin Contact" is tapped in context menu.
+    var onPin: (() -> Void)?
+
+    /// Called when "View Details" is tapped in context menu.
+    var onViewDetails: (() -> Void)?
+
+    /// Called when "Edit Nickname" is tapped in context menu.
+    var onEditNickname: (() -> Void)?
+
+    /// Called when "Remove from Contacts" is tapped in context menu.
+    var onRemove: (() -> Void)?
+
     // MARK: - Body
 
     var body: some View {
@@ -70,6 +82,45 @@ struct ContactCard: View {
             .background(glassBackground)
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if onPin != nil || onViewDetails != nil || onEditNickname != nil || onRemove != nil {
+                if let onPin {
+                    Button {
+                        onPin()
+                    } label: {
+                        Label(
+                            contact.isPinned ? "Unpin Contact" : "Pin Contact",
+                            systemImage: contact.isPinned ? "pin.slash" : "pin"
+                        )
+                    }
+                }
+
+                if let onViewDetails {
+                    Button {
+                        onViewDetails()
+                    } label: {
+                        Label("View Details", systemImage: "info.circle")
+                    }
+                }
+
+                if let onEditNickname {
+                    Button {
+                        onEditNickname()
+                    } label: {
+                        Label("Edit Nickname", systemImage: "pencil")
+                    }
+                }
+
+                if let onRemove {
+                    Divider()
+                    Button(role: .destructive) {
+                        onRemove()
+                    } label: {
+                        Label("Remove from Contacts", systemImage: "trash")
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Avatar View
@@ -140,7 +191,7 @@ struct ContactCard: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.pink)
+                    .background(Color.blue)
                     .cornerRadius(4)
             case .audio:
                 Text("Audio")

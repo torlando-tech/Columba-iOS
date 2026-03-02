@@ -45,6 +45,12 @@ public struct ContactsView: View {
     /// Contact scanned from QR code or deep link, shown in AddContactSheet.
     @State private var scannedContact: ScannedContact?
 
+    /// Contact being edited for nickname.
+    @State private var editingContact: Contact?
+
+    /// Text field value for nickname editing.
+    @State private var nicknameText: String = ""
+
     /// Pending deep link URL string to process.
     var pendingDeepLink: Binding<String?>?
 
@@ -157,6 +163,29 @@ public struct ContactsView: View {
                 )
                 .presentationDetents([.medium, .large])
             }
+        }
+        .alert("Edit Nickname", isPresented: Binding(
+            get: { editingContact != nil },
+            set: { if !$0 { editingContact = nil } }
+        )) {
+            TextField("Nickname", text: $nicknameText)
+            Button("Save") {
+                if let contact = editingContact {
+                    viewModel?.updateNickname(for: contact.id, nickname: nicknameText)
+                }
+                editingContact = nil
+            }
+            Button("Clear", role: .destructive) {
+                if let contact = editingContact {
+                    viewModel?.updateNickname(for: contact.id, nickname: nil)
+                }
+                editingContact = nil
+            }
+            Button("Cancel", role: .cancel) {
+                editingContact = nil
+            }
+        } message: {
+            Text("Enter a custom name for this contact. Clear to use the announce name.")
         }
         .onChange(of: pendingDeepLink?.wrappedValue) { _, newValue in
             if let urlString = newValue, let parsed = ContactsViewModel.parseLXMA(urlString) {
@@ -281,6 +310,19 @@ public struct ContactsView: View {
                             },
                             onTap: {
                                 selectedContact = contact
+                            },
+                            onPin: {
+                                vm.togglePin(for: contact.id)
+                            },
+                            onViewDetails: {
+                                selectedContact = contact
+                            },
+                            onEditNickname: {
+                                nicknameText = contact.displayName ?? ""
+                                editingContact = contact
+                            },
+                            onRemove: {
+                                vm.removeContact(contactId: contact.id)
                             }
                         )
                         .padding(.horizontal, 16)
@@ -301,12 +343,16 @@ public struct ContactsView: View {
                 Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
                     .font(.caption)
                     .foregroundStyle(Theme.accentColor)
+            } else if title == "PINNED" {
+                Image(systemName: "pin.fill")
+                    .font(.caption)
+                    .foregroundStyle(.yellow)
             }
 
             Text(title)
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundStyle(title.contains("RELAY") ? Theme.accentColor : Color.gray)
+                .foregroundStyle(title.contains("RELAY") ? Theme.accentColor : title == "PINNED" ? .yellow : Color.gray)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
