@@ -209,13 +209,16 @@ struct NodeDetailsView: View {
                 Button {
                     #if os(iOS)
                     UIPasteboard.general.string = value
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     #endif
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(.body)
+                        .foregroundStyle(Theme.accentColor)
+                        .padding(8)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
             }
         }
         .padding(14)

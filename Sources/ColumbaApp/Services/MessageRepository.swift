@@ -102,6 +102,26 @@ public actor MessageRepository {
         try await database.setFavorite(hash: conversationHash, isFavorite: isFavorite)
     }
 
+    /// Set pinned status for a conversation.
+    ///
+    /// - Parameters:
+    ///   - conversationHash: Destination hash (16 bytes)
+    ///   - isPinned: Whether to pin the conversation
+    /// - Throws: DatabaseError
+    public func setPinned(_ conversationHash: Data, isPinned: Bool) async throws {
+        try await database.setPinned(hash: conversationHash, isPinned: isPinned)
+    }
+
+    /// Update display name for a conversation.
+    ///
+    /// - Parameters:
+    ///   - conversationHash: Destination hash (16 bytes)
+    ///   - displayName: New display name (nil to clear)
+    /// - Throws: DatabaseError
+    public func updateDisplayName(_ conversationHash: Data, displayName: String?) async throws {
+        try await database.updateDisplayName(hash: conversationHash, displayName: displayName)
+    }
+
     // MARK: - Icon Appearance
 
     /// Update peer icon appearance for a conversation.

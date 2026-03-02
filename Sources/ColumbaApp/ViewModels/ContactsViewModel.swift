@@ -34,6 +34,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
     public let timestamp: Date
     public let isOnline: Bool
     public let isFavorite: Bool
+    public let isPinned: Bool
     public let isRelay: Bool
     public var iconName: String?
     public var iconFgColor: String?
@@ -116,6 +117,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.timestamp = entry.timestamp
         self.isOnline = Date() < entry.expires
         self.isFavorite = false
+        self.isPinned = false
         self.interfaceId = entry.interfaceId
         self.aspect = entry.detectedAspect
 
@@ -145,10 +147,11 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.identityHashHex = hex
         self.badgeType = .peer
         self.hopCount = 0
-        self.signalStrength = 3
+        self.signalStrength = 4
         self.timestamp = Date(timeIntervalSince1970: record.lastMessageTimestamp)
         self.isOnline = true
         self.isFavorite = record.isFavorite != 0
+        self.isPinned = record.isPinned != 0
         self.isRelay = false
         self.iconName = record.iconName
         self.iconFgColor = record.iconFgColor
@@ -168,6 +171,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         timestamp: Date,
         isOnline: Bool,
         isFavorite: Bool,
+        isPinned: Bool = false,
         isRelay: Bool,
         interfaceId: String? = nil,
         aspect: String? = nil
@@ -182,6 +186,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.timestamp = timestamp
         self.isOnline = isOnline
         self.isFavorite = isFavorite
+        self.isPinned = isPinned
         self.isRelay = isRelay
         self.interfaceId = interfaceId
         self.aspect = aspect
@@ -326,12 +331,13 @@ public final class ContactsViewModel {
             identityHash: c.identityHash, identityHashHex: c.identityHashHex,
             badgeType: .relay, hopCount: c.hopCount,
             signalStrength: c.signalStrength, timestamp: c.timestamp,
-            isOnline: c.isOnline, isFavorite: c.isFavorite, isRelay: true,
+            isOnline: c.isOnline, isFavorite: c.isFavorite,
+            isPinned: c.isPinned, isRelay: true,
             interfaceId: c.interfaceId, aspect: c.aspect
         )
     }
 
-    /// My contacts grouped with selected relay at top.
+    /// My contacts grouped with selected relay at top, then pinned, then all.
     public var groupedMyContacts: [(title: String, contacts: [Contact])] {
         var groups: [(title: String, contacts: [Contact])] = []
 
@@ -341,10 +347,19 @@ public final class ContactsViewModel {
             groups.append((title: "MY RELAY\(autoLabel)", contacts: [relay]))
         }
 
-        // Regular contacts (exclude the selected relay to avoid duplication)
-        let regularContacts = filteredMyContacts.filter { $0.identityHash != selectedRelayHash }
-        if !regularContacts.isEmpty {
-            groups.append((title: "ALL CONTACTS", contacts: regularContacts))
+        // Exclude the selected relay from remaining contacts
+        let remaining = filteredMyContacts.filter { $0.identityHash != selectedRelayHash }
+
+        // Pinned contacts
+        let pinned = remaining.filter { $0.isPinned }
+        if !pinned.isEmpty {
+            groups.append((title: "PINNED", contacts: pinned))
+        }
+
+        // All other contacts
+        let others = remaining.filter { !$0.isPinned }
+        if !others.isEmpty {
+            groups.append((title: "ALL CONTACTS", contacts: others))
         }
 
         return groups
@@ -392,14 +407,15 @@ public final class ContactsViewModel {
         var contact = Contact(from: entry)
 
         // Preserve saved-contact state (star filled if already in myContacts)
-        let isSaved = myContacts.contains(where: { $0.id == contact.id })
-        if isSaved && !contact.isFavorite {
+        let savedContact = myContacts.first(where: { $0.id == contact.id })
+        if let savedContact, !contact.isFavorite {
             contact = Contact(
                 id: contact.id, displayName: contact.displayName,
                 identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
                 badgeType: contact.badgeType, hopCount: contact.hopCount,
                 signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay,
+                isOnline: contact.isOnline, isFavorite: true,
+                isPinned: savedContact.isPinned, isRelay: contact.isRelay,
                 interfaceId: contact.interfaceId, aspect: contact.aspect
             )
         }
@@ -502,7 +518,8 @@ public final class ContactsViewModel {
                     identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
                     badgeType: contact.badgeType, hopCount: contact.hopCount,
                     signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                    isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay,
+                    isOnline: contact.isOnline, isFavorite: true,
+                    isPinned: contact.isPinned, isRelay: contact.isRelay,
                     interfaceId: contact.interfaceId, aspect: contact.aspect
                 )
                 myContacts[index] = updated
@@ -525,6 +542,85 @@ public final class ContactsViewModel {
         } else if let contact = networkAnnounces.first(where: { $0.id == contactId }) {
             // Not in myContacts yet (e.g. selected relay) — save it
             Task { await addToContacts(contact) }
+        }
+    }
+
+    /// Toggle pin status for a contact and persist to database.
+    @MainActor
+    public func togglePin(for contactId: String) {
+        guard let index = myContacts.firstIndex(where: { $0.id == contactId }) else { return }
+        let contact = myContacts[index]
+        let newValue = !contact.isPinned
+        Task {
+            try? await messageRepository.setPinned(contact.identityHash, isPinned: newValue)
+        }
+        myContacts[index] = Contact(
+            id: contact.id, displayName: contact.displayName,
+            identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
+            badgeType: contact.badgeType, hopCount: contact.hopCount,
+            signalStrength: contact.signalStrength, timestamp: contact.timestamp,
+            isOnline: contact.isOnline, isFavorite: contact.isFavorite,
+            isPinned: newValue, isRelay: contact.isRelay,
+            interfaceId: contact.interfaceId, aspect: contact.aspect
+        )
+    }
+
+    /// Update nickname for a contact and persist to database.
+    /// Pass nil to clear the custom nickname (falls back to announce name).
+    @MainActor
+    public func updateNickname(for contactId: String, nickname: String?) {
+        guard let index = myContacts.firstIndex(where: { $0.id == contactId }) else { return }
+        let contact = myContacts[index]
+        let trimmed = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newName = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        Task {
+            try? await messageRepository.updateDisplayName(contact.identityHash, displayName: newName)
+        }
+        myContacts[index] = Contact(
+            id: contact.id, displayName: newName,
+            identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
+            badgeType: contact.badgeType, hopCount: contact.hopCount,
+            signalStrength: contact.signalStrength, timestamp: contact.timestamp,
+            isOnline: contact.isOnline, isFavorite: contact.isFavorite,
+            isPinned: contact.isPinned, isRelay: contact.isRelay,
+            interfaceId: contact.interfaceId, aspect: contact.aspect
+        )
+        // Also update in network announces
+        if let nIndex = networkAnnounces.firstIndex(where: { $0.id == contactId }) {
+            let c = networkAnnounces[nIndex]
+            networkAnnounces[nIndex] = Contact(
+                id: c.id, displayName: newName,
+                identityHash: c.identityHash, identityHashHex: c.identityHashHex,
+                badgeType: c.badgeType, hopCount: c.hopCount,
+                signalStrength: c.signalStrength, timestamp: c.timestamp,
+                isOnline: c.isOnline, isFavorite: c.isFavorite,
+                isPinned: c.isPinned, isRelay: c.isRelay,
+                interfaceId: c.interfaceId, aspect: c.aspect
+            )
+        }
+    }
+
+    /// Remove a contact from My Contacts (unfavorite + remove from list).
+    @MainActor
+    public func removeContact(contactId: String) {
+        guard let index = myContacts.firstIndex(where: { $0.id == contactId }) else { return }
+        let contact = myContacts[index]
+        Task {
+            try? await messageRepository.setFavorite(contact.identityHash, isFavorite: false)
+        }
+        myContacts.remove(at: index)
+        // Unmark in network announces
+        if let nIndex = networkAnnounces.firstIndex(where: { $0.id == contactId }) {
+            let c = networkAnnounces[nIndex]
+            networkAnnounces[nIndex] = Contact(
+                id: c.id, displayName: c.displayName,
+                identityHash: c.identityHash, identityHashHex: c.identityHashHex,
+                badgeType: c.badgeType, hopCount: c.hopCount,
+                signalStrength: c.signalStrength, timestamp: c.timestamp,
+                isOnline: c.isOnline, isFavorite: false,
+                isPinned: false, isRelay: c.isRelay,
+                interfaceId: c.interfaceId, aspect: c.aspect
+            )
         }
     }
 
@@ -565,7 +661,8 @@ public final class ContactsViewModel {
                 identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
                 badgeType: contact.badgeType, hopCount: contact.hopCount,
                 signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay,
+                isOnline: contact.isOnline, isFavorite: true,
+                isPinned: contact.isPinned, isRelay: contact.isRelay,
                 interfaceId: contact.interfaceId, aspect: contact.aspect
             )
             myContacts.append(saved)
@@ -578,7 +675,8 @@ public final class ContactsViewModel {
                     identityHash: c.identityHash, identityHashHex: c.identityHashHex,
                     badgeType: c.badgeType, hopCount: c.hopCount,
                     signalStrength: c.signalStrength, timestamp: c.timestamp,
-                    isOnline: c.isOnline, isFavorite: true, isRelay: c.isRelay,
+                    isOnline: c.isOnline, isFavorite: true,
+                    isPinned: c.isPinned, isRelay: c.isRelay,
                     interfaceId: c.interfaceId, aspect: c.aspect
                 )
             }
@@ -676,15 +774,16 @@ public final class ContactsViewModel {
     /// Mark network announces that already exist in my contacts.
     @MainActor
     private func markSavedContacts() {
-        let savedIds = Set(myContacts.map { $0.id })
+        let savedById = Dictionary(myContacts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         networkAnnounces = networkAnnounces.map { contact in
-            if savedIds.contains(contact.id) && !contact.isFavorite {
+            if let saved = savedById[contact.id], !contact.isFavorite {
                 return Contact(
                     id: contact.id, displayName: contact.displayName,
                     identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
                     badgeType: contact.badgeType, hopCount: contact.hopCount,
                     signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                    isOnline: contact.isOnline, isFavorite: true, isRelay: contact.isRelay,
+                    isOnline: contact.isOnline, isFavorite: true,
+                    isPinned: saved.isPinned, isRelay: contact.isRelay,
                     interfaceId: contact.interfaceId, aspect: contact.aspect
                 )
             }
