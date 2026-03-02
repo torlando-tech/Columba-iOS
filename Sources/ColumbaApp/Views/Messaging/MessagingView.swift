@@ -11,9 +11,12 @@ import PhotosUI
 import UniformTypeIdentifiers
 import LXMFSwift
 import LXSTSwift
+import os.log
 #if canImport(UIKit)
 import UIKit
 #endif
+
+private let logger = Logger(subsystem: "com.columba.app", category: "MessagingView")
 
 /// Main messaging/chat screen view.
 ///
@@ -133,7 +136,7 @@ struct MessagingView: View {
                                         }
                                     }
                                 } catch {
-                                    print("[PHOTO_PICKER] Failed to load image: \(error)")
+                                    logger.error("Failed to load image: \(error)")
                                 }
                                 await MainActor.run {
                                     selectedPhotoItem = nil
@@ -444,7 +447,7 @@ struct MessagingView: View {
         if let image {
             imageData = image.compressToPreset(selectedImagePreset)
             imageFormat = "jpeg"
-            print("[SEND_IMG] Image \(image.size.width)x\(image.size.height) preset=\(selectedImagePreset.rawValue) -> JPEG \(imageData?.count ?? 0) bytes")
+            logger.info("Image \(image.size.width)x\(image.size.height) preset=\(selectedImagePreset.rawValue) -> JPEG \(imageData?.count ?? 0) bytes")
         }
 
         let fileAttachments: [(name: String, data: Data)]? = files.isEmpty ? nil : files.map { ($0.name, $0.data) }

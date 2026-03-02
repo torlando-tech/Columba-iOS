@@ -8,6 +8,9 @@
 
 import Foundation
 import ReticulumSwift
+import os.log
+
+private let logger = Logger(subsystem: "com.columba.app", category: "InterfaceRepository")
 
 // MARK: - Interface Entity
 
@@ -457,9 +460,9 @@ public final class InterfaceRepository: @unchecked Sendable {
         do {
             let decoded = try JSONDecoder().decode([InterfaceEntity].self, from: data)
             interfaces = decoded.sorted { $0.displayOrder < $1.displayOrder }
-            print("[INTERFACE_REPO] Loaded \(interfaces.count) interfaces")
+            logger.info("Loaded \(self.interfaces.count) interfaces")
         } catch {
-            print("[INTERFACE_REPO] Failed to decode interfaces: \(error)")
+            logger.error("Failed to decode interfaces: \(error)")
             interfaces = []
         }
     }
@@ -469,9 +472,9 @@ public final class InterfaceRepository: @unchecked Sendable {
         do {
             let data = try JSONEncoder().encode(interfaces)
             defaults.set(data, forKey: storageKey)
-            print("[INTERFACE_REPO] Saved \(interfaces.count) interfaces")
+            logger.debug("Saved \(self.interfaces.count) interfaces")
         } catch {
-            print("[INTERFACE_REPO] Failed to encode interfaces: \(error)")
+            logger.error("Failed to encode interfaces: \(error)")
         }
     }
 
@@ -481,13 +484,13 @@ public final class InterfaceRepository: @unchecked Sendable {
         newInterface.displayOrder = (interfaces.map { $0.displayOrder }.max() ?? -1) + 1
         interfaces.append(newInterface)
         saveInterfaces()
-        print("[INTERFACE_REPO] Added interface: \(newInterface.name)")
+        logger.info("Added interface: \(newInterface.name)")
     }
 
     /// Update an existing interface.
     public func updateInterface(_ interface: InterfaceEntity) {
         guard let index = interfaces.firstIndex(where: { $0.id == interface.id }) else {
-            print("[INTERFACE_REPO] Interface not found for update: \(interface.id)")
+            logger.warning("Interface not found for update: \(interface.id)")
             return
         }
 
@@ -495,14 +498,14 @@ public final class InterfaceRepository: @unchecked Sendable {
         updated.updatedAt = Date()
         interfaces[index] = updated
         saveInterfaces()
-        print("[INTERFACE_REPO] Updated interface: \(updated.name)")
+        logger.info("Updated interface: \(updated.name)")
     }
 
     /// Delete an interface by ID.
     public func deleteInterface(id: String) {
         interfaces.removeAll { $0.id == id }
         saveInterfaces()
-        print("[INTERFACE_REPO] Deleted interface: \(id)")
+        logger.info("Deleted interface: \(id)")
     }
 
     /// Toggle interface enabled state.
@@ -514,7 +517,7 @@ public final class InterfaceRepository: @unchecked Sendable {
         interfaces[index].enabled = enabled
         interfaces[index].updatedAt = Date()
         saveInterfaces()
-        print("[INTERFACE_REPO] Toggled interface \(id): enabled=\(enabled)")
+        logger.info("Toggled interface \(id): enabled=\(enabled)")
     }
 
     /// Get interface by ID.
