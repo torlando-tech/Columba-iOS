@@ -66,9 +66,9 @@ public struct Contact: Identifiable, Sendable, Hashable {
         return .tcp
     }
 
-    /// Display name with fallback to "Unknown Peer".
+    /// Display name with fallback to "Peer <hash prefix>" (matches Android Columba).
     public var resolvedDisplayName: String {
-        displayName ?? "Unknown Peer"
+        displayName ?? "Peer \(String(identityHashHex.prefix(8)).uppercased())"
     }
 
     /// Truncated hex hash for display (first 24 chars + ...).
