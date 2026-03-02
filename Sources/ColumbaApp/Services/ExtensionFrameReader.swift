@@ -8,6 +8,8 @@
 //  Listens for Darwin notifications from the extension to wake and process frames.
 //
 
+#if ENABLE_NETWORK_EXTENSION
+
 import Foundation
 import os.log
 
@@ -98,3 +100,5 @@ public final class ExtensionFrameReader: @unchecked Sendable {
         stopListening()
     }
 }
+
+#endif

@@ -96,6 +96,7 @@ struct NetworkStatusView: View {
                     .foregroundStyle(Theme.textPrimary)
             }
 
+            #if ENABLE_NETWORK_EXTENSION
             // Background transport status
             if let tunnel = appServices.tunnelManager {
                 HStack(spacing: 10) {
@@ -108,6 +109,7 @@ struct NetworkStatusView: View {
                         .foregroundStyle(Theme.textPrimary)
                 }
             }
+            #endif
         }
         .padding(16)
         .glassCard()

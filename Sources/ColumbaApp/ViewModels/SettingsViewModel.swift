@@ -293,20 +293,28 @@ public final class SettingsViewModel {
             usesIdenticon: true
         )
 
-        // Load active identity name — prefer settingsRepository (user-editable) over the
-        // LocalIdentity record, which may be stale (e.g. migrated as "Anonymous Peer").
+        // Unify display name from LocalIdentity and SettingsRepository.
+        // LocalIdentity.displayName is the canonical source; SettingsRepository
+        // is a secondary copy that can get out of sync (e.g. app group migration).
         let repoName = identity.displayName
         if let mgr = identityManager, let active = await mgr.getActiveIdentity() {
             let idName = active.displayName
-            // If the stored identity name looks like the migration default, use the repo name.
-            if idName.isEmpty || idName == "Anonymous Peer" {
-                activeIdentityName = repoName.isEmpty ? idName : repoName
-                // Repair the stored name so it stays in sync going forward.
-                if !repoName.isEmpty {
-                    await mgr.renameIdentity(active.identityHash, newName: repoName)
-                }
+            let resolvedName: String
+            if !idName.isEmpty && idName != "Anonymous Peer" {
+                resolvedName = idName
+            } else if !repoName.isEmpty {
+                resolvedName = repoName
+                // Repair LocalIdentity so it stays in sync.
+                await mgr.renameIdentity(active.identityHash, newName: repoName)
             } else {
-                activeIdentityName = idName
+                resolvedName = idName
+            }
+            activeIdentityName = resolvedName
+            // Keep both sources in sync
+            if identity.displayName != resolvedName {
+                identity.displayName = resolvedName
+                savedDisplayName = resolvedName
+                await settingsRepository.setDisplayName(resolvedName)
             }
         }
 

@@ -55,8 +55,9 @@ struct SettingsView: View {
                         // Transport Mode
                         transportModeCard(vm)
 
-                        // Background Transport (requires paid Apple Developer account)
-                        // backgroundTransportCard()
+                        #if ENABLE_NETWORK_EXTENSION
+                        backgroundTransportCard()
+                        #endif
 
                         // Delivery & Retrieval
                         deliveryRetrievalCard(vm)
@@ -310,6 +311,7 @@ struct SettingsView: View {
         }
     }
 
+    #if ENABLE_NETWORK_EXTENSION
     // MARK: - Background Transport Card
 
     @ViewBuilder
@@ -361,6 +363,7 @@ struct SettingsView: View {
             .glassCard()
         }
     }
+    #endif
 
     // MARK: - Identity Card
 
