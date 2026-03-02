@@ -217,10 +217,18 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 && message.fields?[LXMessage.FIELD_TELEMETRY] != nil
             let isOldMessage = message.timestamp < self.createdAt.timeIntervalSince1970
             if !isTelemetryOnly && !isCeaseMessage && !isOldMessage {
+                // Check if sender is a saved/favorite contact
+                let senderIsFavorite: Bool
+                if let db = self.database {
+                    senderIsFavorite = ((try? await db.getConversation(hash: sourceHash))?.isFavorite ?? 0) != 0
+                } else {
+                    senderIsFavorite = false
+                }
                 await NotificationService.shared.postMessageNotification(
                     message,
                     senderName: nil,
-                    database: self.database
+                    database: self.database,
+                    isFavorite: senderIsFavorite
                 )
             }
 

@@ -467,11 +467,16 @@ struct SettingsView: View {
             })
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Configure how you receive notifications for incoming messages and announcements.")
+                Text(vm.isNotificationsEnabled
+                    ? "Manage notification preferences for messages, announces, and Bluetooth events."
+                    : "All notifications are disabled. Enable to receive alerts for messages and events.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
                 if vm.isNotificationsEnabled {
+                    Divider()
+
+                    // Presentation options
                     settingsToggleRow(
                         title: "Message Previews",
                         isOn: Binding(get: { vm.showMessagePreviews }, set: {
@@ -488,16 +493,119 @@ struct SettingsView: View {
                         })
                     )
 
-                    settingsToggleRow(
-                        title: "Vibrate",
-                        isOn: Binding(get: { vm.vibrate }, set: {
-                            vm.vibrate = $0
+                    Divider()
+
+                    Text("Notification Types")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Theme.textPrimary)
+
+                    notificationTypeRow(
+                        icon: "envelope.fill",
+                        title: "Received Message",
+                        description: "Notify when you receive a new message",
+                        isOn: Binding(get: { vm.notifyReceivedMessage }, set: {
+                            vm.notifyReceivedMessage = $0
+                            vm.saveSettings()
+                        })
+                    )
+
+                    notificationTypeRow(
+                        icon: "star.fill",
+                        title: "Message from Saved Peer",
+                        description: "Only notify for messages from saved contacts",
+                        isOn: Binding(get: { vm.notifyReceivedMessageFavorite }, set: {
+                            vm.notifyReceivedMessageFavorite = $0
+                            vm.saveSettings()
+                        })
+                    )
+
+                    notificationTypeRow(
+                        icon: "antenna.radiowaves.left.and.right",
+                        title: "Heard Announce",
+                        description: "Notify when you hear a new peer announce",
+                        isOn: Binding(get: { vm.notifyHeardAnnounce }, set: {
+                            vm.notifyHeardAnnounce = $0
+                            vm.saveSettings()
+                        })
+                    )
+
+                    if vm.notifyHeardAnnounce {
+                        notificationTypeRow(
+                            icon: "location.fill",
+                            title: "Direct Only",
+                            description: "Only direct (1-hop) announces",
+                            isOn: Binding(get: { vm.notifyAnnounceDirectOnly }, set: {
+                                vm.notifyAnnounceDirectOnly = $0
+                                vm.saveSettings()
+                            }),
+                            indented: true
+                        )
+
+                        notificationTypeRow(
+                            icon: "wifi.slash",
+                            title: "Exclude TCP",
+                            description: "Skip announces via TCP interfaces",
+                            isOn: Binding(get: { vm.notifyAnnounceExcludeTcp }, set: {
+                                vm.notifyAnnounceExcludeTcp = $0
+                                vm.saveSettings()
+                            }),
+                            indented: true
+                        )
+                    }
+
+                    notificationTypeRow(
+                        icon: "antenna.radiowaves.left.and.right.circle.fill",
+                        title: "BLE Peer Connected",
+                        description: "Notify when a Bluetooth LE peer connects",
+                        isOn: Binding(get: { vm.notifyBleConnected }, set: {
+                            vm.notifyBleConnected = $0
+                            vm.saveSettings()
+                        })
+                    )
+
+                    notificationTypeRow(
+                        icon: "antenna.radiowaves.left.and.right.slash",
+                        title: "BLE Peer Disconnected",
+                        description: "Notify when a Bluetooth LE peer disconnects",
+                        isOn: Binding(get: { vm.notifyBleDisconnected }, set: {
+                            vm.notifyBleDisconnected = $0
                             vm.saveSettings()
                         })
                     )
                 }
             }
         }
+    }
+
+    private func notificationTypeRow(
+        icon: String,
+        title: String,
+        description: String,
+        isOn: Binding<Bool>,
+        indented: Bool = false
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.accentColor)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textPrimary)
+                Text(description)
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(Theme.accentColor)
+        }
+        .padding(.leading, indented ? 24 : 0)
     }
 
     // MARK: - Auto Announce Card
