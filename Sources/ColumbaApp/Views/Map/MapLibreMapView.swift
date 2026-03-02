@@ -17,9 +17,31 @@ struct MapLibreMapView: UIViewRepresentable {
     @Binding var metersPerPixel: Double
     var showsUserLocation: Bool
     var peerLocations: [PeerLocation]
+    var httpEnabled: Bool
+
+    /// Online style from OpenFreeMap.
+    private static let onlineStyleURL = URL(string: "https://tiles.openfreemap.org/styles/liberty")!
+
+    /// Minimal offline-only style with no HTTP tile sources.
+    private static let offlineStyleURL: URL = {
+        // MapLibre needs a valid style JSON. Use a blank style that only renders
+        // offline packs (MBTiles/cache) already downloaded.
+        let blankStyle: [String: Any] = [
+            "version": 8,
+            "name": "Offline",
+            "sources": [:] as [String: Any],
+            "layers": [
+                ["id": "background", "type": "background", "paint": ["background-color": "#1a1a2e"]]
+            ]
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: blankStyle)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("offline_style.json")
+        try? data.write(to: url, options: .atomic)
+        return url
+    }()
 
     func makeUIView(context: Context) -> MLNMapView {
-        let styleURL = URL(string: "https://tiles.openfreemap.org/styles/liberty")!
+        let styleURL = httpEnabled ? Self.onlineStyleURL : Self.offlineStyleURL
         let mapView = MLNMapView(frame: .zero, styleURL: styleURL)
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         mapView.showsUserLocation = showsUserLocation
@@ -38,6 +60,12 @@ struct MapLibreMapView: UIViewRepresentable {
 
     func updateUIView(_ mapView: MLNMapView, context: Context) {
         mapView.showsUserLocation = showsUserLocation
+
+        // Switch style when HTTP toggle changes
+        let expectedURL = httpEnabled ? Self.onlineStyleURL : Self.offlineStyleURL
+        if mapView.styleURL != expectedURL {
+            mapView.styleURL = expectedURL
+        }
 
         if centerOnUser {
             DispatchQueue.main.async {

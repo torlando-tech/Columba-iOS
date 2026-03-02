@@ -29,6 +29,9 @@ public struct IdentityInfo: Equatable {
     /// 64-byte public key (encryption || signing) as hex string.
     public let publicKeyHex: String
 
+    /// LXMF delivery destination hash as hex string.
+    public var destinationHash: String
+
     /// Whether using auto-generated identicon or custom icon.
     public var usesIdenticon: Bool
 
@@ -51,12 +54,14 @@ public struct IdentityInfo: Equatable {
         displayName: String = "",
         identityHash: String = "",
         publicKeyHex: String = "",
+        destinationHash: String = "",
         usesIdenticon: Bool = true,
         customIconData: Data? = nil
     ) {
         self.displayName = displayName
         self.identityHash = identityHash
         self.publicKeyHex = publicKeyHex
+        self.destinationHash = destinationHash
         self.usesIdenticon = usesIdenticon
         self.customIconData = customIconData
     }
@@ -74,13 +79,6 @@ public final class SettingsViewModel {
     // MARK: - Types
 
     /// Available map sources.
-    public enum MapSource: String, CaseIterable, Identifiable {
-        case apple = "Apple Maps"
-        case openStreetMap = "OpenStreetMap"
-        case satellite = "Satellite"
-
-        public var id: String { rawValue }
-    }
 
     /// Image quality presets matching Android Columba.
     public enum ImageQualityPreset: String, CaseIterable, Identifiable {
@@ -150,8 +148,8 @@ public final class SettingsViewModel {
     public var isNotificationsExpanded: Bool = false
     public var isAutoAnnounceExpanded: Bool = false
     public var isLocationSharingExpanded: Bool = false
-    public var isMapSourcesExpanded: Bool = false
     public var isDeliveryRetrievalExpanded: Bool = false
+    public var isMapSourcesExpanded: Bool = false
     public var isAppearanceExpanded: Bool = false
     public var isImageQualityExpanded: Bool = false
 
@@ -252,7 +250,8 @@ public final class SettingsViewModel {
 
     // MARK: - Map Settings
 
-    public var selectedMapSource: MapSource = .apple
+    /// Whether HTTP map tile fetching is enabled (vs offline-only).
+    public var mapHttpEnabled: Bool = true
 
     // MARK: - Active Identity Info
 
@@ -283,13 +282,18 @@ public final class SettingsViewModel {
         identity.displayName = await settingsRepository.getDisplayName()
         savedDisplayName = identity.displayName
 
-        // Load identity hash and public key from AppServices
+        // Load identity hash, public key, and LXMF destination hash
         let pubKeyHex = appServices.identity?.publicKeys
             .map { String(format: "%02x", $0) }.joined() ?? ""
+        // identity.hexHash = truncatedHash(pubkeys) — the true identity hash
+        // localIdentityHashHex = Destination.hash(lxmf.delivery) — the LXMF destination hash
+        let idHash = appServices.identity?.hexHash ?? ""
+        let destHash = appServices.localIdentityHashHex
         identity = IdentityInfo(
             displayName: identity.displayName,
-            identityHash: appServices.localIdentityHashHex,
+            identityHash: idHash,
             publicKeyHex: pubKeyHex,
+            destinationHash: destHash,
             usesIdenticon: true
         )
 
@@ -367,10 +371,7 @@ public final class SettingsViewModel {
         sharePreciseLocation = defaults.bool(forKey: "share_precise_location")
         locationUpdateInterval = defaults.integer(forKey: "location_update_interval")
 
-        if let mapSource = defaults.string(forKey: "map_source"),
-           let source = MapSource(rawValue: mapSource) {
-            selectedMapSource = source
-        }
+        mapHttpEnabled = defaults.object(forKey: "map_http_enabled") as? Bool ?? true
 
         if let qualityRaw = defaults.string(forKey: "image_quality_preset"),
            let preset = ImageQualityPreset(rawValue: qualityRaw) {
@@ -407,7 +408,7 @@ public final class SettingsViewModel {
         defaults.set(isLocationSharingEnabled, forKey: "location_sharing_enabled")
         defaults.set(sharePreciseLocation, forKey: "share_precise_location")
         defaults.set(locationUpdateInterval, forKey: "location_update_interval")
-        defaults.set(selectedMapSource.rawValue, forKey: "map_source")
+        defaults.set(mapHttpEnabled, forKey: "map_http_enabled")
         defaults.set(imageQualityPreset.rawValue, forKey: "image_quality_preset")
     }
 
