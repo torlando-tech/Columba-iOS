@@ -208,9 +208,13 @@ public final class SettingsViewModel {
 
     // MARK: - Location Sharing Settings
 
+    /// Live reflection of whether location is being shared with any peer.
+    /// Refreshed by the polling loop. Setting to false calls stopAllSharing().
     public var isLocationSharingEnabled: Bool = false
-    public var sharePreciseLocation: Bool = false
-    public var locationUpdateInterval: Int = 60
+    /// Location precision radius in meters (0 = precise GPS, 100/1000/10000 = coarsened).
+    public var locationPrecisionRadius: Int = 0
+    /// Default duration for new location sharing sessions (raw value of SharingDuration).
+    public var defaultSharingDuration: String = SharingDuration.oneHour.rawValue
 
     // MARK: - Delivery & Retrieval Settings
 
@@ -368,8 +372,10 @@ public final class SettingsViewModel {
         lastAnnounceTime = lastTs > 0 ? Date(timeIntervalSince1970: lastTs) : nil
         isTransportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
         isLocationSharingEnabled = defaults.bool(forKey: "location_sharing_enabled")
-        sharePreciseLocation = defaults.bool(forKey: "share_precise_location")
-        locationUpdateInterval = defaults.integer(forKey: "location_update_interval")
+        locationPrecisionRadius = defaults.integer(forKey: "location_precision_radius")
+        if let storedDuration = defaults.string(forKey: "default_sharing_duration") {
+            defaultSharingDuration = storedDuration
+        }
 
         mapHttpEnabled = defaults.object(forKey: "map_http_enabled") as? Bool ?? true
 
@@ -386,7 +392,7 @@ public final class SettingsViewModel {
             vibrate = true
             isAutoAnnounceEnabled = true
             announceIntervalHours = 3
-            locationUpdateInterval = 60
+            defaultSharingDuration = SharingDuration.oneHour.rawValue
             defaults.set(true, forKey: "settings_initialized")
             // Persist notification defaults so NotificationService can read them
             saveSettings()
@@ -406,8 +412,8 @@ public final class SettingsViewModel {
         defaults.set(announceIntervalHours, forKey: "announce_interval_hours")
         SharedDefaults.suite.set(isTransportEnabled, forKey: "transport_enabled")
         defaults.set(isLocationSharingEnabled, forKey: "location_sharing_enabled")
-        defaults.set(sharePreciseLocation, forKey: "share_precise_location")
-        defaults.set(locationUpdateInterval, forKey: "location_update_interval")
+        defaults.set(locationPrecisionRadius, forKey: "location_precision_radius")
+        defaults.set(defaultSharingDuration, forKey: "default_sharing_duration")
         defaults.set(mapHttpEnabled, forKey: "map_http_enabled")
         defaults.set(imageQualityPreset.rawValue, forKey: "image_quality_preset")
     }

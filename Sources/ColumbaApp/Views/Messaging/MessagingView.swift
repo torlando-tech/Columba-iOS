@@ -578,7 +578,13 @@ extension UIImage {
 /// Bottom sheet for selecting location sharing duration before starting.
 private struct LocationShareSheet: View {
     let onStart: (SharingDuration) -> Void
-    @State private var selected: SharingDuration = .oneHour
+    @State private var selected: SharingDuration = {
+        if let raw = UserDefaults.standard.string(forKey: "default_sharing_duration"),
+           let duration = SharingDuration.allCases.first(where: { $0.rawValue == raw }) {
+            return duration
+        }
+        return .oneHour
+    }()
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
