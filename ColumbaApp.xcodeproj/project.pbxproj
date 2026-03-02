@@ -100,6 +100,13 @@
 		0700 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070 /* AudioManager.swift */; };
 		071B /* BLEConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F071 /* BLEConnectionsView.swift */; };
 		072B /* RNodeProbeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F072 /* RNodeProbeScanner.swift */; };
+		074B /* SharedDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = F074 /* SharedDefaults.swift */; };
+		076B /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
+		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
+		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
+		E003 /* ColumbaNetworkExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = EPROD /* ColumbaNetworkExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		077B /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F077 /* TunnelManager.swift */; };
+		078B /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -194,8 +201,41 @@
 		F071 /* BLEConnectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEConnectionsView.swift; sourceTree = "<group>"; };
 		F072 /* RNodeProbeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeProbeScanner.swift; sourceTree = "<group>"; };
 		F073 /* MessageDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageDetailView.swift; sourceTree = "<group>"; };
+		F074 /* SharedDefaults.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedDefaults.swift; sourceTree = "<group>"; };
+		F075 /* ColumbaApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaApp.entitlements; sourceTree = "<group>"; };
+		F076 /* SharedFrameQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedFrameQueue.swift; sourceTree = "<group>"; };
+		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
+		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
+		F077 /* TunnelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelManager.swift; sourceTree = "<group>"; };
+		F078 /* ExtensionFrameReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionFrameReader.swift; sourceTree = "<group>"; };
+		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXContainerItemProxy section */
+		ECIP /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = PROJ /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ETARG;
+			remoteInfo = ColumbaNetworkExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		ECOPY /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E003 /* ColumbaNetworkExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		FWBP /* Frameworks */ = {
@@ -205,6 +245,13 @@
 				023 /* LXMFSwift in Frameworks */,
 				06FB /* LXSTSwift in Frameworks */,
 				049 /* MapLibre in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EFWBP /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -316,6 +363,7 @@
 				F022 /* Assets.xcassets */,
 				F023 /* Info.plist */,
 				F039 /* materialdesignicons.ttf */,
+				F075 /* ColumbaApp.entitlements */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -377,6 +425,9 @@
 				F068 /* CallManager.swift */,
 				F06F /* CallKitManager.swift */,
 				F070 /* AudioManager.swift */,
+				F074 /* SharedDefaults.swift */,
+				F077 /* TunnelManager.swift */,
+				F078 /* ExtensionFrameReader.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -427,6 +478,7 @@
 			isa = PBXGroup;
 			children = (
 				PROD /* ColumbaApp.app */,
+				EPROD /* ColumbaNetworkExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -435,8 +487,28 @@
 			isa = PBXGroup;
 			children = (
 				SRCS /* Sources/ColumbaApp */,
+				GSHARED /* Sources/Shared */,
+				GEXT /* Sources/ColumbaNetworkExtension */,
 				PRODS /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		GEXT /* Sources/ColumbaNetworkExtension */ = {
+			isa = PBXGroup;
+			children = (
+				FE01 /* PacketTunnelProvider.swift */,
+				FE02 /* Info.plist */,
+				FE03 /* ColumbaNetworkExtension.entitlements */,
+			);
+			path = Sources/ColumbaNetworkExtension;
+			sourceTree = "<group>";
+		};
+		GSHARED /* Sources/Shared */ = {
+			isa = PBXGroup;
+			children = (
+				F076 /* SharedFrameQueue.swift */,
+			);
+			path = Sources/Shared;
 			sourceTree = "<group>";
 		};
 		SRCS /* Sources/ColumbaApp */ = {
@@ -478,6 +550,22 @@
 			productReference = PROD /* ColumbaApp.app */;
 			productType = "com.apple.product-type.application";
 		};
+		ETARG /* ColumbaNetworkExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EBCLST /* Build configuration list for PBXNativeTarget "ColumbaNetworkExtension" */;
+			buildPhases = (
+				ESRCBP /* Sources */,
+				EFWBP /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ColumbaNetworkExtension;
+			productName = ColumbaNetworkExtension;
+			productReference = EPROD /* ColumbaNetworkExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -489,6 +577,9 @@
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
 					TARG = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					ETARG = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
@@ -512,6 +603,7 @@
 			projectRoot = "";
 			targets = (
 				TARG /* ColumbaApp */,
+				ETARG /* ColumbaNetworkExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -621,10 +713,31 @@
 				06F0 /* CallKitManager.swift in Sources */,
 				0700 /* AudioManager.swift in Sources */,
 				071B /* BLEConnectionsView.swift in Sources */,
+				074B /* SharedDefaults.swift in Sources */,
+				076B /* SharedFrameQueue.swift in Sources */,
+				077B /* TunnelManager.swift in Sources */,
+				078B /* ExtensionFrameReader.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ESRCBP /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E001 /* PacketTunnelProvider.swift in Sources */,
+				E002 /* SharedFrameQueue.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EDEP /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ETARG /* ColumbaNetworkExtension */;
+			targetProxy = ECIP /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		DBG /* Debug */ = {
@@ -804,6 +917,58 @@
 			};
 			name = Release;
 		};
+		EDBG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.columba.app.tunnel;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		EREL /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.columba.app.tunnel;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -821,6 +986,15 @@
 			buildConfigurations = (
 				DBG /* Debug */,
 				REL /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EBCLST /* Build configuration list for PBXNativeTarget "ColumbaNetworkExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EDBG /* Debug */,
+				EREL /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

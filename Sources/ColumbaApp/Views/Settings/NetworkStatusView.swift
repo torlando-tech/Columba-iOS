@@ -24,10 +24,12 @@ struct NetworkStatusView: View {
 
     @State private var viewModel: NetworkStatusViewModel
     @State private var selectedInterface: InterfaceInfo?
+    private let appServices: AppServices
 
     // MARK: - Init
 
     init(appServices: AppServices) {
+        self.appServices = appServices
         _viewModel = State(initialValue: NetworkStatusViewModel(appServices: appServices))
     }
 
@@ -92,6 +94,19 @@ struct NetworkStatusView: View {
                 Text(viewModel.networkStatus)
                     .font(.subheadline)
                     .foregroundStyle(Theme.textPrimary)
+            }
+
+            // Background transport status
+            if let tunnel = appServices.tunnelManager {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(tunnel.isRunning ? Theme.success : Theme.textSecondary)
+                        .frame(width: 10, height: 10)
+
+                    Text(tunnel.isRunning ? "Background Transport Active" : "Background Transport Off")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textPrimary)
+                }
             }
         }
         .padding(16)

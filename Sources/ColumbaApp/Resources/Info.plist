@@ -39,7 +39,7 @@
 				<string>lxma</string>
 			</array>
 			<key>CFBundleURLName</key>
-			<string>com.columba.app.lxma</string>
+			<string>network.columba.app.lxma</string>
 		</dict>
 	</array>
 	<key>NSCameraUsageDescription</key>
@@ -83,12 +83,13 @@
 		<string>bluetooth-peripheral</string>
 		<string>location</string>
 		<string>voip</string>
+		<string>network-extension</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Columba uses the microphone for voice calls over the mesh network.</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.columba.app.sync</string>
+		<string>network.columba.app.sync</string>
 	</array>
 </dict>
 </plist>
