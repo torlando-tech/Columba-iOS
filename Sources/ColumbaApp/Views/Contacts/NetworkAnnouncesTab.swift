@@ -136,6 +136,7 @@ struct NetworkAnnouncesTab: View {
                         filterCapsule(
                             label: filter.rawValue,
                             icon: interfaceIcon(for: filter),
+                            mdiIcon: filter == .ble ? "bluetooth" : nil,
                             isSelected: viewModel.interfaceFilter == filter
                         ) {
                             withAnimation(.easeInOut(duration: 0.2)) {
@@ -151,10 +152,13 @@ struct NetworkAnnouncesTab: View {
         .padding(.top, 8)
     }
 
-    private func filterCapsule(label: String, icon: String?, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func filterCapsule(label: String, icon: String?, mdiIcon: String? = nil, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                if let icon = icon {
+                if let mdiIcon, let ch = MaterialDesignIcons.character(for: mdiIcon) {
+                    Text(String(ch))
+                        .font(.custom(MaterialDesignIcons.fontName, size: 12))
+                } else if let icon = icon {
                     Image(systemName: icon)
                         .font(.caption2)
                 }
@@ -190,7 +194,7 @@ struct NetworkAnnouncesTab: View {
         case .all: return nil
         case .tcp: return "globe"
         case .wifi: return "wifi"
-        case .ble: return "wave.3.right"
+        case .ble: return nil // MDI bluetooth icon used instead
         case .rnode: return "antenna.radiowaves.left.and.right"
         }
     }

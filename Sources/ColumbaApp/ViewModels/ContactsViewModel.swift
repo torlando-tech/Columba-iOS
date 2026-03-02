@@ -280,7 +280,7 @@ public final class ContactsViewModel {
     public var searchText: String = ""
 
     /// Network announces aspect filter.
-    public var announceFilter: AnnounceFilter = .all
+    public var announceFilter: AnnounceFilter = .peers
 
     /// Network announces interface filter.
     public var interfaceFilter: InterfaceFilter = .all
