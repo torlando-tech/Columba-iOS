@@ -54,7 +54,7 @@ struct NetworkAnnouncesTab: View {
 
             Text("No Network Announces")
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
 
             Text("Pull to refresh or wait for\npeers to announce themselves")
                 .font(.subheadline)
@@ -87,7 +87,7 @@ struct NetworkAnnouncesTab: View {
 
             Text("No Matching Announces")
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
 
             Text("Try a different filter or wait\nfor new announces")
                 .font(.subheadline)
@@ -173,7 +173,7 @@ struct NetworkAnnouncesTab: View {
                 if isSelected {
                     Capsule().fill(Theme.accentColor)
                 } else {
-                    Capsule().fill(Color.white.opacity(0.08))
+                    Capsule().fill(ThemeManager.shared.isDarkMode ? Color.white.opacity(0.08) : Color.black.opacity(0.06))
                 }
             }
         }

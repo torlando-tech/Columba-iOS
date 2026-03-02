@@ -26,7 +26,7 @@ struct MessageDetailView: View {
                     messagePreview
 
                     Divider()
-                        .background(Color.white.opacity(0.1))
+                        .background(Theme.divider)
 
                     // Info cards
                     if message.isFromMe {
@@ -37,7 +37,7 @@ struct MessageDetailView: View {
                 }
                 .padding(16)
             }
-            .background(Color.black)
+            .background(Theme.backgroundPrimary)
             .navigationTitle("Message Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -369,7 +369,7 @@ private struct InfoCard: View {
             Spacer()
         }
         .padding(14)
-        .background(Color.white.opacity(0.06))
+        .background(Theme.backgroundTertiary.opacity(0.6))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }

@@ -68,9 +68,16 @@ final class ThemeManager {
         }
     }
 
+    /// The system's actual color scheme, updated from root view.
+    var systemColorScheme: ColorScheme = .dark
+
     /// Whether the effective mode is dark.
     var isDarkMode: Bool {
-        colorSchemePreference != .light
+        switch colorSchemePreference {
+        case .dark: return true
+        case .light: return false
+        case .system: return systemColorScheme == .dark
+        }
     }
 
     // MARK: - Color Accessors
@@ -95,6 +102,19 @@ final class ThemeManager {
     var receivedBubbleColor: Color {
         isDarkMode ? Color(hex: activeColors.receivedBubbleHex)
                    : Color(hex: activeColors.lightReceivedBubbleHex)
+    }
+
+    var textPrimary: Color {
+        isDarkMode ? Color.white.opacity(0.87) : Color.black.opacity(0.87)
+    }
+    var textSecondary: Color {
+        isDarkMode ? Color.white.opacity(0.60) : Color.black.opacity(0.55)
+    }
+    var textDisabled: Color {
+        isDarkMode ? Color.white.opacity(0.38) : Color.black.opacity(0.35)
+    }
+    var divider: Color {
+        isDarkMode ? Color.white.opacity(0.12) : Color.black.opacity(0.12)
     }
 
     var success: Color { Color(hex: activeColors.successHex) }

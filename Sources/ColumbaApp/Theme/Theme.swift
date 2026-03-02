@@ -32,16 +32,16 @@ enum Theme {
     @MainActor static var backgroundTertiary: Color { ThemeManager.shared.backgroundTertiary }
 
     /// Primary text color (high emphasis).
-    static let textPrimary = Color.white.opacity(0.87)
+    @MainActor static var textPrimary: Color { ThemeManager.shared.textPrimary }
 
     /// Secondary text color (medium emphasis).
-    static let textSecondary = Color.white.opacity(0.60)
+    @MainActor static var textSecondary: Color { ThemeManager.shared.textSecondary }
 
     /// Disabled/hint text color (low emphasis).
-    static let textDisabled = Color.white.opacity(0.38)
+    @MainActor static var textDisabled: Color { ThemeManager.shared.textDisabled }
 
     /// Divider/separator color.
-    static let divider = Color.white.opacity(0.12)
+    @MainActor static var divider: Color { ThemeManager.shared.divider }
 
     /// Success/online color.
     @MainActor static var success: Color { ThemeManager.shared.success }

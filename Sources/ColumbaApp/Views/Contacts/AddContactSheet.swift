@@ -62,7 +62,7 @@ struct AddContactSheet: View {
                         .font(.system(size: 16))
                         .foregroundStyle(.white)
                         .padding(12)
-                        .background(Color.white.opacity(0.1))
+                        .background(Theme.backgroundTertiary)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         #if os(iOS)
                         .textInputAutocapitalization(.words)
@@ -103,7 +103,7 @@ struct AddContactSheet: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 32)
             }
-            .background(Color(white: 0.1))
+            .background(Theme.backgroundSecondary)
             .navigationTitle("Add Contact")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

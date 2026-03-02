@@ -47,7 +47,7 @@ struct MessageInputBar: View {
         VStack(spacing: 0) {
             // Top separator
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(Theme.divider)
 
             // Attachment preview strip
             if attachedImage != nil || !attachedFiles.isEmpty {
@@ -89,7 +89,7 @@ struct MessageInputBar: View {
                     // Text field
                     TextField("Type a message...", text: $text, axis: .vertical)
                         .font(.body)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1...6)
                         .focused($isFocused)
                         .padding(.horizontal, 12)
@@ -99,7 +99,7 @@ struct MessageInputBar: View {
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                        .stroke(Theme.divider, lineWidth: 0.5)
                 )
 
                 // Action buttons
@@ -108,7 +108,7 @@ struct MessageInputBar: View {
                     Button(action: onImagePicker) {
                         Image(systemName: "photo")
                             .font(.system(size: 20))
-                            .foregroundStyle(.white.opacity(0.7))
+                            .foregroundStyle(Theme.textSecondary)
                     }
                     .buttonStyle(ScaleButtonStyle())
 
@@ -116,7 +116,7 @@ struct MessageInputBar: View {
                     Button(action: onAttachment) {
                         Image(systemName: "paperclip")
                             .font(.system(size: 20))
-                            .foregroundStyle(.white.opacity(0.7))
+                            .foregroundStyle(Theme.textSecondary)
                     }
                     .buttonStyle(ScaleButtonStyle())
 
@@ -145,27 +145,25 @@ struct MessageInputBar: View {
 
     private func fileChipView(index: Int) -> some View {
         let fileName = attachedFiles[index].name
-        let chipBg = Color.white.opacity(0.1)
-        let iconColor = Color.white.opacity(0.7)
         return HStack(spacing: 4) {
             Image(systemName: "doc.fill")
                 .font(.caption2)
-                .foregroundColor(iconColor)
+                .foregroundColor(Theme.textSecondary)
             Text(fileName)
                 .font(.caption)
-                .foregroundColor(.white)
+                .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
             Button {
                 withAnimation { _ = attachedFiles.remove(at: index) }
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.caption)
-                    .foregroundColor(iconColor)
+                    .foregroundColor(Theme.textSecondary)
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(chipBg)
+        .background(Theme.backgroundTertiary)
         .clipShape(Capsule())
     }
 }
