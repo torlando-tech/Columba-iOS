@@ -28,6 +28,7 @@ public actor SettingsRepository {
         static let retryViaRelay = "retryViaRelay"
         static let autoSelectRelay = "autoSelectRelay"
         static let manualRelayHash = "manualRelayHash"
+        static let manualRelayName = "manualRelayName"
         static let periodicSyncEnabled = "periodicSyncEnabled"
         static let syncIntervalSeconds = "syncIntervalSeconds"
         static let lastSyncTimestamp = "lastSyncTimestamp"
@@ -136,6 +137,20 @@ public actor SettingsRepository {
             defaults.set(hex, forKey: Keys.manualRelayHash)
         } else {
             defaults.removeObject(forKey: Keys.manualRelayHash)
+        }
+    }
+
+    /// Get saved relay display name.
+    public func getManualRelayName() -> String? {
+        defaults.string(forKey: Keys.manualRelayName)
+    }
+
+    /// Set saved relay display name.
+    public func setManualRelayName(_ name: String?) {
+        if let name = name {
+            defaults.set(name, forKey: Keys.manualRelayName)
+        } else {
+            defaults.removeObject(forKey: Keys.manualRelayName)
         }
     }
 

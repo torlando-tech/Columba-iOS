@@ -297,7 +297,8 @@ public final class PropagationNodeManager {
             if let hash = hash {
                 selectedNodeHash = hash
                 let node = knownNodes.first(where: { $0.hash == hash })
-                selectedNodeName = node?.resolvedDisplayName
+                let savedName = await settingsRepository.getManualRelayName()
+                selectedNodeName = node?.resolvedDisplayName ?? savedName
                 autoSelectEnabled = false
 
                 // Wire to router (awaited directly, not fire-and-forget)
@@ -323,8 +324,10 @@ public final class PropagationNodeManager {
         if let hash = selectedNodeHash {
             let hex = hash.map { String(format: "%02x", $0) }.joined()
             await settingsRepository.setManualRelayHash(hex)
+            await settingsRepository.setManualRelayName(selectedNodeName)
         } else {
             await settingsRepository.setManualRelayHash(nil)
+            await settingsRepository.setManualRelayName(nil)
         }
 
         if let time = lastSyncTime {
