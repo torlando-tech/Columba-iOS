@@ -103,6 +103,29 @@ public struct Contact: Identifiable, Sendable, Hashable {
         }
     }
 
+    /// Create a copy with optional field overrides.
+    public func copy(
+        displayName: String?? = nil,
+        badgeType: ContactBadgeType? = nil,
+        isFavorite: Bool? = nil,
+        isPinned: Bool? = nil,
+        isRelay: Bool? = nil
+    ) -> Contact {
+        Contact(
+            id: id,
+            displayName: displayName ?? self.displayName,
+            identityHash: identityHash, identityHashHex: identityHashHex,
+            badgeType: badgeType ?? self.badgeType,
+            hopCount: hopCount, signalStrength: signalStrength,
+            timestamp: timestamp, isOnline: isOnline,
+            isFavorite: isFavorite ?? self.isFavorite,
+            isPinned: isPinned ?? self.isPinned,
+            isRelay: isRelay ?? self.isRelay,
+            iconName: iconName, iconFgColor: iconFgColor, iconBgColor: iconBgColor,
+            interfaceId: interfaceId, aspect: aspect
+        )
+    }
+
     /// Create from PathEntry.
     ///
     /// Detects propagation nodes by parsing appData with PropagationNodeInfo.
@@ -173,6 +196,9 @@ public struct Contact: Identifiable, Sendable, Hashable {
         isFavorite: Bool,
         isPinned: Bool = false,
         isRelay: Bool,
+        iconName: String? = nil,
+        iconFgColor: String? = nil,
+        iconBgColor: String? = nil,
         interfaceId: String? = nil,
         aspect: String? = nil
     ) {
@@ -188,6 +214,9 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.isFavorite = isFavorite
         self.isPinned = isPinned
         self.isRelay = isRelay
+        self.iconName = iconName
+        self.iconFgColor = iconFgColor
+        self.iconBgColor = iconBgColor
         self.interfaceId = interfaceId
         self.aspect = aspect
     }
@@ -326,15 +355,7 @@ public final class ContactsViewModel {
             ?? myContacts.first(where: { $0.identityHash == selectedHash })
         guard let c else { return nil }
         // Always force relay badge for the selected relay
-        return Contact(
-            id: c.id, displayName: c.displayName,
-            identityHash: c.identityHash, identityHashHex: c.identityHashHex,
-            badgeType: .relay, hopCount: c.hopCount,
-            signalStrength: c.signalStrength, timestamp: c.timestamp,
-            isOnline: c.isOnline, isFavorite: c.isFavorite,
-            isPinned: c.isPinned, isRelay: true,
-            interfaceId: c.interfaceId, aspect: c.aspect
-        )
+        return c.copy(badgeType: .relay, isRelay: true)
     }
 
     /// My contacts grouped with selected relay at top, then pinned, then all.
@@ -409,15 +430,7 @@ public final class ContactsViewModel {
         // Preserve saved-contact state (star filled if already in myContacts)
         let savedContact = myContacts.first(where: { $0.id == contact.id })
         if let savedContact, !contact.isFavorite {
-            contact = Contact(
-                id: contact.id, displayName: contact.displayName,
-                identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
-                badgeType: contact.badgeType, hopCount: contact.hopCount,
-                signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                isOnline: contact.isOnline, isFavorite: true,
-                isPinned: savedContact.isPinned, isRelay: contact.isRelay,
-                interfaceId: contact.interfaceId, aspect: contact.aspect
-            )
+            contact = contact.copy(isFavorite: true, isPinned: savedContact.isPinned)
         }
 
         if let existingIndex = networkAnnounces.firstIndex(where: { $0.id == contact.id }) {
@@ -513,30 +526,13 @@ public final class ContactsViewModel {
                 try? await messageRepository.setFavorite(contact.identityHash, isFavorite: newValue)
             }
             if newValue {
-                let updated = Contact(
-                    id: contact.id, displayName: contact.displayName,
-                    identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
-                    badgeType: contact.badgeType, hopCount: contact.hopCount,
-                    signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                    isOnline: contact.isOnline, isFavorite: true,
-                    isPinned: contact.isPinned, isRelay: contact.isRelay,
-                    interfaceId: contact.interfaceId, aspect: contact.aspect
-                )
-                myContacts[index] = updated
+                myContacts[index] = contact.copy(isFavorite: true)
             } else {
                 // Unfavorited — remove from My Contacts
                 myContacts.remove(at: index)
                 // Also unmark in network announces
                 if let nIndex = networkAnnounces.firstIndex(where: { $0.id == contactId }) {
-                    let c = networkAnnounces[nIndex]
-                    networkAnnounces[nIndex] = Contact(
-                        id: c.id, displayName: c.displayName,
-                        identityHash: c.identityHash, identityHashHex: c.identityHashHex,
-                        badgeType: c.badgeType, hopCount: c.hopCount,
-                        signalStrength: c.signalStrength, timestamp: c.timestamp,
-                        isOnline: c.isOnline, isFavorite: false, isRelay: c.isRelay,
-                        interfaceId: c.interfaceId, aspect: c.aspect
-                    )
+                    networkAnnounces[nIndex] = networkAnnounces[nIndex].copy(isFavorite: false)
                 }
             }
         } else if let contact = networkAnnounces.first(where: { $0.id == contactId }) {
@@ -554,15 +550,7 @@ public final class ContactsViewModel {
         Task {
             try? await messageRepository.setPinned(contact.identityHash, isPinned: newValue)
         }
-        myContacts[index] = Contact(
-            id: contact.id, displayName: contact.displayName,
-            identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
-            badgeType: contact.badgeType, hopCount: contact.hopCount,
-            signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-            isOnline: contact.isOnline, isFavorite: contact.isFavorite,
-            isPinned: newValue, isRelay: contact.isRelay,
-            interfaceId: contact.interfaceId, aspect: contact.aspect
-        )
+        myContacts[index] = contact.copy(isPinned: newValue)
     }
 
     /// Update nickname for a contact and persist to database.
@@ -576,27 +564,10 @@ public final class ContactsViewModel {
         Task {
             try? await messageRepository.updateDisplayName(contact.identityHash, displayName: newName)
         }
-        myContacts[index] = Contact(
-            id: contact.id, displayName: newName,
-            identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
-            badgeType: contact.badgeType, hopCount: contact.hopCount,
-            signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-            isOnline: contact.isOnline, isFavorite: contact.isFavorite,
-            isPinned: contact.isPinned, isRelay: contact.isRelay,
-            interfaceId: contact.interfaceId, aspect: contact.aspect
-        )
+        myContacts[index] = contact.copy(displayName: .some(newName))
         // Also update in network announces
         if let nIndex = networkAnnounces.firstIndex(where: { $0.id == contactId }) {
-            let c = networkAnnounces[nIndex]
-            networkAnnounces[nIndex] = Contact(
-                id: c.id, displayName: newName,
-                identityHash: c.identityHash, identityHashHex: c.identityHashHex,
-                badgeType: c.badgeType, hopCount: c.hopCount,
-                signalStrength: c.signalStrength, timestamp: c.timestamp,
-                isOnline: c.isOnline, isFavorite: c.isFavorite,
-                isPinned: c.isPinned, isRelay: c.isRelay,
-                interfaceId: c.interfaceId, aspect: c.aspect
-            )
+            networkAnnounces[nIndex] = networkAnnounces[nIndex].copy(displayName: .some(newName))
         }
     }
 
@@ -611,16 +582,7 @@ public final class ContactsViewModel {
         myContacts.remove(at: index)
         // Unmark in network announces
         if let nIndex = networkAnnounces.firstIndex(where: { $0.id == contactId }) {
-            let c = networkAnnounces[nIndex]
-            networkAnnounces[nIndex] = Contact(
-                id: c.id, displayName: c.displayName,
-                identityHash: c.identityHash, identityHashHex: c.identityHashHex,
-                badgeType: c.badgeType, hopCount: c.hopCount,
-                signalStrength: c.signalStrength, timestamp: c.timestamp,
-                isOnline: c.isOnline, isFavorite: false,
-                isPinned: false, isRelay: c.isRelay,
-                interfaceId: c.interfaceId, aspect: c.aspect
-            )
+            networkAnnounces[nIndex] = networkAnnounces[nIndex].copy(isFavorite: false, isPinned: false)
         }
     }
 
@@ -656,29 +618,11 @@ public final class ContactsViewModel {
                 displayName: contact.displayName
             )
             try await messageRepository.setFavorite(contact.identityHash, isFavorite: true)
-            let saved = Contact(
-                id: contact.id, displayName: contact.displayName,
-                identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
-                badgeType: contact.badgeType, hopCount: contact.hopCount,
-                signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                isOnline: contact.isOnline, isFavorite: true,
-                isPinned: contact.isPinned, isRelay: contact.isRelay,
-                interfaceId: contact.interfaceId, aspect: contact.aspect
-            )
-            myContacts.append(saved)
+            myContacts.append(contact.copy(isFavorite: true))
 
             // Mark this contact as saved in network announces
             if let index = networkAnnounces.firstIndex(where: { $0.id == contact.id }) {
-                let c = networkAnnounces[index]
-                networkAnnounces[index] = Contact(
-                    id: c.id, displayName: c.displayName,
-                    identityHash: c.identityHash, identityHashHex: c.identityHashHex,
-                    badgeType: c.badgeType, hopCount: c.hopCount,
-                    signalStrength: c.signalStrength, timestamp: c.timestamp,
-                    isOnline: c.isOnline, isFavorite: true,
-                    isPinned: c.isPinned, isRelay: c.isRelay,
-                    interfaceId: c.interfaceId, aspect: c.aspect
-                )
+                networkAnnounces[index] = networkAnnounces[index].copy(isFavorite: true)
             }
         } catch {
             errorMessage = "Failed to add contact: \(error.localizedDescription)"
@@ -777,15 +721,7 @@ public final class ContactsViewModel {
         let savedById = Dictionary(myContacts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         networkAnnounces = networkAnnounces.map { contact in
             if let saved = savedById[contact.id], !contact.isFavorite {
-                return Contact(
-                    id: contact.id, displayName: contact.displayName,
-                    identityHash: contact.identityHash, identityHashHex: contact.identityHashHex,
-                    badgeType: contact.badgeType, hopCount: contact.hopCount,
-                    signalStrength: contact.signalStrength, timestamp: contact.timestamp,
-                    isOnline: contact.isOnline, isFavorite: true,
-                    isPinned: saved.isPinned, isRelay: contact.isRelay,
-                    interfaceId: contact.interfaceId, aspect: contact.aspect
-                )
+                return contact.copy(isFavorite: true, isPinned: saved.isPinned)
             }
             return contact
         }
