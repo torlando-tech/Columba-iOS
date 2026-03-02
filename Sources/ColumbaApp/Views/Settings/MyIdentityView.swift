@@ -400,14 +400,19 @@ struct MyIdentityView: View {
                     Divider()
                         .background(Theme.divider)
 
-                    Text("Advanced identity settings and cryptographic details.")
+                    Text("Cryptographic identity details. Tap a value to copy.")
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
 
-                    advancedRow(title: "Public Key", value: "Ed25519")
-                    advancedRow(title: "Signature", value: "Ed25519")
-                    advancedRow(title: "Encryption", value: "X25519 + Fernet")
-                    advancedRow(title: "Hash Algorithm", value: "SHA-256")
+                    if !viewModel.identity.identityHash.isEmpty {
+                        advancedCopyableRow(title: "Identity Hash", value: viewModel.identity.identityHash)
+                    }
+                    if !viewModel.identity.destinationHash.isEmpty {
+                        advancedCopyableRow(title: "Destination Hash (LXMF)", value: viewModel.identity.destinationHash)
+                    }
+                    if !viewModel.identity.publicKeyHex.isEmpty {
+                        advancedCopyableRow(title: "Public Key", value: viewModel.identity.publicKeyHex)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
@@ -431,6 +436,32 @@ struct MyIdentityView: View {
             Text(value)
                 .font(.subheadline)
                 .foregroundStyle(Theme.textPrimary)
+        }
+    }
+
+    private func advancedCopyableRow(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+
+            Button {
+                #if os(iOS)
+                UIPasteboard.general.string = value
+                #endif
+            } label: {
+                HStack {
+                    Text(value)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
         }
     }
 
