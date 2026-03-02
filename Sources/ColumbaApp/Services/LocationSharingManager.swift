@@ -424,14 +424,22 @@ public final class LocationSharingManager: NSObject {
             }
         }
 
+        // Apply precision coarsening from user setting
+        let precisionRadius = UserDefaults.standard.integer(forKey: "location_precision_radius")
+        let (finalLat, finalLng) = Self.coarsenLocation(
+            lat: location.coordinate.latitude,
+            lng: location.coordinate.longitude,
+            radiusMeters: precisionRadius
+        )
+
         // Build telemetry packet
         let telemetry = LocationTelemetry(
-            latitude: location.coordinate.latitude,
-            longitude: location.coordinate.longitude,
+            latitude: finalLat,
+            longitude: finalLng,
             altitude: location.altitude,
             speed: max(0, location.speed),
             bearing: max(0, location.course),
-            accuracy: location.horizontalAccuracy,
+            accuracy: precisionRadius > 0 ? Double(precisionRadius) : location.horizontalAccuracy,
             lastUpdate: Int(location.timestamp.timeIntervalSince1970)
         )
 
@@ -496,6 +504,26 @@ public final class LocationSharingManager: NSObject {
         } catch {
             logger.warning("Failed to send cease signal: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Location Coarsening
+
+    /// Coarsen location coordinates to a grid based on the specified radius.
+    /// Matches Android Columba's `coarsenLocation()` algorithm.
+    ///
+    /// - Parameters:
+    ///   - lat: Latitude in decimal degrees
+    ///   - lng: Longitude in decimal degrees
+    ///   - radiusMeters: Coarsening radius in meters (0 = no coarsening)
+    /// - Returns: Tuple of coarsened (lat, lng)
+    static func coarsenLocation(lat: Double, lng: Double, radiusMeters: Int) -> (Double, Double) {
+        guard radiusMeters > 0 else { return (lat, lng) }
+
+        // Convert radius to degrees (approximate: 111km per degree at equator)
+        let gridSizeDegrees = Double(radiusMeters) / 111_000.0
+        let coarseLat = (lat / gridSizeDegrees).rounded() * gridSizeDegrees
+        let coarseLng = (lng / gridSizeDegrees).rounded() * gridSizeDegrees
+        return (coarseLat, coarseLng)
     }
 
     // MARK: - Persistence

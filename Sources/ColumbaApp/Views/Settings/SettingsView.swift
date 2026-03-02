@@ -646,35 +646,58 @@ struct SettingsView: View {
             icon: "location.fill",
             title: "Location Sharing",
             isExpanded: Binding(get: { vm.isLocationSharingExpanded }, set: { vm.isLocationSharingExpanded = $0 }),
-            toggle: Binding(get: { vm.isLocationSharingEnabled }, set: { vm.isLocationSharingEnabled = $0 })
+            toggle: Binding(
+                get: { vm.isLocationSharingEnabled },
+                set: { newValue in
+                    if !newValue {
+                        appServices.locationSharingManager?.stopAllSharing()
+                    }
+                    vm.isLocationSharingEnabled = newValue
+                }
+            )
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Share your location with contacts. Your location is end-to-end encrypted and only visible to peers you communicate with.")
+                Text("Location sharing is started per-contact from conversations. Turning this off will immediately stop sharing with all contacts.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
-                if vm.isLocationSharingEnabled {
-                    settingsToggleRow(
-                        title: "Precise Location",
-                        isOn: Binding(get: { vm.sharePreciseLocation }, set: { vm.sharePreciseLocation = $0 })
-                    )
+                HStack {
+                    Text("Location Precision")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
 
-                    HStack {
-                        Text("Update Interval")
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.textSecondary)
+                    Spacer()
 
-                        Spacer()
-
-                        Picker("", selection: Binding(get: { vm.locationUpdateInterval }, set: { vm.locationUpdateInterval = $0 })) {
-                            Text("30 sec").tag(30)
-                            Text("1 min").tag(60)
-                            Text("5 min").tag(300)
-                            Text("15 min").tag(900)
-                        }
-                        .pickerStyle(.menu)
-                        .tint(Theme.accentColor)
+                    Picker("", selection: Binding(
+                        get: { vm.locationPrecisionRadius },
+                        set: { vm.locationPrecisionRadius = $0; vm.saveSettings() }
+                    )) {
+                        Text("Precise").tag(0)
+                        Text("Neighborhood (~100m)").tag(100)
+                        Text("City (~1km)").tag(1000)
+                        Text("Region (~10km)").tag(10000)
                     }
+                    .pickerStyle(.menu)
+                    .tint(Theme.accentColor)
+                }
+
+                HStack {
+                    Text("Default Duration")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+
+                    Spacer()
+
+                    Picker("", selection: Binding(
+                        get: { vm.defaultSharingDuration },
+                        set: { vm.defaultSharingDuration = $0; vm.saveSettings() }
+                    )) {
+                        ForEach(SharingDuration.allCases) { duration in
+                            Text(duration.rawValue).tag(duration.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(Theme.accentColor)
                 }
             }
         }
