@@ -179,11 +179,14 @@ public final class InterfaceManagementViewModel {
         }
     }
 
-    /// Delete an interface.
+    /// Delete an interface and stop it if running.
     public func deleteInterface(_ interface: InterfaceEntity) {
         repository.deleteInterface(id: interface.id)
         hasPendingChanges = true
         showSuccess("Interface deleted")
+        Task { @MainActor in
+            await applyChanges()
+        }
     }
 
     /// Confirm and delete the pending interface.
@@ -280,101 +283,100 @@ public final class InterfaceManagementViewModel {
     // MARK: - Apply Changes
 
     /// Apply pending interface changes to the running network.
+    ///
+    /// Only starts/stops the interfaces that actually changed, leaving
+    /// other running interfaces untouched.
     @MainActor
     public func applyChanges() async {
         guard hasPendingChanges else { return }
 
         isApplyingChanges = true
 
-        do {
-            let enabledInterfaces = repository.getEnabledInterfaces()
+        let enabledInterfaces = repository.getEnabledInterfaces()
 
-            // Handle TCP client interface
-            let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient })
-            if let tcpInterface = tcpEntity,
-               case .tcpClient(let config) = tcpInterface.config {
-
-                let serverAddress = "\(config.targetHost):\(config.targetPort)"
-                print("[INTERFACE_VM] Applying changes, connecting to: \(serverAddress)")
-
-                activeInterfaceId = tcpInterface.id
-                interfaceStatus[tcpInterface.id] = .connecting
-
-                try await appServices.reconnect(tcpServerAddress: serverAddress)
-
+        // --- TCP ---
+        let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient })
+        if let tcpIf = tcpEntity,
+           case .tcpClient(let config) = tcpIf.config {
+            let serverAddress = "\(config.targetHost):\(config.targetPort)"
+            print("[INTERFACE_VM] Applying TCP: \(serverAddress)")
+            activeInterfaceId = tcpIf.id
+            interfaceStatus[tcpIf.id] = .connecting
+            do {
+                try await appServices.reconnectTCPOnly(host: config.targetHost, port: config.targetPort)
                 showSuccess("Connecting to \(config.targetHost):\(config.targetPort)...")
-            } else if tcpEntity == nil {
-                // No TCP — shutdown TCP if running
-                if appServices.tcpInterface != nil {
-                    print("[INTERFACE_VM] No enabled TCP interfaces, shutting down TCP")
-                    await appServices.shutdown()
-                    activeInterfaceId = nil
+            } catch {
+                print("[INTERFACE_VM] TCP failed: \(error)")
+                interfaceStatus[tcpIf.id] = .error
+                showError("TCP failed: \(error.localizedDescription)")
+            }
+        } else if tcpEntity == nil && appServices.tcpInterface != nil {
+            print("[INTERFACE_VM] Stopping TCP")
+            await appServices.stopTCPInterface()
+            activeInterfaceId = nil
+        }
+
+        // --- AutoInterface ---
+        let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface })
+        if let autoIf = autoEntity,
+           case .autoInterface(let config) = autoIf.config {
+            if appServices.autoInterface == nil {
+                let groupId = config.groupId ?? "reticulum"
+                print("[INTERFACE_VM] Starting AutoInterface: \(groupId)")
+                interfaceStatus[autoIf.id] = .connecting
+                do {
+                    try await appServices.startAutoInterface(groupId: groupId)
+                    interfaceStatus[autoIf.id] = .connected
+                } catch {
+                    print("[INTERFACE_VM] Auto failed: \(error)")
+                    interfaceStatus[autoIf.id] = .error
                 }
             }
+        } else if autoEntity == nil {
+            await appServices.stopAutoInterface()
+        }
 
-            // Handle Auto Discovery interface
-            let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface })
-            if let autoIf = autoEntity,
-               case .autoInterface(let config) = autoIf.config {
-
-                let groupId = config.groupId ?? "reticulum"
-                print("[INTERFACE_VM] Starting AutoInterface with group: \(groupId)")
-
-                interfaceStatus[autoIf.id] = .connecting
-                try await appServices.startAutoInterface(groupId: groupId)
-                interfaceStatus[autoIf.id] = .connected
-                showSuccess("Auto Discovery started (group: \(groupId))")
-            } else {
-                // No enabled auto interface — stop if running
-                await appServices.stopAutoInterface()
-            }
-
-            // Handle BLE interface (separate try-catch so BLE errors don't kill TCP/RNode)
-            #if canImport(CoreBluetooth)
-            let bleEntity = enabledInterfaces.first(where: { $0.type == .ble })
-            if let bleEntity = bleEntity {
-                print("[INTERFACE_VM] Starting BLE interface")
+        // --- BLE ---
+        #if canImport(CoreBluetooth)
+        let bleEntity = enabledInterfaces.first(where: { $0.type == .ble })
+        if let bleEntity = bleEntity {
+            if appServices.bleInterface == nil {
+                print("[INTERFACE_VM] Starting BLE")
                 interfaceStatus[bleEntity.id] = .connecting
                 do {
                     try await appServices.startBLEInterface()
                     interfaceStatus[bleEntity.id] = .connected
-                    showSuccess("BLE interface started")
                 } catch {
-                    print("[INTERFACE_VM] BLE start failed: \(error)")
+                    print("[INTERFACE_VM] BLE failed: \(error)")
                     interfaceStatus[bleEntity.id] = .error
                     showError("BLE failed: \(error.localizedDescription)")
                 }
-            } else {
-                await appServices.stopBLEInterface()
             }
-            #endif
+        } else if bleEntity == nil {
+            await appServices.stopBLEInterface()
+        }
+        #endif
 
-            // Handle RNode interface
-            let rnodeEntity = enabledInterfaces.first(where: { $0.type == .rnode })
-            if let rnodeIf = rnodeEntity,
-               case .rnode(let rnodeConfig) = rnodeIf.config {
-
-                print("[INTERFACE_VM] Applying RNode changes, device: \(rnodeConfig.deviceName)")
+        // --- RNode ---
+        let rnodeEntity = enabledInterfaces.first(where: { $0.type == .rnode })
+        if let rnodeIf = rnodeEntity,
+           case .rnode(let rnodeConfig) = rnodeIf.config {
+            if appServices.rnodeInterface == nil {
+                print("[INTERFACE_VM] Starting RNode: \(rnodeConfig.deviceName)")
                 interfaceStatus[rnodeIf.id] = .connecting
-                try await appServices.startRNodeInterface(config: rnodeConfig, name: rnodeIf.name)
-                showSuccess("Connecting to RNode \(rnodeConfig.deviceName)...")
-            } else {
-                await appServices.stopRNodeInterface()
+                do {
+                    try await appServices.startRNodeInterface(config: rnodeConfig, name: rnodeIf.name)
+                } catch {
+                    print("[INTERFACE_VM] RNode failed: \(error)")
+                    interfaceStatus[rnodeIf.id] = .error
+                    showError("RNode failed: \(error.localizedDescription)")
+                }
             }
-
-            hasPendingChanges = false
-
-            if tcpEntity == nil && autoEntity == nil {
-                showSuccess("Disconnected")
-            }
-        } catch {
-            print("[INTERFACE_VM] Apply failed: \(error)")
-            if let id = activeInterfaceId {
-                interfaceStatus[id] = .error
-            }
-            showError("Connection failed: \(error.localizedDescription)")
+        } else if rnodeEntity == nil {
+            await appServices.stopRNodeInterface()
         }
 
+        hasPendingChanges = false
         isApplyingChanges = false
     }
 

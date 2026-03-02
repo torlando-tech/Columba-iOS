@@ -440,8 +440,8 @@ public final class InterfaceRepository: @unchecked Sendable {
 
     // MARK: - Initialization
 
-    public init(userDefaults: UserDefaults = .standard) {
-        self.defaults = userDefaults
+    public init(userDefaults: UserDefaults? = nil) {
+        self.defaults = userDefaults ?? UserDefaults(suiteName: appGroupIdentifier) ?? .standard
         loadInterfaces()
     }
 

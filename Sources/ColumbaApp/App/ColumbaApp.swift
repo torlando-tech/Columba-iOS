@@ -13,7 +13,7 @@ import BackgroundTasks
 import os
 
 /// App Group identifier for shared data between app and extensions.
-public let appGroupIdentifier = "group.com.columba.ios"
+public let appGroupIdentifier = "group.network.columba.app"
 
 /// Main SwiftUI App entry point.
 ///
@@ -37,7 +37,7 @@ struct ColumbaApp: App {
 
     init() {
         BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: "com.columba.app.sync",
+            forTaskWithIdentifier: "network.columba.app.sync",
             using: nil
         ) { task in
             NotificationCenter.default.post(name: .columbaBackgroundSync, object: task)
@@ -275,7 +275,7 @@ struct RootView: View {
     // MARK: - Background Sync
 
     private func scheduleBackgroundSync() {
-        let request = BGAppRefreshTaskRequest(identifier: "com.columba.app.sync")
+        let request = BGAppRefreshTaskRequest(identifier: "network.columba.app.sync")
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         try? BGTaskScheduler.shared.submit(request)
     }

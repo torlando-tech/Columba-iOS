@@ -1,0 +1,152 @@
+//
+//  TunnelManager.swift
+//  ColumbaApp
+//
+//  Manages the Network Extension (NEPacketTunnelProvider) lifecycle.
+//  Handles loading, starting, stopping, and sending messages to the extension.
+//
+
+import Foundation
+import NetworkExtension
+import os.log
+
+/// Manages the Columba Network Extension tunnel.
+///
+/// The extension keeps TCP and AutoInterface NWConnections alive while the
+/// app is backgrounded. This manager handles the VPN configuration profile
+/// and IPC with the running extension.
+@available(iOS 17.0, macOS 14.0, *)
+@Observable
+public final class TunnelManager: @unchecked Sendable {
+
+    // MARK: - Properties
+
+    /// Current extension status
+    public private(set) var status: NEVPNStatus = .disconnected
+
+    /// Whether the extension is enabled in settings
+    public private(set) var isEnabled = false
+
+    /// The loaded tunnel provider manager
+    private var manager: NETunnelProviderManager?
+
+    private let logger = Logger(subsystem: "com.columba.app", category: "TunnelManager")
+
+    // MARK: - Lifecycle
+
+    /// Load the existing VPN configuration or create a new one.
+    public func load() async {
+        do {
+            let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+            if let existing = managers.first {
+                manager = existing
+                isEnabled = existing.isEnabled
+                status = existing.connection.status
+                logger.info("Loaded existing tunnel config, enabled=\(existing.isEnabled)")
+            } else {
+                logger.info("No tunnel config found")
+            }
+
+            // Observe status changes
+            NotificationCenter.default.addObserver(
+                forName: .NEVPNStatusDidChange,
+                object: manager?.connection,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor in
+                    self.status = self.manager?.connection.status ?? .disconnected
+                }
+            }
+        } catch {
+            logger.error("Failed to load tunnel config: \(error)")
+        }
+    }
+
+    /// Install or update the VPN configuration profile.
+    public func install() async throws {
+        let mgr: NETunnelProviderManager
+        if let existing = manager {
+            mgr = existing
+        } else {
+            mgr = NETunnelProviderManager()
+        }
+
+        let proto = NETunnelProviderProtocol()
+        proto.providerBundleIdentifier = "com.columba.app.tunnel"
+        proto.serverAddress = "Columba Transport"
+
+        mgr.protocolConfiguration = proto
+        mgr.localizedDescription = "Columba Background Transport"
+        mgr.isEnabled = true
+
+        try await mgr.saveToPreferences()
+        try await mgr.loadFromPreferences()
+
+        manager = mgr
+        isEnabled = true
+        status = mgr.connection.status
+        logger.info("Tunnel config installed")
+    }
+
+    /// Start the tunnel extension.
+    public func start() async throws {
+        guard let manager else {
+            try await install()
+            try await start()
+            return
+        }
+
+        if !manager.isEnabled {
+            manager.isEnabled = true
+            try await manager.saveToPreferences()
+        }
+
+        try manager.connection.startVPNTunnel()
+        logger.info("Tunnel started")
+    }
+
+    /// Stop the tunnel extension.
+    public func stop() {
+        manager?.connection.stopVPNTunnel()
+        logger.info("Tunnel stopped")
+    }
+
+    /// Send a raw frame to the extension for transmission.
+    ///
+    /// The extension will route this to the appropriate NWConnection
+    /// based on the interface tag.
+    ///
+    /// - Parameters:
+    ///   - data: Raw frame data (already HDLC-framed for TCP)
+    ///   - interfaceTag: Which interface to send on (TCP=0x01, Auto=0x02)
+    public func sendFrame(_ data: Data, interfaceTag: UInt8) async {
+        guard let session = manager?.connection as? NETunnelProviderSession else {
+            return
+        }
+
+        var message = Data([interfaceTag])
+        message.append(data)
+
+        do {
+            try session.sendProviderMessage(message) { _ in }
+        } catch {
+            logger.error("sendProviderMessage failed: \(error)")
+        }
+    }
+
+    /// Whether the extension is currently running.
+    public var isRunning: Bool {
+        status == .connected
+    }
+
+    /// Remove the VPN configuration entirely.
+    public func uninstall() async throws {
+        guard let manager else { return }
+        try await manager.removeFromPreferences()
+        self.manager = nil
+        isEnabled = false
+        status = .disconnected
+        logger.info("Tunnel config removed")
+    }
+}

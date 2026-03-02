@@ -20,7 +20,7 @@ public final class NotificationObserver: @unchecked Sendable {
     // MARK: - Constants
 
     /// Darwin notification name posted when new LXMF message arrives.
-    public static let newMessageNotification = "com.columba.newMessage" as CFString
+    public static let newMessageNotification = "network.columba.newMessage" as CFString
 
     // MARK: - Properties
 

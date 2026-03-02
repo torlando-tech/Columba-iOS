@@ -118,6 +118,12 @@ public final class AppServices {
     /// Call manager for LXST voice call UI integration.
     public var callManager: CallManager?
 
+    /// Network Extension tunnel manager.
+    public private(set) var tunnelManager: TunnelManager?
+
+    /// Extension frame reader for processing queued frames from the extension.
+    private var extensionFrameReader: ExtensionFrameReader?
+
     // MARK: - Interface Lookup
 
     /// Get a human-readable name for an interface ID.
@@ -541,10 +547,35 @@ public final class AppServices {
         DiagLog.log("[INIT2] Registered destinations: \(regDests)")
         DiagLog.log("[INIT2] Registered link callbacks: \(regCallbacks)")
         // Apply persisted transport mode setting
-        if UserDefaults.standard.bool(forKey: "transport_enabled") {
+        if SharedDefaults.suite.bool(forKey: "transport_enabled") {
             await newTransport.setTransportEnabled(true, identity: identity)
             DiagLog.log("[INIT2] Transport mode enabled")
         }
+
+        // 12. Set up extension frame reader for background transport
+        let reader = ExtensionFrameReader()
+        self.extensionFrameReader = reader
+
+        // Wire frame injection: extension sends unframed packets -> transport
+        let tcpId = await tcpInterface?.id ?? "ext-tcp"
+        let autoId = await autoInterface?.id ?? "ext-auto"
+
+        reader.onTCPFrameReceived = { [weak self] data in
+            guard let transport = self?.transport else { return }
+            Task { await transport.handleReceivedData(data: data, from: tcpId) }
+        }
+
+        reader.onAutoFrameReceived = { [weak self] data in
+            guard let transport = self?.transport else { return }
+            Task { await transport.handleReceivedData(data: data, from: autoId) }
+        }
+
+        reader.startListening()
+
+        // 13. Load tunnel manager
+        let tunnel = TunnelManager()
+        self.tunnelManager = tunnel
+        await tunnel.load()
 
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
@@ -935,7 +966,7 @@ public final class AppServices {
         }
 
         // Apply persisted transport mode setting
-        if let transport = transport, UserDefaults.standard.bool(forKey: "transport_enabled") {
+        if let transport, SharedDefaults.suite.bool(forKey: "transport_enabled") {
             await transport.setTransportEnabled(true, identity: existingIdentity)
         }
 
@@ -1037,6 +1068,65 @@ public final class AppServices {
         logger.info("AppServices shutdown complete")
     }
 
+    /// Stop only the TCP interface without affecting other interfaces.
+    public func stopTCPInterface() async {
+        await tcpInterface?.disconnect()
+        if let transport = transport {
+            await transport.removeInterface(id: "tcp-server")
+        }
+        tcpInterface = nil
+        isConnected = false
+    }
+
+    /// Reconnect only the TCP interface without tearing down BLE/Auto/RNode.
+    public func reconnectTCPOnly(host: String, port: UInt16) async throws {
+        // Stop existing TCP
+        await stopTCPInterface()
+
+        // Ensure base stack exists
+        if transport == nil {
+            try await initializeBaseStack()
+        }
+        guard let transport = transport else {
+            throw AppServicesError.transportNotConnected
+        }
+
+        // Create and connect new TCP interface
+        let config = InterfaceConfig(
+            id: "tcp-server",
+            name: "TCP Server",
+            type: .tcp,
+            enabled: true,
+            mode: .full,
+            host: host,
+            port: port
+        )
+        let newInterface = try TCPInterface(config: config)
+        self.tcpInterface = newInterface
+        try await transport.addInterface(newInterface)
+
+        // Re-register delivery destination
+        if let dest = deliveryDestination {
+            await transport.registerDestination(dest)
+        }
+
+        // Restart router if it was shut down
+        if let router = router {
+            await router.setTransport(transport)
+            await router.restart()
+            if let dest = deliveryDestination {
+                try? await router.registerDeliveryDestination(dest)
+            }
+        }
+
+        // Apply transport mode
+        if let identity = identity, SharedDefaults.suite.bool(forKey: "transport_enabled") {
+            await transport.setTransportEnabled(true, identity: identity)
+        }
+
+        startStateObserver()
+    }
+
     // MARK: - Reconnection
 
     /// Reconnect to a new TCP server.
@@ -1129,7 +1219,7 @@ public final class AppServices {
         }
 
         // Apply persisted transport mode setting
-        if UserDefaults.standard.bool(forKey: "transport_enabled") {
+        if SharedDefaults.suite.bool(forKey: "transport_enabled") {
             await newTransport.setTransportEnabled(true, identity: existingIdentity)
         }
 

@@ -55,6 +55,9 @@ struct SettingsView: View {
                         // Transport Mode
                         transportModeCard(vm)
 
+                        // Background Transport (requires paid Apple Developer account)
+                        // backgroundTransportCard()
+
                         // Delivery & Retrieval
                         deliveryRetrievalCard(vm)
 
@@ -304,6 +307,58 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Background Transport Card
+
+    @ViewBuilder
+    private func backgroundTransportCard() -> some View {
+        if let tunnel = appServices.tunnelManager {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.accentColor)
+
+                    Text("Background Transport")
+                        .font(.headline)
+                        .foregroundStyle(Theme.textPrimary)
+
+                    Spacer()
+
+                    Toggle("", isOn: Binding(
+                        get: { tunnel.isRunning },
+                        set: { newValue in
+                            Task {
+                                if newValue {
+                                    try? await tunnel.start()
+                                } else {
+                                    tunnel.stop()
+                                }
+                            }
+                        }
+                    ))
+                    .labelsHidden()
+                    .tint(Theme.accentColor)
+                }
+
+                Text("Keep TCP and LAN connections alive when the app is backgrounded. Enables receiving messages and notifications without opening the app.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(tunnel.isRunning ? Theme.success : Theme.textSecondary)
+                        .frame(width: 8, height: 8)
+
+                    Text(tunnel.isRunning ? "Running" : "Stopped")
+                        .font(.caption)
+                        .foregroundStyle(tunnel.isRunning ? Theme.success : Theme.textSecondary)
+                }
+            }
+            .padding(16)
+            .glassCard()
         }
     }
 
