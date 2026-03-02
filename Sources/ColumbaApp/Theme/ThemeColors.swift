@@ -44,7 +44,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
         case .plum:
             return ThemeColors(
                 accentHex: "#9C27B0", secondaryAccentHex: "#E040FB",
-                backgroundPrimaryHex: "#111114", backgroundSecondaryHex: "#1C1C1E",
+                backgroundPrimaryHex: "#000000", backgroundSecondaryHex: "#1C1C1E",
                 backgroundTertiaryHex: "#28282C",
                 lightBackgroundPrimaryHex: "#F5F0F7", lightBackgroundSecondaryHex: "#EDE5F0",
                 lightBackgroundTertiaryHex: "#E0D5E5",
@@ -55,7 +55,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
         case .teal:
             return ThemeColors(
                 accentHex: "#009688", secondaryAccentHex: "#4DB6AC",
-                backgroundPrimaryHex: "#101414", backgroundSecondaryHex: "#1A1F1F",
+                backgroundPrimaryHex: "#000000", backgroundSecondaryHex: "#1A1F1F",
                 backgroundTertiaryHex: "#252C2C",
                 lightBackgroundPrimaryHex: "#F0F5F5", lightBackgroundSecondaryHex: "#E0EDED",
                 lightBackgroundTertiaryHex: "#D0E0E0",
@@ -66,7 +66,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
         case .ocean:
             return ThemeColors(
                 accentHex: "#1565C0", secondaryAccentHex: "#42A5F5",
-                backgroundPrimaryHex: "#101218", backgroundSecondaryHex: "#1A1D24",
+                backgroundPrimaryHex: "#000000", backgroundSecondaryHex: "#1A1D24",
                 backgroundTertiaryHex: "#252830",
                 lightBackgroundPrimaryHex: "#F0F3F8", lightBackgroundSecondaryHex: "#E0E8F0",
                 lightBackgroundTertiaryHex: "#D0DCE8",
@@ -77,7 +77,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
         case .sunset:
             return ThemeColors(
                 accentHex: "#E65100", secondaryAccentHex: "#FF8A65",
-                backgroundPrimaryHex: "#141210", backgroundSecondaryHex: "#1F1C1A",
+                backgroundPrimaryHex: "#000000", backgroundSecondaryHex: "#1F1C1A",
                 backgroundTertiaryHex: "#2C2825",
                 lightBackgroundPrimaryHex: "#F8F3F0", lightBackgroundSecondaryHex: "#F0E5E0",
                 lightBackgroundTertiaryHex: "#E8D8D0",
@@ -88,7 +88,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
         case .forest:
             return ThemeColors(
                 accentHex: "#2E7D32", secondaryAccentHex: "#66BB6A",
-                backgroundPrimaryHex: "#101410", backgroundSecondaryHex: "#1A1F1A",
+                backgroundPrimaryHex: "#000000", backgroundSecondaryHex: "#1A1F1A",
                 backgroundTertiaryHex: "#252C25",
                 lightBackgroundPrimaryHex: "#F0F5F0", lightBackgroundSecondaryHex: "#E0EDE0",
                 lightBackgroundTertiaryHex: "#D0E0D0",
@@ -99,7 +99,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
         case .rose:
             return ThemeColors(
                 accentHex: "#AD1457", secondaryAccentHex: "#F06292",
-                backgroundPrimaryHex: "#141012", backgroundSecondaryHex: "#1F1A1C",
+                backgroundPrimaryHex: "#000000", backgroundSecondaryHex: "#1F1A1C",
                 backgroundTertiaryHex: "#2C2528",
                 lightBackgroundPrimaryHex: "#F8F0F3", lightBackgroundSecondaryHex: "#F0E0E5",
                 lightBackgroundTertiaryHex: "#E8D0D8",
@@ -110,7 +110,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
         case .midnight:
             return ThemeColors(
                 accentHex: "#283593", secondaryAccentHex: "#7986CB",
-                backgroundPrimaryHex: "#101014", backgroundSecondaryHex: "#1A1A20",
+                backgroundPrimaryHex: "#000000", backgroundSecondaryHex: "#1A1A20",
                 backgroundTertiaryHex: "#25252C",
                 lightBackgroundPrimaryHex: "#F0F0F5", lightBackgroundSecondaryHex: "#E0E0ED",
                 lightBackgroundTertiaryHex: "#D0D0E0",
@@ -121,7 +121,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
         case .lavender:
             return ThemeColors(
                 accentHex: "#7B1FA2", secondaryAccentHex: "#CE93D8",
-                backgroundPrimaryHex: "#121014", backgroundSecondaryHex: "#1D1A20",
+                backgroundPrimaryHex: "#000000", backgroundSecondaryHex: "#1D1A20",
                 backgroundTertiaryHex: "#28252C",
                 lightBackgroundPrimaryHex: "#F5F0F8", lightBackgroundSecondaryHex: "#EDE0F0",
                 lightBackgroundTertiaryHex: "#E0D0E8",
@@ -196,7 +196,7 @@ struct CustomThemeData: Codable, Identifiable, Equatable {
 
         // Dark backgrounds tinted with accent hue
         let bgHue = primaryHue / 360
-        let bgPrimary = Color(hue: bgHue, saturation: 0.08, brightness: 0.07)
+        let bgPrimary = Color(hue: 0, saturation: 0, brightness: 0) // OLED black
         let bgSecondary = Color(hue: bgHue, saturation: 0.06, brightness: 0.11)
         let bgTertiary = Color(hue: bgHue, saturation: 0.05, brightness: 0.16)
 

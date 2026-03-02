@@ -86,7 +86,7 @@ public struct ContactsView: View {
                     // Content
                     tabContent(vm)
                 }
-                .background(Color(white: 0.1))
+                .background(Color.black)
                 .navigationTitle("Contacts")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
