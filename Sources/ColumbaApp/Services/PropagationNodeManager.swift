@@ -25,7 +25,7 @@ public struct PropagationNode: Identifiable, Sendable, Hashable {
     public let isOnline: Bool
 
     public var resolvedDisplayName: String {
-        displayName ?? "Propagation Node"
+        displayName ?? "Peer \(hash.prefix(4).map { String(format: "%02X", $0) }.joined())"
     }
 
     public static func == (lhs: PropagationNode, rhs: PropagationNode) -> Bool {
@@ -134,10 +134,13 @@ public final class PropagationNodeManager {
         guard info.enabled else { return }
 
         let hex = entry.destinationHash.map { String(format: "%02x", $0) }.joined()
+        // Prefer display name from properly-parsed metadata dict (element[6])
+        // over PathEntry's heuristic parsing which can fail on some formats
+        let name = info.displayName ?? entry.displayName
         let node = PropagationNode(
             id: hex,
             hash: entry.destinationHash,
-            displayName: entry.displayName,
+            displayName: name,
             hopCount: Int(entry.hopCount),
             info: info,
             discoveredAt: entry.timestamp,
