@@ -59,6 +59,11 @@ public actor MessageRepository {
         try await database.markConversationRead(hash: conversationHash)
     }
 
+    /// Set the unread count for a conversation (e.g. mark as unread with count=1).
+    public func setUnreadCount(_ conversationHash: Data, count: Int) async throws {
+        try await database.setUnreadCount(hash: conversationHash, count: count)
+    }
+
     /// Delete conversation and all its messages.
     ///
     /// Cascades deletion to all messages in the conversation due to foreign key constraint.

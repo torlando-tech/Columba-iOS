@@ -231,6 +231,16 @@ public final class ChatsViewModel {
         }
     }
 
+    /// Mark a conversation as unread.
+    @MainActor
+    public func markUnread(_ conversation: Conversation) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversation.id }) else { return }
+        conversations[index].unreadCount = max(1, conversations[index].unreadCount)
+        Task {
+            try? await repository.setUnreadCount(conversation.destinationHash, count: 1)
+        }
+    }
+
     /// Delete a conversation.
     ///
     /// - Parameter conversation: The conversation to delete

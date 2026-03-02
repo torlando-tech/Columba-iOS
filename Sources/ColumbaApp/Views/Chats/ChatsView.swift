@@ -36,6 +36,12 @@ struct ChatsView: View {
     /// Controls the search text field focus.
     @FocusState private var isSearchFocused: Bool
 
+    /// Contact selected for peer details navigation.
+    @State private var selectedContact: Contact?
+
+    /// Conversation pending deletion (confirmation alert).
+    @State private var deletingConversation: Conversation?
+
     // MARK: - Theme Colors
 
     private let backgroundColor = Color.black
@@ -110,6 +116,13 @@ struct ChatsView: View {
             .safeAreaInset(edge: .top) {
                 headerView
             }
+            .navigationDestination(item: $selectedContact) { contact in
+                NodeDetailsView(
+                    contact: contact,
+                    appServices: appServices,
+                    onStartChat: nil
+                )
+            }
         }
         .preferredColorScheme(.dark)
         .tint(Theme.accentColor)
@@ -122,6 +135,22 @@ struct ChatsView: View {
                 )
             }
             await viewModel?.loadConversations()
+        }
+        .alert("Delete Conversation", isPresented: Binding(
+            get: { deletingConversation != nil },
+            set: { if !$0 { deletingConversation = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                if let conversation = deletingConversation {
+                    Task { await viewModel?.deleteConversation(conversation) }
+                }
+                deletingConversation = nil
+            }
+            Button("Cancel", role: .cancel) {
+                deletingConversation = nil
+            }
+        } message: {
+            Text("This will permanently delete the conversation and all its messages.")
         }
     }
 
@@ -214,6 +243,34 @@ struct ChatsView: View {
                             conversation: conversation,
                             onFavoriteToggle: {
                                 vm.toggleFavorite(conversation)
+                            },
+                            onMarkUnread: {
+                                vm.markUnread(conversation)
+                            },
+                            onViewDetails: {
+                                selectedContact = Contact(
+                                    id: conversation.id,
+                                    displayName: conversation.displayName,
+                                    identityHash: conversation.destinationHash,
+                                    identityHashHex: conversation.id,
+                                    badgeType: .peer,
+                                    hopCount: 0,
+                                    signalStrength: 0,
+                                    timestamp: conversation.lastMessageTimestamp,
+                                    isOnline: false,
+                                    isFavorite: conversation.isFavorite,
+                                    isPinned: false,
+                                    isRelay: false,
+                                    iconName: conversation.iconName,
+                                    iconFgColor: conversation.iconFgColor,
+                                    iconBgColor: conversation.iconBgColor
+                                )
+                            },
+                            onRemoveContact: {
+                                vm.toggleFavorite(conversation)
+                            },
+                            onDelete: {
+                                deletingConversation = conversation
                             }
                         )
                     }
