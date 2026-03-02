@@ -98,6 +98,7 @@ struct RootView: View {
     @State private var showIncomingCall = false
     @State private var showActiveCallFromIncoming = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
 
     init(settingsRepository: SettingsRepository, notificationObserver: NotificationObserver, pendingDeepLink: Binding<String?>) {
         self.settingsRepository = settingsRepository
@@ -176,6 +177,12 @@ struct RootView: View {
                 loadingView
             }
         }
+        .onChange(of: colorScheme) { _, newScheme in
+            ThemeManager.shared.systemColorScheme = newScheme
+        }
+        .onAppear {
+            ThemeManager.shared.systemColorScheme = colorScheme
+        }
         .task(id: identitySwitchTrigger) {
             if !showOnboarding {
                 await initializeServices()
@@ -209,10 +216,9 @@ struct RootView: View {
 
     private var loadingView: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Theme.backgroundPrimary.ignoresSafeArea()
 
             VStack(spacing: 20) {
-                // App icon placeholder
                 ZStack {
                     Circle()
                         .fill(Theme.accentColor.opacity(0.2))
@@ -225,7 +231,7 @@ struct RootView: View {
 
                 Text("Columba")
                     .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.textPrimary)
 
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: Theme.accentColor))
@@ -233,7 +239,7 @@ struct RootView: View {
 
                 Text("Connecting to network...")
                     .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
     }
@@ -242,7 +248,7 @@ struct RootView: View {
 
     private func errorView(_ message: String) -> some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Theme.backgroundPrimary.ignoresSafeArea()
 
             VStack(spacing: 20) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -251,11 +257,11 @@ struct RootView: View {
 
                 Text("Connection Failed")
                     .font(.title2.bold())
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.textPrimary)
 
                 Text(message)
                     .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
 

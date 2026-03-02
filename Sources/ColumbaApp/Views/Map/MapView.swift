@@ -68,7 +68,7 @@ struct MapView: View {
                         } label: {
                             Image(systemName: "arrow.down.circle")
                                 .font(.system(size: 20))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Theme.textPrimary)
                                 .frame(width: 44, height: 44)
                                 .background(.ultraThinMaterial)
                                 .clipShape(Circle())
@@ -80,7 +80,7 @@ struct MapView: View {
                         } label: {
                             Image(systemName: "location.fill")
                                 .font(.system(size: 20))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Theme.textPrimary)
                                 .frame(width: 44, height: 44)
                                 .background(.ultraThinMaterial)
                                 .clipShape(Circle())
@@ -94,7 +94,7 @@ struct MapView: View {
             }
         }
         .toolbarBackground(.visible, for: .tabBar)
-        .toolbarBackground(Color.black.opacity(0.85), for: .tabBar)
+        .toolbarBackground(Theme.backgroundPrimary.opacity(0.85), for: .tabBar)
         .onAppear {
             checkLocationAuthorization()
         }

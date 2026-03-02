@@ -173,7 +173,7 @@ struct ContactCard: View {
         HStack(spacing: 8) {
             Text(contact.resolvedDisplayName)
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
 
             // Badge
@@ -220,7 +220,7 @@ struct ContactCard: View {
     private var hashRow: some View {
         Text(contact.truncatedHash)
             .font(.system(.caption, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.6))
+            .foregroundStyle(Theme.textSecondary)
             .lineLimit(2)
     }
 
@@ -235,7 +235,7 @@ struct ContactCard: View {
                 Text(contact.timeAgo)
                     .font(.caption)
             }
-            .foregroundStyle(.white.opacity(0.5))
+            .foregroundStyle(Theme.textDisabled)
         }
     }
 
@@ -259,7 +259,7 @@ struct ContactCard: View {
             // Hop count
             Text("\(contact.hopCount) hops")
                 .font(.caption)
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(Theme.textDisabled)
 
             // Interface type icon for network announces
             if showInterfaceIcon {
@@ -292,7 +292,7 @@ struct ContactCard: View {
         } else {
             Image(systemName: contact.interfaceIcon)
                 .font(.caption)
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(Theme.textDisabled)
         }
     }
 
@@ -315,10 +315,10 @@ struct ContactCard: View {
 
     private var glassBackground: some View {
         RoundedRectangle(cornerRadius: 12)
-            .fill(Color.white.opacity(0.08))
+            .fill(ThemeManager.shared.isDarkMode ? Color.white.opacity(0.08) : Color.black.opacity(0.04))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    .stroke(ThemeManager.shared.isDarkMode ? Color.white.opacity(0.1) : Color.black.opacity(0.08), lineWidth: 1)
             )
     }
 }

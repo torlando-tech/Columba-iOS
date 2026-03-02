@@ -193,7 +193,7 @@ struct MessagingView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(Color.black)
+        .background(Theme.backgroundPrimary)
         #if os(iOS)
         .navigationBarBackButtonHidden(true)
         .gesture(
@@ -328,7 +328,7 @@ struct MessagingView: View {
         Button(action: { dismiss() }) {
             Image(systemName: "chevron.left")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
         }
     }
 
@@ -336,7 +336,7 @@ struct MessagingView: View {
         HStack(spacing: 8) {
             Text(conversation.peerName)
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
 
             Circle()
                 .fill(appServices.isConnected ? Color.green : Color.gray)
@@ -358,7 +358,7 @@ struct MessagingView: View {
                 Button(action: { showCodecPicker = true }) {
                     Image(systemName: "phone.fill")
                         .font(.system(size: 16))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.textPrimary)
                 }
             }
 
@@ -373,7 +373,7 @@ struct MessagingView: View {
             }) {
                 Image(systemName: isSharingLocation ? "location.fill" : "location.slash")
                     .font(.system(size: 16))
-                    .foregroundStyle(isSharingLocation ? .green : .white)
+                    .foregroundStyle(isSharingLocation ? .green : Theme.textPrimary)
             }
 
             // More options menu
@@ -416,7 +416,7 @@ struct MessagingView: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 16))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.textPrimary)
             }
         }
     }
@@ -482,7 +482,7 @@ private struct ImageQualityPickerSheet: View {
         VStack(spacing: 16) {
             Text("Image Quality")
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
                 .padding(.top, 8)
 
             VStack(spacing: 8) {
@@ -498,7 +498,7 @@ private struct ImageQualityPickerSheet: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(preset.rawValue)
                                     .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(Theme.textPrimary)
                                 Text(preset.description)
                                     .font(.caption)
                                     .foregroundStyle(.gray)
@@ -609,7 +609,7 @@ private struct LocationShareSheet: View {
                     } label: {
                         HStack {
                             Text(duration.rawValue)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Theme.textPrimary)
                             Spacer()
                             if selected == duration {
                                 Image(systemName: "checkmark")

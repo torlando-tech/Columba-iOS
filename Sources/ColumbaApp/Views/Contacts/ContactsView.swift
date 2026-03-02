@@ -92,7 +92,7 @@ public struct ContactsView: View {
                     // Content
                     tabContent(vm)
                 }
-                .background(Color.black)
+                .background(Theme.backgroundPrimary)
                 .navigationTitle("Contacts")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -225,7 +225,7 @@ public struct ContactsView: View {
                 set: { vm.searchText = $0 }
             ))
                 .textFieldStyle(.plain)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
                 .autocorrectionDisabled()
                 #if os(iOS)
                 .textInputAutocapitalization(.never)
@@ -241,7 +241,7 @@ public struct ContactsView: View {
             }
         }
         .padding(10)
-        .background(Color.white.opacity(0.1))
+        .background(Theme.backgroundTertiary)
         .cornerRadius(10)
     }
 
@@ -281,7 +281,7 @@ public struct ContactsView: View {
 
             Text("No Contacts")
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
 
             Text("Add contacts from the Network tab\nor wait for announces")
                 .font(.subheadline)
@@ -402,7 +402,7 @@ public struct ContactsView: View {
                               ? "checkmark.circle.fill"
                               : "antenna.radiowaves.left.and.right")
                             .font(.title3)
-                            .foregroundStyle(vm.announceSuccess ? .green : .white)
+                            .foregroundStyle(vm.announceSuccess ? .green : Theme.accentColor)
                     }
                 }
                 .disabled(vm.isAnnouncing)

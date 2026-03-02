@@ -44,7 +44,7 @@ struct ChatsView: View {
 
     // MARK: - Theme Colors
 
-    private let backgroundColor = Color.black
+    private var backgroundColor: Color { Theme.backgroundPrimary }
 
     // MARK: - Body
 
@@ -85,7 +85,7 @@ struct ChatsView: View {
                     } label: {
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 17, weight: .medium))
-                            .foregroundColor(.white)
+                            .foregroundColor(Theme.textPrimary)
                     }
 
                     // Refresh button — syncs from propagation node then reloads DB
@@ -100,7 +100,7 @@ struct ChatsView: View {
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 17, weight: .medium))
-                            .foregroundColor(viewModel?.isRefreshing == true ? Theme.accentColor : .white)
+                            .foregroundColor(viewModel?.isRefreshing == true ? Theme.accentColor : Theme.textPrimary)
                             .rotationEffect(.degrees(viewModel?.isRefreshing == true ? 360 : 0))
                             .animation(
                                 viewModel?.isRefreshing == true
@@ -173,13 +173,13 @@ struct ChatsView: View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(Theme.textDisabled)
 
                 TextField("Search conversations", text: Binding(
                     get: { vm.searchQuery },
                     set: { vm.searchQuery = $0 }
                 ))
-                .foregroundColor(.white)
+                .foregroundColor(Theme.textPrimary)
                 .focused($isSearchFocused)
                 .submitLabel(.search)
 
@@ -188,13 +188,13 @@ struct ChatsView: View {
                         vm.searchQuery = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(Theme.textDisabled)
                     }
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(Color.white.opacity(0.1))
+            .background(Theme.backgroundTertiary)
             .clipShape(RoundedRectangle(cornerRadius: 12))
 
             Button("Cancel") {
@@ -321,12 +321,12 @@ struct ChatsView: View {
             // Title
             Text("No Conversations Yet")
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(Theme.textPrimary)
 
             // Description
             Text("Share your Reticulum address with others to start receiving encrypted messages.")
                 .font(.system(size: 15))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 48)
 

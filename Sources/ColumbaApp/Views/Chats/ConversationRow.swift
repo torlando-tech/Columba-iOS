@@ -37,8 +37,12 @@ struct ConversationRow: View {
 
     // MARK: - Theme Colors
 
-    private let cardBackground = Color.white.opacity(0.08)
-    private let cardBorder = Color.white.opacity(0.12)
+    private var cardBackground: Color {
+        ThemeManager.shared.isDarkMode ? Color.white.opacity(0.08) : Color.black.opacity(0.04)
+    }
+    private var cardBorder: Color {
+        ThemeManager.shared.isDarkMode ? Color.white.opacity(0.12) : Color.black.opacity(0.08)
+    }
 
     // MARK: - Body
 
@@ -53,7 +57,7 @@ struct ConversationRow: View {
                 HStack {
                     Text(conversation.peerName)
                         .font(.system(size: 16, weight: conversation.unreadCount > 0 ? .bold : .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
 
                     Spacer()
@@ -70,14 +74,14 @@ struct ConversationRow: View {
 
                     Text(conversation.relativeTimestamp)
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(Theme.textSecondary)
                 }
 
                 // Message preview
                 if let preview = conversation.lastMessagePreview {
                     Text(preview)
                         .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(Theme.textSecondary)
                         .lineLimit(1)
                 }
             }
@@ -152,7 +156,7 @@ struct ConversationRow: View {
         } label: {
             Image(systemName: conversation.isFavorite ? "star.fill" : "star")
                 .font(.system(size: 20))
-                .foregroundColor(conversation.isFavorite ? .yellow : .white.opacity(0.4))
+                .foregroundColor(conversation.isFavorite ? .yellow : Theme.textDisabled)
                 .contentShape(Rectangle())
                 .frame(width: 44, height: 44)
         }

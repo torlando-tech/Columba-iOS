@@ -49,7 +49,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
                 lightBackgroundPrimaryHex: "#F5F0F7", lightBackgroundSecondaryHex: "#EDE5F0",
                 lightBackgroundTertiaryHex: "#E0D5E5",
                 sentBubbleHex: "#9C27B0", receivedBubbleHex: "#262626",
-                lightReceivedBubbleHex: "#E8E0EC",
+                lightReceivedBubbleHex: "#D5C8DC",
                 successHex: "#4CAF50", warningHex: "#FFC107", errorHex: "#F44336"
             )
         case .teal:
@@ -60,7 +60,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
                 lightBackgroundPrimaryHex: "#F0F5F5", lightBackgroundSecondaryHex: "#E0EDED",
                 lightBackgroundTertiaryHex: "#D0E0E0",
                 sentBubbleHex: "#009688", receivedBubbleHex: "#262626",
-                lightReceivedBubbleHex: "#E0ECEB",
+                lightReceivedBubbleHex: "#C8DDD9",
                 successHex: "#4CAF50", warningHex: "#FFC107", errorHex: "#F44336"
             )
         case .ocean:
@@ -71,7 +71,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
                 lightBackgroundPrimaryHex: "#F0F3F8", lightBackgroundSecondaryHex: "#E0E8F0",
                 lightBackgroundTertiaryHex: "#D0DCE8",
                 sentBubbleHex: "#1565C0", receivedBubbleHex: "#262626",
-                lightReceivedBubbleHex: "#E0E8F0",
+                lightReceivedBubbleHex: "#C8D5E5",
                 successHex: "#4CAF50", warningHex: "#FFC107", errorHex: "#F44336"
             )
         case .sunset:
@@ -82,7 +82,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
                 lightBackgroundPrimaryHex: "#F8F3F0", lightBackgroundSecondaryHex: "#F0E5E0",
                 lightBackgroundTertiaryHex: "#E8D8D0",
                 sentBubbleHex: "#E65100", receivedBubbleHex: "#262626",
-                lightReceivedBubbleHex: "#F0E5E0",
+                lightReceivedBubbleHex: "#E0CFC5",
                 successHex: "#4CAF50", warningHex: "#FFC107", errorHex: "#F44336"
             )
         case .forest:
@@ -93,7 +93,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
                 lightBackgroundPrimaryHex: "#F0F5F0", lightBackgroundSecondaryHex: "#E0EDE0",
                 lightBackgroundTertiaryHex: "#D0E0D0",
                 sentBubbleHex: "#2E7D32", receivedBubbleHex: "#262626",
-                lightReceivedBubbleHex: "#E0ECE0",
+                lightReceivedBubbleHex: "#C8DCC8",
                 successHex: "#4CAF50", warningHex: "#FFC107", errorHex: "#F44336"
             )
         case .rose:
@@ -104,7 +104,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
                 lightBackgroundPrimaryHex: "#F8F0F3", lightBackgroundSecondaryHex: "#F0E0E5",
                 lightBackgroundTertiaryHex: "#E8D0D8",
                 sentBubbleHex: "#AD1457", receivedBubbleHex: "#262626",
-                lightReceivedBubbleHex: "#F0E0E8",
+                lightReceivedBubbleHex: "#DCC8D2",
                 successHex: "#4CAF50", warningHex: "#FFC107", errorHex: "#F44336"
             )
         case .midnight:
@@ -115,7 +115,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
                 lightBackgroundPrimaryHex: "#F0F0F5", lightBackgroundSecondaryHex: "#E0E0ED",
                 lightBackgroundTertiaryHex: "#D0D0E0",
                 sentBubbleHex: "#283593", receivedBubbleHex: "#262626",
-                lightReceivedBubbleHex: "#E0E0EC",
+                lightReceivedBubbleHex: "#C8C8DC",
                 successHex: "#4CAF50", warningHex: "#FFC107", errorHex: "#F44336"
             )
         case .lavender:
@@ -126,7 +126,7 @@ enum PresetThemeId: String, Codable, CaseIterable, Identifiable {
                 lightBackgroundPrimaryHex: "#F5F0F8", lightBackgroundSecondaryHex: "#EDE0F0",
                 lightBackgroundTertiaryHex: "#E0D0E8",
                 sentBubbleHex: "#7B1FA2", receivedBubbleHex: "#262626",
-                lightReceivedBubbleHex: "#EDE0F0",
+                lightReceivedBubbleHex: "#D5C0E0",
                 successHex: "#4CAF50", warningHex: "#FFC107", errorHex: "#F44336"
             )
         }
@@ -215,7 +215,7 @@ struct CustomThemeData: Codable, Identifiable, Equatable {
             lightBackgroundTertiaryHex: lightBgTertiary.toHex(),
             sentBubbleHex: accentHex,
             receivedBubbleHex: "#262626",
-            lightReceivedBubbleHex: lightBgSecondary.toHex(),
+            lightReceivedBubbleHex: Color(hue: bgHue, saturation: 0.12, brightness: 0.84).toHex(),
             successHex: "#4CAF50", warningHex: "#FFC107", errorHex: "#F44336"
         )
     }

@@ -58,7 +58,7 @@ struct MessageBubble: View {
                     if !message.content.isEmpty {
                         Text(message.content)
                             .font(.body)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(message.isFromMe ? .white : Theme.textPrimary)
                     }
 
                     // File attachment chips
@@ -137,7 +137,7 @@ struct MessageBubble: View {
             Theme.receivedBubbleColor
                 .overlay(
                     RoundedRectangle(cornerRadius: 18)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                        .stroke(Theme.divider, lineWidth: 0.5)
                 )
         }
     }
