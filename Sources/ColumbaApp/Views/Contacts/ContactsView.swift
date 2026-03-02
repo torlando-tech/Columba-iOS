@@ -325,6 +325,7 @@ public struct ContactsView: View {
                                 vm.removeContact(contactId: contact.id)
                             }
                         )
+                        .id("\(contact.id)-\(contact.isPinned)")
                         .padding(.horizontal, 16)
                         .padding(.vertical, 6)
                     }
