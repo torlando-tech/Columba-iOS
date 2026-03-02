@@ -159,12 +159,6 @@ public final class PropagationNodeManager {
         if autoSelectEnabled {
             await autoSelectBestNode()
         }
-
-        // DEBUG: Auto-sync on first node discovery
-        if selectedNodeHash != nil && !isSyncing {
-            logger.info("[DEBUG] Auto-triggering sync on node discovery")
-            await syncNow()
-        }
     }
 
     // MARK: - Node Selection
@@ -228,14 +222,12 @@ public final class PropagationNodeManager {
 
         logger.info("[SYNC] syncNow called. knownNodes=\(self.knownNodes.count), selectedNodeHash=\(self.selectedNodeHash != nil ? "set" : "nil")")
 
-        // Auto-select a propagation node if none is set
-        if selectedNodeHash == nil {
-            // Try online nodes first, then any node as fallback
+        // Auto-select a propagation node if none is set and auto-select is enabled
+        if selectedNodeHash == nil && autoSelectEnabled {
             if let best = knownNodes.first(where: { $0.isOnline }) {
                 await selectNode(hash: best.hash)
                 logger.info("[SYNC] Auto-selected online node: \(best.resolvedDisplayName) hops=\(best.hopCount)")
             } else if let best = knownNodes.first {
-                // isOnline is a snapshot from discovery time; node may still be reachable
                 await selectNode(hash: best.hash)
                 logger.info("[SYNC] Auto-selected node (may be offline): \(best.resolvedDisplayName) hops=\(best.hopCount)")
             }
