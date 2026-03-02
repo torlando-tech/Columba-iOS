@@ -5,6 +5,11 @@
 //  Manages the Network Extension (NEPacketTunnelProvider) lifecycle.
 //  Handles loading, starting, stopping, and sending messages to the extension.
 //
+//  Requires paid Apple Developer account. Enable by adding ENABLE_NETWORK_EXTENSION
+//  to Swift Active Compilation Conditions in the ColumbaApp target build settings.
+//
+
+#if ENABLE_NETWORK_EXTENSION
 
 import Foundation
 import NetworkExtension
@@ -150,3 +155,5 @@ public final class TunnelManager: @unchecked Sendable {
         logger.info("Tunnel config removed")
     }
 }
+
+#endif

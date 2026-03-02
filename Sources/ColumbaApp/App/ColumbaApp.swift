@@ -295,21 +295,25 @@ struct RootView: View {
     // MARK: - Initialization
 
     private func initializeServices() async {
-        let bootLogger = Logger(subsystem: "com.columba.app", category: "Startup")
-        NSLog("[STARTUP] initializeServices() ENTERED")
+        DiagLog.log("[STARTUP] initializeServices() ENTERED")
 
-        // Retry the entire init up to 3 times — the Keychain, file system, or crypto
-        // may not be ready immediately after device unlock.
+        // Retry the entire init up to 5 times with increasing delay —
+        // the Keychain, file system, or CryptoKit may not be ready
+        // immediately after device unlock.
         var lastError: Error?
-        for attempt in 1...3 {
+        for attempt in 1...5 {
             do {
                 try await _initializeServicesOnce()
+                if attempt > 1 {
+                    DiagLog.log("[STARTUP] Succeeded on attempt \(attempt)")
+                }
                 return // success
             } catch {
                 lastError = error
-                NSLog("[STARTUP] Attempt \(attempt) failed: \(error)")
-                if attempt < 3 {
-                    try? await Task.sleep(for: .seconds(1))
+                DiagLog.log("[STARTUP] Attempt \(attempt)/5 failed: \(error)")
+                if attempt < 5 {
+                    let delay = Double(attempt) // 1s, 2s, 3s, 4s
+                    try? await Task.sleep(for: .seconds(delay))
                 }
             }
         }
@@ -317,24 +321,26 @@ struct RootView: View {
     }
 
     private func _initializeServicesOnce() async throws {
-        let bootLogger = Logger(subsystem: "com.columba.app", category: "Startup")
         do {
             // 1. Migration check (first launch after update)
+            DiagLog.log("[STARTUP] Step 1: migration check")
             await identityManager.migrateFromSingleIdentityIfNeeded(settingsRepository: settingsRepository)
 
             // 2. Get active identity (created during onboarding)
+            DiagLog.log("[STARTUP] Step 2: get active identity")
             guard let active = await identityManager.getActiveIdentity() else {
                 throw AppServicesError.identityNotInitialized
             }
 
             // 3. Load identity keys from Keychain
+            DiagLog.log("[STARTUP] Step 3: load identity keys for \(active.identityHash)")
             let identity = try await identityManager.loadIdentityKeys(for: active.identityHash)
+            DiagLog.log("[STARTUP] Step 3: identity loaded OK")
 
             // 4. Load interface configurations
             let interfaceRepo = InterfaceRepository()
             let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
-            let startupLogger = Logger(subsystem: "com.columba.app", category: "Startup")
-            startupLogger.error("[STARTUP] Enabled interfaces: \(enabledInterfaces.map { "\($0.type):\($0.name):\($0.enabled)" }.joined(separator: ", "), privacy: .public)")
+            DiagLog.log("[STARTUP] Step 4: \(enabledInterfaces.count) enabled interfaces")
 
             let serverAddress: String
             if let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient }),
@@ -345,11 +351,13 @@ struct RootView: View {
             }
 
             // 5. Initialize AppServices with identity
+            DiagLog.log("[STARTUP] Step 5: initialize AppServices")
             try await appServices.initialize(
                 identity: identity,
                 identityHash: active.identityHash,
                 tcpServerAddress: serverAddress
             )
+            DiagLog.log("[STARTUP] Step 5: AppServices initialized OK")
 
             // 6. Wire up database, message repo, handler
             guard let db = appServices.database else {
@@ -398,20 +406,20 @@ struct RootView: View {
                     #endif
                 case .rnode:
                     if case .rnode(let config) = iface.config {
-                        startupLogger.error("[STARTUP] Starting RNode: device=\(config.deviceName, privacy: .public), freq=\(config.frequency, privacy: .public)")
+                        DiagLog.log("[STARTUP] Starting RNode: device=\(config.deviceName), freq=\(config.frequency)")
                         Task {
                             do {
                                 try await services.startRNodeInterface(
                                     config: config,
                                     name: iface.name
                                 )
-                                startupLogger.error("[STARTUP] RNode started successfully")
+                                DiagLog.log("[STARTUP] RNode started successfully")
                             } catch {
-                                startupLogger.error("[STARTUP] RNode start FAILED: \(error.localizedDescription, privacy: .public)")
+                                DiagLog.log("[STARTUP] RNode start FAILED: \(error.localizedDescription)")
                             }
                         }
                     } else {
-                        startupLogger.error("[STARTUP] RNode interface has no config!")
+                        DiagLog.log("[STARTUP] RNode interface has no config!")
                     }
                 }
             }
@@ -431,7 +439,7 @@ struct RootView: View {
             }
 
         } catch {
-            NSLog("[STARTUP] _initializeServicesOnce failed: \(error)")
+            DiagLog.log("[STARTUP] _initializeServicesOnce FAILED: \(error)")
             throw error
         }
     }

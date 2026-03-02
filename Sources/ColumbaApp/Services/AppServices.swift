@@ -118,11 +118,13 @@ public final class AppServices {
     /// Call manager for LXST voice call UI integration.
     public var callManager: CallManager?
 
+    #if ENABLE_NETWORK_EXTENSION
     /// Network Extension tunnel manager.
     public private(set) var tunnelManager: TunnelManager?
 
     /// Extension frame reader for processing queued frames from the extension.
     private var extensionFrameReader: ExtensionFrameReader?
+    #endif
 
     // MARK: - Interface Lookup
 
@@ -552,6 +554,7 @@ public final class AppServices {
             DiagLog.log("[INIT2] Transport mode enabled")
         }
 
+        #if ENABLE_NETWORK_EXTENSION
         // 12. Set up extension frame reader for background transport
         let reader = ExtensionFrameReader()
         self.extensionFrameReader = reader
@@ -576,6 +579,7 @@ public final class AppServices {
         let tunnel = TunnelManager()
         self.tunnelManager = tunnel
         await tunnel.load()
+        #endif
 
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
