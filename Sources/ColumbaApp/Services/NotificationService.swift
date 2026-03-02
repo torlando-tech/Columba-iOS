@@ -50,6 +50,8 @@ public final class NotificationService: Sendable {
         static let notificationsEnabled = "notifications_enabled"
         static let showMessagePreviews = "show_message_previews"
         static let playSounds = "play_sounds"
+        static let notifyReceivedMessage = "notify_received_message"
+        static let notifyReceivedMessageFavorite = "notify_received_message_favorite"
     }
 
     // MARK: - Init
@@ -122,11 +124,21 @@ public final class NotificationService: Sendable {
     public func postMessageNotification(
         _ message: LXMessage,
         senderName: String?,
-        database: LXMFDatabase?
+        database: LXMFDatabase?,
+        isFavorite: Bool = false
     ) async {
         // Check user preference
         let defaults = UserDefaults.standard
         guard defaults.bool(forKey: Keys.notificationsEnabled) else { return }
+
+        // Check per-type toggles
+        let notifyAll = defaults.object(forKey: Keys.notifyReceivedMessage) as? Bool ?? true
+        let notifyFavoriteOnly = defaults.bool(forKey: Keys.notifyReceivedMessageFavorite)
+
+        // If "favorite only" is on and this sender isn't a favorite, skip
+        if notifyFavoriteOnly && !isFavorite { return }
+        // If general message notifications are off (and not favorite-filtered), skip
+        if !notifyAll && !notifyFavoriteOnly { return }
 
         // Check system permission
         guard await isAuthorized() else { return }

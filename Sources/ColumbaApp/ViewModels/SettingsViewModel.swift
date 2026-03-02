@@ -197,6 +197,15 @@ public final class SettingsViewModel {
     public var playSounds: Bool = true
     public var vibrate: Bool = true
 
+    // Per-type notification toggles (matches Android)
+    public var notifyReceivedMessage: Bool = true
+    public var notifyReceivedMessageFavorite: Bool = false
+    public var notifyHeardAnnounce: Bool = false
+    public var notifyAnnounceDirectOnly: Bool = false
+    public var notifyAnnounceExcludeTcp: Bool = false
+    public var notifyBleConnected: Bool = false
+    public var notifyBleDisconnected: Bool = false
+
     // MARK: - Auto Announce Settings
 
     public var isAutoAnnounceEnabled: Bool = true
@@ -365,6 +374,14 @@ public final class SettingsViewModel {
         showMessagePreviews = defaults.bool(forKey: "show_message_previews")
         playSounds = defaults.bool(forKey: "play_sounds")
         vibrate = defaults.bool(forKey: "vibrate")
+        // Per-type notification defaults: received message defaults to true on first launch
+        notifyReceivedMessage = defaults.object(forKey: "notify_received_message") as? Bool ?? true
+        notifyReceivedMessageFavorite = defaults.bool(forKey: "notify_received_message_favorite")
+        notifyHeardAnnounce = defaults.bool(forKey: "notify_heard_announce")
+        notifyAnnounceDirectOnly = defaults.bool(forKey: "notify_announce_direct_only")
+        notifyAnnounceExcludeTcp = defaults.bool(forKey: "notify_announce_exclude_tcp")
+        notifyBleConnected = defaults.bool(forKey: "notify_ble_connected")
+        notifyBleDisconnected = defaults.bool(forKey: "notify_ble_disconnected")
         isAutoAnnounceEnabled = defaults.bool(forKey: "auto_announce_enabled")
         let storedInterval = defaults.integer(forKey: "announce_interval_hours")
         announceIntervalHours = storedInterval > 0 ? storedInterval : 3
@@ -408,6 +425,13 @@ public final class SettingsViewModel {
         defaults.set(showMessagePreviews, forKey: "show_message_previews")
         defaults.set(playSounds, forKey: "play_sounds")
         defaults.set(vibrate, forKey: "vibrate")
+        defaults.set(notifyReceivedMessage, forKey: "notify_received_message")
+        defaults.set(notifyReceivedMessageFavorite, forKey: "notify_received_message_favorite")
+        defaults.set(notifyHeardAnnounce, forKey: "notify_heard_announce")
+        defaults.set(notifyAnnounceDirectOnly, forKey: "notify_announce_direct_only")
+        defaults.set(notifyAnnounceExcludeTcp, forKey: "notify_announce_exclude_tcp")
+        defaults.set(notifyBleConnected, forKey: "notify_ble_connected")
+        defaults.set(notifyBleDisconnected, forKey: "notify_ble_disconnected")
         defaults.set(isAutoAnnounceEnabled, forKey: "auto_announce_enabled")
         defaults.set(announceIntervalHours, forKey: "announce_interval_hours")
         SharedDefaults.suite.set(isTransportEnabled, forKey: "transport_enabled")
