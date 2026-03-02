@@ -37,7 +37,7 @@ struct ConversationRow: View {
     // MARK: - Body
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             // Avatar
             avatarView
 
@@ -46,11 +46,21 @@ struct ConversationRow: View {
                 // Header row: name and timestamp
                 HStack {
                     Text(conversation.peerName)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 16, weight: conversation.unreadCount > 0 ? .bold : .semibold))
                         .foregroundColor(.white)
                         .lineLimit(1)
 
                     Spacer()
+
+                    if conversation.unreadCount > 0 {
+                        Text("\(conversation.unreadCount)")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Theme.accentColor)
+                            .clipShape(Capsule())
+                    }
 
                     Text(conversation.relativeTimestamp)
                         .font(.system(size: 13))

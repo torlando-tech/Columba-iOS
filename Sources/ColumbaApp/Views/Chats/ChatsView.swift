@@ -84,14 +84,17 @@ struct ChatsView: View {
 
                     // Refresh button — syncs from propagation node then reloads DB
                     Button {
+                        guard viewModel?.isRefreshing != true else { return }
                         Task {
+                            viewModel?.isRefreshing = true
                             await appServices.propagationManager?.syncNow()
                             await viewModel?.refreshConversations()
+                            viewModel?.isRefreshing = false
                         }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 17, weight: .medium))
-                            .foregroundColor(.white)
+                            .foregroundColor(viewModel?.isRefreshing == true ? Theme.accentColor : .white)
                             .rotationEffect(.degrees(viewModel?.isRefreshing == true ? 360 : 0))
                             .animation(
                                 viewModel?.isRefreshing == true
@@ -221,7 +224,25 @@ struct ChatsView: View {
             .padding(.bottom, 16)
         }
         .refreshable {
-            await appServices.propagationManager?.syncNow()
+            // Reload conversations from DB immediately, then kick off sync in background
+            async let refresh: () = vm.refreshConversations()
+            async let sync: () = {
+                // Sync with timeout so pull-to-refresh doesn't hang
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask {
+                        await appServices.propagationManager?.syncNow()
+                    }
+                    group.addTask {
+                        try? await Task.sleep(for: .seconds(15))
+                    }
+                    // Return when either finishes (timeout or sync)
+                    await group.next()
+                    group.cancelAll()
+                }
+            }()
+            await refresh
+            await sync
+            // Reload again in case sync brought new messages
             await vm.refreshConversations()
         }
     }
