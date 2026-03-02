@@ -184,6 +184,15 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 NotificationService.shared.clearBadge()
+                // Sync from propagation node when app becomes active,
+                // debounced to avoid rapid re-syncs on quick app switches
+                if let propManager = appServices.propagationManager,
+                   !propManager.isSyncing {
+                    let lastSync = propManager.lastSyncTime ?? .distantPast
+                    if Date().timeIntervalSince(lastSync) > 60 {
+                        Task { await propManager.syncNow() }
+                    }
+                }
             }
             if newPhase == .background {
                 scheduleBackgroundSync()

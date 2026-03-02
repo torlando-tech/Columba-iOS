@@ -145,6 +145,9 @@ struct SettingsView: View {
                 RNodeWizardView(viewModel: vm)
             }
         }
+        .onAppear {
+            viewModel?.refreshSyncState()
+        }
         .task {
             if viewModel == nil {
                 viewModel = SettingsViewModel(
