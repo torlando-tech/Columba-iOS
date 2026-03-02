@@ -38,6 +38,10 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     /// Location sharing manager for incoming telemetry extraction.
     public var locationSharingManager: LocationSharingManager?
 
+    /// Timestamp when this handler was created.
+    /// Messages older than this are from propagation sync backfill, not new arrivals.
+    private let createdAt = Date()
+
     /// Logger for debugging message receipt.
     private let logger = Logger(subsystem: "com.columba.app", category: "IncomingMessageHandler")
 
@@ -207,9 +211,12 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
             // Post local push notification (respects user preferences).
             // Skip telemetry-only and cease messages to avoid notification spam.
+            // Skip messages older than handler creation — these are propagation sync
+            // backfill, not genuinely new arrivals.
             let isTelemetryOnly = message.content.isEmpty
                 && message.fields?[LXMessage.FIELD_TELEMETRY] != nil
-            if !isTelemetryOnly && !isCeaseMessage {
+            let isOldMessage = message.timestamp < self.createdAt.timeIntervalSince1970
+            if !isTelemetryOnly && !isCeaseMessage && !isOldMessage {
                 await NotificationService.shared.postMessageNotification(
                     message,
                     senderName: nil,
