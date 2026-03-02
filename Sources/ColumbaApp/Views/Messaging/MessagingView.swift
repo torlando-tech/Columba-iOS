@@ -195,6 +195,14 @@ struct MessagingView: View {
         .background(Color.black)
         #if os(iOS)
         .navigationBarBackButtonHidden(true)
+        .gesture(
+            DragGesture(minimumDistance: 20, coordinateSpace: .global)
+                .onEnded { value in
+                    if value.translation.width > 80 && abs(value.translation.height) < 100 {
+                        dismiss()
+                    }
+                }
+        )
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 leadingToolbar
