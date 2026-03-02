@@ -61,7 +61,7 @@ struct MainTabView: View {
 
             // Map Tab
             MapView(
-                locationSharingManager: appServices.locationSharingManager,
+                appServices: appServices,
                 mapHttpEnabled: mapHttpEnabled
             )
                 .tabItem {
