@@ -600,6 +600,15 @@ public final class SettingsViewModel {
         }
     }
 
+    /// Refresh sync time from propagation manager (call on view appear).
+    @MainActor
+    public func refreshSyncState() {
+        if let propManager = appServices.propagationManager {
+            lastSyncTime = propManager.lastSyncTime
+            selectedRelayName = propManager.selectedNodeName
+        }
+    }
+
     /// Copy identity hash to clipboard.
     public func copyIdentityHash() {
         #if canImport(UIKit)
