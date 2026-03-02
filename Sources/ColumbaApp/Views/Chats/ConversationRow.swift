@@ -26,6 +26,12 @@ struct ConversationRow: View {
     /// Callback when favorite button is tapped
     var onFavoriteToggle: () -> Void = {}
 
+    /// Context menu callbacks
+    var onMarkUnread: (() -> Void)?
+    var onViewDetails: (() -> Void)?
+    var onRemoveContact: (() -> Void)?
+    var onDelete: (() -> Void)?
+
     /// Animation state for tap feedback
     @State private var isPressed: Bool = false
 
@@ -84,6 +90,43 @@ struct ConversationRow: View {
         .background(glassCardBackground)
         .scaleEffect(isPressed ? 0.98 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isPressed)
+        .contextMenu {
+            if let onMarkUnread {
+                Button {
+                    onMarkUnread()
+                } label: {
+                    Label("Mark as Unread", systemImage: "envelope.badge")
+                }
+            }
+
+            if let onViewDetails {
+                Button {
+                    onViewDetails()
+                } label: {
+                    Label("View Details", systemImage: "info.circle")
+                }
+            }
+
+            if let onRemoveContact {
+                Button {
+                    onRemoveContact()
+                } label: {
+                    Label(
+                        conversation.isFavorite ? "Remove from Contacts" : "Add to Contacts",
+                        systemImage: conversation.isFavorite ? "star.slash" : "star"
+                    )
+                }
+            }
+
+            if let onDelete {
+                Divider()
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("Delete Conversation", systemImage: "trash")
+                }
+            }
+        }
     }
 
     // MARK: - Subviews
