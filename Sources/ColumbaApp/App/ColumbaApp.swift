@@ -296,7 +296,28 @@ struct RootView: View {
 
     private func initializeServices() async {
         let bootLogger = Logger(subsystem: "com.columba.app", category: "Startup")
-        bootLogger.error("[STARTUP] initializeServices() ENTERED, showOnboarding=\(self.showOnboarding, privacy: .public)")
+        NSLog("[STARTUP] initializeServices() ENTERED")
+
+        // Retry the entire init up to 3 times — the Keychain, file system, or crypto
+        // may not be ready immediately after device unlock.
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                try await _initializeServicesOnce()
+                return // success
+            } catch {
+                lastError = error
+                NSLog("[STARTUP] Attempt \(attempt) failed: \(error)")
+                if attempt < 3 {
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+        }
+        self.initError = lastError?.localizedDescription ?? "Unknown error"
+    }
+
+    private func _initializeServicesOnce() async throws {
+        let bootLogger = Logger(subsystem: "com.columba.app", category: "Startup")
         do {
             // 1. Migration check (first launch after update)
             await identityManager.migrateFromSingleIdentityIfNeeded(settingsRepository: settingsRepository)
@@ -410,7 +431,8 @@ struct RootView: View {
             }
 
         } catch {
-            self.initError = error.localizedDescription
+            NSLog("[STARTUP] _initializeServicesOnce failed: \(error)")
+            throw error
         }
     }
 }
