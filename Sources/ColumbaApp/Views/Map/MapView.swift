@@ -13,6 +13,7 @@ import CoreLocation
 @available(iOS 17.0, macOS 14.0, *)
 struct MapView: View {
     var locationSharingManager: LocationSharingManager?
+    var mapHttpEnabled: Bool = true
 
     #if os(iOS)
     @State private var centerOnUser = false
@@ -30,7 +31,8 @@ struct MapView: View {
                 centerOnUser: $centerOnUser,
                 metersPerPixel: $metersPerPixel,
                 showsUserLocation: locationAuthorized,
-                peerLocations: locationSharingManager.map { Array($0.peerLocations.values) } ?? []
+                peerLocations: locationSharingManager.map { Array($0.peerLocations.values) } ?? [],
+                httpEnabled: mapHttpEnabled
             )
             .ignoresSafeArea()
 
@@ -91,6 +93,8 @@ struct MapView: View {
                 .padding(.bottom, 4)
             }
         }
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(Color.black.opacity(0.85), for: .tabBar)
         .onAppear {
             checkLocationAuthorization()
         }

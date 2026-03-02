@@ -686,13 +686,20 @@ struct SettingsView: View {
             isExpanded: Binding(get: { vm.isMapSourcesExpanded }, set: { vm.isMapSourcesExpanded = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Choose the map provider for viewing contact locations.")
+                settingsToggleRow(
+                    title: "HTTP Map Tiles",
+                    isOn: Binding(
+                        get: { vm.mapHttpEnabled },
+                        set: {
+                            vm.mapHttpEnabled = $0
+                            vm.saveSettings()
+                        }
+                    )
+                )
+
+                Text("When enabled, map tiles are fetched from OpenFreeMap via HTTP. When disabled, only downloaded offline maps are shown.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
-
-                ForEach(SettingsViewModel.MapSource.allCases) { source in
-                    mapSourceRow(vm, source: source)
-                }
             }
         }
     }
@@ -917,26 +924,6 @@ struct SettingsView: View {
         }
     }
 
-    private func mapSourceRow(_ vm: SettingsViewModel, source: SettingsViewModel.MapSource) -> some View {
-        Button(action: {
-            vm.selectedMapSource = source
-        }) {
-            HStack {
-                Text(source.rawValue)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textPrimary)
-
-                Spacer()
-
-                if vm.selectedMapSource == source {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.accentColor)
-                }
-            }
-            .padding(.vertical, 8)
-        }
-    }
 }
 
 // MARK: - Preview

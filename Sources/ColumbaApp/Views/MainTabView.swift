@@ -31,6 +31,7 @@ struct MainTabView: View {
     // MARK: - State
 
     @State private var selectedTab: Tab = .chats
+    @AppStorage("map_http_enabled") private var mapHttpEnabled: Bool = true
 
     // MARK: - Body
 
@@ -59,7 +60,10 @@ struct MainTabView: View {
             .tag(Tab.contacts)
 
             // Map Tab
-            MapView(locationSharingManager: appServices.locationSharingManager)
+            MapView(
+                locationSharingManager: appServices.locationSharingManager,
+                mapHttpEnabled: mapHttpEnabled
+            )
                 .tabItem {
                     Label(Tab.map.title, systemImage: Tab.map.icon)
                 }
