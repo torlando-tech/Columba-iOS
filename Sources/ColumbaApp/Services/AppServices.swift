@@ -796,7 +796,12 @@ public final class AppServices {
         logger.info("[BLE_DIAG] startBLEInterface() called")
 
         // Stop existing BLE interface if running
-        await stopBLEInterface()
+        if bleInterface != nil {
+            await stopBLEInterface()
+            // Give CoreBluetooth time to release the old CBCentralManager/CBPeripheralManager
+            // before creating new ones. Without this, the new managers can see "resetting" state.
+            try? await Task.sleep(for: .milliseconds(500))
+        }
 
         // Ensure base stack exists
         if transport == nil {
