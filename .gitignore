@@ -14,3 +14,13 @@ Package.resolved
 
 # macOS
 .DS_Store
+
+# Claude/AI development tools
+.claude-flow/
+.claude/
+.mcp.json
+.swarm/
+CLAUDE.md
+node_modules/
+package.json
+package-lock.json

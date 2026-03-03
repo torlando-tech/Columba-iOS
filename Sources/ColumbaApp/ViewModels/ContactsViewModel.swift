@@ -285,8 +285,12 @@ public final class ContactsViewModel {
     /// Network announces interface filter.
     public var interfaceFilter: InterfaceFilter = .all
 
-    /// Currently selected relay node hash (from PropagationNodeManager).
+    /// Currently selected relay node hash (lxmf.propagation aspect, from PropagationNodeManager).
     public var selectedRelayHash: Data?
+
+    /// Delivery destination hash for the selected relay (lxmf.delivery aspect).
+    /// Used to match the relay against myContacts which use delivery hashes.
+    public var selectedRelayDeliveryHash: Data?
 
     /// Whether the relay was auto-selected.
     public var isRelayAutoSelected: Bool = true
@@ -346,16 +350,20 @@ public final class ContactsViewModel {
 
     /// The currently selected relay contact, if any.
     ///
-    /// Looks up the stored relay hash and finds the matching contact
-    /// in network announces or my contacts.
+    /// Looks up the stored relay hash in network announces (propagation hash)
+    /// and falls back to matching myContacts by delivery hash.
     public var currentRelayContact: Contact? {
         guard let selectedHash = selectedRelayHash else { return nil }
-        // Find from network announces or my contacts
-        let c = networkAnnounces.first(where: { $0.identityHash == selectedHash })
-            ?? myContacts.first(where: { $0.identityHash == selectedHash })
-        guard let c else { return nil }
-        // Always force relay badge for the selected relay
-        return c.copy(badgeType: .relay, isRelay: true)
+        // Network announces use propagation destination hash — direct match
+        if let c = networkAnnounces.first(where: { $0.identityHash == selectedHash }) {
+            return c.copy(badgeType: .relay, isRelay: true)
+        }
+        // myContacts use delivery destination hash — match via delivery hash
+        if let deliveryHash = selectedRelayDeliveryHash,
+           let c = myContacts.first(where: { $0.identityHash == deliveryHash }) {
+            return c.copy(badgeType: .relay, isRelay: true)
+        }
+        return nil
     }
 
     /// My contacts grouped with selected relay at top, then pinned, then all.
@@ -368,8 +376,11 @@ public final class ContactsViewModel {
             groups.append((title: "MY RELAY\(autoLabel)", contacts: [relay]))
         }
 
-        // Exclude the selected relay from remaining contacts
-        let remaining = filteredMyContacts.filter { $0.identityHash != selectedRelayHash }
+        // Exclude the selected relay from remaining contacts (check both propagation and delivery hashes)
+        let remaining = filteredMyContacts.filter {
+            $0.identityHash != selectedRelayHash &&
+            $0.identityHash != selectedRelayDeliveryHash
+        }
 
         // Pinned contacts
         let pinned = remaining.filter { $0.isPinned }
@@ -441,6 +452,14 @@ public final class ContactsViewModel {
 
         networkAnnounces.sort { $0.timestamp > $1.timestamp }
 
+        // Update myContacts badge if this announce changes the contact type
+        if let myIndex = myContacts.firstIndex(where: { $0.id == contact.id }),
+           myContacts[myIndex].badgeType != contact.badgeType {
+            myContacts[myIndex] = myContacts[myIndex].copy(
+                badgeType: contact.badgeType, isRelay: contact.isRelay
+            )
+        }
+
         // Re-sync relay state (auto-select may have picked this new node)
         syncRelayState()
     }
@@ -472,8 +491,28 @@ public final class ContactsViewModel {
             // Mark network announces that are already saved contacts
             markSavedContacts()
 
+            // Enrich myContacts badges from network announces (ConversationRecord
+            // always creates contacts with .peer badge — cross-reference with path
+            // table data so relays keep their .relay badge after restart)
+            enrichMyContactBadges()
+
             // Sync relay state from PropagationNodeManager
             syncRelayState()
+
+            // DEBUG: Log relay state for diagnosing badge bug
+            let relayHex = selectedRelayHash.map { $0.map { String(format: "%02x", $0) }.joined() } ?? "nil"
+            let relayContacts = networkAnnounces.filter { $0.isRelay }
+            let myRelayMatches = myContacts.filter { $0.identityHash == selectedRelayHash }
+            let netRelayMatches = networkAnnounces.filter { $0.identityHash == selectedRelayHash }
+            DiagLog.log("[CONTACTS] selectedRelayHash=\(relayHex)")
+            DiagLog.log("[CONTACTS] networkAnnounces=\(networkAnnounces.count), relays=\(relayContacts.count): \(relayContacts.map { "\($0.resolvedDisplayName)=\($0.identityHashHex.prefix(16))" })")
+            DiagLog.log("[CONTACTS] myContacts=\(myContacts.count): \(myContacts.map { "\($0.resolvedDisplayName)=\($0.identityHashHex.prefix(16))(\($0.badgeType.rawValue))" })")
+            DiagLog.log("[CONTACTS] relay match in network=\(netRelayMatches.count), in myContacts=\(myRelayMatches.count)")
+            if let relay = currentRelayContact {
+                DiagLog.log("[CONTACTS] currentRelayContact=\(relay.resolvedDisplayName) badge=\(relay.badgeType.rawValue)")
+            } else {
+                DiagLog.log("[CONTACTS] currentRelayContact=nil")
+            }
 
             errorMessage = nil
         } catch {
@@ -500,6 +539,9 @@ public final class ContactsViewModel {
         // Mark network announces that are already saved contacts
         markSavedContacts()
 
+        // Enrich myContacts badges from network announces
+        enrichMyContactBadges()
+
         // Sync relay state from PropagationNodeManager
         syncRelayState()
 
@@ -510,6 +552,7 @@ public final class ContactsViewModel {
     @MainActor
     public func syncRelayState() {
         selectedRelayHash = appServices.propagationManager?.selectedNodeHash
+        selectedRelayDeliveryHash = appServices.propagationManager?.selectedNodeDeliveryHash
         isRelayAutoSelected = appServices.propagationManager?.autoSelectEnabled ?? true
     }
 
@@ -713,6 +756,26 @@ public final class ContactsViewModel {
             data.append(byte)
         }
         return data
+    }
+
+    /// Enrich myContacts badge types from network announces.
+    ///
+    /// ConversationRecord has no badge/relay fields, so Contact(from: ConversationRecord)
+    /// always produces badgeType=.peer. Cross-reference with networkAnnounces (built from
+    /// PathEntry which CAN detect relay/audio) to restore the correct badge.
+    @MainActor
+    private func enrichMyContactBadges() {
+        let announceById = Dictionary(
+            networkAnnounces.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        myContacts = myContacts.map { contact in
+            if let announce = announceById[contact.id],
+               announce.badgeType != contact.badgeType {
+                return contact.copy(badgeType: announce.badgeType, isRelay: announce.isRelay)
+            }
+            return contact
+        }
     }
 
     /// Mark network announces that already exist in my contacts.
