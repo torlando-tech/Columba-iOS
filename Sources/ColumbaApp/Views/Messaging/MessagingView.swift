@@ -55,7 +55,6 @@ struct MessagingView: View {
     @State private var detailMessage: Message?
     @State private var deleteConfirmMessage: Message?
     @State private var showLocationConfirm = false
-    @State private var showEmojiPicker = false
     @State private var emojiPickerTargetMessage: Message?
     @State private var isSavedContact: Bool = false
     @Environment(\.dismiss) private var dismiss
@@ -127,7 +126,6 @@ struct MessagingView: View {
                                         },
                                         onShowEmojiPicker: {
                                             emojiPickerTargetMessage = message
-                                            showEmojiPicker = true
                                         }
                                     )
                                 }
@@ -334,20 +332,18 @@ struct MessagingView: View {
             })
             .presentationDetents([.medium])
         }
-        .sheet(isPresented: $showEmojiPicker) {
-            if let target = emojiPickerTargetMessage {
-                EmojiPickerSheet { emoji in
-                    Task {
-                        await viewModel?.sendReaction(
-                            targetMessageId: target.id,
-                            targetMessageHash: target.messageHash,
-                            emoji: emoji
-                        )
-                    }
+        .sheet(item: $emojiPickerTargetMessage) { target in
+            EmojiPickerSheet { emoji in
+                Task {
+                    await viewModel?.sendReaction(
+                        targetMessageId: target.id,
+                        targetMessageHash: target.messageHash,
+                        emoji: emoji
+                    )
                 }
-                .presentationDetents([.height(340)])
-                .presentationDragIndicator(.visible)
             }
+            .presentationDetents([.height(340)])
+            .presentationDragIndicator(.visible)
         }
         .onDisappear {
             NotificationService.activeConversationThreadId = nil
