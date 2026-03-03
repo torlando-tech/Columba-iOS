@@ -56,6 +56,7 @@ struct MessagingView: View {
     @State private var deleteConfirmMessage: Message?
     @State private var showLocationConfirm = false
     @State private var emojiPickerTargetMessage: Message?
+    @State private var reactionModeMessage: Message?
     @State private var isSavedContact: Bool = false
     @Environment(\.dismiss) private var dismiss
 
@@ -87,29 +88,6 @@ struct MessagingView: View {
                                 }) {
                                     MessageBubble(
                                         message: message,
-                                        onRetry: message.deliveryStatus == .failed ? {
-                                            Task { await vm.retryMessage(messageId: message.id) }
-                                        } : nil,
-                                        onShowDetails: {
-                                            detailMessage = message
-                                        },
-                                        onDelete: {
-                                            deleteConfirmMessage = message
-                                        },
-                                        onReply: {
-                                            withAnimation(.easeInOut(duration: 0.25)) {
-                                                vm.replyToMessage = message
-                                            }
-                                        },
-                                        onReact: { emoji in
-                                            Task {
-                                                await vm.sendReaction(
-                                                    targetMessageId: message.id,
-                                                    targetMessageHash: message.messageHash,
-                                                    emoji: emoji
-                                                )
-                                            }
-                                        },
                                         onToggleReaction: { emoji in
                                             Task {
                                                 await vm.sendReaction(
@@ -124,8 +102,10 @@ struct MessagingView: View {
                                                 proxy.scrollTo(replyId, anchor: .center)
                                             }
                                         },
-                                        onShowEmojiPicker: {
-                                            emojiPickerTargetMessage = message
+                                        onLongPress: {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                reactionModeMessage = message
+                                            }
                                         }
                                     )
                                 }
@@ -237,6 +217,47 @@ struct MessagingView: View {
             }
         }
         .background(Theme.backgroundPrimary)
+        .overlay {
+            if let msg = reactionModeMessage {
+                ReactionOverlay(
+                    message: msg,
+                    onReact: { emoji in
+                        Task {
+                            await viewModel?.sendReaction(
+                                targetMessageId: msg.id,
+                                targetMessageHash: msg.messageHash,
+                                emoji: emoji
+                            )
+                        }
+                    },
+                    onReply: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            viewModel?.replyToMessage = msg
+                        }
+                    },
+                    onCopy: {
+                        UIPasteboard.general.string = msg.content
+                    },
+                    onDetails: {
+                        detailMessage = msg
+                    },
+                    onDelete: {
+                        deleteConfirmMessage = msg
+                    },
+                    onRetry: msg.deliveryStatus == .failed ? {
+                        Task { await viewModel?.retryMessage(messageId: msg.id) }
+                    } : nil,
+                    onMoreEmoji: {
+                        emojiPickerTargetMessage = msg
+                    },
+                    onDismiss: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            reactionModeMessage = nil
+                        }
+                    }
+                )
+            }
+        }
         #if os(iOS)
         .navigationBarBackButtonHidden(true)
         .background(InteractivePopGestureEnabler())
@@ -756,6 +777,155 @@ private struct EmojiPickerSheet: View {
             Spacer()
         }
         .background(Theme.backgroundSecondary)
+    }
+}
+
+// MARK: - Signal-Style Reaction Overlay
+
+/// Full-screen overlay with emoji bar and action buttons, triggered by long-press on a message.
+@available(iOS 17.0, macOS 14.0, *)
+private struct ReactionOverlay: View {
+    let message: Message
+    let onReact: (String) -> Void
+    let onReply: () -> Void
+    let onCopy: () -> Void
+    let onDetails: () -> Void
+    let onDelete: () -> Void
+    var onRetry: (() -> Void)?
+    let onMoreEmoji: () -> Void
+    let onDismiss: () -> Void
+
+    private static let quickEmojis = ["👍", "❤️", "😂", "😮", "😢", "😡"]
+
+    var body: some View {
+        ZStack {
+            // Dimmed scrim
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture { onDismiss() }
+
+            VStack(spacing: 12) {
+                // Inline emoji bar
+                HStack(spacing: 12) {
+                    ForEach(Self.quickEmojis, id: \.self) { emoji in
+                        Button {
+                            onReact(emoji)
+                            onDismiss()
+                        } label: {
+                            Text(emoji)
+                                .font(.system(size: 28))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Button {
+                        onDismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            onMoreEmoji()
+                        }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 26))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial)
+                .clipShape(Capsule())
+
+                // Message preview
+                HStack {
+                    if message.isFromMe { Spacer(minLength: 60) }
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let imageData = message.imageData,
+                           let uiImage = UIImage(data: imageData) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(maxWidth: 200, maxHeight: 150)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        if !message.content.isEmpty {
+                            Text(message.content)
+                                .font(.body)
+                                .foregroundStyle(message.isFromMe ? .white : Theme.textPrimary)
+                                .lineLimit(4)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        message.isFromMe
+                            ? Theme.sentBubbleColor.opacity(0.85)
+                            : Theme.receivedBubbleColor
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    if !message.isFromMe { Spacer(minLength: 60) }
+                }
+                .padding(.horizontal, 16)
+
+                // Action buttons
+                HStack(spacing: 0) {
+                    actionButton(icon: "arrowshape.turn.up.left", label: "Reply") {
+                        onDismiss()
+                        onReply()
+                    }
+
+                    if !message.content.isEmpty {
+                        actionButton(icon: "doc.on.doc", label: "Copy") {
+                            onDismiss()
+                            onCopy()
+                        }
+                    }
+
+                    actionButton(icon: "info.circle", label: "Details") {
+                        onDismiss()
+                        onDetails()
+                    }
+
+                    if let onRetry {
+                        actionButton(icon: "arrow.clockwise", label: "Retry") {
+                            self.onDismiss()
+                            onRetry()
+                        }
+                    }
+
+                    actionButton(icon: "trash", label: "Delete", isDestructive: true) {
+                        onDismiss()
+                        onDelete()
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .padding(.horizontal, 16)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+
+    private func actionButton(
+        icon: String,
+        label: String,
+        isDestructive: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 20))
+                Text(label)
+                    .font(.caption2)
+            }
+            .foregroundStyle(isDestructive ? .red : Theme.textPrimary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
     }
 }
 
