@@ -41,6 +41,8 @@ struct MessageBubble: View {
     var onToggleReaction: ((String) -> Void)?
     /// Callback when user taps the reply preview to scroll to original.
     var onTapReplyPreview: ((String) -> Void)?
+    /// Callback for opening full emoji picker.
+    var onShowEmojiPicker: (() -> Void)?
 
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
@@ -124,6 +126,12 @@ struct MessageBubble: View {
                                 Button(emoji) {
                                     onReact(emoji)
                                 }
+                            }
+                            Divider()
+                            Button {
+                                onShowEmojiPicker?()
+                            } label: {
+                                Label("More...", systemImage: "face.smiling.inverse")
                             }
                         } label: {
                             Label("React", systemImage: "face.smiling")
