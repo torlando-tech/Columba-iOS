@@ -78,6 +78,39 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
         // Save to database asynchronously, then notify
         Task {
+            // Check for FIELD_APP_DATA (0x10) — reactions and replies
+            if let appData = message.fields?[LXMessage.FIELD_APP_DATA] as? [String: Any] {
+                // Handle reaction messages: merge into target, delete reaction message from DB
+                if let reactionTo = appData["reaction_to"] as? String,
+                   let emoji = appData["emoji"] as? String,
+                   let sender = appData["sender"] as? String {
+                    self.logger.info("Reaction \(emoji) from \(sender.prefix(8)) to \(reactionTo.prefix(8))")
+                    await self.handleIncomingReaction(
+                        targetMessageHex: reactionTo,
+                        emoji: emoji,
+                        senderHex: sender,
+                        reactionMessageHash: message.hash
+                    )
+                    // Post notification so open conversation reloads with updated reactions
+                    NotificationCenter.default.post(
+                        name: IncomingMessageHandler.messageReceivedNotification,
+                        object: nil,
+                        userInfo: ["sourceHash": sourceHash]
+                    )
+                    return  // Skip normal message processing
+                }
+
+                // Handle reply messages: update reply_to_id column
+                if let replyTo = appData["reply_to"] as? String {
+                    self.logger.info("Reply to \(replyTo.prefix(8))")
+                    do {
+                        try await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
+                    } catch {
+                        self.logger.error("Failed to update reply_to_id: \(error.localizedDescription)")
+                    }
+                }
+            }
+
             // Check block unknown senders setting (needs async DB access)
             if UserDefaults.standard.bool(forKey: "block_unknown_senders"),
                let db = self.database {
@@ -246,5 +279,76 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
         // Post notification to refresh UI with failed state
         NotificationObserver.postNewMessage()
+    }
+
+    // MARK: - Reaction Handling
+
+    /// Merge an incoming reaction into the target message's reactions_json and delete the reaction message.
+    private func handleIncomingReaction(
+        targetMessageHex: String,
+        emoji: String,
+        senderHex: String,
+        reactionMessageHash: Data
+    ) async {
+        // Convert target message hex to Data
+        let targetHash = Self.hexToData(targetMessageHex)
+        guard let targetHash, targetHash.count == 32 else {
+            logger.warning("Invalid reaction target hash: \(targetMessageHex.prefix(16))")
+            return
+        }
+
+        // Read-modify-write reactions on the target message
+        do {
+            var reactionsDict: [String: [String]] = [:]
+            if let json = try await messageRepository.getReactionsJson(targetHash),
+               let data = json.data(using: .utf8),
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
+                reactionsDict = dict
+            }
+
+            // Toggle: if sender already reacted with this emoji, remove; otherwise add
+            var senders = reactionsDict[emoji] ?? []
+            if senders.contains(senderHex) {
+                senders.removeAll { $0 == senderHex }
+            } else {
+                senders.append(senderHex)
+            }
+
+            if senders.isEmpty {
+                reactionsDict.removeValue(forKey: emoji)
+            } else {
+                reactionsDict[emoji] = senders
+            }
+
+            // Serialize and save
+            if reactionsDict.isEmpty {
+                try await messageRepository.updateReactions(targetHash, reactionsJson: "")
+            } else if let jsonData = try? JSONSerialization.data(withJSONObject: reactionsDict),
+                      let jsonStr = String(data: jsonData, encoding: .utf8) {
+                try await messageRepository.updateReactions(targetHash, reactionsJson: jsonStr)
+            }
+        } catch {
+            logger.error("Failed to merge reaction: \(error.localizedDescription)")
+        }
+
+        // Delete the reaction message from DB (it's a control message, not a visible message)
+        do {
+            try await messageRepository.deleteMessage(reactionMessageHash)
+        } catch {
+            logger.error("Failed to delete reaction message: \(error.localizedDescription)")
+        }
+    }
+
+    /// Convert hex string to Data.
+    private static func hexToData(_ hex: String) -> Data? {
+        var data = Data()
+        var chars = hex[hex.startIndex...]
+        while chars.count >= 2 {
+            let end = chars.index(chars.startIndex, offsetBy: 2)
+            guard let byte = UInt8(chars[chars.startIndex..<end], radix: 16) else { return nil }
+            data.append(byte)
+            chars = chars[end...]
+        }
+        return data
     }
 }

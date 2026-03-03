@@ -25,6 +25,8 @@ struct MessageInputBar: View {
     @Binding var text: String
     @Binding var attachedImage: UIImage?
     @Binding var attachedFiles: [FileAttachment]
+    var replyToMessage: Message?
+    var onDismissReply: (() -> Void)?
     var onSend: () -> Void
     var onImagePicker: () -> Void
     var onAttachment: () -> Void
@@ -48,6 +50,38 @@ struct MessageInputBar: View {
             // Top separator
             Divider()
                 .background(Theme.divider)
+
+            // Reply-to preview bar
+            if let replyMsg = replyToMessage {
+                HStack(spacing: 8) {
+                    Rectangle()
+                        .fill(Theme.accentColor)
+                        .frame(width: 3)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Replying to")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.accentColor)
+                        Text(replyMsg.content.isEmpty ? "Message" : String(replyMsg.content.prefix(60)))
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        onDismissReply?()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.ultraThinMaterial)
+            }
 
             // Attachment preview strip
             if attachedImage != nil || !attachedFiles.isEmpty {
@@ -204,6 +238,24 @@ private struct ScaleButtonStyle: ButtonStyle {
             text: .constant("Hello, this is a test message"),
             attachedImage: .constant(nil as UIImage?),
             attachedFiles: .constant([]),
+            onSend: {},
+            onImagePicker: {},
+            onAttachment: {}
+        )
+    }
+    .background(Color.black)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("With Reply") {
+    VStack {
+        Spacer()
+        MessageInputBar(
+            text: .constant(""),
+            attachedImage: .constant(nil as UIImage?),
+            attachedFiles: .constant([]),
+            replyToMessage: Message(content: "Hey, did you see the news?", isFromMe: false),
+            onDismissReply: {},
             onSend: {},
             onImagePicker: {},
             onAttachment: {}

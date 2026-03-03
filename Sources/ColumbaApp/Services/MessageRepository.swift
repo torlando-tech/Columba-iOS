@@ -148,6 +148,28 @@ public actor MessageRepository {
         try await database.getPeerIcon(hash)
     }
 
+    // MARK: - Reply & Reaction Operations
+
+    /// Update the reply_to_id for a message.
+    public func updateReplyToId(_ messageId: Data, replyToId: String) async throws {
+        try await database.updateReplyToId(messageId: messageId, replyToId: replyToId)
+    }
+
+    /// Update the reactions_json for a message.
+    public func updateReactions(_ messageId: Data, reactionsJson: String) async throws {
+        try await database.updateReactions(messageId: messageId, reactionsJson: reactionsJson)
+    }
+
+    /// Get the reactions_json for a message.
+    public func getReactionsJson(_ messageId: Data) async throws -> String? {
+        try await database.getReactionsJson(messageId: messageId)
+    }
+
+    /// Get a single message record by ID (lightweight).
+    public func getMessageRecord(id: Data) async throws -> MessageRecord? {
+        try await database.getMessageRecord(id: id)
+    }
+
     // MARK: - Message Operations
 
     /// Fetch messages for a specific conversation.

@@ -89,6 +89,32 @@ struct MessagingView: View {
                                     },
                                     onDelete: {
                                         deleteConfirmMessage = message
+                                    },
+                                    onReply: {
+                                        vm.replyToMessage = message
+                                    },
+                                    onReact: { emoji in
+                                        Task {
+                                            await vm.sendReaction(
+                                                targetMessageId: message.id,
+                                                targetMessageHash: message.messageHash,
+                                                emoji: emoji
+                                            )
+                                        }
+                                    },
+                                    onToggleReaction: { emoji in
+                                        Task {
+                                            await vm.sendReaction(
+                                                targetMessageId: message.id,
+                                                targetMessageHash: message.messageHash,
+                                                emoji: emoji
+                                            )
+                                        }
+                                    },
+                                    onTapReplyPreview: { replyId in
+                                        withAnimation {
+                                            proxy.scrollTo(replyId, anchor: .center)
+                                        }
                                     }
                                 )
                                 .id(message.id)
@@ -115,6 +141,8 @@ struct MessagingView: View {
                             text: $messageText,
                             attachedImage: $attachedImage,
                             attachedFiles: $attachedFiles,
+                            replyToMessage: vm.replyToMessage,
+                            onDismissReply: { vm.replyToMessage = nil },
                             onSend: sendMessage,
                             onImagePicker: { showPhotoPicker = true },
                             onAttachment: { showFilePicker = true }
@@ -435,12 +463,14 @@ struct MessagingView: View {
         let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let image = attachedImage
         let files = attachedFiles
+        let replyToId = viewModel?.replyToMessage?.id
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 
         messageText = ""
         attachedImage = nil
         attachedFiles = []
+        viewModel?.replyToMessage = nil
 
         #if os(iOS)
         let generator = UIImpactFeedbackGenerator(style: .medium)
@@ -462,7 +492,8 @@ struct MessagingView: View {
                 text: text,
                 imageData: imageData,
                 imageFormat: imageFormat,
-                attachments: fileAttachments
+                attachments: fileAttachments,
+                replyToId: replyToId
             )
         }
     }
