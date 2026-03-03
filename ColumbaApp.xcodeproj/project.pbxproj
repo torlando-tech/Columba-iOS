@@ -594,8 +594,8 @@
 			);
 			mainGroup = ROOT;
 			packageReferences = (
-				PKGREF /* XCLocalSwiftPackageReference "../LXMFSwift" */,
-				PKGREF3 /* XCLocalSwiftPackageReference "../LXSTSwift" */,
+				PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */,
+				PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */,
 				PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
 			);
 			productRefGroup = PRODS /* Products */;
@@ -1001,18 +1001,23 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		PKGREF /* XCLocalSwiftPackageReference "../LXMFSwift" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../LXMFSwift;
-		};
-		PKGREF3 /* XCLocalSwiftPackageReference "../LXSTSwift" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../LXSTSwift;
-		};
-/* End XCLocalSwiftPackageReference section */
-
 /* Begin XCRemoteSwiftPackageReference section */
+		PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "git@github.com:torlando-tech/LXMF-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
+		PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "git@github.com:torlando-tech/LXST-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
 		PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/maplibre/maplibre-gl-native-distribution";
@@ -1026,6 +1031,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		P001 /* LXMFSwift */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */;
 			productName = LXMFSwift;
 		};
 		P002 /* MapLibre */ = {
@@ -1035,6 +1041,7 @@
 		};
 		P003 /* LXSTSwift */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
 			productName = LXSTSwift;
 		};
 /* End XCSwiftPackageProductDependency section */
