@@ -160,19 +160,28 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 && message.fields?[LXMessage.FIELD_TELEMETRY] != nil
             let isOldMessage = message.timestamp < self.createdAt.timeIntervalSince1970
             if !isTelemetryOnly && !isCeaseMessage && !isOldMessage {
-                // Check if sender is a saved/favorite contact
-                let senderIsFavorite: Bool
-                if let db = self.database {
-                    senderIsFavorite = ((try? await db.getConversation(hash: sourceHash))?.isFavorite ?? 0) != 0
+                // Skip notification if user is already viewing this conversation
+                let sourceThreadId = sourceHash.map { String(format: "%02x", $0) }.joined()
+                let activeThread = await MainActor.run { NotificationService.activeConversationThreadId }
+                let isViewingConversation = !sourceThreadId.isEmpty && sourceThreadId == activeThread
+
+                if isViewingConversation {
+                    // User is viewing this conversation — skip notification
                 } else {
-                    senderIsFavorite = false
+                    // Check if sender is a saved/favorite contact
+                    let senderIsFavorite: Bool
+                    if let db = self.database {
+                        senderIsFavorite = ((try? await db.getConversation(hash: sourceHash))?.isFavorite ?? 0) != 0
+                    } else {
+                        senderIsFavorite = false
+                    }
+                    await NotificationService.shared.postMessageNotification(
+                        message,
+                        senderName: nil,
+                        database: self.database,
+                        isFavorite: senderIsFavorite
+                    )
                 }
-                await NotificationService.shared.postMessageNotification(
-                    message,
-                    senderName: nil,
-                    database: self.database,
-                    isFavorite: senderIsFavorite
-                )
             }
 
             // Post notification so views reload with saved data

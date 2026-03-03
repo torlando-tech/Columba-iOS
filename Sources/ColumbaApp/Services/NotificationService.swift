@@ -15,6 +15,7 @@ import LXMFSwift
 /// Reads notification preferences from UserDefaults (same keys as SettingsViewModel)
 /// and posts local notifications via UNUserNotificationCenter when messages arrive.
 /// Delegate that allows notifications to display while the app is in the foreground.
+/// Suppresses banners for messages belonging to the currently visible conversation.
 @available(iOS 17.0, macOS 14.0, *)
 final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(
@@ -22,12 +23,27 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound, .badge])
+        // willPresent is called on the main thread (delegate was set on main).
+        let threadId = notification.request.content.threadIdentifier
+        let activeId = MainActor.assumeIsolated { NotificationService.activeConversationThreadId }
+        if !threadId.isEmpty, threadId == activeId {
+            // Message is for the conversation the user is currently viewing — skip banner
+            completionHandler([])
+        } else {
+            completionHandler([.banner, .sound, .badge])
+        }
     }
 }
 
 @available(iOS 17.0, macOS 14.0, *)
 public final class NotificationService: Sendable {
+
+    // MARK: - Active Conversation Tracking
+
+    /// Thread identifier (hex destination hash) of the conversation currently visible to the user.
+    /// Set by MessagingView on appear/disappear. When a notification's threadIdentifier matches,
+    /// the foreground banner is suppressed.
+    @MainActor static var activeConversationThreadId: String?
 
     // MARK: - Singleton
 
