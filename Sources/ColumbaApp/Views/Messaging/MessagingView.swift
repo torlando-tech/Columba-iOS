@@ -299,7 +299,12 @@ struct MessagingView: View {
             })
             .presentationDetents([.medium])
         }
+        .onDisappear {
+            NotificationService.activeConversationThreadId = nil
+        }
         .task {
+            let threadId = conversation.destinationHash.map { String(format: "%02x", $0) }.joined()
+            NotificationService.activeConversationThreadId = threadId
             if let record = try? await messageRepository.fetchConversation(conversation.destinationHash) {
                 isSavedContact = record.isFavorite != 0
             } else {
