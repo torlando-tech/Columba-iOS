@@ -14,16 +14,16 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(path: "../LXMFSwift"),
-        .package(path: "../LXSTSwift"),
+        .package(url: "git@github.com:torlando-tech/LXMF-swift.git", from: "0.1.0"),
+        .package(url: "git@github.com:torlando-tech/LXST-swift.git", from: "0.1.0"),
         .package(url: "https://github.com/maplibre/maplibre-gl-native-distribution", from: "6.9.0"),
     ],
     targets: [
         .executableTarget(
             name: "ColumbaApp",
             dependencies: [
-                "LXMFSwift",
-                "LXSTSwift",
+                .product(name: "LXMFSwift", package: "LXMF-swift"),
+                .product(name: "LXSTSwift", package: "LXST-swift"),
                 .product(name: "MapLibre", package: "maplibre-gl-native-distribution"),
             ],
             path: "Sources/ColumbaApp"
