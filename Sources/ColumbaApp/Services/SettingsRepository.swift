@@ -28,6 +28,7 @@ public actor SettingsRepository {
         static let retryViaRelay = "retryViaRelay"
         static let autoSelectRelay = "autoSelectRelay"
         static let manualRelayHash = "manualRelayHash"
+        static let manualRelayDeliveryHash = "manualRelayDeliveryHash"
         static let manualRelayName = "manualRelayName"
         static let periodicSyncEnabled = "periodicSyncEnabled"
         static let syncIntervalSeconds = "syncIntervalSeconds"
@@ -137,6 +138,20 @@ public actor SettingsRepository {
             defaults.set(hex, forKey: Keys.manualRelayHash)
         } else {
             defaults.removeObject(forKey: Keys.manualRelayHash)
+        }
+    }
+
+    /// Get the relay's lxmf.delivery destination hash (hex string).
+    public func getManualRelayDeliveryHash() -> String? {
+        defaults.string(forKey: Keys.manualRelayDeliveryHash)
+    }
+
+    /// Set the relay's lxmf.delivery destination hash.
+    public func setManualRelayDeliveryHash(_ hashHex: String?) {
+        if let hex = hashHex {
+            defaults.set(hex, forKey: Keys.manualRelayDeliveryHash)
+        } else {
+            defaults.removeObject(forKey: Keys.manualRelayDeliveryHash)
         }
     }
 

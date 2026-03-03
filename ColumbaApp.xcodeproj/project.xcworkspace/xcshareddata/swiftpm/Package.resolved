@@ -1,5 +1,5 @@
 {
-  "originHash" : "6f03ed44adaac6efa75a0973c15bbfa4d7e098015f0e677657abdd41f8714737",
+  "originHash" : "c7dee423c59cc8c0a11df25d462d202b9d304e192dfd59f33db44ab5eec71255",
   "pins" : [
     {
       "identity" : "bitbytedata",
@@ -29,12 +29,39 @@
       }
     },
     {
+      "identity" : "lxmf-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "git@github.com:torlando-tech/LXMF-swift.git",
+      "state" : {
+        "revision" : "7b1d1223b1ab0bdc0c76a0e76136316b3512e43f",
+        "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "lxst-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "git@github.com:torlando-tech/LXST-swift.git",
+      "state" : {
+        "revision" : "9246eb1cddd3fff4957dff7a913ea605292628f3",
+        "version" : "0.1.0"
+      }
+    },
+    {
       "identity" : "maplibre-gl-native-distribution",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/maplibre/maplibre-gl-native-distribution",
       "state" : {
         "revision" : "4cbd3f5f25583627006e60c5fcdaf5339813118c",
         "version" : "6.23.0"
+      }
+    },
+    {
+      "identity" : "reticulum-swift-lib",
+      "kind" : "remoteSourceControl",
+      "location" : "git@github.com:torlando-tech/reticulum-swift-lib.git",
+      "state" : {
+        "revision" : "2b89c1b7d7296640d11f9c905a938f944b420706",
+        "version" : "0.1.0"
       }
     },
     {

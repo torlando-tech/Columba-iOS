@@ -53,8 +53,12 @@ public final class PropagationNodeManager {
     /// Known propagation nodes discovered from announces, sorted by hop count.
     public private(set) var knownNodes: [PropagationNode] = []
 
-    /// Destination hash of the currently selected relay node.
+    /// Destination hash of the currently selected relay node (lxmf.propagation aspect).
     public var selectedNodeHash: Data?
+
+    /// Delivery destination hash for the selected relay (lxmf.delivery aspect).
+    /// Used to match the relay against saved contacts which use the delivery hash.
+    public var selectedNodeDeliveryHash: Data?
 
     /// Display name of the selected relay node.
     public var selectedNodeName: String?
@@ -189,6 +193,19 @@ public final class PropagationNodeManager {
         let node = knownNodes.first(where: { $0.hash == hash })
         selectedNodeName = node?.resolvedDisplayName
 
+        // Compute delivery hash for this identity so we can match against saved contacts.
+        // Relay announces use lxmf.propagation aspect; contacts use lxmf.delivery aspect.
+        if let entry = await appServices?.pathTable?.lookup(destinationHash: hash),
+           entry.publicKeys.count >= 64 {
+            let identityHash = Hashing.truncatedHash(entry.publicKeys)
+            let nameHash = Hashing.destinationNameHash(appName: "lxmf", aspects: ["delivery"])
+            var combined = nameHash
+            combined.append(identityHash)
+            selectedNodeDeliveryHash = Hashing.truncatedHash(combined)
+        } else {
+            selectedNodeDeliveryHash = nil
+        }
+
         // Wire to router (awaited directly, not fire-and-forget)
         let stampCost = node?.info.stampCost ?? 0
         await appServices?.router?.setOutboundPropagationNode(hash)
@@ -201,6 +218,7 @@ public final class PropagationNodeManager {
     /// Clear the selected relay node.
     public func clearSelection() async {
         selectedNodeHash = nil
+        selectedNodeDeliveryHash = nil
         selectedNodeName = nil
 
         await appServices?.router?.setOutboundPropagationNode(nil)
@@ -287,14 +305,25 @@ public final class PropagationNodeManager {
         periodicSyncEnabled = await settingsRepository.getPeriodicSyncEnabled()
         syncInterval = await settingsRepository.getSyncInterval()
 
-        if let hashHex = await settingsRepository.getManualRelayHash(), !hashHex.isEmpty {
+        let savedHashHex = await settingsRepository.getManualRelayHash()
+        let savedName = await settingsRepository.getManualRelayName()
+        DiagLog.log("[PROP_MGR] loadPreferences: autoSelect=\(autoSelectEnabled), savedHash=\(savedHashHex ?? "nil"), savedName=\(savedName ?? "nil")")
+
+        if let hashHex = savedHashHex, !hashHex.isEmpty {
             let hash = Data(hexString: hashHex)
             if let hash = hash {
                 selectedNodeHash = hash
                 let node = knownNodes.first(where: { $0.hash == hash })
-                let savedName = await settingsRepository.getManualRelayName()
                 selectedNodeName = node?.resolvedDisplayName ?? savedName
                 autoSelectEnabled = false
+
+                // Restore delivery hash for contact matching
+                if let deliveryHex = await settingsRepository.getManualRelayDeliveryHash(),
+                   let deliveryHash = Data(hexString: deliveryHex) {
+                    selectedNodeDeliveryHash = deliveryHash
+                }
+
+                DiagLog.log("[PROP_MGR] Restored relay: hash=\(hashHex.prefix(16)), name=\(selectedNodeName ?? "nil"), nodeFound=\(node != nil)")
 
                 // Wire to router (awaited directly, not fire-and-forget)
                 let stampCost = node?.info.stampCost ?? 0
@@ -320,9 +349,16 @@ public final class PropagationNodeManager {
             let hex = hash.map { String(format: "%02x", $0) }.joined()
             await settingsRepository.setManualRelayHash(hex)
             await settingsRepository.setManualRelayName(selectedNodeName)
+            if let deliveryHash = selectedNodeDeliveryHash {
+                let deliveryHex = deliveryHash.map { String(format: "%02x", $0) }.joined()
+                await settingsRepository.setManualRelayDeliveryHash(deliveryHex)
+            } else {
+                await settingsRepository.setManualRelayDeliveryHash(nil)
+            }
         } else {
             await settingsRepository.setManualRelayHash(nil)
             await settingsRepository.setManualRelayName(nil)
+            await settingsRepository.setManualRelayDeliveryHash(nil)
         }
 
         if let time = lastSyncTime {

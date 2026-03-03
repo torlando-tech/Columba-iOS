@@ -424,10 +424,14 @@ public final class AppServices {
         startStateObserver()
 
         // 10. Initialize propagation node manager
+        // IMPORTANT: loadPreferences() MUST run before startListening() so that
+        // the saved relay selection (selectedNodeHash, autoSelectEnabled) is restored
+        // before the listening task processes path entries and calls autoSelectBestNode().
+        // Otherwise the default autoSelectEnabled=true can overwrite the user's manual selection.
         let propManager = PropagationNodeManager(appServices: self)
         self.propagationManager = propManager
-        propManager.startListening()
         await propManager.loadPreferences()
+        propManager.startListening()
         propManager.startPeriodicSync()
 
         // 11. Initialize auto-announce manager
@@ -532,10 +536,11 @@ public final class AppServices {
         startStateObserver()
 
         // 10. Initialize propagation node manager
+        // IMPORTANT: loadPreferences() MUST run before startListening() — see first overload.
         let propManager = PropagationNodeManager(appServices: self)
         self.propagationManager = propManager
-        propManager.startListening()
         await propManager.loadPreferences()
+        propManager.startListening()
         propManager.startPeriodicSync()
 
         // 11. Initialize auto-announce manager
