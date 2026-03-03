@@ -33,6 +33,14 @@ struct MessageBubble: View {
     var onShowDetails: (() -> Void)?
     /// Callback for deleting this message.
     var onDelete: (() -> Void)?
+    /// Callback for reply action.
+    var onReply: (() -> Void)?
+    /// Callback for emoji reaction: (emoji) -> Void.
+    var onReact: ((String) -> Void)?
+    /// Callback for tapping a reaction chip to toggle own reaction.
+    var onToggleReaction: ((String) -> Void)?
+    /// Callback when user taps the reply preview to scroll to original.
+    var onTapReplyPreview: ((String) -> Void)?
 
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
@@ -47,6 +55,28 @@ struct MessageBubble: View {
             VStack(alignment: message.isFromMe ? .trailing : .leading, spacing: 4) {
                 // Message content bubble
                 VStack(alignment: .leading, spacing: 6) {
+                    // Reply preview
+                    if let replyPreview = message.replyToPreview {
+                        Button {
+                            if let replyId = message.replyToId {
+                                onTapReplyPreview?(replyId)
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Rectangle()
+                                    .fill(Theme.accentColor)
+                                    .frame(width: 2)
+                                Text(replyPreview)
+                                    .font(.caption)
+                                    .foregroundStyle(message.isFromMe ? .white.opacity(0.7) : .secondary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     // Inline image
                     if let imageData = message.imageData,
                        let uiImage = UIImage(data: imageData) {
@@ -78,6 +108,28 @@ struct MessageBubble: View {
                 .background(bubbleBackground)
                 .clipShape(bubbleShape)
                 .contextMenu {
+                    // Reply
+                    if let onReply {
+                        Button {
+                            onReply()
+                        } label: {
+                            Label("Reply", systemImage: "arrowshape.turn.up.left")
+                        }
+                    }
+
+                    // Quick reactions
+                    if let onReact {
+                        Menu {
+                            ForEach(["👍", "❤️", "😂", "😮", "😢", "😡"], id: \.self) { emoji in
+                                Button(emoji) {
+                                    onReact(emoji)
+                                }
+                            }
+                        } label: {
+                            Label("React", systemImage: "face.smiling")
+                        }
+                    }
+
                     if message.deliveryStatus == .failed, let onRetry {
                         Button {
                             onRetry()
@@ -108,6 +160,36 @@ struct MessageBubble: View {
                             onDelete()
                         } label: {
                             Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+
+                // Reaction chips (below bubble)
+                if !message.reactions.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(message.reactions, id: \.emoji) { reaction in
+                            Button {
+                                onToggleReaction?(reaction.emoji)
+                            } label: {
+                                HStack(spacing: 2) {
+                                    Text(reaction.emoji)
+                                        .font(.caption2)
+                                    if reaction.count > 1 {
+                                        Text("\(reaction.count)")
+                                            .font(.caption2)
+                                            .foregroundStyle(reaction.includesMe ? Theme.accentColor : .secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(
+                                    reaction.includesMe
+                                        ? Theme.accentColor.opacity(0.2)
+                                        : Color.gray.opacity(0.15)
+                                )
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -224,6 +306,13 @@ public struct FileAttachment: Equatable {
     public let data: Data
 }
 
+/// Aggregated reaction for display on a message bubble.
+public struct ReactionDisplay: Equatable {
+    public let emoji: String
+    public let count: Int
+    public let includesMe: Bool
+}
+
 public struct Message: Identifiable, Equatable {
     public let id: String
     public var content: String
@@ -240,6 +329,11 @@ public struct Message: Identifiable, Equatable {
     public var snr: Double?
     public var messageHash: Data?
     public var receivedInterface: String?
+
+    // Reply & reactions
+    public var replyToId: String?
+    public var replyToPreview: String?
+    public var reactions: [ReactionDisplay]
 
     /// Cached formatter for relative time strings.
     private static let relativeFormatter: RelativeDateTimeFormatter = {
@@ -267,7 +361,10 @@ public struct Message: Identifiable, Equatable {
         deliveryStatus: DeliveryStatus = .sent,
         imageData: Data? = nil,
         imageFormat: String? = nil,
-        attachments: [FileAttachment]? = nil
+        attachments: [FileAttachment]? = nil,
+        replyToId: String? = nil,
+        replyToPreview: String? = nil,
+        reactions: [ReactionDisplay] = []
     ) {
         self.id = id
         self.content = content
@@ -277,6 +374,9 @@ public struct Message: Identifiable, Equatable {
         self.imageData = imageData
         self.imageFormat = imageFormat
         self.attachments = attachments
+        self.replyToId = replyToId
+        self.replyToPreview = replyToPreview
+        self.reactions = reactions
     }
 
     /// Create from LXMessage.
@@ -322,6 +422,13 @@ public struct Message: Identifiable, Equatable {
             }
             if !atts.isEmpty { self.attachments = atts }
         }
+
+        // Extract reply_to from FIELD_APP_DATA (0x10)
+        if let appData = lxMessage.fields?[LXMessage.FIELD_APP_DATA] as? [String: Any],
+           let replyTo = appData["reply_to"] as? String {
+            self.replyToId = replyTo
+        }
+        self.reactions = []  // Accumulated separately
     }
 
     /// Create from MessageRecord.
@@ -368,6 +475,27 @@ public struct Message: Identifiable, Equatable {
         // Receiving interface from DB
         self.receivedInterface = record.receivingInterface
 
+        // Reply
+        self.replyToId = record.replyToId
+        // replyToPreview is resolved later by the ViewModel
+        self.replyToPreview = nil
+
+        // Reactions from JSON
+        if let json = record.reactionsJson,
+           let data = json.data(using: .utf8),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
+            let localHashHex = localHash.map { String(format: "%02x", $0) }.joined()
+            self.reactions = dict.map { emoji, senders in
+                ReactionDisplay(
+                    emoji: emoji,
+                    count: senders.count,
+                    includesMe: senders.contains(localHashHex)
+                )
+            }.sorted { $0.emoji < $1.emoji }
+        } else {
+            self.reactions = []
+        }
+
         // Extract fields from packed wire format if available
         if let lxMessage = try? LXMessage.unpackFromBytes(record.packedLxmf) {
             // Re-extract content from unpacked message if DB column was empty
@@ -400,6 +528,13 @@ public struct Message: Identifiable, Equatable {
                     }
                 }
                 if !atts.isEmpty { self.attachments = atts }
+            }
+
+            // Fallback: extract reply_to from packed fields if DB column was nil
+            if self.replyToId == nil,
+               let appData = lxMessage.fields?[LXMessage.FIELD_APP_DATA] as? [String: Any],
+               let replyTo = appData["reply_to"] as? String {
+                self.replyToId = replyTo
             }
         }
     }

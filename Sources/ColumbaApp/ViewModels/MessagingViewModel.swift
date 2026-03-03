@@ -37,6 +37,9 @@ public final class MessagingViewModel {
     /// Error message if operation failed, nil otherwise.
     public var errorMessage: String? = nil
 
+    /// Message being replied to (set by UI when user swipes or taps Reply).
+    public var replyToMessage: Message? = nil
+
     /// Page size for message fetching.
     private static let pageSize = 50
 
@@ -114,7 +117,21 @@ public final class MessagingViewModel {
                 .map { Message(from: $0, localHash: appServices.localIdentityHash) }
                 .filter { !$0.isEmpty }  // Hide telemetry-only messages (e.g. location sharing)
 
-            messages = loaded
+            // Resolve reply previews from loaded messages
+            var resolvedMessages = loaded
+            let contentById = Dictionary(loaded.map { ($0.id, $0.content) }, uniquingKeysWith: { first, _ in first })
+            for i in resolvedMessages.indices {
+                if let replyId = resolvedMessages[i].replyToId {
+                    if let preview = contentById[replyId] {
+                        resolvedMessages[i].replyToPreview = String(preview.prefix(80))
+                    } else {
+                        // DB fallback for messages not in current page
+                        resolvedMessages[i].replyToPreview = await resolveReplyPreview(replyId)
+                    }
+                }
+            }
+
+            messages = resolvedMessages
             allMessagesLoaded = records.count < Self.pageSize
 
             // Mark as read
@@ -160,20 +177,22 @@ public final class MessagingViewModel {
         await sendMessage(text: text, imageData: nil, imageFormat: nil, attachments: nil)
     }
 
-    /// Send a message with optional image and file attachments.
+    /// Send a message with optional image, file attachments, and reply reference.
     ///
     /// - Parameters:
     ///   - text: Message text (can be empty if attachments provided)
     ///   - imageData: PNG/JPEG image bytes for FIELD_IMAGE
     ///   - imageFormat: Image format string ("png" or "jpeg")
     ///   - attachments: File attachments as (name, data) tuples for FIELD_FILE_ATTACHMENTS
+    ///   - replyToId: Hex hash of message being replied to (optional)
     /// - Returns: True if message was sent successfully
     @MainActor
     public func sendMessage(
         text: String,
         imageData: Data?,
         imageFormat: String?,
-        attachments: [(name: String, data: Data)]?
+        attachments: [(name: String, data: Data)]?,
+        replyToId: String? = nil
     ) async -> Bool {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty || imageData != nil || (attachments != nil && !attachments!.isEmpty) else {
@@ -213,6 +232,11 @@ public final class MessagingViewModel {
             fields[LXMessage.FIELD_FILE_ATTACHMENTS] = attachments.map { [$0.name, $0.data] as [Any] } as [Any]
         }
 
+        // Add reply reference (FIELD_APP_DATA = 0x10)
+        if let replyToId {
+            fields[LXMessage.FIELD_APP_DATA] = ["reply_to": replyToId] as [String: Any]
+        }
+
         // Create outbound LXMF message — always opportunistic first
         var lxMessage = LXMessage(
             destinationHash: conversationHash,
@@ -228,6 +252,15 @@ public final class MessagingViewModel {
         let optimisticId = UUID().uuidString
         lxMessage.hash = optimisticId.data(using: .utf8)!
 
+        // Build reply preview for optimistic display
+        let replyPreview: String? = {
+            guard let replyToId else { return nil }
+            if let msg = messages.first(where: { $0.id == replyToId }) {
+                return String(msg.content.prefix(80))
+            }
+            return nil
+        }()
+
         // Create UI message for immediate display (include attachments for preview)
         let optimisticMessage = Message(
             id: optimisticId,
@@ -237,7 +270,9 @@ public final class MessagingViewModel {
             deliveryStatus: .sending,
             imageData: imageData,
             imageFormat: imageFormat,
-            attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) }
+            attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) },
+            replyToId: replyToId,
+            replyToPreview: replyPreview
         )
 
         // Add to UI immediately
@@ -261,7 +296,9 @@ public final class MessagingViewModel {
                         deliveryStatus: .sent,
                         imageData: imageData,
                         imageFormat: imageFormat,
-                        attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) }
+                        attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) },
+                        replyToId: replyToId,
+                        replyToPreview: replyPreview
                     )
                 }
             }
@@ -304,7 +341,9 @@ public final class MessagingViewModel {
                                 deliveryStatus: .sent,
                                 imageData: imageData,
                                 imageFormat: imageFormat,
-                                attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) }
+                                attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) },
+                                replyToId: replyToId,
+                                replyToPreview: replyPreview
                             )
                         }
                     }
@@ -365,5 +404,102 @@ public final class MessagingViewModel {
     /// Check if a message is from the local user.
     public func isMessageFromMe(_ message: Message) -> Bool {
         message.isFromMe
+    }
+
+    // MARK: - Reactions
+
+    /// Send an emoji reaction to a message (toggle: adds if not present, removes if present).
+    @MainActor
+    public func sendReaction(targetMessageId: String, targetMessageHash: Data?, emoji: String) async {
+        guard let hash = targetMessageHash else { return }
+        guard let identity = appServices.identity, let router = appServices.router else { return }
+
+        let localHashHex = appServices.localIdentityHash.map { String(format: "%02x", $0) }.joined()
+
+        // Read-modify-write reactions in DB
+        var reactionsDict: [String: [String]] = [:]
+        if let json = try? await repository.getReactionsJson(hash),
+           let data = json.data(using: .utf8),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
+            reactionsDict = dict
+        }
+
+        // Toggle
+        var senders = reactionsDict[emoji] ?? []
+        if senders.contains(localHashHex) {
+            senders.removeAll { $0 == localHashHex }
+        } else {
+            senders.append(localHashHex)
+        }
+        if senders.isEmpty {
+            reactionsDict.removeValue(forKey: emoji)
+        } else {
+            reactionsDict[emoji] = senders
+        }
+
+        // Save to DB
+        if let jsonData = try? JSONSerialization.data(withJSONObject: reactionsDict),
+           let jsonStr = String(data: jsonData, encoding: .utf8) {
+            try? await repository.updateReactions(hash, reactionsJson: jsonStr)
+        }
+
+        // Update UI
+        if let index = messages.firstIndex(where: { $0.id == targetMessageId }) {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                messages[index].reactions = reactionsDict.map { emojiKey, senderList in
+                    ReactionDisplay(
+                        emoji: emojiKey,
+                        count: senderList.count,
+                        includesMe: senderList.contains(localHashHex)
+                    )
+                }.sorted { $0.emoji < $1.emoji }
+            }
+        }
+
+        // Send reaction LXMF message (empty content)
+        var fields: [UInt8: Any] = [:]
+        fields[LXMessage.FIELD_APP_DATA] = [
+            "reaction_to": targetMessageId,
+            "emoji": emoji,
+            "sender": localHashHex
+        ] as [String: Any]
+
+        var lxMessage = LXMessage(
+            destinationHash: conversationHash,
+            sourceIdentity: identity,
+            content: Data(),
+            title: Data(),
+            fields: fields,
+            desiredMethod: .opportunistic
+        )
+
+        do {
+            try await router.handleOutbound(&lxMessage)
+        } catch {
+            logger.error("Failed to send reaction: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Reply Preview Resolution
+
+    /// Resolve reply preview text for a message hash (DB fallback when not in loaded messages).
+    private func resolveReplyPreview(_ replyToIdHex: String) async -> String? {
+        guard let hashData = Self.hexToData(replyToIdHex) else { return nil }
+        guard let record = try? await repository.getMessageRecord(id: hashData) else { return nil }
+        guard let content = String(data: record.content, encoding: .utf8), !content.isEmpty else { return nil }
+        return String(content.prefix(80))
+    }
+
+    /// Convert hex string to Data.
+    private static func hexToData(_ hex: String) -> Data? {
+        var data = Data()
+        var chars = hex[hex.startIndex...]
+        while chars.count >= 2 {
+            let end = chars.index(chars.startIndex, offsetBy: 2)
+            guard let byte = UInt8(chars[chars.startIndex..<end], radix: 16) else { return nil }
+            data.append(byte)
+            chars = chars[end...]
+        }
+        return data
     }
 }
