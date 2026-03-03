@@ -82,7 +82,9 @@ struct MessagingView: View {
 
                             ForEach(vm.messages) { message in
                                 SwipeToReplyContainer(onReply: {
-                                    vm.replyToMessage = message
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        vm.replyToMessage = message
+                                    }
                                 }) {
                                     MessageBubble(
                                         message: message,
@@ -96,7 +98,9 @@ struct MessagingView: View {
                                             deleteConfirmMessage = message
                                         },
                                         onReply: {
-                                            vm.replyToMessage = message
+                                            withAnimation(.easeInOut(duration: 0.25)) {
+                                                vm.replyToMessage = message
+                                            }
                                         },
                                         onReact: { emoji in
                                             Task {
@@ -152,7 +156,7 @@ struct MessagingView: View {
                             attachedImage: $attachedImage,
                             attachedFiles: $attachedFiles,
                             replyToMessage: vm.replyToMessage,
-                            onDismissReply: { vm.replyToMessage = nil },
+                            onDismissReply: { withAnimation(.easeInOut(duration: 0.25)) { vm.replyToMessage = nil } },
                             onSend: sendMessage,
                             onImagePicker: { showPhotoPicker = true },
                             onAttachment: { showFilePicker = true }
@@ -211,18 +215,6 @@ struct MessagingView: View {
                     .onChange(of: vm.messages.last?.id) { _, _ in
                         if isNearBottom {
                             scrollToBottom(proxy: proxy)
-                        }
-                    }
-                    // Keep scroll position stable when reply bar appears/disappears
-                    .onChange(of: vm.replyToMessage?.id) { _, _ in
-                        // Delay lets the safeAreaInset resize complete before scrolling
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(150))
-                            if let lastId = vm.messages.last?.id {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    proxy.scrollTo(lastId, anchor: .bottom)
-                                }
-                            }
                         }
                     }
                     // Scroll to bottom when the keyboard appears so the latest message
@@ -500,7 +492,9 @@ struct MessagingView: View {
         messageText = ""
         attachedImage = nil
         attachedFiles = []
-        viewModel?.replyToMessage = nil
+        withAnimation(.easeInOut(duration: 0.25)) {
+            viewModel?.replyToMessage = nil
+        }
 
         #if os(iOS)
         let generator = UIImpactFeedbackGenerator(style: .medium)
