@@ -27,22 +27,12 @@ struct MessageBubble: View {
 
     let message: Message
 
-    /// Callback for retry action (failed messages only).
-    var onRetry: (() -> Void)?
-    /// Callback for showing message details.
-    var onShowDetails: (() -> Void)?
-    /// Callback for deleting this message.
-    var onDelete: (() -> Void)?
-    /// Callback for reply action.
-    var onReply: (() -> Void)?
-    /// Callback for emoji reaction: (emoji) -> Void.
-    var onReact: ((String) -> Void)?
     /// Callback for tapping a reaction chip to toggle own reaction.
     var onToggleReaction: ((String) -> Void)?
     /// Callback when user taps the reply preview to scroll to original.
     var onTapReplyPreview: ((String) -> Void)?
-    /// Callback for opening full emoji picker.
-    var onShowEmojiPicker: (() -> Void)?
+    /// Callback for long-press to enter reaction mode.
+    var onLongPress: (() -> Void)?
 
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
@@ -109,67 +99,12 @@ struct MessageBubble: View {
                 .padding(.vertical, 10)
                 .background(bubbleBackground)
                 .clipShape(bubbleShape)
-                .contextMenu {
-                    // Reply
-                    if let onReply {
-                        Button {
-                            onReply()
-                        } label: {
-                            Label("Reply", systemImage: "arrowshape.turn.up.left")
-                        }
-                    }
-
-                    // Quick reactions
-                    if let onReact {
-                        Menu {
-                            ForEach(["👍", "❤️", "😂", "😮", "😢", "😡"], id: \.self) { emoji in
-                                Button(emoji) {
-                                    onReact(emoji)
-                                }
-                            }
-                            Divider()
-                            Button {
-                                onShowEmojiPicker?()
-                            } label: {
-                                Label("More...", systemImage: "face.smiling.inverse")
-                            }
-                        } label: {
-                            Label("React", systemImage: "face.smiling")
-                        }
-                    }
-
-                    if message.deliveryStatus == .failed, let onRetry {
-                        Button {
-                            onRetry()
-                        } label: {
-                            Label("Retry", systemImage: "arrow.clockwise")
-                        }
-                    }
-
-                    if !message.content.isEmpty {
-                        Button {
-                            UIPasteboard.general.string = message.content
-                        } label: {
-                            Label("Copy", systemImage: "doc.on.doc")
-                        }
-                    }
-
-                    if let onShowDetails {
-                        Button {
-                            onShowDetails()
-                        } label: {
-                            Label("Details", systemImage: "info.circle")
-                        }
-                    }
-
-                    if let onDelete {
-                        Divider()
-                        Button(role: .destructive) {
-                            onDelete()
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
+                .contentShape(bubbleShape)
+                .onLongPressGesture(minimumDuration: 0.4) {
+                    #if canImport(UIKit)
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    #endif
+                    onLongPress?()
                 }
 
                 // Reaction chips (below bubble)
