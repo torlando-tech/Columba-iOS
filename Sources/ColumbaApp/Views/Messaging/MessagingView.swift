@@ -55,6 +55,8 @@ struct MessagingView: View {
     @State private var detailMessage: Message?
     @State private var deleteConfirmMessage: Message?
     @State private var showLocationConfirm = false
+    @State private var showEmojiPicker = false
+    @State private var emojiPickerTargetMessage: Message?
     @State private var isSavedContact: Bool = false
     @Environment(\.dismiss) private var dismiss
 
@@ -79,44 +81,52 @@ struct MessagingView: View {
                             }
 
                             ForEach(vm.messages) { message in
-                                MessageBubble(
-                                    message: message,
-                                    onRetry: message.deliveryStatus == .failed ? {
-                                        Task { await vm.retryMessage(messageId: message.id) }
-                                    } : nil,
-                                    onShowDetails: {
-                                        detailMessage = message
-                                    },
-                                    onDelete: {
-                                        deleteConfirmMessage = message
-                                    },
-                                    onReply: {
-                                        vm.replyToMessage = message
-                                    },
-                                    onReact: { emoji in
-                                        Task {
-                                            await vm.sendReaction(
-                                                targetMessageId: message.id,
-                                                targetMessageHash: message.messageHash,
-                                                emoji: emoji
-                                            )
+                                SwipeToReplyContainer(onReply: {
+                                    vm.replyToMessage = message
+                                }) {
+                                    MessageBubble(
+                                        message: message,
+                                        onRetry: message.deliveryStatus == .failed ? {
+                                            Task { await vm.retryMessage(messageId: message.id) }
+                                        } : nil,
+                                        onShowDetails: {
+                                            detailMessage = message
+                                        },
+                                        onDelete: {
+                                            deleteConfirmMessage = message
+                                        },
+                                        onReply: {
+                                            vm.replyToMessage = message
+                                        },
+                                        onReact: { emoji in
+                                            Task {
+                                                await vm.sendReaction(
+                                                    targetMessageId: message.id,
+                                                    targetMessageHash: message.messageHash,
+                                                    emoji: emoji
+                                                )
+                                            }
+                                        },
+                                        onToggleReaction: { emoji in
+                                            Task {
+                                                await vm.sendReaction(
+                                                    targetMessageId: message.id,
+                                                    targetMessageHash: message.messageHash,
+                                                    emoji: emoji
+                                                )
+                                            }
+                                        },
+                                        onTapReplyPreview: { replyId in
+                                            withAnimation {
+                                                proxy.scrollTo(replyId, anchor: .center)
+                                            }
+                                        },
+                                        onShowEmojiPicker: {
+                                            emojiPickerTargetMessage = message
+                                            showEmojiPicker = true
                                         }
-                                    },
-                                    onToggleReaction: { emoji in
-                                        Task {
-                                            await vm.sendReaction(
-                                                targetMessageId: message.id,
-                                                targetMessageHash: message.messageHash,
-                                                emoji: emoji
-                                            )
-                                        }
-                                    },
-                                    onTapReplyPreview: { replyId in
-                                        withAnimation {
-                                            proxy.scrollTo(replyId, anchor: .center)
-                                        }
-                                    }
-                                )
+                                    )
+                                }
                                 .id(message.id)
                                 .transition(.asymmetric(
                                     insertion: .move(edge: .bottom).combined(with: .opacity),
@@ -203,6 +213,18 @@ struct MessagingView: View {
                             scrollToBottom(proxy: proxy)
                         }
                     }
+                    // Keep scroll position stable when reply bar appears/disappears
+                    .onChange(of: vm.replyToMessage?.id) { _, _ in
+                        // Delay lets the safeAreaInset resize complete before scrolling
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(150))
+                            if let lastId = vm.messages.last?.id {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    proxy.scrollTo(lastId, anchor: .bottom)
+                                }
+                            }
+                        }
+                    }
                     // Scroll to bottom when the keyboard appears so the latest message
                     // stays visible above the keyboard.
                     #if canImport(UIKit)
@@ -227,14 +249,7 @@ struct MessagingView: View {
         .background(Theme.backgroundPrimary)
         #if os(iOS)
         .navigationBarBackButtonHidden(true)
-        .gesture(
-            DragGesture(minimumDistance: 20, coordinateSpace: .global)
-                .onEnded { value in
-                    if value.translation.width > 80 && abs(value.translation.height) < 100 {
-                        dismiss()
-                    }
-                }
-        )
+        .background(InteractivePopGestureEnabler())
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 leadingToolbar
@@ -326,6 +341,21 @@ struct MessagingView: View {
                 )
             })
             .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $showEmojiPicker) {
+            if let target = emojiPickerTargetMessage {
+                EmojiPickerSheet { emoji in
+                    Task {
+                        await viewModel?.sendReaction(
+                            targetMessageId: target.id,
+                            targetMessageHash: target.messageHash,
+                            emoji: emoji
+                        )
+                    }
+                }
+                .presentationDetents([.height(340)])
+                .presentationDragIndicator(.visible)
+            }
         }
         .onDisappear {
             NotificationService.activeConversationThreadId = nil
@@ -613,6 +643,131 @@ extension UIImage {
 }
 
 // MARK: - Location Share Sheet
+
+// MARK: - Interactive Pop Gesture Enabler
+
+/// Re-enables the native iOS edge-swipe-to-go-back gesture that
+/// `.navigationBarBackButtonHidden(true)` disables.
+#if canImport(UIKit)
+private struct InteractivePopGestureEnabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        InteractivePopController()
+    }
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+}
+
+private class InteractivePopController: UIViewController, UIGestureRecognizerDelegate {
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        navigationController?.interactivePopGestureRecognizer?.isEnabled = true
+        navigationController?.interactivePopGestureRecognizer?.delegate = self
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        (navigationController?.viewControllers.count ?? 0) > 1
+    }
+}
+#endif
+
+// MARK: - Swipe to Reply Container
+
+/// Wraps a message bubble to add swipe-right-to-reply gesture.
+@available(iOS 17.0, macOS 14.0, *)
+private struct SwipeToReplyContainer<Content: View>: View {
+    let onReply: () -> Void
+    @ViewBuilder let content: Content
+
+    @GestureState private var dragOffset: CGFloat = 0
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            // Reply icon revealed behind the bubble
+            if dragOffset > 10 {
+                Image(systemName: "arrowshape.turn.up.left.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Theme.accentColor.opacity(min(1, dragOffset / 60)))
+                    .padding(.leading, 8)
+            }
+
+            content
+                .offset(x: min(dragOffset * 0.6, 60))
+        }
+        .animation(.interactiveSpring(response: 0.15, dampingFraction: 0.86), value: dragOffset)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 25, coordinateSpace: .local)
+                .updating($dragOffset) { value, state, _ in
+                    let horizontal = value.translation.width
+                    let vertical = abs(value.translation.height)
+                    // Only track rightward horizontal swipes
+                    if horizontal > 0 && vertical < horizontal * 0.5 {
+                        state = horizontal
+                    }
+                }
+                .onEnded { value in
+                    let horizontal = value.translation.width
+                    let vertical = abs(value.translation.height)
+                    if horizontal > 50 && vertical < horizontal * 0.5 {
+                        #if canImport(UIKit)
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        #endif
+                        onReply()
+                    }
+                }
+        )
+    }
+}
+
+// MARK: - Emoji Picker Sheet
+
+/// Grid of popular emoji for reaction selection.
+@available(iOS 17.0, macOS 14.0, *)
+private struct EmojiPickerSheet: View {
+    let onSelect: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private static let emojis = [
+        "👍", "❤️", "😂", "😮", "😢", "😡",
+        "🔥", "👏", "🎉", "💯", "✨", "🙏",
+        "😍", "🥰", "😊", "😎", "🤣", "😅",
+        "😭", "🤔", "🙄", "😏", "🥲", "😋",
+        "👀", "💀", "🫡", "🤝", "💪", "✌️",
+        "🖤", "💜", "💙", "💚", "💛", "🧡",
+        "⭐", "🌟", "⚡", "🌈", "☀️", "🫶",
+        "😤", "😱", "🤮", "😴", "🥳", "🤗",
+    ]
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 8)
+
+    var body: some View {
+        VStack(spacing: 16) {
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(Color.secondary.opacity(0.4))
+                .frame(width: 36, height: 5)
+                .padding(.top, 8)
+
+            Text("Choose Reaction")
+                .font(.headline)
+                .foregroundStyle(Theme.textPrimary)
+
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(Self.emojis, id: \.self) { emoji in
+                    Button {
+                        onSelect(emoji)
+                        dismiss()
+                    } label: {
+                        Text(emoji)
+                            .font(.system(size: 28))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+
+            Spacer()
+        }
+        .background(Theme.backgroundSecondary)
+    }
+}
 
 /// Bottom sheet for selecting location sharing duration before starting.
 private struct LocationShareSheet: View {

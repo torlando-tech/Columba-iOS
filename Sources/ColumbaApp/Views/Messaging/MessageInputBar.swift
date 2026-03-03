@@ -54,9 +54,9 @@ struct MessageInputBar: View {
             // Reply-to preview bar
             if let replyMsg = replyToMessage {
                 HStack(spacing: 8) {
-                    Rectangle()
+                    RoundedRectangle(cornerRadius: 1.5)
                         .fill(Theme.accentColor)
-                        .frame(width: 3)
+                        .frame(width: 3, height: 28)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Replying to")
