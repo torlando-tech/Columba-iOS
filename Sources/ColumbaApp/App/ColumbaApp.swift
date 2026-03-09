@@ -53,6 +53,7 @@ struct ColumbaApp: App {
                 notificationObserver: notificationObserver,
                 pendingDeepLink: $pendingDeepLink
             )
+            .background(KeyboardDismissHelper())
             .preferredColorScheme(ThemeManager.shared.resolvedColorScheme)
             .tint(Theme.accentColor)
             .id(ThemeManager.shared.themeVersion)
@@ -62,6 +63,31 @@ struct ColumbaApp: App {
             }
         }
     }
+}
+
+// MARK: - Keyboard Dismiss Helper
+
+/// Installs a UITapGestureRecognizer on the window that dismisses the keyboard
+/// when tapping outside text fields. Uses `cancelsTouchesInView = false` so
+/// buttons, nav bar items, and other controls continue to work normally.
+private struct KeyboardDismissHelper: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false // Don't block any touches on this view
+
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+
+            let tapGesture = UITapGestureRecognizer(target: window, action: #selector(UIView.endEditing(_:)))
+            tapGesture.requiresExclusiveTouchType = false
+            tapGesture.cancelsTouchesInView = false
+            window.addGestureRecognizer(tapGesture)
+        }
+
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 // MARK: - Root View
