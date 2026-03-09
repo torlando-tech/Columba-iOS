@@ -87,5 +87,10 @@ struct MainTabView: View {
                 selectedTab = .contacts
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            if NotificationService.pendingConversationHash != nil {
+                selectedTab = .chats
+            }
+        }
     }
 }
