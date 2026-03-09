@@ -109,7 +109,7 @@ public enum InterfaceType: String, Codable, Sendable, CaseIterable {
         case .autoInterface: return "antenna.radiowaves.left.and.right"
         case .ble: return "wave.3.right"
         case .rnode: return "radio"
-        case .multipeer: return "wifi.circle"
+        case .multipeer: return "apple.logo"
         }
     }
 }
