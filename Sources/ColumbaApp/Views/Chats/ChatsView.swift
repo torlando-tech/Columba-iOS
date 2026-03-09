@@ -162,9 +162,15 @@ struct ChatsView: View {
         } message: {
             Text("This will permanently delete the conversation and all its messages.")
         }
+        #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             checkPendingNotification()
         }
+        #else
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            checkPendingNotification()
+        }
+        #endif
         .onChange(of: viewModel?.filteredConversations) { _, _ in
             checkPendingNotification()
         }

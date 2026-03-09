@@ -217,35 +217,35 @@ struct RNodeConfigSheet: View {
                 placeholder: "915000000",
                 text: $viewModel.configFrequency,
                 error: viewModel.frequencyError,
-                keyboardType: .numberPad
+                isNumeric: true
             )
 
             configField(
                 title: "Bandwidth (Hz)",
                 placeholder: "125000",
                 text: $viewModel.configBandwidth,
-                keyboardType: .numberPad
+                isNumeric: true
             )
 
             configField(
                 title: "TX Power (dBm)",
                 placeholder: "17",
                 text: $viewModel.configTxPower,
-                keyboardType: .numberPad
+                isNumeric: true
             )
 
             configField(
                 title: "Spreading Factor",
                 placeholder: "7",
                 text: $viewModel.configSpreadingFactor,
-                keyboardType: .numberPad
+                isNumeric: true
             )
 
             configField(
                 title: "Coding Rate",
                 placeholder: "5",
                 text: $viewModel.configCodingRate,
-                keyboardType: .numberPad
+                isNumeric: true
             )
         }
         .padding(16)
@@ -277,7 +277,7 @@ struct RNodeConfigSheet: View {
         placeholder: String,
         text: Binding<String>,
         error: String? = nil,
-        keyboardType: UIKeyboardType = .default
+        isNumeric: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
@@ -291,7 +291,7 @@ struct RNodeConfigSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
                 .foregroundStyle(Theme.textPrimary)
                 #if os(iOS)
-                .keyboardType(keyboardType)
+                .keyboardType(isNumeric ? .numberPad : .default)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 #endif

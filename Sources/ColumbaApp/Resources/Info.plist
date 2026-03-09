@@ -2,81 +2,38 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
-	<key>CFBundleDisplayName</key>
-	<string>Columba</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>network.columba.app.sync</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>network.columba.app.lxma</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>lxma</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSBluetoothWhenInUseUsageDescription</key>
+	<string>Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_reticulum._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Columba uses the local network for peer-to-peer communication with nearby Reticulum devices.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>materialdesignicons.ttf</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<true/>
 	</dict>
-	<key>UIAppFonts</key>
-	<array>
-		<string>materialdesignicons.ttf</string>
-	</array>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>lxma</string>
-			</array>
-			<key>CFBundleURLName</key>
-			<string>network.columba.app.lxma</string>
-		</dict>
-	</array>
-	<key>NSCameraUsageDescription</key>
-	<string>Columba uses the camera to scan QR codes for adding contacts.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Columba uses local network access to discover nearby Reticulum peers and connect to TCP servers on your network.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_reticulum._tcp</string>
-	</array>
-	<key>UILaunchScreen</key>
-	<dict/>
-	<key>UIRequiredDeviceCapabilities</key>
-	<array>
-		<string>armv7</string>
-	</array>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Columba uses your location to show your position on the map and share it with peers.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Columba uses background location to share your position with peers on the mesh network.</string>
-	<key>NSBluetoothWhenInUseUsageDescription</key>
-	<string>Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.</string>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
@@ -85,11 +42,7 @@
 		<string>voip</string>
 		<string>network-extension</string>
 	</array>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Columba uses the microphone for voice calls over the mesh network.</string>
-	<key>BGTaskSchedulerPermittedIdentifiers</key>
-	<array>
-		<string>network.columba.app.sync</string>
-	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
 </dict>
 </plist>

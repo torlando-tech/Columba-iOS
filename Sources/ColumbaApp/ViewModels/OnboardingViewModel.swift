@@ -187,6 +187,12 @@ final class OnboardingViewModel {
                     type: .autoInterface,
                     config: .autoInterface(AutoInterfaceConfig())
                 ))
+            case .nearby:
+                repo.addInterface(InterfaceEntity(
+                    name: "Nearby",
+                    type: .multipeer,
+                    config: .multipeer(MultipeerConfig())
+                ))
             case .ble:
                 repo.addInterface(InterfaceEntity(
                     name: "Bluetooth LE",
@@ -216,6 +222,7 @@ final class OnboardingViewModel {
 /// Interface types available during onboarding.
 enum OnboardingInterfaceType: String, CaseIterable, Hashable {
     case auto
+    case nearby
     case ble
     case tcp
     case rnode
@@ -223,6 +230,7 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
     var title: String {
         switch self {
         case .auto: return "Local WiFi"
+        case .nearby: return "Nearby"
         case .ble: return "Bluetooth LE"
         case .tcp: return "Internet (TCP)"
         case .rnode: return "LoRa Radio"
@@ -232,6 +240,7 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
     var shortName: String {
         switch self {
         case .auto: return "WiFi"
+        case .nearby: return "Nearby"
         case .ble: return "BLE"
         case .tcp: return "TCP"
         case .rnode: return "LoRa"
@@ -241,6 +250,7 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
     var icon: String {
         switch self {
         case .auto: return "wifi"
+        case .nearby: return "wifi.circle"
         case .ble: return "wave.3.right"
         case .tcp: return "globe"
         case .rnode: return "radio"
@@ -250,6 +260,7 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
     var description: String {
         switch self {
         case .auto: return "Discover peers on your local network"
+        case .nearby: return "Connect directly with nearby Apple devices"
         case .ble: return "Connect directly to nearby devices"
         case .tcp: return "Connect to the global Reticulum network"
         case .rnode: return "Long-range mesh via RNode hardware"
@@ -259,6 +270,7 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
     var subtitle: String {
         switch self {
         case .auto: return "No internet required"
+        case .nearby: return "Apple devices only, no WiFi needed"
         case .ble: return "Requires Bluetooth permissions"
         case .tcp: return "Requires internet connection"
         case .rnode: return "Configure in Settings after setup"

@@ -137,6 +137,7 @@ struct SettingsView: View {
         // previously, the viewModel was created inline in .navigationDestination, so
         // each re-render produced a fresh InterfaceManagementViewModel with
         // showRNodeWizard=false, which immediately dismissed the fullScreenCover.
+        #if os(iOS)
         .fullScreenCover(isPresented: Binding(
             get: { interfaceViewModel?.showRNodeWizard ?? false },
             set: { interfaceViewModel?.showRNodeWizard = $0 }
@@ -145,6 +146,7 @@ struct SettingsView: View {
                 RNodeWizardView(viewModel: vm)
             }
         }
+        #endif
         .onAppear {
             viewModel?.refreshSyncState()
         }
@@ -757,9 +759,11 @@ struct SettingsView: View {
             toggle: Binding(
                 get: { vm.isLocationSharingEnabled },
                 set: { newValue in
+                    #if os(iOS)
                     if !newValue {
                         appServices.locationSharingManager?.stopAllSharing()
                     }
+                    #endif
                     vm.isLocationSharingEnabled = newValue
                 }
             )

@@ -10,10 +10,15 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 import LXMFSwift
+#if os(iOS)
 import LXSTSwift
+#endif
 import os.log
 #if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
 #endif
 
 private let logger = Logger(subsystem: "com.columba.app", category: "MessagingView")
@@ -236,7 +241,12 @@ struct MessagingView: View {
                         }
                     },
                     onCopy: {
+                        #if os(iOS)
                         UIPasteboard.general.string = msg.content
+                        #else
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(msg.content, forType: .string)
+                        #endif
                     },
                     onDetails: {
                         detailMessage = msg
@@ -304,6 +314,7 @@ struct MessagingView: View {
             .presentationDetents([.height(340)])
             .presentationDragIndicator(.visible)
         }
+        #if os(iOS)
         .sheet(isPresented: $showCodecPicker) {
             CodecSelectionSheet { profile in
                 showCallScreen = true
@@ -323,6 +334,7 @@ struct MessagingView: View {
                 )
             }
         }
+        #endif
         .sheet(item: $detailMessage) { message in
             MessageDetailView(message: message)
         }
@@ -344,6 +356,7 @@ struct MessagingView: View {
         } message: {
             Text("This message will be permanently deleted from this device.")
         }
+        #if os(iOS)
         .sheet(isPresented: $showLocationConfirm) {
             LocationShareSheet(onStart: { duration in
                 appServices.locationSharingManager?.startSharing(
@@ -353,6 +366,7 @@ struct MessagingView: View {
             })
             .presentationDetents([.medium])
         }
+        #endif
         .sheet(item: $emojiPickerTargetMessage) { target in
             EmojiPickerSheet { emoji in
                 Task {
@@ -421,13 +435,16 @@ struct MessagingView: View {
 
     @State private var isSyncing = false
 
+    #if os(iOS)
     /// Whether we are currently sharing location with this conversation's peer.
     private var isSharingLocation: Bool {
         appServices.locationSharingManager?.isSharing(with: conversation.destinationHash) ?? false
     }
+    #endif
 
     private var trailingToolbar: some View {
         HStack(spacing: 16) {
+            #if os(iOS)
             // Voice call button
             if appServices.callManager != nil {
                 Button(action: { showCodecPicker = true }) {
@@ -450,6 +467,7 @@ struct MessagingView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(isSharingLocation ? .green : Theme.textPrimary)
             }
+            #endif
 
             // More options menu
             Menu {
@@ -632,11 +650,19 @@ extension UIImage {
         let ratio = min(maxDimension / size.width, maxDimension / size.height)
         if ratio >= 1.0 { return self }
         let newSize = CGSize(width: size.width * ratio, height: size.height * ratio)
+        #if os(iOS)
         UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
         draw(in: CGRect(origin: .zero, size: newSize))
         let result = UIGraphicsGetImageFromCurrentImageContext()!
         UIGraphicsEndImageContext()
         return result
+        #else
+        let newImage = NSImage(size: newSize)
+        newImage.lockFocus()
+        draw(in: CGRect(origin: .zero, size: newSize), from: CGRect(origin: .zero, size: size), operation: .copy, fraction: 1.0)
+        newImage.unlockFocus()
+        return newImage
+        #endif
     }
 
     /// Compress image to fit within a quality preset's target size.
@@ -842,7 +868,7 @@ private struct ReactionOverlay: View {
                     VStack(alignment: .leading, spacing: 6) {
                         if let imageData = message.imageData,
                            let uiImage = UIImage(data: imageData) {
-                            Image(uiImage: uiImage)
+                            Image(platformImage: uiImage)
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .frame(maxWidth: 200, maxHeight: 150)
@@ -929,6 +955,7 @@ private struct ReactionOverlay: View {
     }
 }
 
+#if os(iOS)
 /// Bottom sheet for selecting location sharing duration before starting.
 private struct LocationShareSheet: View {
     let onStart: (SharingDuration) -> Void
@@ -1005,3 +1032,4 @@ private struct LocationShareSheet: View {
         }
     }
 }
+#endif

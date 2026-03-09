@@ -35,8 +35,10 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     /// Database for notification sender name lookups.
     private let database: LXMFDatabase?
 
+    #if os(iOS)
     /// Location sharing manager for incoming telemetry extraction.
     public var locationSharingManager: LocationSharingManager?
+    #endif
 
     /// Timestamp when this handler was created.
     /// Messages older than this are from propagation sync backfill, not new arrivals.
@@ -53,11 +55,18 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     ///   - messageRepository: Repository for saving messages to database
     ///   - database: Database for sender name lookups in notifications
     ///   - locationSharingManager: Optional manager for extracting incoming telemetry
+    #if os(iOS)
     public init(messageRepository: MessageRepository, database: LXMFDatabase? = nil, locationSharingManager: LocationSharingManager? = nil) {
         self.messageRepository = messageRepository
         self.database = database
         self.locationSharingManager = locationSharingManager
     }
+    #else
+    public init(messageRepository: MessageRepository, database: LXMFDatabase? = nil) {
+        self.messageRepository = messageRepository
+        self.database = database
+    }
+    #endif
 
     // MARK: - LXMRouterDelegate
 
@@ -157,7 +166,9 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
                 if let metaStr, metaStr.contains("\"cease\"") {
                     isCeaseMessage = true
+                    #if os(iOS)
                     self.locationSharingManager?.handleIncomingCease(from: message.sourceHash)
+                    #endif
                     self.logger.debug("Cease signal from \(sourceHashHex)")
                 }
             }
@@ -176,12 +187,14 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
                 if let telemetryData = fields[LXMessage.FIELD_TELEMETRY] as? Data,
                    let packet = TelemetryPacket.decode(from: telemetryData) {
+                    #if os(iOS)
                     self.locationSharingManager?.handleIncomingTelemetry(
                         from: message.sourceHash,
                         packet: packet,
                         displayName: nil,
                         iconAppearance: peerIcon
                     )
+                    #endif
                 }
             }
 

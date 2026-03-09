@@ -78,6 +78,7 @@ public enum InterfaceType: String, Codable, Sendable, CaseIterable {
     case autoInterface = "AutoInterface"
     case ble = "BLE"
     case rnode = "RNode"
+    case multipeer = "Multipeer"
 
     public var displayName: String {
         switch self {
@@ -86,6 +87,7 @@ public enum InterfaceType: String, Codable, Sendable, CaseIterable {
         case .autoInterface: return "Auto Discovery"
         case .ble: return "Bluetooth LE"
         case .rnode: return "RNode LoRa"
+        case .multipeer: return "Nearby"
         }
     }
 
@@ -96,6 +98,7 @@ public enum InterfaceType: String, Codable, Sendable, CaseIterable {
         case .autoInterface: return "Automatically discover peers on local network"
         case .ble: return "Peer-to-peer networking over Bluetooth LE"
         case .rnode: return "Connect to RNode hardware via Bluetooth"
+        case .multipeer: return "Connect directly with nearby Apple devices without shared WiFi"
         }
     }
 
@@ -106,6 +109,7 @@ public enum InterfaceType: String, Codable, Sendable, CaseIterable {
         case .autoInterface: return "antenna.radiowaves.left.and.right"
         case .ble: return "wave.3.right"
         case .rnode: return "radio"
+        case .multipeer: return "wifi.circle"
         }
     }
 }
@@ -119,6 +123,7 @@ public enum InterfaceTypeConfig: Codable, Equatable, Sendable {
     case autoInterface(AutoInterfaceConfig)
     case ble(BLEConfig)
     case rnode(RNodeConfig)
+    case multipeer(MultipeerConfig)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -145,6 +150,9 @@ public enum InterfaceTypeConfig: Codable, Equatable, Sendable {
         case "rnode":
             let config = try container.decode(RNodeConfig.self, forKey: .config)
             self = .rnode(config)
+        case "multipeer":
+            let config = try container.decode(MultipeerConfig.self, forKey: .config)
+            self = .multipeer(config)
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unknown config type: \(type)"))
         }
@@ -168,6 +176,9 @@ public enum InterfaceTypeConfig: Codable, Equatable, Sendable {
             try container.encode(config, forKey: .config)
         case .rnode(let config):
             try container.encode("rnode", forKey: .type)
+            try container.encode(config, forKey: .config)
+        case .multipeer(let config):
+            try container.encode("multipeer", forKey: .type)
             try container.encode(config, forKey: .config)
         }
     }
@@ -346,6 +357,18 @@ public struct RNodeConfig: Codable, Equatable, Sendable {
         self.codingRate = codingRate
         self.stAlock = stAlock
         self.ltAlock = ltAlock
+    }
+}
+
+// MARK: - Multipeer Config
+
+/// Configuration for Multipeer Connectivity interface.
+public struct MultipeerConfig: Codable, Equatable, Sendable {
+    /// Service type for Bonjour advertising (<=15 chars, lowercase alphanumeric + hyphens)
+    public var serviceType: String
+
+    public init(serviceType: String = "reticulum") {
+        self.serviceType = serviceType
     }
 }
 

@@ -36,12 +36,14 @@ struct ColumbaApp: App {
     // MARK: - Init
 
     init() {
+        #if os(iOS)
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: "network.columba.app.sync",
             using: nil
         ) { task in
             NotificationCenter.default.post(name: .columbaBackgroundSync, object: task)
         }
+        #endif
 
         // Install notification delegate early so didReceive (notification tap) works
         UNUserNotificationCenter.current().delegate = NotificationService.delegate
@@ -56,7 +58,9 @@ struct ColumbaApp: App {
                 notificationObserver: notificationObserver,
                 pendingDeepLink: $pendingDeepLink
             )
+            #if os(iOS)
             .background(KeyboardDismissHelper())
+            #endif
             .preferredColorScheme(ThemeManager.shared.resolvedColorScheme)
             .tint(Theme.accentColor)
             .id(ThemeManager.shared.themeVersion)
@@ -68,6 +72,7 @@ struct ColumbaApp: App {
     }
 }
 
+#if os(iOS)
 // MARK: - Keyboard Dismiss Helper
 
 /// Installs a UITapGestureRecognizer on the window that dismisses the keyboard
@@ -92,6 +97,7 @@ private struct KeyboardDismissHelper: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {}
 }
+#endif
 
 // MARK: - Root View
 
@@ -172,6 +178,7 @@ struct RootView: View {
                         identitySwitchTrigger = UUID()
                     }
                 )
+                #if os(iOS)
                 .fullScreenCover(isPresented: $showIncomingCall) {
                     if let cm = appServices.callManager {
                         IncomingCallScreen(callManager: cm, onAnswer: {
@@ -191,8 +198,6 @@ struct RootView: View {
                 }
                 .onChange(of: appServices.callManager?.callState) { _, newState in
                     guard let newState, appServices.callManager?.isIncoming == true else { return }
-                    // Show incoming call screen when we first learn about an incoming call
-                    // (.connecting = link just arrived, .ringing = caller identified)
                     switch newState {
                     case .connecting, .ringing:
                         if !showIncomingCall {
@@ -202,6 +207,7 @@ struct RootView: View {
                         break
                     }
                 }
+                #endif
             } else {
                 loadingView
             }
@@ -230,15 +236,19 @@ struct RootView: View {
                     }
                 }
             }
+            #if os(iOS)
             if newPhase == .background {
                 scheduleBackgroundSync()
             }
             appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
+            #endif
         }
+        #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: .columbaBackgroundSync)) { note in
             guard let task = note.object as? BGAppRefreshTask else { return }
             handleBackgroundSync(task: task)
         }
+        #endif
     }
 
     // MARK: - Loading View
@@ -316,6 +326,7 @@ struct RootView: View {
         }
     }
 
+    #if os(iOS)
     // MARK: - Background Sync
 
     private func scheduleBackgroundSync() {
@@ -335,6 +346,7 @@ struct RootView: View {
             task.setTaskCompleted(success: false)
         }
     }
+    #endif
 
     // MARK: - Initialization
 
@@ -412,11 +424,14 @@ struct RootView: View {
             let repo = MessageRepository(database: db)
             self.messageRepository = repo
 
+            #if os(iOS)
             // Initialize location sharing manager
             let locManager = LocationSharingManager(appServices: appServices)
             appServices.locationSharingManager = locManager
-
             let handler = IncomingMessageHandler(messageRepository: repo, database: db, locationSharingManager: locManager)
+            #else
+            let handler = IncomingMessageHandler(messageRepository: repo, database: db)
+            #endif
             self.incomingMessageHandler = handler
             if let router = appServices.router {
                 await router.setDelegate(handler)
@@ -465,6 +480,14 @@ struct RootView: View {
                     } else {
                         DiagLog.log("[STARTUP] RNode interface has no config!")
                     }
+                case .multipeer:
+                    #if canImport(MultipeerConnectivity)
+                    Task {
+                        DiagLog.log("[STARTUP] Starting Multipeer Connectivity")
+                        try? await services.startMPCInterface()
+                        DiagLog.log("[STARTUP] Multipeer started")
+                    }
+                    #endif
                 }
             }
 

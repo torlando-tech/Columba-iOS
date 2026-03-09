@@ -379,6 +379,27 @@ public final class InterfaceManagementViewModel {
             await appServices.stopRNodeInterface()
         }
 
+        // --- Multipeer Connectivity ---
+        #if canImport(MultipeerConnectivity)
+        let mpcEntity = enabledInterfaces.first(where: { $0.type == .multipeer })
+        if let mpcIf = mpcEntity {
+            if appServices.mpcInterface == nil {
+                logger.info("Starting Multipeer")
+                interfaceStatus[mpcIf.id] = .connecting
+                do {
+                    try await appServices.startMPCInterface()
+                    interfaceStatus[mpcIf.id] = .connected
+                } catch {
+                    logger.error("Multipeer failed: \(error)")
+                    interfaceStatus[mpcIf.id] = .error
+                    showError("Multipeer failed: \(error.localizedDescription)")
+                }
+            }
+        } else if mpcEntity == nil {
+            await appServices.stopMPCInterface()
+        }
+        #endif
+
         hasPendingChanges = false
         isApplyingChanges = false
     }
@@ -407,7 +428,7 @@ public final class InterfaceManagementViewModel {
                 guard let self = self else { break }
 
                 // Read @MainActor properties we need for actor lookups
-                let (activeId, isConn, isReconn, connErr, autoIf, bleIf, rnodeIf, enabledIfs) = await MainActor.run {
+                let (activeId, isConn, isReconn, connErr, autoIf, bleIf, rnodeIf, mpcIf, enabledIfs) = await MainActor.run {
                     (
                         self.activeInterfaceId,
                         self.appServices.isConnected,
@@ -416,6 +437,7 @@ public final class InterfaceManagementViewModel {
                         self.appServices.autoInterface,
                         self.appServices.bleInterface,
                         self.appServices.rnodeInterface,
+                        self.appServices.mpcInterface,
                         self.repository.getEnabledInterfaces()
                     )
                 }
@@ -438,6 +460,13 @@ public final class InterfaceManagementViewModel {
                 var rnodeState: InterfaceState?
                 if let rnode = rnodeIf {
                     rnodeState = await rnode.state
+                }
+
+                var mpcState: InterfaceState?
+                var mpcPeerCount: Int?
+                if let mpc = mpcIf {
+                    mpcState = await mpc.state
+                    mpcPeerCount = await mpc.peerCount
                 }
 
                 // Batch all UI mutations into single MainActor.run
@@ -521,6 +550,28 @@ public final class InterfaceManagementViewModel {
                             self.interfaceStatus[rnodeEntity.id] = .disconnected
                         }
                     }
+
+                    // Track MPC interface status
+                    // Parent is always .connected once advertising — use peer count
+                    // to distinguish "active with peers" from "browsing, no peers"
+                    if let mpcEntity = enabledIfs.first(where: { $0.type == .multipeer }) {
+                        if let state = mpcState {
+                            switch state {
+                            case .connected:
+                                if (mpcPeerCount ?? 0) > 0 {
+                                    self.interfaceStatus[mpcEntity.id] = .connected
+                                } else {
+                                    self.interfaceStatus[mpcEntity.id] = .connecting
+                                }
+                            case .connecting:
+                                self.interfaceStatus[mpcEntity.id] = .connecting
+                            default:
+                                self.interfaceStatus[mpcEntity.id] = .disconnected
+                            }
+                        } else {
+                            self.interfaceStatus[mpcEntity.id] = .disconnected
+                        }
+                    }
                 }
 
                 try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
@@ -586,6 +637,9 @@ public final class InterfaceManagementViewModel {
             configTxPower = String(config.txPower)
             configSpreadingFactor = String(config.spreadingFactor)
             configCodingRate = String(config.codingRate)
+
+        case .multipeer:
+            break // No type-specific fields to populate
         }
     }
 
@@ -623,6 +677,9 @@ public final class InterfaceManagementViewModel {
 
         case .ble:
             return .ble(BLEConfig())
+
+        case .multipeer:
+            return .multipeer(MultipeerConfig())
         }
     }
 

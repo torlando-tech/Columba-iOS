@@ -154,7 +154,7 @@ struct NodeDetailsView: View {
             detailRow(
                 icon: "antenna.radiowaves.left.and.right",
                 label: "Interface",
-                value: interfaceName ?? "Mesh Network"
+                value: interfaceName ?? "Unknown"
             )
 
             detailRow(
