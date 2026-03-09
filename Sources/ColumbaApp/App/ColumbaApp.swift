@@ -484,8 +484,12 @@ struct RootView: View {
                     #if canImport(MultipeerConnectivity)
                     Task {
                         DiagLog.log("[STARTUP] Starting Multipeer Connectivity")
-                        try? await services.startMPCInterface()
-                        DiagLog.log("[STARTUP] Multipeer started")
+                        do {
+                            try await services.startMPCInterface()
+                            DiagLog.log("[STARTUP] Multipeer started successfully")
+                        } catch {
+                            DiagLog.log("[STARTUP] Multipeer FAILED: \(error)")
+                        }
                     }
                     #endif
                 }

@@ -49,6 +49,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         if iface.hasPrefix("ble") { return "bluetooth" }
         if iface.hasPrefix("rnode") { return "antenna.radiowaves.left.and.right" }
         if iface.hasPrefix("auto") { return "wifi" }
+        if iface.hasPrefix("mpc") { return "apple.logo" }
         return "globe" // tcp and others
     }
 
@@ -63,6 +64,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         if iface.hasPrefix("ble") { return .ble }
         if iface.hasPrefix("rnode") { return .rnode }
         if iface.hasPrefix("auto") { return .wifi }
+        if iface.hasPrefix("mpc") { return .wifi }
         return .tcp
     }
 
