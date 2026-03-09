@@ -16,7 +16,8 @@ struct CompletePage: View {
     let isSaving: Bool
     let selectedRNode: Bool
     let identityManager: IdentityManager
-    let onShowQR: () -> Void
+    let qrCodeString: String
+    let onPrepare: () async -> Void
     let onFinish: () -> Void
 
     @State private var showQRSheet = false
@@ -117,6 +118,9 @@ struct CompletePage: View {
         .sheet(isPresented: $showQRSheet) {
             qrCodeSheet
         }
+        .task {
+            await onPrepare()
+        }
     }
 
     // MARK: - Summary Row
@@ -152,12 +156,28 @@ struct CompletePage: View {
                     .font(.title2.bold())
                     .foregroundStyle(.white)
 
-                // QR code will be populated after identity is created
-                Text("Complete setup first to generate your QR code")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
+                if qrCodeString.isEmpty {
+                    ProgressView()
+                        .tint(Theme.accentColor)
+                    Text("Generating identity...")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+                } else {
+                    if let cgImage = Self.generateQRCode(from: qrCodeString) {
+                        Image(decorative: cgImage, scale: 1)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 200, height: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+
+                    Text("Scan this code to add you as a contact")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                }
 
                 Spacer()
             }
@@ -171,5 +191,17 @@ struct CompletePage: View {
             }
         }
         .presentationDetents([.medium])
+    }
+
+    // MARK: - QR Code Generation
+
+    private static func generateQRCode(from string: String) -> CGImage? {
+        let context = CIContext()
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(string.utf8)
+
+        guard let outputImage = filter.outputImage else { return nil }
+        let scaled = outputImage.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        return context.createCGImage(scaled, from: scaled.extent)
     }
 }

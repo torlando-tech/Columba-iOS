@@ -93,7 +93,10 @@ struct OnboardingView: View {
                             isSaving: viewModel.isSaving,
                             selectedRNode: viewModel.selectedInterfaces.contains(.rnode),
                             identityManager: identityManager,
-                            onShowQR: { },
+                            qrCodeString: viewModel.qrCodeString,
+                            onPrepare: {
+                                await viewModel.prepareIdentity(identityManager: identityManager)
+                            },
                             onFinish: {
                                 Task {
                                     try? await viewModel.completeOnboarding(

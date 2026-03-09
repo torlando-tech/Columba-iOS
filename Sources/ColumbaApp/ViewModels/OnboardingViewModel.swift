@@ -24,6 +24,11 @@ final class OnboardingViewModel {
     var notificationsGranted: Bool = false
     var isSaving: Bool = false
 
+    /// Identity created during onboarding (set by prepareIdentity).
+    var createdIdentity: LocalIdentity?
+    /// QR code string for the created identity.
+    var qrCodeString: String = ""
+
     /// Total number of onboarding pages.
     static let pageCount = 5
 
@@ -73,11 +78,29 @@ final class OnboardingViewModel {
         notificationsGranted = settings.authorizationStatus == .authorized
     }
 
+    // MARK: - Identity Preparation
+
+    /// Create the identity eagerly so the QR code is available on the complete page.
+    func prepareIdentity(identityManager: IdentityManager) async {
+        guard createdIdentity == nil else { return }
+        do {
+            let local = try await identityManager.createIdentity(displayName: effectiveDisplayName)
+            let identity = try await identityManager.loadIdentityKeys(for: local.identityHash)
+            createdIdentity = local
+
+            // Build QR string: lxma://<dest_hash>:<public_key_hex>
+            let pubKeyHex = identity.publicKeys.map { String(format: "%02x", $0) }.joined()
+            qrCodeString = "lxma://\(local.destinationHash):\(pubKeyHex)"
+        } catch {
+            // Non-fatal — QR just won't be available
+        }
+    }
+
     // MARK: - Completion
 
     /// Complete onboarding with user's selections.
     ///
-    /// Creates identity, configures interfaces, saves display name, and marks onboarding done.
+    /// Uses the identity already created by prepareIdentity, or creates one if needed.
     func completeOnboarding(
         identityManager: IdentityManager,
         settingsRepository: SettingsRepository
@@ -85,8 +108,13 @@ final class OnboardingViewModel {
         isSaving = true
         defer { isSaving = false }
 
-        // 1. Create identity with display name
-        let local = try await identityManager.createIdentity(displayName: effectiveDisplayName)
+        // 1. Use existing identity or create one
+        let local: LocalIdentity
+        if let existing = createdIdentity {
+            local = existing
+        } else {
+            local = try await identityManager.createIdentity(displayName: effectiveDisplayName)
+        }
         let _ = try await identityManager.switchToIdentity(local.identityHash)
 
         // 2. Save display name to settings
