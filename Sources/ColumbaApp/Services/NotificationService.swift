@@ -33,6 +33,20 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
             completionHandler([.banner, .sound, .badge])
         }
     }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+        if let sourceHash = userInfo["sourceHash"] as? String {
+            Task { @MainActor in
+                NotificationService.pendingConversationHash = sourceHash
+            }
+        }
+        completionHandler()
+    }
 }
 
 @available(iOS 17.0, macOS 14.0, *)
@@ -44,6 +58,10 @@ public final class NotificationService: Sendable {
     /// Set by MessagingView on appear/disappear. When a notification's threadIdentifier matches,
     /// the foreground banner is suppressed.
     @MainActor static var activeConversationThreadId: String?
+
+    /// Hex destination hash of the conversation to navigate to when a notification is tapped.
+    /// Set by NotificationDelegate.didReceive, consumed by ChatsView.
+    @MainActor static var pendingConversationHash: String?
 
     // MARK: - Singleton
 

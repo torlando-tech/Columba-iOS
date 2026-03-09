@@ -39,6 +39,9 @@ struct ChatsView: View {
     /// Contact selected for peer details navigation.
     @State private var selectedContact: Contact?
 
+    /// Conversation to navigate to programmatically (e.g. from notification tap).
+    @State private var notificationConversation: Conversation?
+
     /// Conversation pending deletion (confirmation alert).
     @State private var deletingConversation: Conversation?
 
@@ -123,6 +126,13 @@ struct ChatsView: View {
                     onStartChat: nil
                 )
             }
+            .navigationDestination(item: $notificationConversation) { conversation in
+                MessagingView(
+                    conversation: conversation,
+                    appServices: appServices,
+                    messageRepository: messageRepository
+                )
+            }
         }
         .preferredColorScheme(.dark)
         .tint(Theme.accentColor)
@@ -151,6 +161,22 @@ struct ChatsView: View {
             }
         } message: {
             Text("This will permanently delete the conversation and all its messages.")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            checkPendingNotification()
+        }
+        .onChange(of: viewModel?.filteredConversations) { _, _ in
+            checkPendingNotification()
+        }
+    }
+
+    /// Navigate to conversation from a tapped notification.
+    private func checkPendingNotification() {
+        guard let hash = NotificationService.pendingConversationHash,
+              let vm = viewModel else { return }
+        NotificationService.pendingConversationHash = nil
+        if let conversation = vm.filteredConversations.first(where: { $0.id == hash }) {
+            notificationConversation = conversation
         }
     }
 

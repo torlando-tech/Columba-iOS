@@ -42,6 +42,9 @@ struct ColumbaApp: App {
         ) { task in
             NotificationCenter.default.post(name: .columbaBackgroundSync, object: task)
         }
+
+        // Install notification delegate early so didReceive (notification tap) works
+        UNUserNotificationCenter.current().delegate = NotificationService.delegate
     }
 
     // MARK: - App Body
