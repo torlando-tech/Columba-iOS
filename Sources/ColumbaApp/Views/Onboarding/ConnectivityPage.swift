@@ -7,6 +7,7 @@
 
 import SwiftUI
 import CoreBluetooth
+import Network
 
 @available(iOS 17.0, macOS 14.0, *)
 struct ConnectivityPage: View {
@@ -18,6 +19,8 @@ struct ConnectivityPage: View {
     @State private var showServerPicker = false
     @State private var bluetoothAuthorization: CBManagerAuthorization = CBCentralManager.authorization
     @State private var bluetoothProbe: BluetoothPermissionProbe?
+    @State private var localNetworkProbe: LocalNetworkPermissionProbe?
+    @State private var localNetworkPrompted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -104,6 +107,11 @@ struct ConnectivityPage: View {
         .sheet(isPresented: $showServerPicker) {
             serverPickerSheet
         }
+        .onAppear {
+            if selectedInterfaces.contains(.auto) && !localNetworkPrompted {
+                requestLocalNetworkPermission()
+            }
+        }
     }
 
     // MARK: - Interface Card
@@ -122,6 +130,9 @@ struct ConnectivityPage: View {
                 }
                 if type == .ble && CBCentralManager.authorization == .notDetermined {
                     requestBluetoothPermission()
+                }
+                if type == .auto && !localNetworkPrompted {
+                    requestLocalNetworkPermission()
                 }
             }
         } label: {
@@ -301,6 +312,11 @@ struct ConnectivityPage: View {
             bluetoothAuthorization = auth
         }
     }
+
+    private func requestLocalNetworkPermission() {
+        localNetworkPrompted = true
+        localNetworkProbe = LocalNetworkPermissionProbe()
+    }
 }
 
 /// Triggers the iOS Bluetooth permission dialog by initializing a CBCentralManager.
@@ -319,5 +335,26 @@ private class BluetoothPermissionProbe: NSObject, CBCentralManagerDelegate {
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         onAuthorizationChange(CBCentralManager.authorization)
+    }
+}
+
+/// Triggers the iOS local network permission dialog by browsing for a Bonjour service.
+/// iOS shows the prompt on first local network access attempt.
+private class LocalNetworkPermissionProbe {
+    private var browser: NWBrowser?
+
+    init() {
+        let params = NWParameters()
+        params.includePeerToPeer = true
+        browser = NWBrowser(for: .bonjour(type: "_reticulum._tcp", domain: nil), using: params)
+        browser?.stateUpdateHandler = { [weak self] state in
+            if case .cancelled = state { return }
+            // Brief browse is enough to trigger the prompt — cancel after 2s
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                self?.browser?.cancel()
+                self?.browser = nil
+            }
+        }
+        browser?.start(queue: .main)
     }
 }

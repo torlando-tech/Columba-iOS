@@ -19,7 +19,7 @@ final class OnboardingViewModel {
 
     var currentPage: Int = 0
     var displayName: String = ""
-    var selectedInterfaces: Set<OnboardingInterfaceType> = [.auto]
+    var selectedInterfaces: Set<OnboardingInterfaceType> = []
     var selectedTcpServer: TcpCommunityServer? = nil
     var notificationsGranted: Bool = false
     var isSaving: Bool = false
