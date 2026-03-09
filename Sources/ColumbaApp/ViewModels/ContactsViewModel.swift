@@ -324,7 +324,7 @@ public final class ContactsViewModel {
         case .all:
             break
         case .peers:
-            results = results.filter { !$0.isRelay && !$0.isAudio }
+            results = results.filter { $0.aspect == "lxmf.delivery" || $0.aspect == nil }
         case .audio:
             results = results.filter { $0.isAudio }
         case .relays:
