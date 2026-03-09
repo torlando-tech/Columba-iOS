@@ -90,7 +90,7 @@ struct MessageInputBar: View {
                         // Image preview
                         if let image = attachedImage {
                             ZStack(alignment: .topTrailing) {
-                                Image(uiImage: image)
+                                Image(platformImage: image)
                                     .resizable()
                                     .aspectRatio(contentMode: .fill)
                                     .frame(width: 60, height: 60)

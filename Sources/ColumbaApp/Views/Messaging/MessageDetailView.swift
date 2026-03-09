@@ -41,13 +41,22 @@ struct MessageDetailView: View {
             .navigationTitle("Message Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                #if os(iOS)
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Done") { dismiss() }
                         .foregroundStyle(Theme.accentColor)
                 }
+                #else
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Theme.accentColor)
+                }
+                #endif
             }
+            #if os(iOS)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            #endif
         }
         .preferredColorScheme(.dark)
     }

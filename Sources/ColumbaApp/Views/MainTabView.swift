@@ -59,6 +59,7 @@ struct MainTabView: View {
             }
             .tag(Tab.contacts)
 
+            #if os(iOS)
             // Map Tab
             MapView(
                 appServices: appServices,
@@ -68,6 +69,7 @@ struct MainTabView: View {
                     Label(Tab.map.title, systemImage: Tab.map.icon)
                 }
                 .tag(Tab.map)
+            #endif
 
             // Settings Tab
             SettingsView(
@@ -87,10 +89,18 @@ struct MainTabView: View {
                 selectedTab = .contacts
             }
         }
+        #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             if NotificationService.pendingConversationHash != nil {
                 selectedTab = .chats
             }
         }
+        #else
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if NotificationService.pendingConversationHash != nil {
+                selectedTab = .chats
+            }
+        }
+        #endif
     }
 }

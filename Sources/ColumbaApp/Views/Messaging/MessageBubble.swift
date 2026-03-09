@@ -72,7 +72,7 @@ struct MessageBubble: View {
                     // Inline image
                     if let imageData = message.imageData,
                        let uiImage = UIImage(data: imageData) {
-                        Image(uiImage: uiImage)
+                        Image(platformImage: uiImage)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: 250)

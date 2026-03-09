@@ -106,7 +106,7 @@ struct InterfaceManagementScreen: View {
         #endif
         .sheet(isPresented: $viewModel.showTypeSelector) {
             InterfaceTypeSelector(viewModel: viewModel)
-                .presentationDetents([.medium])
+                .presentationDetents([.height(480), .large])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $viewModel.showConfigSheet) {
@@ -419,6 +419,11 @@ struct InterfaceTypeSelector: View {
                         type: .rnode,
                         highlighted: true
                     )
+
+                    typeOption(
+                        type: .multipeer,
+                        highlighted: true
+                    )
                 }
                 .padding(16)
             }
@@ -506,7 +511,7 @@ struct TCPInterfaceConfigSheet: View {
                                 placeholder: "IP address or hostname",
                                 text: $viewModel.configTargetHost,
                                 error: viewModel.targetHostError,
-                                keyboardType: .URL
+                                isNumeric: false
                             )
 
                             configField(
@@ -514,7 +519,7 @@ struct TCPInterfaceConfigSheet: View {
                                 placeholder: "4242",
                                 text: $viewModel.configTargetPort,
                                 error: viewModel.targetPortError,
-                                keyboardType: .numberPad
+                                isNumeric: true
                             )
                         }
 
@@ -570,7 +575,7 @@ struct TCPInterfaceConfigSheet: View {
         placeholder: String,
         text: Binding<String>,
         error: String? = nil,
-        keyboardType: UIKeyboardType = .default
+        isNumeric: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
@@ -584,7 +589,7 @@ struct TCPInterfaceConfigSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
                 .foregroundStyle(Theme.textPrimary)
                 #if os(iOS)
-                .keyboardType(keyboardType)
+                .keyboardType(isNumeric ? .numberPad : .default)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 #endif

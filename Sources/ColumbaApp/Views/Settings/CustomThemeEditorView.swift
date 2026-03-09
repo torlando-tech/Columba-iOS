@@ -453,7 +453,9 @@ struct CustomThemeEditorView: View {
                 TextField("#RRGGBB", text: $hexInput)
                     .font(.body.monospaced())
                     .foregroundStyle(.white)
+                    #if os(iOS)
                     .textInputAutocapitalization(.characters)
+                    #endif
                     .autocorrectionDisabled()
                     .focused($hexFieldFocused)
                     .onChange(of: hexInput) {

@@ -1,5 +1,5 @@
 {
-  "originHash" : "c7dee423c59cc8c0a11df25d462d202b9d304e192dfd59f33db44ab5eec71255",
+  "originHash" : "",
   "pins" : [
     {
       "identity" : "bitbytedata",
@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "git@github.com:torlando-tech/reticulum-swift-lib.git",
       "state" : {
-        "revision" : "2b89c1b7d7296640d11f9c905a938f944b420706",
-        "version" : "0.1.0"
+        "branch" : "feature/mpc-interface",
+        "revision" : "ee2724fced421e7f992ff550c56021bd08426b03"
       }
     },
     {

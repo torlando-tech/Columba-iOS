@@ -100,7 +100,9 @@ struct BLEDevicePickerSheet: View {
                     .foregroundStyle(isScanning ? Theme.error : Theme.accentColor)
                 }
             }
+            #if os(iOS)
             .toolbarBackground(Theme.backgroundPrimary, for: .navigationBar)
+            #endif
         }
         .onDisappear {
             stopScanning()

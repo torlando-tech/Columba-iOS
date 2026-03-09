@@ -113,6 +113,7 @@ final class NetworkStatusViewModel {
                 case .autoInterface: typeName = "AutoInterface"
                 case .rnode: typeName = "RNode"
                 case .ble: typeName = "BLE"
+                case .multipeerConnectivity: typeName = "Multipeer"
                 }
             }
 

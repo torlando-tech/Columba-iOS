@@ -11,7 +11,9 @@
 
 import Foundation
 import LXMFSwift
+#if os(iOS)
 import LXSTSwift
+#endif
 import ReticulumSwift
 import os.log
 
@@ -100,6 +102,11 @@ public final class AppServices {
     /// BLE interface for Bluetooth peer-to-peer networking.
     public private(set) var bleInterface: BLEInterface?
 
+    #if canImport(MultipeerConnectivity)
+    /// Multipeer Connectivity interface for peer-to-peer WiFi.
+    public private(set) var mpcInterface: MPCInterface?
+    #endif
+
     /// LXMF delivery destination for receiving messages.
     public private(set) var deliveryDestination: Destination?
 
@@ -112,11 +119,13 @@ public final class AppServices {
     /// Auto announce manager for periodic network announces.
     public private(set) var autoAnnounceManager: AutoAnnounceManager?
 
+    #if os(iOS)
     /// Location sharing manager for telemetry exchange with peers.
     public var locationSharingManager: LocationSharingManager?
 
     /// Call manager for LXST voice call UI integration.
     public var callManager: CallManager?
+    #endif
 
     #if ENABLE_NETWORK_EXTENSION
     /// Network Extension tunnel manager.
@@ -389,6 +398,7 @@ public final class AppServices {
         await newRouter.setTransport(newTransport)
         await newRouter.setRatchetManager(newDestination.ratchetManager)
 
+        #if os(iOS)
         // 7b. Initialize call manager BEFORE interfaces so that autoAnnounce()
         //     (triggered by onInterfaceAdded) can send the telephony announce.
         DiagLog.log("[INIT] Step 7b: creating CallManager")
@@ -396,6 +406,7 @@ public final class AppServices {
         await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
         self.callManager = cm
         DiagLog.log("[INIT] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
+        #endif
 
         // 8. Parse server address and create TCP interface (non-fatal — app works offline)
         if let (host, port) = parseHostPort(tcpServerAddress) {
@@ -497,6 +508,7 @@ public final class AppServices {
         await newRouter.setTransport(newTransport)
         await newRouter.setRatchetManager(newDestination.ratchetManager)
 
+        #if os(iOS)
         // 7b. Initialize call manager BEFORE interfaces so that autoAnnounce()
         //     (triggered by onInterfaceAdded) can send the telephony announce.
         DiagLog.log("[INIT2] Step 7b: creating CallManager")
@@ -509,6 +521,7 @@ public final class AppServices {
             let isRegistered = await newTransport.isDestinationRegistered(telDest.hash)
             DiagLog.log("[INIT2] telephony dest registered in transport: \(isRegistered)")
         }
+        #endif
 
         // 8. Parse server address and create TCP interface
         if let (host, port) = parseHostPort(tcpServerAddress) {
@@ -856,6 +869,53 @@ public final class AppServices {
     }
     #endif
 
+    #if canImport(MultipeerConnectivity)
+    /// Start the Multipeer Connectivity interface for peer-to-peer WiFi.
+    ///
+    /// Discovers nearby Apple devices advertising the same service type
+    /// and establishes direct peer-to-peer WiFi connections without
+    /// requiring shared infrastructure.
+    public func startMPCInterface() async throws {
+        await stopMPCInterface()
+
+        if transport == nil {
+            try await initializeBaseStack()
+        }
+
+        guard let transport = transport, let identity = identity else {
+            throw AppServicesError.transportNotConnected
+        }
+
+        let displayName = String(identity.hexHash.prefix(8))
+        let config = InterfaceConfig(
+            id: "mpc0",
+            name: "Multipeer",
+            type: .multipeerConnectivity,
+            enabled: true,
+            mode: .full,
+            host: "reticulum",
+            port: 0
+        )
+
+        let newMPCInterface = MPCInterface(config: config, displayName: displayName)
+        self.mpcInterface = newMPCInterface
+
+        try await transport.addMPCInterface(newMPCInterface)
+        logger.info("MPCInterface started with display name: \(displayName)")
+    }
+
+    /// Stop the Multipeer Connectivity interface.
+    public func stopMPCInterface() async {
+        guard let mpc = mpcInterface else { return }
+        await mpc.disconnect()
+        if let transport = transport {
+            await transport.removeInterface(id: mpc.id)
+        }
+        mpcInterface = nil
+        logger.info("MPCInterface stopped")
+    }
+    #endif
+
     /// Start an RNode BLE interface with the given radio configuration.
     ///
     /// Creates an RNodeInterface, configures the radio, and registers it with
@@ -998,6 +1058,7 @@ public final class AppServices {
             propManager.startPeriodicSync()
         }
 
+        #if os(iOS)
         // Init call manager if needed (must be before interfaces so autoAnnounce
         // can send telephony announce when onInterfaceAdded fires)
         if callManager == nil, let transport = transport, let pt = pathTable, let db = database {
@@ -1005,6 +1066,7 @@ public final class AppServices {
             await cm.initialize(identity: existingIdentity, transport: transport, pathTable: pt, database: db)
             self.callManager = cm
         }
+        #endif
 
         // Init auto-announce manager if needed
         if autoAnnounceManager == nil {
@@ -1046,8 +1108,10 @@ public final class AppServices {
         stateObserverTask?.cancel()
         stateObserverTask = nil
 
+        #if os(iOS)
         // Stop call manager
         await callManager?.shutdown()
+        #endif
 
         // Stop auto-announce manager
         autoAnnounceManager?.stop()
@@ -1304,16 +1368,19 @@ public final class AppServices {
             firstError = error
         }
 
+        #if os(iOS)
         do {
             try await sendTelephonyAnnounce(displayName: displayName)
         } catch {
             DiagLog.log("[ANNOUNCE] Telephony announce failed: \(error.localizedDescription)")
             if firstError == nil { firstError = error }
         }
+        #endif
 
         if let firstError { throw firstError }
     }
 
+    #if os(iOS)
     /// Send an announce for the LXST telephony destination.
     ///
     /// This broadcasts the device's telephony endpoint to the network, allowing
@@ -1346,6 +1413,7 @@ public final class AppServices {
 
         DiagLog.log("[TELEPHONY_ANNOUNCE] Sent for dest \(destination.hexHash)")
     }
+    #endif
 
     /// Wire transport callbacks that need app-layer context.
     private func configureTransportCallbacks(_ transport: ReticulumTransport) async {
@@ -1376,7 +1444,7 @@ public final class AppServices {
             DiagLog.log("[AUTO_ANNOUNCE] debounced (last announce \(String(format: "%.1f", now.timeIntervalSince(lastAutoAnnounce)))s ago)")
             return
         }
-        DiagLog.log("[AUTO_ANNOUNCE] triggered, callManager=\(callManager == nil ? "nil" : "exists")")
+        DiagLog.log("[AUTO_ANNOUNCE] triggered")
         let displayName = await SettingsRepository().getDisplayName()
         do {
             try await sendAllAnnounces(displayName: displayName)
