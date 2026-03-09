@@ -94,12 +94,10 @@ public struct ContactsView: View {
                 }
                 .background(Theme.backgroundPrimary)
                 .navigationTitle("Contacts")
-                #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     toolbarContent(vm)
                 }
-                #endif
                 .navigationDestination(item: $selectedContact) { contact in
                     NodeDetailsView(
                         contact: contact,
@@ -385,63 +383,89 @@ public struct ContactsView: View {
         }
     }
 
-    #if os(iOS)
-    @ToolbarContentBuilder
-    private func toolbarContent(_ vm: ContactsViewModel) -> some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            HStack(spacing: 16) {
-                // Announce button
-                Button {
-                    Task { await vm.sendAnnounce() }
-                } label: {
-                    if vm.isAnnouncing {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    } else {
-                        Image(systemName: vm.announceSuccess
-                              ? "checkmark.circle.fill"
-                              : "antenna.radiowaves.left.and.right")
-                            .font(.title3)
-                            .foregroundStyle(vm.announceSuccess ? .green : Theme.accentColor)
+    private var toolbarButtons: some View {
+        HStack(spacing: 16) {
+            // Announce button
+            Button {
+                Task { await viewModel?.sendAnnounce() }
+            } label: {
+                if viewModel?.isAnnouncing == true {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: viewModel?.announceSuccess == true
+                          ? "checkmark.circle.fill"
+                          : "antenna.radiowaves.left.and.right")
+                        .font(.title3)
+                        .foregroundStyle(viewModel?.announceSuccess == true ? .green : Theme.accentColor)
+                }
+            }
+            .disabled(viewModel?.isAnnouncing == true)
+            .help("Send Announce")
+
+            #if os(iOS)
+            // QR scan button
+            Button {
+                showQRScanner = true
+            } label: {
+                Image(systemName: "qrcode.viewfinder")
+                    .font(.title3)
+            }
+            #else
+            // Paste contact button (macOS — no camera)
+            Button {
+                if let str = NSPasteboard.general.string(forType: .string),
+                   let parsed = ContactsViewModel.parseLXMA(str) {
+                    scannedContact = ScannedContact(
+                        destinationHash: parsed.destinationHash,
+                        publicKey: parsed.publicKey
+                    )
+                }
+            } label: {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.title3)
+            }
+            .help("Add Contact from Clipboard")
+            #endif
+
+            // Search button
+            Button {
+                withAnimation {
+                    isSearching.toggle()
+                    if !isSearching {
+                        viewModel?.searchText = ""
                     }
                 }
-                .disabled(vm.isAnnouncing)
+            } label: {
+                Image(systemName: isSearching ? "magnifyingglass.circle.fill" : "magnifyingglass")
+                    .font(.title3)
+            }
 
-                // QR scan button
-                Button {
-                    showQRScanner = true
-                } label: {
-                    Image(systemName: "qrcode.viewfinder")
-                        .font(.title3)
-                }
-
-                // Search button
-                Button {
-                    withAnimation {
-                        isSearching.toggle()
-                        if !isSearching {
-                            vm.searchText = ""
-                        }
-                    }
-                } label: {
-                    Image(systemName: isSearching ? "magnifyingglass.circle.fill" : "magnifyingglass")
-                        .font(.title3)
-                }
-
-                // More options
-                Menu {
-                    Button("Sort by Name", action: {})
-                    Button("Sort by Recent", action: {})
-                    Divider()
-                    Button("Show Offline", action: {})
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.title3)
-                }
+            // More options
+            Menu {
+                Button("Sort by Name", action: {})
+                Button("Sort by Recent", action: {})
+                Divider()
+                Button("Show Offline", action: {})
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.title3)
             }
         }
     }
-    #endif
+
+    @ToolbarContentBuilder
+    private func toolbarContent(_ vm: ContactsViewModel) -> some ToolbarContent {
+        #if os(iOS)
+        ToolbarItem(placement: .topBarTrailing) {
+            toolbarButtons
+        }
+        #else
+        ToolbarItem(placement: .primaryAction) {
+            toolbarButtons
+        }
+        #endif
+    }
 }
 
 // MARK: - Preview
