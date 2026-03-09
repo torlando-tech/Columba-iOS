@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreBluetooth
 
 @available(iOS 17.0, macOS 14.0, *)
 struct ConnectivityPage: View {
@@ -15,6 +16,8 @@ struct ConnectivityPage: View {
     let onContinue: () -> Void
 
     @State private var showServerPicker = false
+    @State private var bluetoothAuthorization: CBManagerAuthorization = CBCentralManager.authorization
+    @State private var bluetoothProbe: BluetoothPermissionProbe?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,6 +52,13 @@ struct ConnectivityPage: View {
                     // TCP server selection
                     if selectedInterfaces.contains(.tcp) {
                         tcpServerRow
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 12)
+                    }
+
+                    // Bluetooth permission card
+                    if selectedInterfaces.contains(.ble) {
+                        bluetoothPermissionCard
                             .padding(.horizontal, 24)
                             .padding(.bottom, 12)
                     }
@@ -109,6 +119,9 @@ struct ConnectivityPage: View {
                 selectedInterfaces.insert(type)
                 if type == .tcp && selectedTcpServer == nil {
                     selectedTcpServer = TcpCommunityServer.defaultServer
+                }
+                if type == .ble && CBCentralManager.authorization == .notDetermined {
+                    requestBluetoothPermission()
                 }
             }
         } label: {
@@ -233,5 +246,78 @@ struct ConnectivityPage: View {
                 }
             }
         }
+    }
+
+    // MARK: - Bluetooth Permission Card
+
+    private var bluetoothPermissionCard: some View {
+        let granted = bluetoothAuthorization == .allowedAlways
+
+        return HStack(spacing: 14) {
+            Image(systemName: "wave.3.right")
+                .font(.system(size: 24))
+                .foregroundStyle(granted ? Theme.success : Theme.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Bluetooth Access")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(granted ? "Enabled" : "Required for BLE mesh networking")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
+            Spacer()
+
+            if granted {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(Theme.success)
+            } else {
+                Button {
+                    requestBluetoothPermission()
+                } label: {
+                    Text("Enable")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Theme.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
+        .padding(16)
+        .background(Theme.backgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(granted ? Theme.success.opacity(0.5) : Theme.divider, lineWidth: 1)
+        )
+    }
+
+    private func requestBluetoothPermission() {
+        bluetoothProbe = BluetoothPermissionProbe { auth in
+            bluetoothAuthorization = auth
+        }
+    }
+}
+
+/// Triggers the iOS Bluetooth permission dialog by initializing a CBCentralManager.
+/// iOS shows the permission prompt on first CBCentralManager creation if authorization is .notDetermined.
+private class BluetoothPermissionProbe: NSObject, CBCentralManagerDelegate {
+    private var manager: CBCentralManager?
+    private let onAuthorizationChange: (CBManagerAuthorization) -> Void
+
+    init(onAuthorizationChange: @escaping (CBManagerAuthorization) -> Void) {
+        self.onAuthorizationChange = onAuthorizationChange
+        super.init()
+        manager = CBCentralManager(delegate: self, queue: nil, options: [
+            CBCentralManagerOptionShowPowerAlertKey: false
+        ])
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        onAuthorizationChange(CBCentralManager.authorization)
     }
 }

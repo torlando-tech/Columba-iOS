@@ -6,10 +6,14 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 @available(iOS 17.0, macOS 14.0, *)
 struct WelcomePage: View {
     let onContinue: () -> Void
+    let onRestoreFile: (Data) -> Void
+
+    @State private var showingFileImporter = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,7 +71,7 @@ struct WelcomePage: View {
                 }
 
                 Button {
-                    // Placeholder for future backup restore
+                    showingFileImporter = true
                 } label: {
                     Text("Restore from backup")
                         .font(.subheadline)
@@ -76,6 +80,22 @@ struct WelcomePage: View {
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
+        }
+        .fileImporter(
+            isPresented: $showingFileImporter,
+            allowedContentTypes: [
+                UTType(filenameExtension: "columba") ?? .data,
+                .json
+            ],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                if let data = try? Data(contentsOf: url) {
+                    onRestoreFile(data)
+                }
+            }
         }
     }
 

@@ -15,6 +15,8 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @State private var viewModel = OnboardingViewModel()
+    @State private var showRestoreSheet = false
+    @State private var migrationVM: MigrationViewModel?
 
     var body: some View {
         ZStack {
@@ -50,7 +52,16 @@ struct OnboardingView: View {
                     switch viewModel.currentPage {
                     case 0:
                         WelcomePage(
-                            onContinue: { viewModel.nextPage() }
+                            onContinue: { viewModel.nextPage() },
+                            onRestoreFile: { data in
+                                let vm = MigrationViewModel(
+                                    identityManager: identityManager,
+                                    settingsRepository: settingsRepository
+                                )
+                                migrationVM = vm
+                                showRestoreSheet = true
+                                Task { await vm.handleImportFile(data: data) }
+                            }
                         )
                     case 1:
                         IdentityPage(
@@ -112,6 +123,21 @@ struct OnboardingView: View {
         .animation(.easeInOut(duration: 0.25), value: viewModel.currentPage)
         .task {
             await viewModel.checkNotificationStatus()
+        }
+        .sheet(isPresented: $showRestoreSheet) {
+            if let vm = migrationVM {
+                OnboardingRestoreSheet(viewModel: vm) {
+                    showRestoreSheet = false
+                    // Restore complete — skip onboarding and finish
+                    Task {
+                        try? await viewModel.skipOnboarding(
+                            identityManager: identityManager,
+                            settingsRepository: settingsRepository
+                        )
+                        onComplete()
+                    }
+                }
+            }
         }
     }
 }
