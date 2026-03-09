@@ -353,10 +353,25 @@ public final class MessagingViewModel {
                 }
             }
 
-            // Update to failed status
+            // Update to failed status with real hash so retry can delete from DB
+            let realHash = lxMessage.hash
+            let failedId = realHash.map { String(format: "%02x", $0) }.joined()
             if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     messages[index].deliveryStatus = .failed
+                    messages[index].messageHash = realHash
+                    if !failedId.isEmpty {
+                        messages[index] = Message(
+                            id: failedId,
+                            content: messages[index].content,
+                            timestamp: messages[index].timestamp,
+                            isFromMe: true,
+                            deliveryStatus: .failed,
+                            replyToId: replyToId,
+                            replyToPreview: replyPreview
+                        )
+                        messages[index].messageHash = realHash
+                    }
                 }
             }
             errorMessage = "Failed to send: \(error.localizedDescription)"
@@ -372,15 +387,20 @@ public final class MessagingViewModel {
             return
         }
 
-        let content = messages[index].content
+        let failedMessage = messages[index]
 
-        // Remove failed message
+        // Delete from database if we have the hash
+        if let hash = failedMessage.messageHash {
+            try? await repository.deleteMessage(hash)
+        }
+
+        // Remove from UI
         withAnimation {
             messages.remove(at: index)
         }
 
         // Resend
-        _ = await sendMessage(text: content)
+        _ = await sendMessage(text: failedMessage.content)
     }
 
     /// Delete a message from the conversation.
