@@ -250,7 +250,7 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
     var icon: String {
         switch self {
         case .auto: return "wifi"
-        case .nearby: return "wifi.circle"
+        case .nearby: return "apple.logo"
         case .ble: return "wave.3.right"
         case .tcp: return "globe"
         case .rnode: return "radio"
