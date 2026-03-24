@@ -639,7 +639,7 @@
 				PKGREF /* XCLocalSwiftPackageReference "../LXMF-swift" */,
 				PKGREF3 /* XCLocalSwiftPackageReference "../LXST-swift" */,
 				PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
-				PKGREF4 /* XCLocalSwiftPackageReference "../reticulum-swift-lib" */,
+				PKGREF4 /* XCLocalSwiftPackageReference "../reticulum-swift" */,
 			);
 			productRefGroup = PRODS /* Products */;
 			projectDirPath = "";
@@ -1142,9 +1142,9 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../LXST-swift";
 		};
-		PKGREF4 /* XCLocalSwiftPackageReference "../reticulum-swift-lib" */ = {
+		PKGREF4 /* XCLocalSwiftPackageReference "../reticulum-swift" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = "../reticulum-swift-lib";
+			relativePath = "../reticulum-swift";
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -1166,7 +1166,7 @@
 		};
 		P004 /* ReticulumSwift */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = PKGREF4 /* XCLocalSwiftPackageReference "../reticulum-swift-lib" */;
+			package = PKGREF4 /* XCLocalSwiftPackageReference "../reticulum-swift" */;
 			productName = ReticulumSwift;
 		};
 /* End XCSwiftPackageProductDependency section */
