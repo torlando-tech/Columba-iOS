@@ -29,7 +29,7 @@ extension TcpCommunityServer {
     /// Bootstrap servers are preferred for first-time connections.
     static let servers: [TcpCommunityServer] = [
         // Bootstrap servers
-        TcpCommunityServer(name: "Beleth RNS Hub", host: "beleth.org", port: 4242, isBootstrap: true),
+        TcpCommunityServer(name: "Beleth RNS Hub", host: "rns.beleth.net", port: 4242, isBootstrap: true),
         TcpCommunityServer(name: "Quad4 RNS", host: "rns.quad4.io", port: 4242, isBootstrap: true),
         TcpCommunityServer(name: "FireZen Hub", host: "reticulum.firezen.xyz", port: 4242, isBootstrap: true),
 

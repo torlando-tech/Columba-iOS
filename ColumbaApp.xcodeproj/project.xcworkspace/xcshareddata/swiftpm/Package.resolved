@@ -1,5 +1,5 @@
 {
-  "originHash" : "",
+  "originHash" : "b617fe4d2abc6aafb806a354e042a1db3024a49e4379fc29d532e0775eb82313",
   "pins" : [
     {
       "identity" : "bitbytedata",
@@ -29,39 +29,12 @@
       }
     },
     {
-      "identity" : "lxmf-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "git@github.com:torlando-tech/LXMF-swift.git",
-      "state" : {
-        "revision" : "ddf3d60c136ac519b1a19ece41cb1f8480ec88e0",
-        "version" : "0.2.0"
-      }
-    },
-    {
-      "identity" : "lxst-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "git@github.com:torlando-tech/LXST-swift.git",
-      "state" : {
-        "revision" : "9246eb1cddd3fff4957dff7a913ea605292628f3",
-        "version" : "0.1.0"
-      }
-    },
-    {
       "identity" : "maplibre-gl-native-distribution",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/maplibre/maplibre-gl-native-distribution",
       "state" : {
         "revision" : "4cbd3f5f25583627006e60c5fcdaf5339813118c",
         "version" : "6.23.0"
-      }
-    },
-    {
-      "identity" : "reticulum-swift-lib",
-      "kind" : "remoteSourceControl",
-      "location" : "git@github.com:torlando-tech/reticulum-swift-lib.git",
-      "state" : {
-        "branch" : "feature/mpc-interface",
-        "revision" : "ee2724fced421e7f992ff550c56021bd08426b03"
       }
     },
     {
