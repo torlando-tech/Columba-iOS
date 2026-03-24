@@ -90,8 +90,11 @@ public final class AppServices {
     /// Path table for route lookups.
     public private(set) var pathTable: PathTable?
 
-    /// TCP interface to server.
-    public private(set) var tcpInterface: TCPInterface?
+    /// TCP interfaces keyed by entity ID. Multiple concurrent connections are supported.
+    public private(set) var tcpInterfaces: [String: TCPInterface] = [:]
+
+    /// Convenience accessor for the first TCP interface (backward compat).
+    public var tcpInterface: TCPInterface? { tcpInterfaces.values.first }
 
     /// RNode BLE interface for LoRa radio communication.
     public var rnodeInterface: RNodeInterface?
@@ -421,7 +424,7 @@ public final class AppServices {
             )
             do {
                 let newInterface = try TCPInterface(config: config)
-                self.tcpInterface = newInterface
+                tcpInterfaces["tcp-server"] = newInterface
                 try await newTransport.addInterface(newInterface)
             } catch {
                 logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
@@ -536,7 +539,7 @@ public final class AppServices {
             )
             do {
                 let newInterface = try TCPInterface(config: config)
-                self.tcpInterface = newInterface
+                tcpInterfaces["tcp-server"] = newInterface
                 try await newTransport.addInterface(newInterface)
             } catch {
                 logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
@@ -645,15 +648,22 @@ public final class AppServices {
                 guard let self = self else { return }
 
                 // Read actor-isolated properties OFF the main thread
-                let interface = await MainActor.run { self.tcpInterface }
+                let allTCPInterfaces = await MainActor.run { Array(self.tcpInterfaces.values) }
                 let autoIface = await MainActor.run { self.autoInterface }
                 let rnodeIface = await MainActor.run { self.rnodeInterface }
                 let bleIface = await MainActor.run { self.bleInterface }
 
-                // Check TCP state
-                let tcpState: InterfaceState = await interface?.state ?? .disconnected
-                let errorDesc = await interface?.lastErrorDescription
-                let tcpConnected = tcpState == .connected
+                // Aggregate TCP state across all interfaces
+                var anyTCPConnected = false
+                var anyTCPReconnecting = false
+                var errorDesc: String? = nil
+                for iface in allTCPInterfaces {
+                    let s = await iface.state
+                    if s == .connected { anyTCPConnected = true }
+                    if case .reconnecting = s { anyTCPReconnecting = true }
+                    if let err = await iface.lastErrorDescription { errorDesc = err }
+                }
+                let tcpConnected = anyTCPConnected
 
                 // Check non-TCP interfaces
                 let autoConnected: Bool
@@ -676,10 +686,7 @@ public final class AppServices {
                 }
 
                 let anyConnected = tcpConnected || autoConnected || rnodeConnected || bleConnected
-                let tcpReconnecting = {
-                    if case .reconnecting = tcpState { return true }
-                    return false
-                }()
+                let tcpReconnecting = anyTCPReconnecting && !anyTCPConnected
 
                 // Batch all UI mutations into a single MainActor.run
                 let shouldAnnounce: Bool = await MainActor.run {
@@ -1123,8 +1130,8 @@ public final class AppServices {
         // Shutdown router first (stops processing loop)
         await router?.shutdown()
 
-        // Disconnect TCP interface
-        await tcpInterface?.disconnect()
+        // Disconnect all TCP interfaces
+        await stopTCPInterface()
 
         // Stop RNode interface
         await stopRNodeInterface()
@@ -1137,29 +1144,20 @@ public final class AppServices {
         // Stop auto interface
         await stopAutoInterface()
 
-        // Remove interface from transport
-        if let transport = transport {
-            await transport.removeInterface(id: "tcp-server")
-        }
-
         isConnected = false
         logger.info("AppServices shutdown complete")
     }
 
-    /// Stop only the TCP interface without affecting other interfaces.
-    public func stopTCPInterface() async {
-        await tcpInterface?.disconnect()
-        if let transport = transport {
-            await transport.removeInterface(id: "tcp-server")
+    /// Connect a TCP interface by entity ID, replacing any existing one with the same ID.
+    ///
+    /// Multiple concurrent TCP interfaces are supported — each entity ID is independent.
+    public func connectTCPInterface(entityId: String, host: String, port: UInt16) async throws {
+        // Stop any existing interface with this entity ID
+        if let existing = tcpInterfaces[entityId] {
+            await existing.disconnect()
+            await transport?.removeInterface(id: entityId)
+            tcpInterfaces.removeValue(forKey: entityId)
         }
-        tcpInterface = nil
-        isConnected = false
-    }
-
-    /// Reconnect only the TCP interface without tearing down BLE/Auto/RNode.
-    public func reconnectTCPOnly(host: String, port: UInt16) async throws {
-        // Stop existing TCP
-        await stopTCPInterface()
 
         // Ensure base stack exists
         if transport == nil {
@@ -1169,9 +1167,8 @@ public final class AppServices {
             throw AppServicesError.transportNotConnected
         }
 
-        // Create and connect new TCP interface
         let config = InterfaceConfig(
-            id: "tcp-server",
+            id: entityId,
             name: "TCP Server",
             type: .tcp,
             enabled: true,
@@ -1180,15 +1177,13 @@ public final class AppServices {
             port: port
         )
         let newInterface = try TCPInterface(config: config)
-        self.tcpInterface = newInterface
+        tcpInterfaces[entityId] = newInterface
         try await transport.addInterface(newInterface)
 
-        // Re-register delivery destination
         if let dest = deliveryDestination {
             await transport.registerDestination(dest)
         }
 
-        // Restart router if it was shut down
         if let router = router {
             await router.setTransport(transport)
             await router.restart()
@@ -1197,12 +1192,35 @@ public final class AppServices {
             }
         }
 
-        // Apply transport mode
         if let identity = identity, SharedDefaults.suite.bool(forKey: "transport_enabled") {
             await transport.setTransportEnabled(true, identity: identity)
         }
 
         startStateObserver()
+    }
+
+    /// Stop a specific TCP interface by entity ID.
+    public func stopTCPInterface(entityId: String) async {
+        guard let interface = tcpInterfaces[entityId] else { return }
+        await interface.disconnect()
+        await transport?.removeInterface(id: entityId)
+        tcpInterfaces.removeValue(forKey: entityId)
+    }
+
+    /// Stop all TCP interfaces.
+    public func stopTCPInterface() async {
+        for (entityId, interface) in tcpInterfaces {
+            await interface.disconnect()
+            await transport?.removeInterface(id: entityId)
+        }
+        tcpInterfaces.removeAll()
+        isConnected = false
+    }
+
+    /// Reconnect only the TCP interface without tearing down BLE/Auto/RNode.
+    /// Uses the legacy "tcp-server" entity ID for backward compatibility.
+    public func reconnectTCPOnly(host: String, port: UInt16) async throws {
+        try await connectTCPInterface(entityId: "tcp-server", host: host, port: port)
     }
 
     // MARK: - Reconnection
@@ -1278,7 +1296,7 @@ public final class AppServices {
             port: port
         )
         let newInterface = try TCPInterface(config: config)
-        self.tcpInterface = newInterface
+        tcpInterfaces["tcp-server"] = newInterface
 
         // Add interface to transport (connects it)
         try await newTransport.addInterface(newInterface)

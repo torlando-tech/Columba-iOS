@@ -398,20 +398,12 @@ struct RootView: View {
             let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
             DiagLog.log("[STARTUP] Step 4: \(enabledInterfaces.count) enabled interfaces")
 
-            let serverAddress: String
-            if let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient }),
-               case .tcpClient(let config) = tcpEntity.config {
-                serverAddress = "\(config.targetHost):\(config.targetPort)"
-            } else {
-                serverAddress = ""
-            }
-
-            // 5. Initialize AppServices with identity
+            // 5. Initialize AppServices with identity (TCP connected separately below)
             DiagLog.log("[STARTUP] Step 5: initialize AppServices")
             try await appServices.initialize(
                 identity: identity,
                 identityHash: active.identityHash,
-                tcpServerAddress: serverAddress
+                tcpServerAddress: ""
             )
             DiagLog.log("[STARTUP] Step 5: AppServices initialized OK")
 
@@ -444,8 +436,18 @@ struct RootView: View {
                 DiagLog.log("[STARTUP] Starting interface: \(iface.type) name=\(iface.name)")
                 switch iface.type {
                 case .tcpClient:
-                    // Already connected via appServices.initialize() above
-                    break
+                    if case .tcpClient(let config) = iface.config {
+                        let entityId = iface.id
+                        Task {
+                            DiagLog.log("[STARTUP] TCP connecting: \(config.targetHost):\(config.targetPort)")
+                            do {
+                                try await services.connectTCPInterface(entityId: entityId, host: config.targetHost, port: config.targetPort)
+                                DiagLog.log("[STARTUP] TCP connected: \(entityId)")
+                            } catch {
+                                DiagLog.log("[STARTUP] TCP connect FAILED [\(entityId)]: \(error.localizedDescription)")
+                            }
+                        }
+                    }
                 case .tcpServer:
                     break
                 case .autoInterface:
