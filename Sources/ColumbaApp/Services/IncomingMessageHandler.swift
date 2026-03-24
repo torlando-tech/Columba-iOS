@@ -8,6 +8,7 @@
 
 import Foundation
 import LXMFSwift
+import ReticulumSwift
 import UserNotifications
 import os.log
 
@@ -34,6 +35,9 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
     /// Database for notification sender name lookups.
     private let database: LXMFDatabase?
+
+    /// Path table for looking up sender display names from announces.
+    public var pathTable: PathTable?
 
     #if os(iOS)
     /// Location sharing manager for incoming telemetry extraction.
@@ -149,6 +153,14 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             } catch {
                 self.logger.error("[LXMF_INBOUND] Failed to update peer icon for \(messageHashHex): \(error.localizedDescription)")
+            }
+
+            // Look up sender display name from path table (announce data) and update conversation
+            if let pathTable = self.pathTable {
+                if let entry = await pathTable.lookup(destinationHash: sourceHash),
+                   let name = entry.displayName, !name.isEmpty {
+                    try? await self.messageRepository.ensureConversation(sourceHash, displayName: name)
+                }
             }
 
             // Check for FIELD_COLUMBA_META (0x70) cease signal (Android Columba format)

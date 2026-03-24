@@ -424,6 +424,7 @@ struct RootView: View {
             #else
             let handler = IncomingMessageHandler(messageRepository: repo, database: db)
             #endif
+            handler.pathTable = appServices.pathTable
             self.incomingMessageHandler = handler
             if let router = appServices.router {
                 await router.setDelegate(handler)
