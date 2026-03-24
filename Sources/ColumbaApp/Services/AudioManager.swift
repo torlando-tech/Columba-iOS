@@ -75,6 +75,11 @@ public final class AudioManager {
     private var captureBuffer: AudioRingBuffer
     private var drainTask: Task<Void, Never>?
     private var deviceSampleRate: Double = 48000
+    /// Saved hardware input format from start(). Reused in config change / session
+    /// activation handlers to avoid querying inputNode after stop() (returns stale
+    /// codec format instead of real HW format, causing tap format mismatch crash).
+    private var hwInputFormat: AVAudioFormat?
+    private var hwInputChannels: Int = 1
     /// Actual hardware output channel count (1 in voiceChat mode, ≥1 otherwise).
     /// Set in start() from the engine's output node. Used to downmix decoded
     /// stereo frames to mono when the hardware can't play stereo.
@@ -196,13 +201,11 @@ public final class AudioManager {
         try session.setPreferredSampleRate(sampleRate)
         try session.setActive(true, options: [])
 
-        // Always route to speaker for VoIP calls. The earpiece is inaudible
-        // unless the phone is held to the ear, and LXST calls are typically
-        // used in speakerphone/hands-free mode. Users can toggle to earpiece
-        // via the speaker button if needed.
-        try session.overrideOutputAudioPort(.speaker)
+        if speakerEnabled {
+            try session.overrideOutputAudioPort(.speaker)
+        }
 
-        logger.info("[AUDIO] Session activated: rate=\(self.sampleRate), ioBuf=\(self.ioBufferDuration), speaker=true (forced)")
+        logger.info("[AUDIO] Session activated: rate=\(self.sampleRate), ioBuf=\(self.ioBufferDuration), speaker=\(speakerEnabled)")
         #endif
     }
 
@@ -321,7 +324,7 @@ public final class AudioManager {
                 eng.disconnectNodeOutput(player)
                 if let playbackFormat = AVAudioFormat(
                     standardFormatWithSampleRate: sampleRate,
-                    channels: AVAudioChannelCount(hwOutputChannels)
+                    channels: 1
                 ) {
                     eng.connect(player, to: eng.mainMixerNode, format: playbackFormat)
                 }
@@ -356,12 +359,9 @@ public final class AudioManager {
         eng.stop()
         eng.inputNode.removeTap(onBus: 0)
 
-        // Re-query hardware format after session activation (may have changed)
-        let inputFormat = eng.inputNode.outputFormat(forBus: 0)
-        let hwChannels = Int(inputFormat.channelCount)
-        deviceSampleRate = inputFormat.sampleRate
-
-        // Reinstall capture tap with the now-active session
+        // Install tap with format: nil — lets AVAudioEngine use the input node's
+        // native format. After stop(), querying inputNode.outputFormat returns stale
+        // data, so we can't trust an explicit format here.
         let spf = samplesPerFrame
         let ch = channels
         let ringBuf = captureBuffer
@@ -369,7 +369,7 @@ public final class AudioManager {
         eng.inputNode.installTap(
             onBus: 0,
             bufferSize: AVAudioFrameCount(spf),
-            format: inputFormat
+            format: nil
         ) { buffer, _ in
             guard let channelData = buffer.floatChannelData else { return }
             let frameCount = Int(buffer.frameLength)
@@ -405,12 +405,20 @@ public final class AudioManager {
             try eng.start()
             playerNode?.play()
 
-            // Restart drain loop with potentially new hw channel count
-            drainTask?.cancel()
-            startDrainLoop(hwChannels: hwChannels)
+            // Query real format AFTER start — now the engine reports actual HW values
+            let freshFormat = eng.inputNode.outputFormat(forBus: 0)
+            if freshFormat.sampleRate > 0 && freshFormat.channelCount > 0 {
+                hwInputFormat = freshFormat
+                hwInputChannels = Int(freshFormat.channelCount)
+                deviceSampleRate = freshFormat.sampleRate
+            }
 
-            DiagLog.log("[AUDIO] Capture restarted after session activation: \(inputFormat.sampleRate)Hz \(hwChannels)ch")
-            logger.error("[AUDIO] Capture restarted after session activation: \(inputFormat.sampleRate, privacy: .public)Hz \(hwChannels, privacy: .public)ch")
+            // Restart drain loop with fresh hw channel count
+            drainTask?.cancel()
+            startDrainLoop(hwChannels: hwInputChannels)
+
+            DiagLog.log("[AUDIO] Capture restarted after session activation: \(freshFormat.sampleRate)Hz \(self.hwInputChannels)ch")
+            logger.error("[AUDIO] Capture restarted after session activation: \(freshFormat.sampleRate, privacy: .public)Hz \(self.hwInputChannels, privacy: .public)ch")
         } catch {
             DiagLog.log("[AUDIO] Failed to restart after session activation: \(error.localizedDescription)")
             logger.error("[AUDIO] Failed to restart after session activation: \(error.localizedDescription, privacy: .public)")
@@ -430,35 +438,85 @@ public final class AudioManager {
     private func handleEngineConfigurationChange() {
         guard let eng = engine, isActive else { return }
         logger.error("[AUDIO] Config change: engineRunning=\(eng.isRunning, privacy: .public)")
-        do {
-            // Re-query hardware format — it may have changed (e.g. stereo→mono on route switch)
-            let outputFormat = eng.outputNode.outputFormat(forBus: 0)
-            let hwOut = outputFormat.channelCount > 0 ? Int(outputFormat.channelCount) : 1
-            hwOutputChannels = hwOut
 
-            // Reconnect player with the (possibly new) hardware format.
-            // ALL connections are broken by the config change — not just hardware-node connections.
+        do {
+            // Do NOT call eng.stop() — iOS already stopped the engine on config change.
+
+            // Remove old tap — it is invalidated by the config change.
+            eng.inputNode.removeTap(onBus: 0)
+
+            // After a config change (e.g. speaker toggle), inputNode.outputFormat
+            // returns the STALE codec rate (24kHz) even though the real hardware has
+            // reverted to native 48kHz. AVAudioSession.sampleRate returns the ACTUAL
+            // hardware rate, which we must use for the tap format.
+            #if os(iOS)
+            let actualHwRate = AVAudioSession.sharedInstance().sampleRate
+            #else
+            let actualHwRate = deviceSampleRate
+            #endif
+
+            guard let tapFormat = AVAudioFormat(
+                standardFormatWithSampleRate: actualHwRate,
+                channels: 1
+            ) else {
+                logger.error("[AUDIO] Failed to create tap format at \(actualHwRate, privacy: .public)Hz")
+                return
+            }
+
+            logger.error("[AUDIO] Config change: sessionRate=\(actualHwRate, privacy: .public)Hz, inputNodeRate=\(eng.inputNode.outputFormat(forBus: 0).sampleRate, privacy: .public)Hz")
+
+            let spf = samplesPerFrame
+            let ch = channels
+            let ringBuf = captureBuffer
+            eng.inputNode.installTap(
+                onBus: 0,
+                bufferSize: AVAudioFrameCount(spf),
+                format: tapFormat
+            ) { buffer, _ in
+                guard let channelData = buffer.floatChannelData else { return }
+                let frameCount = Int(buffer.frameLength)
+                let srcChannels = Int(buffer.format.channelCount)
+                if ch == 1 {
+                    let ptr = channelData[0]
+                    for i in 0..<frameCount { ringBuf.write(ptr[i]) }
+                } else {
+                    for i in 0..<frameCount {
+                        for c in 0..<min(srcChannels, ch) { ringBuf.write(channelData[c][i]) }
+                    }
+                }
+            }
+
+            // Keep hwOutputChannels = 1 (forced mono) — see start() for rationale.
+            hwOutputChannels = 1
+
+            // Reconnect player — ALL connections are broken by config change.
             if let player = playerNode {
                 eng.disconnectNodeOutput(player)
                 if let playbackFormat = AVAudioFormat(
                     standardFormatWithSampleRate: sampleRate,
-                    channels: AVAudioChannelCount(hwOut)
+                    channels: 1
                 ) {
                     eng.connect(player, to: eng.mainMixerNode, format: playbackFormat)
-                    logger.error("[AUDIO] Reconnected player: \(hwOut, privacy: .public)ch \(self.sampleRate, privacy: .public)Hz")
                 }
             }
 
-            if !eng.isRunning {
-                try eng.start()
-                logger.error("[AUDIO] Engine restarted after config change, hwOut=\(hwOut, privacy: .public)ch")
-            }
-            // Always call play() after reconnection — isPlaying state can be stale
-            // after a config change (node reports playing but output is disconnected).
-            if let player = playerNode {
-                player.play()
-                logger.error("[AUDIO] PlayerNode play() called after config change, isPlaying=\(player.isPlaying, privacy: .public)")
-            }
+            // Update deviceSampleRate BEFORE starting drain loop so resampling is correct.
+            deviceSampleRate = actualHwRate
+            hwInputFormat = tapFormat
+            hwInputChannels = 1
+
+            try eng.start()
+
+            logger.error("[AUDIO] Engine restarted after config change: \(actualHwRate, privacy: .public)Hz")
+
+            playerNode?.play()
+            logger.error("[AUDIO] PlayerNode play() after config change, isPlaying=\(self.playerNode?.isPlaying ?? false, privacy: .public)")
+
+            // Restart drain loop — deviceSampleRate may have changed (e.g. 24kHz→48kHz),
+            // so the drain loop needs to resample to the codec rate.
+            drainTask?.cancel()
+            startDrainLoop(hwChannels: hwInputChannels)
+
         } catch {
             logger.error("[AUDIO] Failed to restart after config change: \(error.localizedDescription, privacy: .public)")
         }
@@ -528,10 +586,12 @@ public final class AudioManager {
             let inputNode = eng.inputNode
             let inputFormat = inputNode.outputFormat(forBus: 0)
             deviceSampleRate = inputFormat.sampleRate
+            hwInputFormat = inputFormat
+            hwInputChannels = Int(inputFormat.channelCount)
 
             let spf = samplesPerFrame
             let ch = channels
-            let hwChannels = Int(inputFormat.channelCount)
+            let hwChannels = hwInputChannels
             let ringBuf = captureBuffer
 
             // The tap callback runs on a real-time thread — no locks, no allocation
@@ -617,6 +677,8 @@ public final class AudioManager {
         inputLevel = 0.0
         playCount = 0
         hwOutputChannels = 1
+        hwInputFormat = nil
+        hwInputChannels = 1
 
         removeSessionObservers()
         deactivateAudioSession()

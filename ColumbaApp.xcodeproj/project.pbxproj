@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		T001 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT01 /* AudioRingBufferTests.swift */; };
+		T002 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT02 /* AudioManagerConfigChangeTests.swift */; };
 		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* ColumbaApp.swift */; };
 		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
 		003 /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* ChatsViewModel.swift */; };
@@ -111,7 +113,20 @@
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		TTPROXY /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = PROJ /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = TTARG;
+			remoteInfo = ColumbaAppTests;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		FT01 /* AudioRingBufferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRingBufferTests.swift; sourceTree = "<group>"; };
+		FT02 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
+		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
 		F002 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -235,6 +250,13 @@
 				023 /* LXMFSwift in Frameworks */,
 				06FB /* LXSTSwift in Frameworks */,
 				049 /* MapLibre in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		TFWBP /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -482,8 +504,18 @@
 			children = (
 				PROD /* ColumbaApp.app */,
 				EPROD /* ColumbaNetworkExtension.appex */,
+				TPROD /* ColumbaAppTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		GTESTS /* Tests/ColumbaAppTests */ = {
+			isa = PBXGroup;
+			children = (
+				FT01 /* AudioRingBufferTests.swift */,
+				FT02 /* AudioManagerConfigChangeTests.swift */,
+			);
+			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
 		};
 		ROOT = {
@@ -492,6 +524,7 @@
 				SRCS /* Sources/ColumbaApp */,
 				GSHARED /* Sources/Shared */,
 				GEXT /* Sources/ColumbaNetworkExtension */,
+				GTESTS /* Tests/ColumbaAppTests */,
 				F07B /* Config/Signing.xcconfig */,
 				F07C /* Config/LocalSigning.xcconfig.example */,
 				PRODS /* Products */,
@@ -554,6 +587,23 @@
 			productReference = PROD /* ColumbaApp.app */;
 			productType = "com.apple.product-type.application";
 		};
+		TTARG /* ColumbaAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = TBCLST /* Build configuration list for PBXNativeTarget "ColumbaAppTests" */;
+			buildPhases = (
+				TSRCBP /* Sources */,
+				TFWBP /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				TTDEP /* PBXTargetDependency */,
+			);
+			name = ColumbaAppTests;
+			productName = ColumbaAppTests;
+			productReference = TPROD /* ColumbaAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -569,6 +619,10 @@
 					};
 					TARG = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					TTARG = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = TARG;
 					};
 				};
 			};
@@ -593,6 +647,7 @@
 			targets = (
 				TARG /* ColumbaApp */,
 				ETARG /* ColumbaNetworkExtension */,
+				TTARG /* ColumbaAppTests */,
 			);
 		};
 /* End PBXProject section */
@@ -609,7 +664,24 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		TTDEP /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = TARG /* ColumbaApp */;
+			targetProxy = TTPROXY /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin PBXSourcesBuildPhase section */
+		TSRCBP /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				T001 /* AudioRingBufferTests.swift in Sources */,
+				T002 /* AudioManagerConfigChangeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ESRCBP /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -972,6 +1044,46 @@
 			};
 			name = Release;
 		};
+		TTDBG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
+			};
+			name = Debug;
+		};
+		TTREL /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -998,6 +1110,15 @@
 			buildConfigurations = (
 				DBG /* Debug */,
 				REL /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		TBCLST /* Build configuration list for PBXNativeTarget "ColumbaAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				TTDBG /* Debug */,
+				TTREL /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
