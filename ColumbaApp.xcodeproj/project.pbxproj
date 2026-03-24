@@ -112,6 +112,8 @@
 
 /* Begin PBXFileReference section */
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F07B /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
+		F07C /* LocalSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/LocalSigning.xcconfig.example; sourceTree = SOURCE_ROOT; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
 		F002 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		F003 /* ChatsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsViewModel.swift; sourceTree = "<group>"; };
@@ -488,6 +490,8 @@
 				SRCS /* Sources/ColumbaApp */,
 				GSHARED /* Sources/Shared */,
 				GEXT /* Sources/ColumbaNetworkExtension */,
+				F07B /* Signing.xcconfig */,
+				F07C /* LocalSigning.xcconfig.example */,
 				PRODS /* Products */,
 			);
 			sourceTree = "<group>";
@@ -783,11 +787,11 @@
 		};
 		EDBG /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -809,11 +813,11 @@
 		};
 		EREL /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -892,12 +896,12 @@
 		};
 		TDBG /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
@@ -930,12 +934,12 @@
 		};
 		TREL /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;

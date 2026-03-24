@@ -24,3 +24,6 @@ CLAUDE.md
 node_modules/
 package.json
 package-lock.json
+
+# Local Xcode signing overrides
+Config/LocalSigning.xcconfig
