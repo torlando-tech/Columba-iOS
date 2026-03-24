@@ -23,4 +23,7 @@ Dependencies are resolved automatically via Swift Package Manager.
 
 ## License
 
-[AGPL-3.0](LICENSE)
+Copyright (C) 2026 Torlando Tech LLC.
+
+This project is licensed under the GNU Affero General Public License,
+version 3 or any later version. See [LICENSE](LICENSE).
