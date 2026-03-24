@@ -141,7 +141,8 @@ struct ChatsView: View {
             if viewModel == nil {
                 viewModel = ChatsViewModel(
                     repository: messageRepository,
-                    notificationObserver: notificationObserver
+                    notificationObserver: notificationObserver,
+                    pathTable: appServices.pathTable
                 )
             }
             await viewModel?.loadConversations()

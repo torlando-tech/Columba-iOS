@@ -9,6 +9,7 @@
 import Foundation
 import Observation
 import LXMFSwift
+import ReticulumSwift
 
 // MARK: - Conversation Model
 
@@ -147,13 +148,15 @@ public final class ChatsViewModel {
 
     private let repository: MessageRepository
     private let notificationObserver: NotificationObserver
+    private let pathTable: PathTable?
     private var inProcessObserver: NSObjectProtocol?
 
     // MARK: - Initialization
 
-    public init(repository: MessageRepository, notificationObserver: NotificationObserver) {
+    public init(repository: MessageRepository, notificationObserver: NotificationObserver, pathTable: PathTable? = nil) {
         self.repository = repository
         self.notificationObserver = notificationObserver
+        self.pathTable = pathTable
 
         // Register for Darwin notifications (cross-process, fires before DB save)
         notificationObserver.onNewMessage { [weak self] in
@@ -190,9 +193,23 @@ public final class ChatsViewModel {
 
         do {
             let records = try await repository.fetchConversations()
-            conversations = records
+            var convos = records
                 .filter { $0.lastMessagePreview != nil }
                 .map { Conversation(from: $0) }
+
+            // Backfill display names from path table for conversations that have none
+            if let pathTable {
+                for i in convos.indices where convos[i].displayName == nil {
+                    if let entry = await pathTable.lookup(destinationHash: convos[i].destinationHash),
+                       let name = entry.displayName, !name.isEmpty {
+                        convos[i].displayName = name
+                        // Persist so we don't need to look up again
+                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: name)
+                    }
+                }
+            }
+
+            conversations = convos
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -207,9 +224,22 @@ public final class ChatsViewModel {
 
         do {
             let records = try await repository.fetchConversations()
-            conversations = records
+            var convos = records
                 .filter { $0.lastMessagePreview != nil }
                 .map { Conversation(from: $0) }
+
+            // Backfill display names from path table for conversations that have none
+            if let pathTable {
+                for i in convos.indices where convos[i].displayName == nil {
+                    if let entry = await pathTable.lookup(destinationHash: convos[i].destinationHash),
+                       let name = entry.displayName, !name.isEmpty {
+                        convos[i].displayName = name
+                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: name)
+                    }
+                }
+            }
+
+            conversations = convos
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
