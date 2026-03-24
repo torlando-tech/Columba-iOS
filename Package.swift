@@ -14,8 +14,8 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "git@github.com:torlando-tech/LXMF-swift.git", from: "0.2.0"),
-        .package(url: "git@github.com:torlando-tech/LXST-swift.git", from: "0.1.0"),
+        .package(url: "https://github.com/torlando-tech/LXMF-swift.git", from: "0.2.0"),
+        .package(url: "https://github.com/torlando-tech/LXST-swift.git", from: "0.1.0"),
         .package(url: "https://github.com/maplibre/maplibre-gl-native-distribution", from: "6.9.0"),
     ],
     targets: [

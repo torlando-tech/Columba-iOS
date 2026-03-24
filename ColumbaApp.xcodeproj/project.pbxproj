@@ -1001,7 +1001,7 @@
 /* Begin XCRemoteSwiftPackageReference section */
 		PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "git@github.com:torlando-tech/LXMF-swift.git";
+			repositoryURL = "https://github.com/torlando-tech/LXMF-swift.git";
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 0.2.0;
@@ -1017,7 +1017,7 @@
 		};
 		PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "git@github.com:torlando-tech/LXST-swift.git";
+			repositoryURL = "https://github.com/torlando-tech/LXST-swift.git";
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 0.1.0;
@@ -1025,7 +1025,7 @@
 		};
 		PKGREF4 /* XCRemoteSwiftPackageReference "reticulum-swift-lib" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "git@github.com:torlando-tech/reticulum-swift-lib.git";
+			repositoryURL = "https://github.com/torlando-tech/reticulum-swift-lib.git";
 			requirement = {
 				kind = branch;
 				branch = "feature/mpc-interface";
