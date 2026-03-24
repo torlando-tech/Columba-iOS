@@ -124,9 +124,6 @@ public final class InterfaceManagementViewModel {
     /// Status observation task
     private var statusObserverTask: Task<Void, Never>?
 
-    /// The interface ID currently being monitored for connection
-    private var activeInterfaceId: String?
-
     // MARK: - Computed Properties
 
     /// Whether we're in edit mode (vs add mode)
@@ -297,26 +294,31 @@ public final class InterfaceManagementViewModel {
 
         let enabledInterfaces = repository.getEnabledInterfaces()
 
-        // --- TCP ---
-        let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient })
-        if let tcpIf = tcpEntity,
-           case .tcpClient(let config) = tcpIf.config {
-            let serverAddress = "\(config.targetHost):\(config.targetPort)"
-            logger.info("Applying TCP: \(serverAddress)")
-            activeInterfaceId = tcpIf.id
-            interfaceStatus[tcpIf.id] = .connecting
-            do {
-                try await appServices.reconnectTCPOnly(host: config.targetHost, port: config.targetPort)
-                showSuccess("Connecting to \(config.targetHost):\(config.targetPort)...")
-            } catch {
-                logger.error("TCP failed: \(error)")
-                interfaceStatus[tcpIf.id] = .error
-                showError("TCP failed: \(error.localizedDescription)")
+        // --- TCP (supports multiple simultaneous connections) ---
+        let enabledTCPs = enabledInterfaces.filter { $0.type == .tcpClient }
+        let enabledTCPIds = Set(enabledTCPs.map { $0.id })
+
+        // Connect/reconnect each enabled TCP interface
+        for tcpIf in enabledTCPs {
+            if case .tcpClient(let config) = tcpIf.config {
+                logger.info("Applying TCP[\(tcpIf.id)]: \(config.targetHost):\(config.targetPort)")
+                interfaceStatus[tcpIf.id] = .connecting
+                do {
+                    try await appServices.connectTCPInterface(entityId: tcpIf.id, host: config.targetHost, port: config.targetPort)
+                    showSuccess("Connecting to \(config.targetHost):\(config.targetPort)...")
+                } catch {
+                    logger.error("TCP failed [\(tcpIf.id)]: \(error)")
+                    interfaceStatus[tcpIf.id] = .error
+                    showError("TCP failed: \(error.localizedDescription)")
+                }
             }
-        } else if tcpEntity == nil && appServices.tcpInterface != nil {
-            logger.info("Stopping TCP")
-            await appServices.stopTCPInterface()
-            activeInterfaceId = nil
+        }
+
+        // Stop TCP interfaces that are no longer in the enabled set
+        let currentTCPIds = Set(appServices.tcpInterfaces.keys)
+        for oldId in currentTCPIds where !enabledTCPIds.contains(oldId) {
+            logger.info("Stopping TCP[\(oldId)]")
+            await appServices.stopTCPInterface(entityId: oldId)
         }
 
         // --- AutoInterface ---
@@ -407,39 +409,42 @@ public final class InterfaceManagementViewModel {
     // MARK: - Status Observation
 
     /// Start polling AppServices connection state to update interface status.
-    ///
-    /// On the first iteration, this also performs initial sync — detecting
-    /// interfaces that are already running (from app startup) and reflecting
-    /// their true state in the UI.
     private func startStatusObserver() {
         statusObserverTask?.cancel()
         statusObserverTask = Task.detached { [weak self] in
-            // Initial sync: detect already-running TCP interface
-            await MainActor.run {
-                guard let self = self else { return }
-                let enabledInterfaces = self.repository.getEnabledInterfaces()
-                if let tcpEntity = enabledInterfaces.first(where: { $0.type == .tcpClient }),
-                   self.appServices.tcpInterface != nil {
-                    self.activeInterfaceId = tcpEntity.id
-                }
-            }
-
             while !Task.isCancelled {
                 guard let self = self else { break }
 
                 // Read @MainActor properties we need for actor lookups
-                let (activeId, isConn, isReconn, connErr, autoIf, bleIf, rnodeIf, mpcIf, enabledIfs) = await MainActor.run {
+                let (tcpEntities, tcpIfaces, autoIf, bleIf, rnodeIf, mpcIf, enabledIfs) = await MainActor.run {
                     (
-                        self.activeInterfaceId,
-                        self.appServices.isConnected,
-                        self.appServices.isReconnecting,
-                        self.appServices.connectionError,
+                        self.repository.getEnabledInterfaces().filter { $0.type == .tcpClient },
+                        self.appServices.tcpInterfaces,
                         self.appServices.autoInterface,
                         self.appServices.bleInterface,
                         self.appServices.rnodeInterface,
                         self.appServices.mpcInterface,
                         self.repository.getEnabledInterfaces()
                     )
+                }
+
+                // Read TCP interface states off main thread
+                var tcpUpdates: [(String, InterfaceStatus, String?)] = []
+                for entity in tcpEntities {
+                    if let iface = tcpIfaces[entity.id] {
+                        let state = await iface.state
+                        let err = await iface.lastErrorDescription
+                        let status: InterfaceStatus
+                        switch state {
+                        case .connected: status = .connected
+                        case .connecting: status = .connecting
+                        case .reconnecting: status = .reconnecting
+                        case .disconnected: status = .disconnected
+                        }
+                        tcpUpdates.append((entity.id, status, err))
+                    } else {
+                        tcpUpdates.append((entity.id, .disconnected, nil))
+                    }
                 }
 
                 // Read actor-isolated state OFF main thread
@@ -471,25 +476,15 @@ public final class InterfaceManagementViewModel {
 
                 // Batch all UI mutations into single MainActor.run
                 await MainActor.run {
-                    // Track TCP interface status
-                    if let interfaceId = activeId {
-                        if isConn {
-                            if self.interfaceStatus[interfaceId] != .connected {
-                                self.interfaceStatus[interfaceId] = .connected
-                                self.errorMessage = nil
-                            }
-                        } else if isReconn {
-                            self.interfaceStatus[interfaceId] = .reconnecting
-                            if let error = connErr,
-                               self.errorMessage != error {
-                                self.showError(error)
-                            }
-                        } else if connErr != nil {
-                            self.interfaceStatus[interfaceId] = .error
-                            if let error = connErr,
-                               self.errorMessage != error {
-                                self.showError(error)
-                            }
+                    // Update TCP interface statuses
+                    for (id, status, err) in tcpUpdates {
+                        self.interfaceStatus[id] = status
+                        if (status == .reconnecting || status == .error),
+                           let e = err, self.errorMessage != e {
+                            self.showError(e)
+                        }
+                        if status == .connected {
+                            self.errorMessage = nil
                         }
                     }
 
