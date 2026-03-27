@@ -635,13 +635,12 @@ struct SettingsIdenticonView: View {
                 ForEach(0..<5, id: \.self) { row in
                     ForEach(0..<5, id: \.self) { col in
                         if pattern[row][col] {
+                            let xPos: CGFloat = CGFloat(col) * cellSize + cellSize / 2
+                            let yPos: CGFloat = CGFloat(row) * cellSize + cellSize / 2
                             Circle()
                                 .fill(colors[row % colors.count])
                                 .frame(width: cellSize * 0.8, height: cellSize * 0.8)
-                                .position(
-                                    x: CGFloat(col) * cellSize + cellSize / 2,
-                                    y: CGFloat(row) * cellSize + cellSize / 2
-                                )
+                                .position(x: xPos, y: yPos)
                         }
                     }
                 }
