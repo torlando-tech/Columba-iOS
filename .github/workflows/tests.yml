@@ -33,21 +33,33 @@ jobs:
       - name: Resolve packages
         run: xcodebuild -resolvePackageDependencies -project ColumbaApp.xcodeproj -scheme ColumbaApp
 
-      - name: Run tests
+      - name: Find simulator
+        id: sim
         run: |
-          # Find first available iPhone simulator
           DEVICE_ID=$(xcrun simctl list devices available -j \
             | python3 -c "import sys,json; devs=json.load(sys.stdin)['devices']; print(next(d['udid'] for rt in devs for d in devs[rt] if 'iPhone' in d['name']))")
+          echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
-          xcodebuild test \
+
+      - name: Build for testing
+        run: |
+          xcodebuild build-for-testing \
             -project ColumbaApp.xcodeproj \
             -scheme ColumbaApp \
             -sdk iphonesimulator \
-            -destination "id=$DEVICE_ID" \
-            -only-testing:ColumbaAppTests \
-            -resultBundlePath TestResults.xcresult \
+            -destination "id=${{ steps.sim.outputs.device_id }}" \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Run tests
+        run: |
+          xcodebuild test-without-building \
+            -project ColumbaApp.xcodeproj \
+            -scheme ColumbaApp \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.sim.outputs.device_id }}" \
+            -only-testing:ColumbaAppTests \
+            -resultBundlePath TestResults.xcresult
