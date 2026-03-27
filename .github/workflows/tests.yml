@@ -23,7 +23,19 @@ jobs:
           git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+
+      - name: Find simulator destination
+        id: dest
+        run: |
+          DEST=$(xcodebuild -showdestinations -project ColumbaApp.xcodeproj -scheme ColumbaApp 2>/dev/null \
+            | grep 'iOS Simulator' | grep 'iPhone' | head -1 \
+            | sed 's/.*{ //' | sed 's/ }$//')
+          echo "destination=$DEST" >> "$GITHUB_OUTPUT"
+          echo "Using destination: $DEST"
 
       - name: Resolve packages
         run: xcodebuild -resolvePackageDependencies -project ColumbaApp.xcodeproj -scheme ColumbaApp
@@ -34,7 +46,7 @@ jobs:
             -project ColumbaApp.xcodeproj \
             -scheme ColumbaApp \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination '${{ steps.dest.outputs.destination }}' \
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGN_IDENTITY="" \
