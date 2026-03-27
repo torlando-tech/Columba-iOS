@@ -193,7 +193,7 @@ actor MigrationImporter {
                         lxMessage.incoming = msg.isIncoming
 
                         // Pack and save through normal path
-                        try lxMessage.pack()
+                        _ = try lxMessage.pack()
                         try await db.saveMessage(lxMessage)
                         messagesImported += 1
                     } catch {

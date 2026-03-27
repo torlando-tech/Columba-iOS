@@ -395,7 +395,7 @@ public final class MessagingViewModel {
         }
 
         // Remove from UI
-        withAnimation {
+        _ = withAnimation {
             messages.remove(at: index)
         }
 

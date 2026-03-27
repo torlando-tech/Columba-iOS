@@ -103,7 +103,7 @@ final class OfflineMapManager {
         let context = regionId.data(using: .utf8)!
 
         // Create metadata
-        var region = OfflineMapRegion(
+        let region = OfflineMapRegion(
             id: regionId,
             name: name,
             centerLatitude: center.latitude,

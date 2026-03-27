@@ -421,7 +421,7 @@ public final class ContactsViewModel {
         updateTask = Task {
             for await entry in pathTable.pathUpdates {
                 guard !Task.isCancelled else { break }
-                await handleNewPathEntry(entry)
+                handleNewPathEntry(entry)
             }
         }
     }
