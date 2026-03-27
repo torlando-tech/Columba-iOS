@@ -1,0 +1,39 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone sibling packages
+        run: |
+          git clone https://github.com/torlando-tech/reticulum-swift.git ../reticulum-swift
+          git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
+          git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+
+      - name: Resolve packages
+        run: xcodebuild -resolvePackageDependencies -project ColumbaApp.xcodeproj -scheme ColumbaApp
+
+      - name: Run tests
+        run: |
+          xcodebuild test \
+            -project ColumbaApp.xcodeproj \
+            -scheme ColumbaApp \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -only-testing:ColumbaAppTests \
+            -resultBundlePath TestResults.xcresult
