@@ -41,28 +41,32 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      - name: Build for testing
+      - name: Build app target
         run: |
-          set -o pipefail
-          xcodebuild build-for-testing \
+          xcodebuild build \
             -project ColumbaApp.xcodeproj \
             -scheme ColumbaApp \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
+            -target ColumbaApp \
+            ENABLE_TESTABILITY=YES \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" 2>&1 | tee /tmp/build.log
-          echo "=== Build errors ==="
-          grep 'error:' /tmp/build.log || echo "No errors found"
+            PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Run tests
+      - name: Build and run tests
         run: |
-          xcodebuild test-without-building \
+          xcodebuild test \
             -project ColumbaApp.xcodeproj \
             -scheme ColumbaApp \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             -only-testing:ColumbaAppTests \
-            -resultBundlePath TestResults.xcresult
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
