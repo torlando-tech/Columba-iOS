@@ -43,6 +43,7 @@ jobs:
 
       - name: Build for testing
         run: |
+          set -o pipefail
           xcodebuild build-for-testing \
             -project ColumbaApp.xcodeproj \
             -scheme ColumbaApp \
@@ -52,7 +53,9 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER=""
+            PROVISIONING_PROFILE_SPECIFIER="" 2>&1 | tee /tmp/build.log
+          echo "=== Build errors ==="
+          grep 'error:' /tmp/build.log || echo "No errors found"
 
       - name: Run tests
         run: |
