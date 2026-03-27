@@ -28,10 +28,6 @@ jobs:
           echo "Using $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
-          xcrun simctl list devices available | grep iPhone | head -5
-
-      - name: Resolve packages
-        run: xcodebuild -resolvePackageDependencies -project ColumbaApp.xcodeproj -scheme ColumbaApp
 
       - name: Find simulator
         id: sim
@@ -41,14 +37,13 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      - name: Build app target
+      - name: Build
         run: |
           xcodebuild build \
             -project ColumbaApp.xcodeproj \
-            -target ColumbaApp \
+            -scheme ColumbaApp \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
-            ENABLE_TESTABILITY=YES \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
