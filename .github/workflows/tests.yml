@@ -46,6 +46,8 @@ jobs:
             -destination "id=$DEVICE_ID" \
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
-            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
