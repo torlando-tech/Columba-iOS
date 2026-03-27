@@ -27,26 +27,23 @@ jobs:
           XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
           echo "Using $XCODE"
           sudo xcode-select -s "$XCODE"
-
-      - name: Find simulator destination
-        id: dest
-        run: |
-          DEST=$(xcodebuild -showdestinations -project ColumbaApp.xcodeproj -scheme ColumbaApp 2>/dev/null \
-            | grep 'iOS Simulator' | grep 'iPhone' | head -1 \
-            | sed 's/.*{ //' | sed 's/ }$//')
-          echo "destination=$DEST" >> "$GITHUB_OUTPUT"
-          echo "Using destination: $DEST"
+          xcodebuild -version
+          xcrun simctl list devices available | grep iPhone | head -5
 
       - name: Resolve packages
         run: xcodebuild -resolvePackageDependencies -project ColumbaApp.xcodeproj -scheme ColumbaApp
 
       - name: Run tests
         run: |
+          # Find first available iPhone simulator
+          DEVICE_ID=$(xcrun simctl list devices available -j \
+            | python3 -c "import sys,json; devs=json.load(sys.stdin)['devices']; print(next(d['udid'] for rt in devs for d in devs[rt] if 'iPhone' in d['name']))")
+          echo "Using simulator: $DEVICE_ID"
           xcodebuild test \
             -project ColumbaApp.xcodeproj \
             -scheme ColumbaApp \
             -sdk iphonesimulator \
-            -destination '${{ steps.dest.outputs.destination }}' \
+            -destination "id=$DEVICE_ID" \
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGN_IDENTITY="" \
