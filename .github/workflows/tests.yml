@@ -45,10 +45,9 @@ jobs:
         run: |
           xcodebuild build \
             -project ColumbaApp.xcodeproj \
-            -scheme ColumbaApp \
+            -target ColumbaApp \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
-            -target ColumbaApp \
             ENABLE_TESTABILITY=YES \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
