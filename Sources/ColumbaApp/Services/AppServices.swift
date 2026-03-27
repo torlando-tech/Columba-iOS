@@ -728,7 +728,7 @@ public final class AppServices {
                 // Auto-announce on connect (outside the MainActor.run to avoid blocking UI)
                 if shouldAnnounce {
                     try? await Task.sleep(for: .seconds(1))
-                    await MainActor.run {
+                    _ = await MainActor.run {
                         Task {
                             await self.autoAnnounce()
                             self.autoAnnounceManager?.resetTimer()

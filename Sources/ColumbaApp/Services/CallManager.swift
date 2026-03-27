@@ -402,7 +402,7 @@ public final class CallManager {
     /// (CXEndCallAction). Performs the actual Telephone hangup without
     /// re-entering CallKit.
     func hangupFromCallKit() {
-        guard let telephone else { return }
+        guard telephone != nil else { return }
         DiagLog.log("[CALL] hangupFromCallKit() triggered")
         isHangingUpFromCallKit = true
         hangup()

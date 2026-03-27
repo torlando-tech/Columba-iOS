@@ -138,7 +138,7 @@ public struct ContactsView: View {
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showQRScanner) {
-            if let vm = viewModel {
+            if viewModel != nil {
                 QRScannerView(
                     onScanned: { hash, pubKey in
                         showQRScanner = false
