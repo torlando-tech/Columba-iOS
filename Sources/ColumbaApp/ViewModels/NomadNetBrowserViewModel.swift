@@ -24,6 +24,9 @@ public final class NomadNetBrowserViewModel {
     public var isLoading: Bool = false
     public var statusMessage: String = ""
     public var errorMessage: String?
+    public var downloadedFileURL: URL?
+    public var downloadedFileName: String?
+    public var showingShareSheet: Bool = false
 
     // MARK: - Form State
 
@@ -96,11 +99,19 @@ public final class NomadNetBrowserViewModel {
     public func navigateTo(url: MicronURL) async {
         switch url {
         case .samePage(let path):
+            if path.hasPrefix("/file/") {
+                await downloadFile(nodeHash: currentNodeHash, path: path)
+                return
+            }
             pushHistory()
             currentPath = path
             await loadPage()
 
         case .remoteNode(let hash, let path):
+            if path.hasPrefix("/file/"), let hashData = Data(hexString: hash) {
+                await downloadFile(nodeHash: hashData, path: path)
+                return
+            }
             pushHistory()
             if let hashData = Data(hexString: hash) {
                 currentNodeHash = hashData
@@ -113,6 +124,31 @@ public final class NomadNetBrowserViewModel {
             // LXMF links are handled by the view layer (navigate to chat)
             break
         }
+    }
+
+    /// Download a file from a node.
+    public func downloadFile(nodeHash: Data, path: String) async {
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            let (data, filename) = try await browserService.downloadFile(
+                destinationHash: nodeHash,
+                path: path
+            )
+            // Save to temp directory
+            let tempDir = FileManager.default.temporaryDirectory
+            let fileURL = tempDir.appendingPathComponent(filename)
+            try data.write(to: fileURL)
+            downloadedFileURL = fileURL
+            downloadedFileName = filename
+            showingShareSheet = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        isLoading = false
+        statusMessage = ""
     }
 
     /// Go back in navigation history.

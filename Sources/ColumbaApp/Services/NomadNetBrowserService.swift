@@ -130,6 +130,26 @@ public actor NomadNetBrowserService {
         return (document, markup)
     }
 
+    /// Download a file from a NomadNet node.
+    /// Returns the file data and suggested filename.
+    public func downloadFile(
+        destinationHash: Data,
+        path: String
+    ) async throws -> (Data, String) {
+        let link = try await getOrCreateLink(destinationHash: destinationHash)
+
+        statusMessage = "Downloading file..."
+        logger.info("[NOMAD] Downloading \(path, privacy: .public)")
+
+        let receipt = try await link.request(path: path, data: nil, timeout: 60.0)
+        let data = try await waitForResponse(receipt: receipt)
+
+        // Extract filename from path
+        let filename = path.split(separator: "/").last.map(String.init) ?? "download"
+        statusMessage = ""
+        return (data, filename)
+    }
+
     /// Reveal local identity to the node.
     public func identifyToNode(destinationHash: Data) async throws {
         let link = try await getOrCreateLink(destinationHash: destinationHash)

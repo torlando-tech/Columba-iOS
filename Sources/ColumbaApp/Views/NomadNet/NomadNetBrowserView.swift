@@ -89,6 +89,13 @@ struct NomadNetBrowserView: View {
                 await viewModel.pollStatus()
             }
         }
+        #if os(iOS)
+        .sheet(isPresented: $viewModel.showingShareSheet) {
+            if let url = viewModel.downloadedFileURL {
+                ShareSheet(items: [url])
+            }
+        }
+        #endif
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }
