@@ -24,7 +24,12 @@ struct NomadNetBrowserView: View {
 
             if let document = viewModel.currentDocument {
                 ScrollView {
-                    MicronDocumentView(document: document) { link in
+                    MicronDocumentView(
+                        document: document,
+                        formFields: $viewModel.formFields,
+                        checkboxFields: $viewModel.checkboxFields,
+                        radioFields: $viewModel.radioFields
+                    ) { link in
                         Task { await viewModel.handleLinkTap(link) }
                     }
                 }

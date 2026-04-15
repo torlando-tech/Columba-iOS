@@ -332,6 +332,80 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(MicronParser.parseURL("lxmf@abc123"), .lxmf(hash: "abc123"))
     }
 
+    // MARK: - Form Fields
+
+    func testTextInput() {
+        let doc = MicronParser.parse("`<24|username`admin>")
+        let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
+        XCTAssertEqual(formElements.count, 1)
+        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .textInput(let width, let name, let defaultValue) = field else {
+            XCTFail("Expected text input"); return
+        }
+        XCTAssertEqual(width, 24)
+        XCTAssertEqual(name, "username")
+        XCTAssertEqual(defaultValue, "admin")
+    }
+
+    func testPasswordInput() {
+        let doc = MicronParser.parse("`<!|password`>")
+        let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
+        XCTAssertEqual(formElements.count, 1)
+        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .passwordInput(let name, _) = field else {
+            XCTFail("Expected password input"); return
+        }
+        XCTAssertEqual(name, "password")
+    }
+
+    func testCheckbox() {
+        let doc = MicronParser.parse("`<?|option|yes`>Accept terms")
+        let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
+        XCTAssertEqual(formElements.count, 1)
+        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .checkbox(let name, let value, let label, let checked) = field else {
+            XCTFail("Expected checkbox"); return
+        }
+        XCTAssertEqual(name, "option")
+        XCTAssertEqual(value, "yes")
+        XCTAssertTrue(label.contains("Accept terms"))
+        XCTAssertFalse(checked)
+    }
+
+    func testCheckboxPrechecked() {
+        let doc = MicronParser.parse("`<?|option|yes|*`>Accept terms")
+        let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
+        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .checkbox(_, _, _, let checked) = field else {
+            XCTFail("Expected checkbox"); return
+        }
+        XCTAssertTrue(checked)
+    }
+
+    func testRadioButton() {
+        let doc = MicronParser.parse("`<^|choice|a`>Option A")
+        let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
+        XCTAssertEqual(formElements.count, 1)
+        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .radio(let name, let value, let label, let selected) = field else {
+            XCTFail("Expected radio"); return
+        }
+        XCTAssertEqual(name, "choice")
+        XCTAssertEqual(value, "a")
+        XCTAssertTrue(label.contains("Option A"))
+        XCTAssertFalse(selected)
+    }
+
+    func testRadioPreselected() {
+        let doc = MicronParser.parse("`<^|choice|b|*`>Option B")
+        let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
+        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .radio(_, _, _, let selected) = field else {
+            XCTFail("Expected radio"); return
+        }
+        XCTAssertTrue(selected)
+    }
+
     // MARK: - Mixed Content
 
     func testMixedDocument() {

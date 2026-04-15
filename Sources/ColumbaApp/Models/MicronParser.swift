@@ -68,9 +68,10 @@ public struct MicronParser {
                 if content.isEmpty {
                     continue
                 }
-                let (spans, alignment) = parseInline(content, currentStyle: .plain, currentAlignment: currentAlignment)
+                let (spans, alignment, fields) = parseInline(content, currentStyle: .plain, currentAlignment: currentAlignment)
                 if let alignment = alignment { currentAlignment = alignment }
                 elements.append(.heading(level: headingLevel, spans: spans, alignment: currentAlignment))
+                for field in fields { elements.append(.formField(field)) }
                 continue
             }
 
@@ -87,9 +88,10 @@ public struct MicronParser {
                 currentIndent = 0
                 let rest = String(line.dropFirst())
                 if !rest.isEmpty {
-                    let (spans, alignment) = parseInline(rest, currentStyle: .plain, currentAlignment: currentAlignment)
+                    let (spans, alignment, fields) = parseInline(rest, currentStyle: .plain, currentAlignment: currentAlignment)
                     if let alignment = alignment { currentAlignment = alignment }
                     elements.append(.paragraph(spans: spans, alignment: currentAlignment, indentLevel: currentIndent))
+                    for field in fields { elements.append(.formField(field)) }
                 }
                 continue
             }
@@ -102,9 +104,10 @@ public struct MicronParser {
             }
 
             // Regular paragraph — parse inline formatting
-            let (spans, alignment) = parseInline(line, currentStyle: .plain, currentAlignment: currentAlignment)
+            let (spans, alignment, fields) = parseInline(line, currentStyle: .plain, currentAlignment: currentAlignment)
             if let alignment = alignment { currentAlignment = alignment }
             elements.append(.paragraph(spans: spans, alignment: currentAlignment, indentLevel: currentIndent))
+            for field in fields { elements.append(.formField(field)) }
         }
 
         // Close unclosed literal block
@@ -131,15 +134,16 @@ public struct MicronParser {
     // MARK: - Inline Parsing
 
     /// Parse inline formatting within a line of text.
-    /// Returns parsed spans and any alignment change detected.
+    /// Returns parsed spans, any alignment change detected, and any form fields found.
     private static func parseInline(
         _ text: String,
         currentStyle: MicronTextStyle,
         currentAlignment: MicronAlignment
-    ) -> ([MicronSpan], MicronAlignment?) {
+    ) -> ([MicronSpan], MicronAlignment?, [MicronFormField]) {
         var spans: [MicronSpan] = []
         var style = currentStyle
         var alignment: MicronAlignment? = nil
+        var formFields: [MicronFormField] = []
         var buffer = ""
         var i = text.startIndex
 
@@ -282,6 +286,22 @@ public struct MicronParser {
                     continue
                 }
 
+                // Form field: `<spec`value>
+                if cmd == "<" {
+                    flushBuffer()
+                    if let result = parseFormField(text, from: text.index(after: next)) {
+                        // Form fields are returned as a special span that the
+                        // caller should extract — but since they're block-level
+                        // elements we handle them by returning early
+                        formFields.append(result.field)
+                        i = result.endIndex
+                    } else {
+                        buffer.append(ch)
+                        i = next
+                    }
+                    continue
+                }
+
                 // Unknown command — treat as literal
                 buffer.append(ch)
                 i = next
@@ -293,7 +313,103 @@ public struct MicronParser {
         }
 
         flushBuffer()
-        return (spans, alignment)
+        return (spans, alignment, formFields)
+    }
+
+    // MARK: - Form Field Parsing
+
+    private struct ParsedFormField {
+        let field: MicronFormField
+        let label: String?
+        let endIndex: String.Index
+    }
+
+    /// Parse a form field starting after the `<` character.
+    /// Formats:
+    ///   `<width|name`default>          — text input
+    ///   `<!|name`default>              — password
+    ///   `<?|name|value`>Label          — checkbox
+    ///   `<?|name|value|*`>Label        — checkbox (prechecked)
+    ///   `<^|name|value`>Label          — radio
+    ///   `<^|name|value|*`>Label        — radio (preselected)
+    private static func parseFormField(_ text: String, from start: String.Index) -> ParsedFormField? {
+        // Find closing >
+        guard let closeAngle = text[start...].firstIndex(of: ">") else { return nil }
+        let content = String(text[start..<closeAngle])
+        let afterClose = text.index(after: closeAngle)
+
+        // Split on backtick to get spec and default value
+        let backtickParts = content.split(separator: "`", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        let spec = backtickParts[0]
+        let defaultValue = backtickParts.count > 1 ? backtickParts[1] : ""
+
+        // Split spec on pipe
+        let specParts = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard !specParts.isEmpty else { return nil }
+
+        let typeIndicator = specParts[0]
+
+        // Checkbox: ?|name|value or ?|name|value|*
+        if typeIndicator == "?" && specParts.count >= 3 {
+            let name = specParts[1]
+            let value = specParts[2]
+            let checked = specParts.count >= 4 && specParts[3] == "*"
+            // Label follows the closing >
+            let label = extractTrailingLabel(text, from: afterClose)
+            return ParsedFormField(
+                field: .checkbox(name: name, value: value, label: label.text, checked: checked),
+                label: label.text,
+                endIndex: label.endIndex
+            )
+        }
+
+        // Radio: ^|name|value or ^|name|value|*
+        if typeIndicator == "^" && specParts.count >= 3 {
+            let name = specParts[1]
+            let value = specParts[2]
+            let selected = specParts.count >= 4 && specParts[3] == "*"
+            let label = extractTrailingLabel(text, from: afterClose)
+            return ParsedFormField(
+                field: .radio(name: name, value: value, label: label.text, selected: selected),
+                label: label.text,
+                endIndex: label.endIndex
+            )
+        }
+
+        // Password: !|name or !width|name
+        if typeIndicator.hasPrefix("!") {
+            let name = specParts.count >= 2 ? specParts[1] : typeIndicator.dropFirst().description
+            return ParsedFormField(
+                field: .passwordInput(name: name, defaultValue: defaultValue),
+                label: nil,
+                endIndex: afterClose
+            )
+        }
+
+        // Text input: width|name or just name
+        if specParts.count >= 2 {
+            let width = Int(specParts[0]) ?? 24
+            let name = specParts[1]
+            return ParsedFormField(
+                field: .textInput(width: width, name: name, defaultValue: defaultValue),
+                label: nil,
+                endIndex: afterClose
+            )
+        }
+
+        // Single name, no width
+        return ParsedFormField(
+            field: .textInput(width: 24, name: typeIndicator, defaultValue: defaultValue),
+            label: nil,
+            endIndex: afterClose
+        )
+    }
+
+    /// Extract label text that follows a checkbox/radio closing >.
+    private static func extractTrailingLabel(_ text: String, from start: String.Index) -> (text: String, endIndex: String.Index) {
+        // Label is the rest of the line after >
+        let remaining = String(text[start...])
+        return (remaining, text.endIndex)
     }
 
     // MARK: - Link Parsing

@@ -37,6 +37,7 @@ public enum MicronElement: Sendable, Equatable, Identifiable {
     case paragraph(spans: [MicronSpan], alignment: MicronAlignment, indentLevel: Int)
     case divider(character: Character?)
     case literalBlock(text: String)
+    case formField(MicronFormField)
 
     public var id: String {
         switch self {
@@ -48,6 +49,30 @@ public enum MicronElement: Sendable, Equatable, Identifiable {
             return "div_\(ch?.description ?? "default")"
         case .literalBlock(let text):
             return "lit_\(text.hashValue)"
+        case .formField(let field):
+            return "field_\(field.name)"
+        }
+    }
+}
+
+// MARK: - Form Fields
+
+public enum MicronFormField: Sendable, Equatable, Hashable {
+    /// Text input: `<width|name`defaultValue>
+    case textInput(width: Int, name: String, defaultValue: String)
+    /// Password input: `<!|name`defaultValue>
+    case passwordInput(name: String, defaultValue: String)
+    /// Checkbox: `<?|name|value`>Label  (* = prechecked)
+    case checkbox(name: String, value: String, label: String, checked: Bool)
+    /// Radio button: `<^|name|value`>Label  (* = preselected)
+    case radio(name: String, value: String, label: String, selected: Bool)
+
+    public var name: String {
+        switch self {
+        case .textInput(_, let name, _): return name
+        case .passwordInput(let name, _): return name
+        case .checkbox(let name, _, _, _): return name
+        case .radio(let name, _, _, _): return name
         }
     }
 }

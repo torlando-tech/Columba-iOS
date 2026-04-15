@@ -25,6 +25,15 @@ public final class NomadNetBrowserViewModel {
     public var statusMessage: String = ""
     public var errorMessage: String?
 
+    // MARK: - Form State
+
+    /// Text/password field values keyed by field name.
+    public var formFields: [String: String] = [:]
+    /// Checkbox states keyed by "name:value".
+    public var checkboxFields: [String: Bool] = [:]
+    /// Radio button selections keyed by group name.
+    public var radioFields: [String: String] = [:]
+
     // MARK: - Navigation
 
     private var navigationHistory: [NomadNetNavigationEntry] = []
@@ -73,6 +82,7 @@ public final class NomadNetBrowserViewModel {
                 path: currentPath
             )
             currentDocument = document
+            initializeFormDefaults(from: document)
             statusMessage = await browserService.statusMessage
         } catch {
             errorMessage = error.localizedDescription
@@ -138,7 +148,103 @@ public final class NomadNetBrowserViewModel {
 
     /// Handle a link tap from the micron document.
     public func handleLinkTap(_ link: MicronLink) async {
-        await navigateTo(url: link.url)
+        if let fieldNames = link.fieldNames, !fieldNames.isEmpty {
+            // Form submission link — collect field values and submit
+            await submitForm(url: link.url, fieldNames: fieldNames)
+        } else {
+            await navigateTo(url: link.url)
+        }
+    }
+
+    /// Submit form fields to a page.
+    public func submitForm(url: MicronURL, fieldNames: [String]) async {
+        let fields = collectFormFields(fieldNames: fieldNames)
+        guard case .samePage(let path) = url else {
+            // For remote node form submissions, navigate first then submit
+            await navigateTo(url: url)
+            return
+        }
+
+        pushHistory()
+        currentPath = path
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            let (document, _) = try await browserService.submitForm(
+                destinationHash: currentNodeHash,
+                path: path,
+                fields: fields
+            )
+            currentDocument = document
+            initializeFormDefaults(from: document)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        isLoading = false
+        statusMessage = ""
+    }
+
+    // MARK: - Form Helpers
+
+    /// Initialize form field defaults from a document.
+    private func initializeFormDefaults(from document: MicronDocument) {
+        formFields.removeAll()
+        checkboxFields.removeAll()
+        radioFields.removeAll()
+
+        for element in document.elements {
+            guard case .formField(let field) = element else { continue }
+            switch field {
+            case .textInput(_, let name, let defaultValue):
+                formFields[name] = defaultValue
+            case .passwordInput(let name, let defaultValue):
+                formFields[name] = defaultValue
+            case .checkbox(let name, let value, _, let checked):
+                checkboxFields["\(name):\(value)"] = checked
+            case .radio(let name, let value, _, let selected):
+                if selected {
+                    radioFields[name] = value
+                }
+            }
+        }
+    }
+
+    /// Collect form field values for submission.
+    private func collectFormFields(fieldNames: [String]) -> [String: String] {
+        var result: [String: String] = [:]
+        let submitAll = fieldNames.contains("*")
+
+        for (name, value) in formFields {
+            if submitAll || fieldNames.contains(name) {
+                result[name] = value
+            }
+        }
+
+        // Collect checked checkboxes — concatenate values with same name
+        var checkboxValues: [String: [String]] = [:]
+        for (key, checked) in checkboxFields where checked {
+            let parts = key.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let name = String(parts[0])
+            let value = String(parts[1])
+            if submitAll || fieldNames.contains(name) {
+                checkboxValues[name, default: []].append(value)
+            }
+        }
+        for (name, values) in checkboxValues {
+            result[name] = values.joined(separator: ",")
+        }
+
+        // Collect radio selections
+        for (name, value) in radioFields {
+            if submitAll || fieldNames.contains(name) {
+                result[name] = value
+            }
+        }
+
+        return result
     }
 
     // MARK: - History

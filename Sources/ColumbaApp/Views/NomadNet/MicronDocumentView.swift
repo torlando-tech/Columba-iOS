@@ -4,6 +4,9 @@ import SwiftUI
 @available(iOS 17.0, macOS 14.0, *)
 struct MicronDocumentView: View {
     let document: MicronDocument
+    @Binding var formFields: [String: String]
+    @Binding var checkboxFields: [String: Bool]
+    @Binding var radioFields: [String: String]
     var onLinkTapped: ((MicronLink) -> Void)?
 
     var body: some View {
@@ -53,7 +56,73 @@ struct MicronDocumentView: View {
                 .background(Color(.systemGray6))
                 .cornerRadius(6)
                 .padding(.vertical, 4)
+
+        case .formField(let field):
+            renderFormField(field)
+                .padding(.vertical, 2)
         }
+    }
+
+    // MARK: - Form Field Rendering
+
+    @ViewBuilder
+    private func renderFormField(_ field: MicronFormField) -> some View {
+        switch field {
+        case .textInput(let width, let name, _):
+            TextField(name, text: binding(for: name))
+                .font(.system(.body, design: .monospaced))
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: CGFloat(width) * 10)
+
+        case .passwordInput(let name, _):
+            SecureField(name, text: binding(for: name))
+                .font(.system(.body, design: .monospaced))
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 240)
+
+        case .checkbox(let name, let value, let label, _):
+            let key = "\(name):\(value)"
+            Button {
+                checkboxFields[key] = !(checkboxFields[key] ?? false)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: (checkboxFields[key] ?? false) ? "checkmark.square.fill" : "square")
+                        .foregroundColor((checkboxFields[key] ?? false) ? .accentColor : .secondary)
+                    Text(label)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.primary)
+                }
+            }
+            .buttonStyle(.plain)
+
+        case .radio(let name, let value, let label, _):
+            Button {
+                radioFields[name] = value
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: radioFields[name] == value ? "circle.inset.filled" : "circle")
+                        .foregroundColor(radioFields[name] == value ? .accentColor : .secondary)
+                    Text(label)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.primary)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func binding(for name: String) -> Binding<String> {
+        Binding(
+            get: { formFields[name] ?? "" },
+            set: { formFields[name] = $0 }
+        )
+    }
+
+    private func checkboxBinding(for key: String) -> Binding<Bool> {
+        Binding(
+            get: { checkboxFields[key] ?? false },
+            set: { checkboxFields[key] = $0 }
+        )
     }
 
     private func headingFont(level: Int) -> Font {
