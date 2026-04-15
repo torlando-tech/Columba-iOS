@@ -108,6 +108,9 @@
 		078B /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
 		079B /* OnboardingRestoreSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F079 /* OnboardingRestoreSheet.swift */; };
 		07AB /* PlatformCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07A /* PlatformCompat.swift */; };
+		07CB /* MicronDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07D /* MicronDocument.swift */; };
+		07DB /* MicronParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07E /* MicronParser.swift */; };
+		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
 		2F3D64B12F7227E100049252 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P004 /* ReticulumSwift */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
@@ -126,6 +129,7 @@
 /* Begin PBXFileReference section */
 		FT01 /* AudioRingBufferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRingBufferTests.swift; sourceTree = "<group>"; };
 		FT02 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
+		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
@@ -226,6 +230,8 @@
 		F078 /* ExtensionFrameReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionFrameReader.swift; sourceTree = "<group>"; };
 		F079 /* OnboardingRestoreSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRestoreSheet.swift; sourceTree = "<group>"; };
 		F07A /* PlatformCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformCompat.swift; sourceTree = "<group>"; };
+		F07D /* MicronDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronDocument.swift; sourceTree = "<group>"; };
+		F07E /* MicronParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParser.swift; sourceTree = "<group>"; };
 		F07B /* Config/Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
 		F07C /* Config/LocalSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/LocalSigning.xcconfig.example; sourceTree = SOURCE_ROOT; };
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
@@ -344,6 +350,8 @@
 				F053 /* TcpCommunityServer.swift */,
 				F05B /* MigrationData.swift */,
 				F069 /* CodecProfileInfo.swift */,
+				F07D /* MicronDocument.swift */,
+				F07E /* MicronParser.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -514,6 +522,7 @@
 			children = (
 				FT01 /* AudioRingBufferTests.swift */,
 				FT02 /* AudioManagerConfigChangeTests.swift */,
+				FT03 /* MicronParserTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -679,6 +688,7 @@
 			files = (
 				T001 /* AudioRingBufferTests.swift in Sources */,
 				T002 /* AudioManagerConfigChangeTests.swift in Sources */,
+				T003 /* MicronParserTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -789,6 +799,8 @@
 				078B /* ExtensionFrameReader.swift in Sources */,
 				079B /* OnboardingRestoreSheet.swift in Sources */,
 				07AB /* PlatformCompat.swift in Sources */,
+				07CB /* MicronDocument.swift in Sources */,
+				07DB /* MicronParser.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
