@@ -18,6 +18,7 @@ public enum ContactBadgeType: String, Sendable, Equatable, Hashable {
     case peer = "Peer"
     case relay = "RELAY"
     case audio = "Audio"
+    case node = "Node"
 }
 
 // MARK: - Contact Model
@@ -157,6 +158,9 @@ public struct Contact: Identifiable, Sendable, Hashable {
         } else if entry.isLXSTTelephony {
             self.badgeType = .audio
             self.isRelay = false
+        } else if entry.detectedAspect == "nomadnetwork.node" {
+            self.badgeType = .node
+            self.isRelay = false
         } else {
             self.badgeType = .peer
             self.isRelay = false
@@ -237,6 +241,7 @@ public enum AnnounceFilter: String, Sendable, Equatable, Hashable, CaseIterable 
     case all = "All"
     case peers = "Peers"
     case audio = "Audio"
+    case nodes = "Nodes"
     case relays = "Relays"
 }
 
@@ -329,6 +334,8 @@ public final class ContactsViewModel {
             results = results.filter { $0.aspect == "lxmf.delivery" || $0.aspect == nil }
         case .audio:
             results = results.filter { $0.isAudio }
+        case .nodes:
+            results = results.filter { $0.badgeType == .node }
         case .relays:
             results = results.filter { $0.isRelay }
         }

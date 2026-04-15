@@ -99,13 +99,26 @@ public struct ContactsView: View {
                     toolbarContent(vm)
                 }
                 .navigationDestination(item: $selectedContact) { contact in
-                    NodeDetailsView(
-                        contact: contact,
-                        appServices: appServices,
-                        onStartChat: { contact in
-                            startChat(with: contact)
-                        }
-                    )
+                    if contact.badgeType == .node,
+                       let transport = appServices.transport,
+                       let pathTable = appServices.pathTable,
+                       let identity = appServices.identity {
+                        NomadNetBrowserView(
+                            nodeHash: contact.identityHash,
+                            nodeName: contact.displayName,
+                            transport: transport,
+                            pathTable: pathTable,
+                            identity: identity
+                        )
+                    } else {
+                        NodeDetailsView(
+                            contact: contact,
+                            appServices: appServices,
+                            onStartChat: { contact in
+                                startChat(with: contact)
+                            }
+                        )
+                    }
                 }
                 .navigationDestination(item: $chatConversation) { conversation in
                     MessagingView(

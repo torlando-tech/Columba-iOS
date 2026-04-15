@@ -102,6 +102,7 @@ struct NetworkAnnouncesTab: View {
         switch viewModel.announceFilter {
         case .relays: return "server.rack"
         case .audio: return "phone.down"
+        case .nodes: return "globe"
         case .peers: return "person.2"
         case .all: return "antenna.radiowaves.left.and.right.slash"
         }
@@ -185,6 +186,7 @@ struct NetworkAnnouncesTab: View {
         case .all: return nil
         case .peers: return "person.2"
         case .audio: return "phone"
+        case .nodes: return "globe"
         case .relays: return "server.rack"
         }
     }

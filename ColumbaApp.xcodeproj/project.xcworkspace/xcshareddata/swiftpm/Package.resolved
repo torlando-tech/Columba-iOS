@@ -38,6 +38,15 @@
       }
     },
     {
+      "identity" : "reticulum-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/torlando-tech/reticulum-swift.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "689f5f701b665ac3aa28b7da11ba814480b711e3"
+      }
+    },
+    {
       "identity" : "swcompression",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tsolomko/SWCompression.git",
