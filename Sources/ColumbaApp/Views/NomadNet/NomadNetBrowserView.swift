@@ -28,7 +28,9 @@ struct NomadNetBrowserView: View {
                         document: document,
                         formFields: $viewModel.formFields,
                         checkboxFields: $viewModel.checkboxFields,
-                        radioFields: $viewModel.radioFields
+                        radioFields: $viewModel.radioFields,
+                        partialDocuments: viewModel.partialDocuments,
+                        loadingPartials: viewModel.loadingPartials
                     ) { link in
                         Task { await viewModel.handleLinkTap(link) }
                     }

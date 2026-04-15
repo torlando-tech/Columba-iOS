@@ -7,6 +7,8 @@ struct MicronDocumentView: View {
     @Binding var formFields: [String: String]
     @Binding var checkboxFields: [String: Bool]
     @Binding var radioFields: [String: String]
+    var partialDocuments: [String: MicronDocument] = [:]
+    var loadingPartials: Set<String> = []
     var onLinkTapped: ((MicronLink) -> Void)?
 
     var body: some View {
@@ -60,7 +62,23 @@ struct MicronDocumentView: View {
         case .formField(let field):
             renderFormField(field)
                 .padding(.vertical, 2)
+
+        case .partial(let partial):
+            renderPartial(partial)
         }
+    }
+
+    // MARK: - Partial Rendering
+
+    @ViewBuilder
+    private func renderPartial(_ partial: MicronPartial) -> some View {
+        let key = partial.partialId ?? partial.url
+        MicronPartialView(
+            partialKey: key,
+            partialDocuments: partialDocuments,
+            loadingPartials: loadingPartials,
+            onLinkTapped: onLinkTapped
+        )
     }
 
     // MARK: - Form Field Rendering
@@ -130,6 +148,69 @@ struct MicronDocumentView: View {
         case 1: return .title
         case 2: return .title2
         default: return .title3
+        }
+    }
+}
+
+// MARK: - Partial View
+
+/// Renders a loaded partial document inline, or a loading indicator.
+@available(iOS 17.0, macOS 14.0, *)
+private struct MicronPartialView: View {
+    let partialKey: String
+    let partialDocuments: [String: MicronDocument]
+    let loadingPartials: Set<String>
+    var onLinkTapped: ((MicronLink) -> Void)?
+
+    var body: some View {
+        if let partialDoc = partialDocuments[partialKey] {
+            // Render partial content as simple text spans (no nested form/partial support)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(partialDoc.elements.enumerated()), id: \.offset) { _, element in
+                    MicronSimpleElementView(element: element, onLinkTapped: onLinkTapped)
+                }
+            }
+        } else if loadingPartials.contains(partialKey) {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.7)
+                Text("Loading...")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+/// Simplified element renderer for partial content (no form fields or nested partials).
+@available(iOS 17.0, macOS 14.0, *)
+private struct MicronSimpleElementView: View {
+    let element: MicronElement
+    var onLinkTapped: ((MicronLink) -> Void)?
+
+    var body: some View {
+        switch element {
+        case .heading(_, let spans, let alignment):
+            renderSpans(spans, onLinkTapped: onLinkTapped)
+                .font(.headline)
+                .bold()
+                .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
+        case .paragraph(let spans, let alignment, let indentLevel):
+            renderSpans(spans, onLinkTapped: onLinkTapped)
+                .font(.system(.body, design: .monospaced))
+                .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
+                .padding(.leading, CGFloat(indentLevel) * 16)
+        case .divider:
+            Divider().padding(.vertical, 4)
+        case .literalBlock(let text):
+            Text(text)
+                .font(.system(.body, design: .monospaced))
+                .padding(8)
+                .background(Color(.systemGray6))
+                .cornerRadius(6)
+        case .formField, .partial:
+            EmptyView()
         }
     }
 }

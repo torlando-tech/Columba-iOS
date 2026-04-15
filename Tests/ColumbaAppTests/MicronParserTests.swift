@@ -406,6 +406,38 @@ final class MicronParserTests: XCTestCase {
         XCTAssertTrue(selected)
     }
 
+    // MARK: - Partials
+
+    func testSimplePartial() {
+        let doc = MicronParser.parse("`{/page/status.mu}")
+        let partials = doc.elements.filter { if case .partial = $0 { return true }; return false }
+        XCTAssertEqual(partials.count, 1)
+        guard case .partial(let p) = partials[0] else { XCTFail("Expected partial"); return }
+        XCTAssertEqual(p.url, "/page/status.mu")
+        XCTAssertNil(p.refreshInterval)
+        XCTAssertNil(p.partialId)
+    }
+
+    func testPartialWithRefresh() {
+        let doc = MicronParser.parse("`{/page/status.mu`5}")
+        guard case .partial(let p) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
+            XCTFail("Expected partial"); return
+        }
+        XCTAssertEqual(p.url, "/page/status.mu")
+        XCTAssertEqual(p.refreshInterval, 5)
+    }
+
+    func testPartialWithIdAndFields() {
+        let doc = MicronParser.parse("`{/page/widget.mu`10`pid=status|username}")
+        guard case .partial(let p) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
+            XCTFail("Expected partial"); return
+        }
+        XCTAssertEqual(p.url, "/page/widget.mu")
+        XCTAssertEqual(p.refreshInterval, 10)
+        XCTAssertEqual(p.partialId, "status")
+        XCTAssertEqual(p.fieldNames, ["username"])
+    }
+
     // MARK: - Mixed Content
 
     func testMixedDocument() {

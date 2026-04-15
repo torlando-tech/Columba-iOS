@@ -38,6 +38,7 @@ public enum MicronElement: Sendable, Equatable, Identifiable {
     case divider(character: Character?)
     case literalBlock(text: String)
     case formField(MicronFormField)
+    case partial(MicronPartial)
 
     public var id: String {
         switch self {
@@ -51,8 +52,24 @@ public enum MicronElement: Sendable, Equatable, Identifiable {
             return "lit_\(text.hashValue)"
         case .formField(let field):
             return "field_\(field.name)"
+        case .partial(let partial):
+            return "partial_\(partial.url)_\(partial.partialId ?? "auto")"
         }
     }
+}
+
+// MARK: - Partials
+
+/// Async sub-page include: `{url`refresh`fields}
+public struct MicronPartial: Sendable, Equatable, Hashable {
+    /// URL to fetch (same-node path or remote)
+    public var url: String
+    /// Auto-refresh interval in seconds (nil = no refresh, 0 = no refresh)
+    public var refreshInterval: Int?
+    /// Partial ID for targeted reloads via p:<pid> links
+    public var partialId: String?
+    /// Field names to include in partial requests
+    public var fieldNames: [String]?
 }
 
 // MARK: - Form Fields

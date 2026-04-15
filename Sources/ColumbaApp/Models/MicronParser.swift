@@ -96,6 +96,14 @@ public struct MicronParser {
                 continue
             }
 
+            // Partial include: `{url`refresh`fields}
+            if line.hasPrefix("`{") {
+                if let partial = parsePartial(line) {
+                    elements.append(.partial(partial))
+                }
+                continue
+            }
+
             // Escaped line
             if firstChar == "\\" {
                 let text = String(line.dropFirst())
@@ -410,6 +418,51 @@ public struct MicronParser {
         // Label is the rest of the line after >
         let remaining = String(text[start...])
         return (remaining, text.endIndex)
+    }
+
+    // MARK: - Partial Parsing
+
+    /// Parse a partial include line: `{url`refresh`fields}
+    private static func parsePartial(_ line: String) -> MicronPartial? {
+        // Strip `{ prefix and } suffix
+        var content = line
+        guard content.hasPrefix("`{") else { return nil }
+        content = String(content.dropFirst(2))
+        if content.hasSuffix("}") {
+            content = String(content.dropLast())
+        }
+
+        let parts = content.split(separator: "`", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+        guard !parts.isEmpty else { return nil }
+
+        let url = parts[0]
+        var refreshInterval: Int? = nil
+        var partialId: String? = nil
+        var fieldNames: [String]? = nil
+
+        if parts.count >= 2 && !parts[1].isEmpty {
+            refreshInterval = Int(parts[1])
+        }
+
+        if parts.count >= 3 && !parts[2].isEmpty {
+            let fields = parts[2].split(separator: "|").map(String.init)
+            var names: [String] = []
+            for field in fields {
+                if field.hasPrefix("pid=") {
+                    partialId = String(field.dropFirst(4))
+                } else {
+                    names.append(field)
+                }
+            }
+            if !names.isEmpty { fieldNames = names }
+        }
+
+        return MicronPartial(
+            url: url,
+            refreshInterval: refreshInterval,
+            partialId: partialId,
+            fieldNames: fieldNames
+        )
     }
 
     // MARK: - Link Parsing

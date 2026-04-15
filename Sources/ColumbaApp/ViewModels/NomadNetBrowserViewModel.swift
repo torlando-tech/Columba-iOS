@@ -28,6 +28,11 @@ public final class NomadNetBrowserViewModel {
     public var downloadedFileName: String?
     public var showingShareSheet: Bool = false
 
+    /// Loaded partial content keyed by partial URL or partial ID.
+    public var partialDocuments: [String: MicronDocument] = [:]
+    /// Partials currently loading.
+    public var loadingPartials: Set<String> = []
+
     // MARK: - Form State
 
     /// Text/password field values keyed by field name.
@@ -85,6 +90,7 @@ public final class NomadNetBrowserViewModel {
                 path: currentPath
             )
             currentDocument = document
+            partialDocuments.removeAll()
             initializeFormDefaults(from: document)
             statusMessage = await browserService.statusMessage
         } catch {
@@ -93,6 +99,9 @@ public final class NomadNetBrowserViewModel {
 
         isLoading = false
         statusMessage = ""
+
+        // Load partials after main page
+        await loadPartials()
     }
 
     /// Navigate to a URL from a micron link.
@@ -220,6 +229,44 @@ public final class NomadNetBrowserViewModel {
 
         isLoading = false
         statusMessage = ""
+    }
+
+    // MARK: - Partials
+
+    /// Load all partials in the current document.
+    public func loadPartials() async {
+        guard let document = currentDocument else { return }
+        for element in document.elements {
+            guard case .partial(let partial) = element else { continue }
+            await loadPartial(partial)
+        }
+    }
+
+    /// Load a single partial.
+    public func loadPartial(_ partial: MicronPartial) async {
+        let key = partial.partialId ?? partial.url
+        loadingPartials.insert(key)
+
+        do {
+            let (document, _) = try await browserService.fetchPage(
+                destinationHash: currentNodeHash,
+                path: partial.url
+            )
+            partialDocuments[key] = document
+        } catch {
+            // Partials fail silently — show empty content
+        }
+
+        loadingPartials.remove(key)
+
+        // Set up auto-refresh if configured
+        if let interval = partial.refreshInterval, interval > 0 {
+            Task {
+                try? await Task.sleep(for: .seconds(interval))
+                guard currentDocument != nil else { return }
+                await loadPartial(partial)
+            }
+        }
     }
 
     // MARK: - Form Helpers
