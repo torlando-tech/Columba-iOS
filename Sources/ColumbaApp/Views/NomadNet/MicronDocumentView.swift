@@ -40,12 +40,15 @@ struct MicronDocumentView: View {
         switch element {
         case .heading(let level, let spans, let alignment):
             if isScrollMode {
-                // Tight, no padding above/below, fixed cell height per line
-                renderSpans(spans, onLinkTapped: onLinkTapped)
-                    .font(headingFont(level: level))
-                    .bold()
-                    .lineLimit(1)
-                    .frame(height: cellHeight, alignment: alignment.swiftUI)
+                // UIKit-backed line with strict paragraph line-height so block chars stack tight
+                MonospaceLineView(
+                    spans: spans,
+                    fontSize: style.fontSize,
+                    cellHeight: cellHeight,
+                    alignment: alignment,
+                    bold: true,
+                    onLinkTapped: onLinkTapped
+                )
             } else {
                 renderSpans(spans, onLinkTapped: onLinkTapped)
                     .font(headingFont(level: level))
@@ -57,12 +60,15 @@ struct MicronDocumentView: View {
 
         case .paragraph(let spans, let alignment, let indentLevel):
             if isScrollMode {
-                // Each paragraph = one line at exact cell height
-                renderSpans(spans, onLinkTapped: onLinkTapped)
-                    .font(bodyFont)
-                    .lineLimit(1)
-                    .frame(height: cellHeight, alignment: alignment.swiftUI)
-                    .padding(.leading, CGFloat(indentLevel) * style.approxCharWidth)
+                MonospaceLineView(
+                    spans: spans,
+                    fontSize: style.fontSize,
+                    cellHeight: cellHeight,
+                    alignment: alignment,
+                    bold: false,
+                    onLinkTapped: onLinkTapped
+                )
+                .padding(.leading, CGFloat(indentLevel) * style.approxCharWidth)
             } else {
                 renderSpans(spans, onLinkTapped: onLinkTapped)
                     .font(bodyFont)
@@ -72,20 +78,27 @@ struct MicronDocumentView: View {
             }
 
         case .divider(let character):
-            if let ch = character {
+            if isScrollMode {
+                // Use a full-width horizontal line character for scroll mode
+                let divChar = character.map(String.init) ?? "─"
+                MonospaceLineView(
+                    spans: [.text(String(repeating: divChar, count: 80), .plain)],
+                    fontSize: style.fontSize,
+                    cellHeight: cellHeight,
+                    alignment: .left,
+                    bold: false,
+                    onLinkTapped: nil
+                )
+            } else if let ch = character {
                 Text(String(repeating: ch, count: 40))
                     .font(.system(size: style.fontSize, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .frame(
-                        maxWidth: isScrollMode ? nil : .infinity,
-                        minHeight: isScrollMode ? cellHeight : nil,
-                        alignment: .leading
-                    )
-                    .padding(.vertical, isScrollMode ? 0 : 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
             } else {
                 Divider()
-                    .padding(.vertical, isScrollMode ? 0 : 4)
+                    .padding(.vertical, 4)
             }
 
         case .literalBlock(let text):
@@ -93,10 +106,14 @@ struct MicronDocumentView: View {
                 // Split literal blocks into individual lines so each gets exact cell height
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
-                        Text(String(line))
-                            .font(.system(size: style.fontSize, design: .monospaced))
-                            .lineLimit(1)
-                            .frame(height: cellHeight, alignment: .leading)
+                        MonospaceLineView(
+                            spans: [.text(String(line), .plain)],
+                            fontSize: style.fontSize,
+                            cellHeight: cellHeight,
+                            alignment: .left,
+                            bold: false,
+                            onLinkTapped: nil
+                        )
                     }
                 }
             } else {
