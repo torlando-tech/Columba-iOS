@@ -23,17 +23,16 @@ struct NomadNetBrowserView: View {
                 .ignoresSafeArea()
 
             if let document = viewModel.currentDocument {
-                ScrollView {
-                    MicronDocumentView(
-                        document: document,
-                        formFields: $viewModel.formFields,
-                        checkboxFields: $viewModel.checkboxFields,
-                        radioFields: $viewModel.radioFields,
-                        partialDocuments: viewModel.partialDocuments,
-                        loadingPartials: viewModel.loadingPartials
-                    ) { link in
-                        Task { await viewModel.handleLinkTap(link) }
-                    }
+                MicronRenderContainer(
+                    document: document,
+                    mode: viewModel.renderingMode,
+                    formFields: $viewModel.formFields,
+                    checkboxFields: $viewModel.checkboxFields,
+                    radioFields: $viewModel.radioFields,
+                    partialDocuments: viewModel.partialDocuments,
+                    loadingPartials: viewModel.loadingPartials
+                ) { link in
+                    Task { await viewModel.handleLinkTap(link) }
                 }
             } else if !viewModel.isLoading {
                 ContentUnavailableView(
@@ -77,6 +76,24 @@ struct NomadNetBrowserView: View {
                         Task { await viewModel.identifyToNode() }
                     } label: {
                         Label("Identify to Node", systemImage: "person.badge.key")
+                    }
+
+                    Divider()
+
+                    Menu {
+                        ForEach(NomadNetRenderingMode.allCases, id: \.self) { mode in
+                            Button {
+                                viewModel.renderingMode = mode
+                            } label: {
+                                if viewModel.renderingMode == mode {
+                                    Label(mode.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(mode.displayName)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("Rendering Mode", systemImage: viewModel.renderingMode.iconName)
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")

@@ -2,6 +2,35 @@ import Foundation
 import SwiftUI
 import ReticulumSwift
 
+/// Rendering mode for NomadNet pages.
+public enum NomadNetRenderingMode: String, Sendable, CaseIterable {
+    /// Monospace font with horizontal+vertical scroll, square line height, pinch zoom.
+    /// Best for ASCII art and pixel art pages.
+    case monospaceScroll
+    /// Compact monospace with vertical scroll and text wrapping.
+    /// Best for dense text content.
+    case monospaceZoom
+    /// System (proportional) font with vertical scroll and text wrapping.
+    /// Best for readable prose.
+    case proportionalWrap
+
+    public var displayName: String {
+        switch self {
+        case .monospaceScroll: return "Monospace (scroll)"
+        case .monospaceZoom: return "Monospace (zoom)"
+        case .proportionalWrap: return "Proportional (wrap)"
+        }
+    }
+
+    public var iconName: String {
+        switch self {
+        case .monospaceScroll: return "arrow.up.and.down.and.arrow.left.and.right"
+        case .monospaceZoom: return "textformat.size.smaller"
+        case .proportionalWrap: return "text.alignleft"
+        }
+    }
+}
+
 /// Navigation history entry for the NomadNet browser.
 public struct NomadNetNavigationEntry: Sendable {
     public let nodeHash: Data
@@ -27,6 +56,19 @@ public final class NomadNetBrowserViewModel {
     public var downloadedFileURL: URL?
     public var downloadedFileName: String?
     public var showingShareSheet: Bool = false
+
+    /// Current rendering mode (persisted to UserDefaults).
+    public var renderingMode: NomadNetRenderingMode = {
+        if let raw = UserDefaults.standard.string(forKey: "nomadnet.renderingMode"),
+           let mode = NomadNetRenderingMode(rawValue: raw) {
+            return mode
+        }
+        return .monospaceScroll
+    }() {
+        didSet {
+            UserDefaults.standard.set(renderingMode.rawValue, forKey: "nomadnet.renderingMode")
+        }
+    }
 
     /// Loaded partial content keyed by partial URL or partial ID.
     public var partialDocuments: [String: MicronDocument] = [:]

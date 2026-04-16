@@ -10,6 +10,7 @@ struct MicronDocumentView: View {
     var partialDocuments: [String: MicronDocument] = [:]
     var loadingPartials: Set<String> = []
     var onLinkTapped: ((MicronLink) -> Void)?
+    var style: MicronRenderStyle = .monospaceScroll
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -21,6 +22,14 @@ struct MicronDocumentView: View {
         .padding(.vertical, 8)
     }
 
+    private var bodyFont: Font {
+        if style.usesMonospace {
+            return .system(size: style.fontSize, design: .monospaced)
+        } else {
+            return .system(size: style.fontSize)
+        }
+    }
+
     @ViewBuilder
     private func renderElement(_ element: MicronElement, index: Int) -> some View {
         switch element {
@@ -28,22 +37,26 @@ struct MicronDocumentView: View {
             renderSpans(spans, onLinkTapped: onLinkTapped)
                 .font(headingFont(level: level))
                 .bold()
-                .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
+                .lineSpacing(style.lineSpacing)
+                .lineLimit(style.wraps ? nil : 1)
+                .frame(maxWidth: style.wraps ? .infinity : nil, alignment: alignment.swiftUI)
                 .padding(.top, level == 1 ? 12 : 8)
                 .padding(.bottom, 4)
 
         case .paragraph(let spans, let alignment, let indentLevel):
             renderSpans(spans, onLinkTapped: onLinkTapped)
-                .font(.system(.body, design: .monospaced))
-                .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
+                .font(bodyFont)
+                .lineSpacing(style.lineSpacing)
+                .lineLimit(style.wraps ? nil : 1)
+                .frame(maxWidth: style.wraps ? .infinity : nil, alignment: alignment.swiftUI)
                 .padding(.leading, CGFloat(indentLevel) * 16)
 
         case .divider(let character):
             if let ch = character {
                 Text(String(repeating: ch, count: 40))
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(size: style.fontSize, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: style.wraps ? .infinity : nil)
                     .padding(.vertical, 4)
             } else {
                 Divider()
@@ -52,9 +65,10 @@ struct MicronDocumentView: View {
 
         case .literalBlock(let text):
             Text(text)
-                .font(.system(.body, design: .monospaced))
+                .font(.system(size: style.fontSize, design: .monospaced))
+                .lineLimit(style.wraps ? nil : nil) // literal blocks always preserve layout
                 .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: style.wraps ? .infinity : nil, alignment: .leading)
                 .background(Color(.systemGray6))
                 .cornerRadius(6)
                 .padding(.vertical, 4)

@@ -1,0 +1,164 @@
+import SwiftUI
+
+// MARK: - Render Container
+
+/// Wraps MicronDocumentView in the appropriate scroll/zoom/wrap container for a given rendering mode.
+@available(iOS 17.0, macOS 14.0, *)
+struct MicronRenderContainer: View {
+    let document: MicronDocument
+    let mode: NomadNetRenderingMode
+    @Binding var formFields: [String: String]
+    @Binding var checkboxFields: [String: Bool]
+    @Binding var radioFields: [String: String]
+    var partialDocuments: [String: MicronDocument] = [:]
+    var loadingPartials: Set<String> = []
+    var onLinkTapped: ((MicronLink) -> Void)?
+
+    var body: some View {
+        switch mode {
+        case .monospaceScroll:
+            MonospaceScrollContainer(
+                document: document,
+                formFields: $formFields,
+                checkboxFields: $checkboxFields,
+                radioFields: $radioFields,
+                partialDocuments: partialDocuments,
+                loadingPartials: loadingPartials,
+                onLinkTapped: onLinkTapped
+            )
+
+        case .monospaceZoom:
+            ScrollView(.vertical) {
+                MicronDocumentView(
+                    document: document,
+                    formFields: $formFields,
+                    checkboxFields: $checkboxFields,
+                    radioFields: $radioFields,
+                    partialDocuments: partialDocuments,
+                    loadingPartials: loadingPartials,
+                    onLinkTapped: onLinkTapped,
+                    style: .monospaceCompact
+                )
+            }
+
+        case .proportionalWrap:
+            ScrollView(.vertical) {
+                MicronDocumentView(
+                    document: document,
+                    formFields: $formFields,
+                    checkboxFields: $checkboxFields,
+                    radioFields: $radioFields,
+                    partialDocuments: partialDocuments,
+                    loadingPartials: loadingPartials,
+                    onLinkTapped: onLinkTapped,
+                    style: .proportional
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Monospace Scroll Container
+
+/// The most complex rendering mode: horizontal + vertical scroll, square line height
+/// (for block-drawing/pixel-art characters), pinch-to-zoom, no text wrapping.
+@available(iOS 17.0, macOS 14.0, *)
+struct MonospaceScrollContainer: View {
+    let document: MicronDocument
+    @Binding var formFields: [String: String]
+    @Binding var checkboxFields: [String: Bool]
+    @Binding var radioFields: [String: String]
+    var partialDocuments: [String: MicronDocument]
+    var loadingPartials: Set<String>
+    var onLinkTapped: ((MicronLink) -> Void)?
+
+    @State private var zoomScale: CGFloat = 1.0
+    @State private var lastPinchScale: CGFloat = 1.0
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            MicronDocumentView(
+                document: document,
+                formFields: $formFields,
+                checkboxFields: $checkboxFields,
+                radioFields: $radioFields,
+                partialDocuments: partialDocuments,
+                loadingPartials: loadingPartials,
+                onLinkTapped: onLinkTapped,
+                style: .monospaceScroll
+            )
+            .fixedSize(horizontal: true, vertical: false)
+            .scaleEffect(zoomScale, anchor: .topLeading)
+            .padding(.trailing, max(0, 400 * (zoomScale - 1)))
+            .padding(.bottom, max(0, 400 * (zoomScale - 1)))
+        }
+        #if os(iOS)
+        .gesture(
+            MagnifyGesture()
+                .onChanged { value in
+                    let newScale = lastPinchScale * value.magnification
+                    zoomScale = min(max(newScale, 0.5), 3.0)
+                }
+                .onEnded { _ in
+                    lastPinchScale = zoomScale
+                }
+        )
+        #endif
+    }
+}
+
+// MARK: - Rendering Style
+
+/// Style parameters used by MicronDocumentView. Picked based on rendering mode.
+public enum MicronRenderStyle: Sendable {
+    /// Monospace, 14pt, square line height, no wrapping. For ASCII/pixel art.
+    case monospaceScroll
+    /// Monospace, 10pt, default line height, wrapping. Dense text.
+    case monospaceCompact
+    /// System font, 14pt, default line height, wrapping. Readable prose.
+    case proportional
+
+    public var fontSize: CGFloat {
+        switch self {
+        case .monospaceScroll: return 14
+        case .monospaceCompact: return 10
+        case .proportional: return 14
+        }
+    }
+
+    public var usesMonospace: Bool {
+        switch self {
+        case .monospaceScroll, .monospaceCompact: return true
+        case .proportional: return false
+        }
+    }
+
+    public var wraps: Bool {
+        switch self {
+        case .monospaceScroll: return false
+        case .monospaceCompact, .proportional: return true
+        }
+    }
+
+    /// Approximate width of a single character in the monospace font at the style's font size.
+    /// Used to compute square line height for block-drawing characters.
+    public var approxCharWidth: CGFloat {
+        // "M" is ~0.6 × fontSize in JetBrains Mono / system monospace
+        return fontSize * 0.6
+    }
+
+    /// Line spacing to apply for square pixel rendering.
+    /// Returns 0 for modes that should use the system default.
+    public var lineSpacing: CGFloat {
+        switch self {
+        case .monospaceScroll:
+            // Goal: line height = 2 × char width. Default line height is ~1.2 × fontSize.
+            // lineSpacing adds to that baseline, so target - default = extra spacing needed.
+            let targetHeight = approxCharWidth * 2
+            let defaultHeight = fontSize * 1.2
+            return max(0, targetHeight - defaultHeight)
+        default:
+            return 0
+        }
+    }
+}

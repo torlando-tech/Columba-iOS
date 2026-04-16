@@ -114,6 +114,7 @@
 		07FB /* NomadNetBrowserViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F080 /* NomadNetBrowserViewModel.swift */; };
 		080B /* NomadNetBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F081 /* NomadNetBrowserView.swift */; };
 		081B /* MicronDocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F082 /* MicronDocumentView.swift */; };
+		082B /* MicronRenderContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F083 /* MicronRenderContainer.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
 		2F3D64B12F7227E100049252 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P004 /* ReticulumSwift */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
@@ -240,6 +241,7 @@
 		F080 /* NomadNetBrowserViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NomadNetBrowserViewModel.swift; sourceTree = "<group>"; };
 		F081 /* NomadNetBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NomadNetBrowserView.swift; sourceTree = "<group>"; };
 		F082 /* MicronDocumentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronDocumentView.swift; sourceTree = "<group>"; };
+		F083 /* MicronRenderContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronRenderContainer.swift; sourceTree = "<group>"; };
 		F07B /* Config/Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
 		F07C /* Config/LocalSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/LocalSigning.xcconfig.example; sourceTree = SOURCE_ROOT; };
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
@@ -394,6 +396,7 @@
 			children = (
 				F081 /* NomadNetBrowserView.swift */,
 				F082 /* MicronDocumentView.swift */,
+				F083 /* MicronRenderContainer.swift */,
 			);
 			path = NomadNet;
 			sourceTree = "<group>";
@@ -825,6 +828,7 @@
 				07FB /* NomadNetBrowserViewModel.swift in Sources */,
 				080B /* NomadNetBrowserView.swift in Sources */,
 				081B /* MicronDocumentView.swift in Sources */,
+				082B /* MicronRenderContainer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
