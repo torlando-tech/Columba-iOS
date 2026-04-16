@@ -65,8 +65,9 @@ struct MicronRenderContainer: View {
 
 // MARK: - Monospace Scroll Container
 
-/// The most complex rendering mode: horizontal + vertical scroll, square line height
-/// (for block-drawing/pixel-art characters), pinch-to-zoom, no text wrapping.
+/// Horizontal + vertical scroll with native pinch-to-zoom. Backed by
+/// UIScrollView so pan, pinch, momentum, and bounce all work together —
+/// SwiftUI's ScrollView + MagnifyGesture can't coordinate the two cleanly.
 @available(iOS 17.0, macOS 14.0, *)
 struct MonospaceScrollContainer: View {
     let document: MicronDocument
@@ -77,10 +78,22 @@ struct MonospaceScrollContainer: View {
     var loadingPartials: Set<String>
     var onLinkTapped: ((MicronLink) -> Void)?
 
-    @State private var zoomScale: CGFloat = 1.0
-    @State private var lastPinchScale: CGFloat = 1.0
-
     var body: some View {
+        #if os(iOS)
+        ZoomableScrollView {
+            MicronDocumentView(
+                document: document,
+                formFields: $formFields,
+                checkboxFields: $checkboxFields,
+                radioFields: $radioFields,
+                partialDocuments: partialDocuments,
+                loadingPartials: loadingPartials,
+                onLinkTapped: onLinkTapped,
+                style: .monospaceScroll
+            )
+            .fixedSize()
+        }
+        #else
         ScrollView([.horizontal, .vertical]) {
             MicronDocumentView(
                 document: document,
@@ -92,22 +105,8 @@ struct MonospaceScrollContainer: View {
                 onLinkTapped: onLinkTapped,
                 style: .monospaceScroll
             )
-            .fixedSize(horizontal: true, vertical: false)
-            .scaleEffect(zoomScale, anchor: .topLeading)
-            .padding(.trailing, max(0, 400 * (zoomScale - 1)))
-            .padding(.bottom, max(0, 400 * (zoomScale - 1)))
+            .fixedSize()
         }
-        #if os(iOS)
-        .gesture(
-            MagnifyGesture()
-                .onChanged { value in
-                    let newScale = lastPinchScale * value.magnification
-                    zoomScale = min(max(newScale, 0.5), 3.0)
-                }
-                .onEnded { _ in
-                    lastPinchScale = zoomScale
-                }
-        )
         #endif
     }
 }
