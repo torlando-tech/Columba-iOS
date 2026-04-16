@@ -190,27 +190,43 @@ public actor NomadNetBrowserService {
             linkCache.removeValue(forKey: destinationHash)
         }
 
-        // Look up path entry to get remote public keys
-        guard let pathEntry = await pathTable.lookup(destinationHash: destinationHash) else {
-            // Try requesting path
-            statusMessage = "Resolving path..."
-            await transport.requestPath(for: destinationHash)
-
-            // Poll for path (up to 10 seconds)
-            for _ in 0..<20 {
-                try await Task.sleep(for: .milliseconds(500))
-                if await pathTable.hasPath(for: destinationHash) {
-                    break
-                }
-            }
-
-            guard let entry = await pathTable.lookup(destinationHash: destinationHash) else {
-                throw NomadNetError.noPath(destinationHash: destinationHash)
-            }
-            return try await establishLink(pathEntry: entry, destinationHash: destinationHash)
+        // Resolve a VALID path (with a live interface). Returns nil if no path
+        // arrives within the timeout or no live interface is available.
+        guard let pathEntry = try await resolveValidPath(destinationHash: destinationHash) else {
+            throw NomadNetError.noPath(destinationHash: destinationHash)
         }
 
         return try await establishLink(pathEntry: pathEntry, destinationHash: destinationHash)
+    }
+
+    /// Look up a path entry whose interface is currently registered. If the
+    /// cached path points to a dead interface (e.g. leftover from a previous
+    /// app run), invalidate it and wait for a fresh path.
+    private func resolveValidPath(destinationHash: Data) async throws -> PathEntry? {
+        let liveInterfaceIds = Set(await transport.listInterfaceIds())
+
+        // First pass: is the current path valid?
+        if let entry = await pathTable.lookup(destinationHash: destinationHash),
+           liveInterfaceIds.contains(entry.interfaceId) {
+            return entry
+        }
+
+        // Path is missing or stale. Invalidate and request a fresh one.
+        statusMessage = "Resolving path..."
+        await pathTable.remove(destinationHash: destinationHash)
+        await transport.requestPath(for: destinationHash)
+
+        // Poll up to 10 seconds for a new path to arrive on a live interface.
+        for _ in 0..<40 {
+            try await Task.sleep(for: .milliseconds(250))
+            let liveNow = Set(await transport.listInterfaceIds())
+            if let entry = await pathTable.lookup(destinationHash: destinationHash),
+               liveNow.contains(entry.interfaceId) {
+                return entry
+            }
+        }
+
+        return nil
     }
 
     private func establishLink(pathEntry: PathEntry, destinationHash: Data) async throws -> Link {
@@ -226,18 +242,26 @@ public actor NomadNetBrowserService {
 
         let link = try await transport.initiateLink(to: destination, identity: localIdentity)
 
-        // Wait for link to become active (up to 15 seconds)
-        let deadline = Date().addingTimeInterval(15.0)
-        for await linkState in await link.stateUpdates {
-            if linkState.isEstablished {
-                break
+        // Wait for link to become active, with a hard 20s timeout.
+        // Race the state stream against a timeout task so we never hang if
+        // the link silently stops producing state updates.
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for await linkState in await link.stateUpdates {
+                    if linkState.isEstablished { return }
+                    if case .closed = linkState {
+                        throw NomadNetError.linkFailed("Link closed during establishment")
+                    }
+                }
+                throw NomadNetError.linkFailed("State stream ended before link became active")
             }
-            if case .closed = linkState {
-                throw NomadNetError.linkFailed("Link closed during establishment")
-            }
-            if Date() > deadline {
+            group.addTask {
+                try await Task.sleep(for: .seconds(20))
                 throw NomadNetError.linkFailed("Link establishment timed out")
             }
+            // Wait for whichever task finishes first, then cancel the rest.
+            try await group.next()
+            group.cancelAll()
         }
 
         // Evict oldest if at capacity
