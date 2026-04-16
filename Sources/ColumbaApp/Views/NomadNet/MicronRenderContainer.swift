@@ -1,4 +1,9 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 // MARK: - Render Container
 
@@ -110,7 +115,7 @@ struct MonospaceScrollContainer: View {
 // MARK: - Rendering Style
 
 /// Style parameters used by MicronDocumentView. Picked based on rendering mode.
-public enum MicronRenderStyle: Sendable {
+public enum MicronRenderStyle: Sendable, Equatable {
     /// Monospace, 14pt, square line height, no wrapping. For ASCII/pixel art.
     case monospaceScroll
     /// Monospace, 10pt, default line height, wrapping. Dense text.
@@ -140,25 +145,32 @@ public enum MicronRenderStyle: Sendable {
         }
     }
 
-    /// Approximate width of a single character in the monospace font at the style's font size.
-    /// Used to compute square line height for block-drawing characters.
+    /// Measured width of a single character in the monospace font at this style's font size.
+    /// Used to compute square line height for block-drawing characters (▀▄█ etc.).
     public var approxCharWidth: CGFloat {
-        // "M" is ~0.6 × fontSize in JetBrains Mono / system monospace
-        return fontSize * 0.6
+        Self.measureMonospaceCharWidth(fontSize: fontSize)
     }
 
     /// Line spacing to apply for square pixel rendering.
     /// Returns 0 for modes that should use the system default.
-    public var lineSpacing: CGFloat {
-        switch self {
-        case .monospaceScroll:
-            // Goal: line height = 2 × char width. Default line height is ~1.2 × fontSize.
-            // lineSpacing adds to that baseline, so target - default = extra spacing needed.
-            let targetHeight = approxCharWidth * 2
-            let defaultHeight = fontSize * 1.2
-            return max(0, targetHeight - defaultHeight)
-        default:
-            return 0
-        }
+    public var lineSpacing: CGFloat { 0 }
+
+    /// Measure the advance width of a monospaced character at the given font size.
+    /// Cached so we don't re-measure every frame.
+    private static var charWidthCache: [CGFloat: CGFloat] = [:]
+
+    private static func measureMonospaceCharWidth(fontSize: CGFloat) -> CGFloat {
+        if let cached = charWidthCache[fontSize] { return cached }
+        #if os(iOS)
+        let font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let width = ("M" as NSString).size(withAttributes: [.font: font]).width
+        #elseif os(macOS)
+        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let width = ("M" as NSString).size(withAttributes: [.font: font]).width
+        #else
+        let width = fontSize * 0.6
+        #endif
+        charWidthCache[fontSize] = width
+        return width
     }
 }

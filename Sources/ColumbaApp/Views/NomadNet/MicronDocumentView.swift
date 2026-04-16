@@ -13,14 +13,19 @@ struct MicronDocumentView: View {
     var style: MicronRenderStyle = .monospaceScroll
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: isScrollMode ? 0 : 2) {
             ForEach(Array(document.elements.enumerated()), id: \.offset) { index, element in
                 renderElement(element, index: index)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, isScrollMode ? 0 : 12)
+        .padding(.vertical, isScrollMode ? 0 : 8)
     }
+
+    private var isScrollMode: Bool { style == .monospaceScroll }
+
+    /// Exact pixel-grid cell height for square rendering of block-drawing characters.
+    private var cellHeight: CGFloat { style.approxCharWidth * 2 }
 
     private var bodyFont: Font {
         if style.usesMonospace {
@@ -34,44 +39,75 @@ struct MicronDocumentView: View {
     private func renderElement(_ element: MicronElement, index: Int) -> some View {
         switch element {
         case .heading(let level, let spans, let alignment):
-            renderSpans(spans, onLinkTapped: onLinkTapped)
-                .font(headingFont(level: level))
-                .bold()
-                .lineSpacing(style.lineSpacing)
-                .lineLimit(style.wraps ? nil : 1)
-                .frame(maxWidth: style.wraps ? .infinity : nil, alignment: alignment.swiftUI)
-                .padding(.top, level == 1 ? 12 : 8)
-                .padding(.bottom, 4)
+            if isScrollMode {
+                // Tight, no padding above/below, fixed cell height per line
+                renderSpans(spans, onLinkTapped: onLinkTapped)
+                    .font(headingFont(level: level))
+                    .bold()
+                    .lineLimit(1)
+                    .frame(height: cellHeight, alignment: alignment.swiftUI)
+            } else {
+                renderSpans(spans, onLinkTapped: onLinkTapped)
+                    .font(headingFont(level: level))
+                    .bold()
+                    .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
+                    .padding(.top, level == 1 ? 12 : 8)
+                    .padding(.bottom, 4)
+            }
 
         case .paragraph(let spans, let alignment, let indentLevel):
-            renderSpans(spans, onLinkTapped: onLinkTapped)
-                .font(bodyFont)
-                .lineSpacing(style.lineSpacing)
-                .lineLimit(style.wraps ? nil : 1)
-                .frame(maxWidth: style.wraps ? .infinity : nil, alignment: alignment.swiftUI)
-                .padding(.leading, CGFloat(indentLevel) * 16)
+            if isScrollMode {
+                // Each paragraph = one line at exact cell height
+                renderSpans(spans, onLinkTapped: onLinkTapped)
+                    .font(bodyFont)
+                    .lineLimit(1)
+                    .frame(height: cellHeight, alignment: alignment.swiftUI)
+                    .padding(.leading, CGFloat(indentLevel) * style.approxCharWidth)
+            } else {
+                renderSpans(spans, onLinkTapped: onLinkTapped)
+                    .font(bodyFont)
+                    .lineLimit(nil)
+                    .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
+                    .padding(.leading, CGFloat(indentLevel) * 16)
+            }
 
         case .divider(let character):
             if let ch = character {
                 Text(String(repeating: ch, count: 40))
                     .font(.system(size: style.fontSize, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: style.wraps ? .infinity : nil)
-                    .padding(.vertical, 4)
+                    .lineLimit(1)
+                    .frame(
+                        maxWidth: isScrollMode ? nil : .infinity,
+                        minHeight: isScrollMode ? cellHeight : nil,
+                        alignment: .leading
+                    )
+                    .padding(.vertical, isScrollMode ? 0 : 4)
             } else {
                 Divider()
-                    .padding(.vertical, 4)
+                    .padding(.vertical, isScrollMode ? 0 : 4)
             }
 
         case .literalBlock(let text):
-            Text(text)
-                .font(.system(size: style.fontSize, design: .monospaced))
-                .lineLimit(style.wraps ? nil : nil) // literal blocks always preserve layout
-                .padding(8)
-                .frame(maxWidth: style.wraps ? .infinity : nil, alignment: .leading)
-                .background(Color(.systemGray6))
-                .cornerRadius(6)
-                .padding(.vertical, 4)
+            if isScrollMode {
+                // Split literal blocks into individual lines so each gets exact cell height
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
+                        Text(String(line))
+                            .font(.system(size: style.fontSize, design: .monospaced))
+                            .lineLimit(1)
+                            .frame(height: cellHeight, alignment: .leading)
+                    }
+                }
+            } else {
+                Text(text)
+                    .font(.system(size: style.fontSize, design: .monospaced))
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(6)
+                    .padding(.vertical, 4)
+            }
 
         case .formField(let field):
             renderFormField(field)
