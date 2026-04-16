@@ -75,9 +75,16 @@ public actor NomadNetBrowserService {
         // Wait for response
         statusMessage = "Loading response..."
         let responseData = try await waitForResponse(receipt: receipt)
+        logger.info("[NOMAD] Response \(responseData.count) bytes, first 32: \(responseData.prefix(32).hexString, privacy: .public)")
 
         guard let markup = String(data: responseData, encoding: .utf8) else {
-            throw NomadNetError.invalidResponse("Response is not valid UTF-8")
+            // Fallback: try Latin-1 (some NomadNet pages use non-UTF-8 encodings)
+            if let markup = String(data: responseData, encoding: .isoLatin1) {
+                let document = MicronParser.parse(markup)
+                statusMessage = ""
+                return (document, markup)
+            }
+            throw NomadNetError.invalidResponse("Response is not valid UTF-8 (\(responseData.count) bytes)")
         }
 
         let document = MicronParser.parse(markup)
@@ -121,8 +128,8 @@ public actor NomadNetBrowserService {
 
         let responseData = try await waitForResponse(receipt: receipt)
 
-        guard let markup = String(data: responseData, encoding: .utf8) else {
-            throw NomadNetError.invalidResponse("Response is not valid UTF-8")
+        guard let markup = String(data: responseData, encoding: .utf8) ?? String(data: responseData, encoding: .isoLatin1) else {
+            throw NomadNetError.invalidResponse("Response is not valid UTF-8 (\(responseData.count) bytes)")
         }
 
         let document = MicronParser.parse(markup)
@@ -253,7 +260,7 @@ public actor NomadNetBrowserService {
             switch status {
             case .responseReceived:
                 if let data = await receipt.responseData {
-                    return data
+                    return unwrapResponseData(data)
                 }
                 throw NomadNetError.invalidResponse("Response received but no data")
             case .failed(let reason):
@@ -265,6 +272,27 @@ public actor NomadNetBrowserService {
             }
         }
         throw NomadNetError.requestFailed("Status stream ended without response")
+    }
+
+    /// Unwrap MessagePack-encoded response data if needed.
+    ///
+    /// Reticulum wraps response payloads in MessagePack. For resource-based
+    /// responses, the response data arrives as a MessagePack-packed value
+    /// (e.g. `.binary(pageBytes)` or `.string(pageText)`). Extract the raw
+    /// payload for the application layer.
+    private func unwrapResponseData(_ data: Data) -> Data {
+        // Try to unpack as MessagePack and extract the inner value
+        if let value = try? unpackMsgPack(data) {
+            switch value {
+            case .binary(let bytes):
+                return bytes
+            case .string(let str):
+                return str.data(using: .utf8) ?? data
+            default:
+                break
+            }
+        }
+        return data
     }
 }
 
