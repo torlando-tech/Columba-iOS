@@ -159,15 +159,19 @@ public final class NomadNetBrowserViewModel {
             await loadPage()
 
         case .remoteNode(let hash, let path):
-            if path.hasPrefix("/file/"), let hashData = Data(hexString: hash) {
+            // Decode hash first — bail with an error if it's malformed rather
+            // than silently fetching the new path from the previous node.
+            guard let hashData = Data(hexString: hash) else {
+                errorMessage = "Invalid node hash in link: \(hash)"
+                return
+            }
+            if path.hasPrefix("/file/") {
                 await downloadFile(nodeHash: hashData, path: path)
                 return
             }
             pushHistory()
-            if let hashData = Data(hexString: hash) {
-                currentNodeHash = hashData
-                currentNodeName = nil
-            }
+            currentNodeHash = hashData
+            currentNodeName = nil
             currentPath = path
             await loadPage()
 

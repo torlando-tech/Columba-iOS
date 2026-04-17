@@ -284,72 +284,83 @@ private struct MicronSimpleElementView: View {
 
 // MARK: - Span Rendering
 
-/// Renders an array of MicronSpans into a composed view.
-/// Uses Text concatenation for styled text, and buttons for links.
+/// Renders an array of MicronSpans into a single wrapping Text view.
+///
+/// Uses `AttributedString` with inline `.link` attributes so SwiftUI can
+/// wrap naturally at word boundaries. Link taps are intercepted via a
+/// custom URL scheme (`micron-link://<index>`) that `OpenURLAction` maps
+/// back to the originating `MicronLink`.
 @available(iOS 17.0, macOS 14.0, *)
-@ViewBuilder
 func renderSpans(_ spans: [MicronSpan], onLinkTapped: ((MicronLink) -> Void)?) -> some View {
-    // Check if any spans are links — if so, use a flow layout
-    let hasLinks = spans.contains { span in
-        if case .link = span { return true }
-        return false
-    }
-
-    if hasLinks {
-        // Mixed text+links: wrap in an HStack-style layout
-        WrappingHStack(spans: spans, onLinkTapped: onLinkTapped)
-    } else {
-        // Pure text: use Text concatenation for efficient rendering
-        spans.reduce(Text("")) { result, span in
-            switch span {
-            case .text(let content, let style):
-                return result + styledText(content, style: style)
-            case .link(let link):
-                return result + Text(link.label).foregroundColor(.accentColor).underline()
-            }
-        }
-    }
+    MicronSpansText(spans: spans, onLinkTapped: onLinkTapped)
 }
 
-/// Build a styled Text view from a MicronTextStyle.
-private func styledText(_ content: String, style: MicronTextStyle) -> Text {
-    var text = Text(content)
-    if style.bold { text = text.bold() }
-    if style.italic { text = text.italic() }
-    if style.underline { text = text.underline() }
-    if let fg = style.foregroundColor, let color = MicronTextStyle.colorFrom3Hex(fg) {
-        text = text.foregroundColor(color)
-    }
-    return text
-}
-
-// MARK: - Wrapping HStack for mixed text+links
-
-/// A simple wrapping layout for lines containing both text and tappable links.
 @available(iOS 17.0, macOS 14.0, *)
-private struct WrappingHStack: View {
+struct MicronSpansText: View {
     let spans: [MicronSpan]
     var onLinkTapped: ((MicronLink) -> Void)?
 
     var body: some View {
-        // Use a simple approach: render each span inline
-        HStack(spacing: 0) {
-            ForEach(Array(spans.enumerated()), id: \.offset) { _, span in
-                switch span {
-                case .text(let content, let style):
-                    styledText(content, style: style)
-
-                case .link(let link):
-                    Button {
-                        onLinkTapped?(link)
-                    } label: {
-                        Text(link.label)
-                            .foregroundColor(.accentColor)
-                            .underline()
-                    }
-                    .buttonStyle(.plain)
+        Text(buildAttributed())
+            .environment(\.openURL, OpenURLAction { url in
+                if url.scheme == "micron-link",
+                   let host = url.host,
+                   let idx = Int(host),
+                   idx < links.count {
+                    onLinkTapped?(links[idx])
+                    return .handled
                 }
+                return .systemAction
+            })
+    }
+
+    /// Indices of link spans, in document order. The attributed string uses
+    /// `micron-link://<index>` so the openURL handler can route back to the
+    /// exact span without relying on label uniqueness.
+    private var links: [MicronLink] {
+        spans.compactMap { span in
+            if case .link(let link) = span { return link }
+            return nil
+        }
+    }
+
+    private func buildAttributed() -> AttributedString {
+        var result = AttributedString("")
+        var linkIndex = 0
+        for span in spans {
+            switch span {
+            case .text(let content, let style):
+                result.append(styledAttributed(content, style: style))
+            case .link(let link):
+                var piece = AttributedString(link.label)
+                piece.foregroundColor = .accentColor
+                piece.underlineStyle = .single
+                if let url = URL(string: "micron-link://\(linkIndex)") {
+                    piece.link = url
+                }
+                result.append(piece)
+                linkIndex += 1
             }
         }
+        return result
+    }
+
+    private func styledAttributed(_ content: String, style: MicronTextStyle) -> AttributedString {
+        var piece = AttributedString(content)
+        if style.bold && style.italic {
+            piece.font = .body.bold().italic()
+        } else if style.bold {
+            piece.font = .body.bold()
+        } else if style.italic {
+            piece.font = .body.italic()
+        }
+        if style.underline { piece.underlineStyle = .single }
+        if let fg = style.foregroundColor, let color = MicronTextStyle.colorFrom3Hex(fg) {
+            piece.foregroundColor = color
+        }
+        if let bg = style.backgroundColor, let color = MicronTextStyle.colorFrom3Hex(bg) {
+            piece.backgroundColor = color
+        }
+        return piece
     }
 }

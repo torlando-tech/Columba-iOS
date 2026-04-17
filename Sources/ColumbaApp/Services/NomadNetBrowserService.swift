@@ -16,6 +16,10 @@ public actor NomadNetBrowserService {
     // MARK: - Link Cache
 
     private var linkCache: [Data: Link] = [:]
+    /// Insertion-order list of destination hashes in the cache.
+    /// Used to evict the oldest link when the cache is full — Swift
+    /// dictionaries don't guarantee key ordering, so we track it explicitly.
+    private var linkCacheOrder: [Data] = []
     private static let maxCachedLinks = 8
 
     // MARK: - Page Cache
@@ -168,6 +172,7 @@ public actor NomadNetBrowserService {
 
     /// Close a cached link to a node.
     public func closeLink(destinationHash: Data) async {
+        linkCacheOrder.removeAll { $0 == destinationHash }
         if let link = linkCache.removeValue(forKey: destinationHash) {
             await link.close()
         }
@@ -187,6 +192,7 @@ public actor NomadNetBrowserService {
             if linkState.isEstablished {
                 return cached
             }
+            linkCacheOrder.removeAll { $0 == destinationHash }
             linkCache.removeValue(forKey: destinationHash)
         }
 
@@ -264,16 +270,17 @@ public actor NomadNetBrowserService {
             group.cancelAll()
         }
 
-        // Evict oldest if at capacity
-        if linkCache.count >= Self.maxCachedLinks {
-            if let oldestKey = linkCache.keys.first {
-                if let old = linkCache.removeValue(forKey: oldestKey) {
-                    await old.close()
-                }
+        // Evict oldest (FIFO) if at capacity — dictionaries have no stable
+        // ordering, so we evict based on linkCacheOrder insertion order.
+        if linkCache.count >= Self.maxCachedLinks, let oldestKey = linkCacheOrder.first {
+            linkCacheOrder.removeFirst()
+            if let old = linkCache.removeValue(forKey: oldestKey) {
+                await old.close()
             }
         }
 
         linkCache[destinationHash] = link
+        linkCacheOrder.append(destinationHash)
         return link
     }
 

@@ -32,30 +32,20 @@ public struct MicronPageHeaders: Sendable, Equatable {
 
 // MARK: - Elements
 
-public enum MicronElement: Sendable, Equatable, Identifiable {
+/// A block-level element in a parsed micron document.
+///
+/// Note: elements intentionally don't implement `Identifiable`. Two
+/// identical dividers (`-`) or two identical headings would produce the
+/// same ID, and `hashValue`-based IDs are randomized per-process. Callers
+/// should iterate with `enumerated()` and use the offset as the `ForEach`
+/// identifier, so position disambiguates repeats.
+public enum MicronElement: Sendable, Equatable {
     case heading(level: Int, spans: [MicronSpan], alignment: MicronAlignment)
     case paragraph(spans: [MicronSpan], alignment: MicronAlignment, indentLevel: Int)
     case divider(character: Character?)
     case literalBlock(text: String)
     case formField(MicronFormField)
     case partial(MicronPartial)
-
-    public var id: String {
-        switch self {
-        case .heading(let level, let spans, _):
-            return "h\(level)_\(spans.hashValue)"
-        case .paragraph(let spans, _, let indent):
-            return "p\(indent)_\(spans.hashValue)"
-        case .divider(let ch):
-            return "div_\(ch?.description ?? "default")"
-        case .literalBlock(let text):
-            return "lit_\(text.hashValue)"
-        case .formField(let field):
-            return "field_\(field.name)"
-        case .partial(let partial):
-            return "partial_\(partial.url)_\(partial.partialId ?? "auto")"
-        }
-    }
 }
 
 // MARK: - Partials
