@@ -214,11 +214,16 @@ public final class NomadNetBrowserViewModel {
     public func goBack() async {
         guard let previous = navigationHistory.popLast() else { return }
 
+        cancelPartialRefreshTasks()
         currentNodeHash = previous.nodeHash
         currentPath = previous.path
 
         if let doc = previous.document {
             currentDocument = doc
+            // Reseed form state from the restored page so fields don't show
+            // the forward-page's values after a back navigation.
+            initializeFormDefaults(from: doc)
+            await loadPartials()
         } else {
             await loadPage()
         }
