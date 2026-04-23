@@ -32,6 +32,11 @@ struct MainTabView: View {
 
     @State private var selectedTab: Tab = .chats
     @AppStorage("map_http_enabled") private var mapHttpEnabled: Bool = true
+    @AppStorage(OnboardingViewModel.pendingRNodeSetupKey) private var pendingRNodeSetup: Bool = false
+    /// Session-scoped copy of `pendingRNodeSetup` consumed by `SettingsView` to
+    /// trigger the wizard. Set once by `onAppear` so the persisted flag can be
+    /// cleared atomically and subsequent re-appearances don't re-route the user.
+    @State private var shouldOpenRNodeWizard: Bool = false
 
     // MARK: - Body
 
@@ -76,7 +81,8 @@ struct MainTabView: View {
                 appServices: appServices,
                 settingsRepository: settingsRepository,
                 identityManager: identityManager,
-                onIdentitySwitch: onIdentitySwitch
+                onIdentitySwitch: onIdentitySwitch,
+                shouldOpenRNodeWizard: $shouldOpenRNodeWizard
             )
             .tabItem {
                 Label(Tab.settings.title, systemImage: Tab.settings.icon)
@@ -84,6 +90,15 @@ struct MainTabView: View {
             .tag(Tab.settings)
         }
         .tint(Theme.accentColor)
+        .onAppear {
+            // Consume the persisted flag atomically so a cancelled SettingsView
+            // task can't leave the user re-snapped to Settings on every appearance.
+            if pendingRNodeSetup {
+                selectedTab = .settings
+                shouldOpenRNodeWizard = true
+                pendingRNodeSetup = false
+            }
+        }
         .onChange(of: pendingDeepLink) { _, newValue in
             if newValue != nil {
                 selectedTab = .contacts

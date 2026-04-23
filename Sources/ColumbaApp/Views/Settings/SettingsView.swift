@@ -27,6 +27,9 @@ struct SettingsView: View {
     let settingsRepository: SettingsRepository
     let identityManager: IdentityManager
     var onIdentitySwitch: (() -> Void)?
+    /// Session-scoped flag from MainTabView requesting the RNode wizard.
+    /// Cleared by SettingsView only after the wizard has actually been triggered.
+    @Binding var shouldOpenRNodeWizard: Bool
 
     // MARK: - State
 
@@ -159,6 +162,26 @@ struct SettingsView: View {
                 )
             }
             await viewModel?.loadSettings()
+
+            // If MainTabView handed off an RNode wizard request, launch it now.
+            // Use selectInterfaceType so configType is set before validation runs
+            // when the user taps "Configure RNode" at the end of the wizard.
+            // Only clear the flag after the VM is guaranteed non-nil, so a nil
+            // VM can't silently drop the request and permanently lose the flag.
+            if shouldOpenRNodeWizard {
+                if interfaceViewModel == nil {
+                    let repo = interfaceRepository ?? InterfaceRepository()
+                    interfaceRepository = repo
+                    interfaceViewModel = InterfaceManagementViewModel(
+                        repository: repo,
+                        appServices: appServices
+                    )
+                }
+                if let vm = interfaceViewModel {
+                    vm.selectInterfaceType(.rnode)
+                    shouldOpenRNodeWizard = false
+                }
+            }
 
             // Poll connection state every 2s so the card stays live
             while !Task.isCancelled {
