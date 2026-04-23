@@ -162,6 +162,8 @@ struct SettingsView: View {
             await viewModel?.loadSettings()
 
             // If onboarding requested RNode configuration, launch the wizard now.
+            // Use selectInterfaceType so configType is set before validation runs
+            // when the user taps "Configure RNode" at the end of the wizard.
             if pendingRNodeSetup {
                 if interfaceRepository == nil {
                     let repo = InterfaceRepository()
@@ -171,7 +173,7 @@ struct SettingsView: View {
                         appServices: appServices
                     )
                 }
-                interfaceViewModel?.showRNodeWizard = true
+                interfaceViewModel?.selectInterfaceType(.rnode)
                 pendingRNodeSetup = false
             }
 
