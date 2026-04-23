@@ -78,7 +78,7 @@ public actor NomadNetBrowserService {
 
         // Wait for response
         statusMessage = "Loading response..."
-        let responseData = try await waitForResponse(receipt: receipt)
+        let responseData = try await waitForResponse(receipt: receipt, timeout: 30.0)
         logger.info("[NOMAD] Response \(responseData.count) bytes, first 32: \(responseData.prefix(32).hexString, privacy: .public)")
 
         guard let markup = String(data: responseData, encoding: .utf8) else {
@@ -130,7 +130,7 @@ public actor NomadNetBrowserService {
             timeout: 30.0
         )
 
-        let responseData = try await waitForResponse(receipt: receipt)
+        let responseData = try await waitForResponse(receipt: receipt, timeout: 30.0)
 
         guard let markup = String(data: responseData, encoding: .utf8) ?? String(data: responseData, encoding: .isoLatin1) else {
             throw NomadNetError.invalidResponse("Response is not valid UTF-8 (\(responseData.count) bytes)")
@@ -153,7 +153,7 @@ public actor NomadNetBrowserService {
         logger.info("[NOMAD] Downloading \(path, privacy: .public)")
 
         let receipt = try await link.request(path: path, data: nil, timeout: 60.0)
-        let data = try await waitForResponse(receipt: receipt)
+        let data = try await waitForResponse(receipt: receipt, timeout: 60.0)
 
         // Extract filename from path
         let filename = path.split(separator: "/").last.map(String.init) ?? "download"
@@ -286,23 +286,41 @@ public actor NomadNetBrowserService {
 
     // MARK: - Response Handling
 
-    private func waitForResponse(receipt: RequestReceipt) async throws -> Data {
-        for await status in await receipt.statusUpdates {
-            switch status {
-            case .responseReceived:
-                if let data = await receipt.responseData {
-                    return unwrapResponseData(data)
+    /// Wait for a request to complete. Races the status stream against a
+    /// wall-clock timeout so a stalled stream (no further status updates)
+    /// can't hang indefinitely — mirrors the pattern used in establishLink.
+    /// `timeout` should be slightly longer than the link.request timeout so
+    /// the request's own .timeout status is preferred when available.
+    private func waitForResponse(receipt: RequestReceipt, timeout: TimeInterval) async throws -> Data {
+        try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                for await status in await receipt.statusUpdates {
+                    switch status {
+                    case .responseReceived:
+                        if let data = await receipt.responseData {
+                            return self.unwrapResponseData(data)
+                        }
+                        throw NomadNetError.invalidResponse("Response received but no data")
+                    case .failed(let reason):
+                        throw NomadNetError.requestFailed(reason)
+                    case .timeout:
+                        throw NomadNetError.timeout
+                    default:
+                        continue
+                    }
                 }
-                throw NomadNetError.invalidResponse("Response received but no data")
-            case .failed(let reason):
-                throw NomadNetError.requestFailed(reason)
-            case .timeout:
-                throw NomadNetError.timeout
-            default:
-                continue
+                throw NomadNetError.requestFailed("Status stream ended without response")
             }
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw NomadNetError.timeout
+            }
+            guard let data = try await group.next() else {
+                throw NomadNetError.requestFailed("Response task group produced no value")
+            }
+            group.cancelAll()
+            return data
         }
-        throw NomadNetError.requestFailed("Status stream ended without response")
     }
 
     /// Unwrap MessagePack-encoded response data if needed.
@@ -311,7 +329,9 @@ public actor NomadNetBrowserService {
     /// responses, the response data arrives as a MessagePack-packed value
     /// (e.g. `.binary(pageBytes)` or `.string(pageText)`). Extract the raw
     /// payload for the application layer.
-    private func unwrapResponseData(_ data: Data) -> Data {
+    /// Nonisolated: pure function over Data, callable from the task-group
+    /// child task used by waitForResponse.
+    nonisolated private func unwrapResponseData(_ data: Data) -> Data {
         // Try to unpack as MessagePack and extract the inner value
         if let value = try? unpackMsgPack(data) {
             switch value {
