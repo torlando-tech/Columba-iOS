@@ -202,6 +202,15 @@ struct ContactCard: View {
                     .padding(.vertical, 2)
                     .background(Color.purple)
                     .cornerRadius(4)
+            case .node:
+                Text("Node")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.green)
+                    .cornerRadius(4)
             case .peer:
                 Text("Peer")
                     .font(.caption2)
