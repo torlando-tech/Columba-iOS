@@ -74,6 +74,9 @@ public final class NomadNetBrowserViewModel {
     public var partialDocuments: [String: MicronDocument] = [:]
     /// Partials currently loading.
     public var loadingPartials: Set<String> = []
+    /// Outstanding auto-refresh tasks keyed by partial id/url. Cancelled on page change
+    /// so N navigations cannot accumulate N parallel refresh chains.
+    private var partialRefreshTasks: [String: Task<Void, Never>] = [:]
 
     // MARK: - Form State
 
@@ -123,6 +126,7 @@ public final class NomadNetBrowserViewModel {
 
     /// Load the current page.
     public func loadPage() async {
+        cancelPartialRefreshTasks()
         isLoading = true
         errorMessage = nil
 
@@ -250,21 +254,41 @@ public final class NomadNetBrowserViewModel {
     /// Submit form fields to a page.
     public func submitForm(url: MicronURL, fieldNames: [String]) async {
         let fields = collectFormFields(fieldNames: fieldNames)
-        guard case .samePage(let path) = url else {
-            // For remote node form submissions, navigate first then submit
-            await navigateTo(url: url)
+
+        // Resolve target node hash and path from the URL. Reject LXMF targets
+        // (no form submission semantics) and bail on invalid remote hashes
+        // rather than silently submitting to the previous node.
+        let targetHash: Data
+        let targetPath: String
+        switch url {
+        case .samePage(let path):
+            targetHash = currentNodeHash
+            targetPath = path
+        case .remoteNode(let hash, let path):
+            guard let hashData = Data(hexString: hash) else {
+                errorMessage = "Invalid node hash in form action: \(hash)"
+                return
+            }
+            targetHash = hashData
+            targetPath = path
+        case .lxmf:
             return
         }
 
+        cancelPartialRefreshTasks()
         pushHistory()
-        currentPath = path
+        if case .remoteNode = url {
+            currentNodeHash = targetHash
+            currentNodeName = nil
+        }
+        currentPath = targetPath
         isLoading = true
         errorMessage = nil
 
         do {
             let (document, _) = try await browserService.submitForm(
-                destinationHash: currentNodeHash,
-                path: path,
+                destinationHash: targetHash,
+                path: targetPath,
                 fields: fields
             )
             currentDocument = document
@@ -275,6 +299,8 @@ public final class NomadNetBrowserViewModel {
 
         isLoading = false
         statusMessage = ""
+
+        await loadPartials()
     }
 
     // MARK: - Partials
@@ -305,14 +331,29 @@ public final class NomadNetBrowserViewModel {
 
         loadingPartials.remove(key)
 
-        // Set up auto-refresh if configured
+        // Set up auto-refresh if configured. Each partial has at most one
+        // in-flight refresh task; scheduling a new one cancels the previous.
+        // All outstanding tasks are cancelled in cancelPartialRefreshTasks()
+        // when the page changes, so navigations cannot stack chains.
         if let interval = partial.refreshInterval, interval > 0 {
-            Task {
+            partialRefreshTasks[key]?.cancel()
+            partialRefreshTasks[key] = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(interval))
-                guard currentDocument != nil else { return }
-                await loadPartial(partial)
+                if Task.isCancelled { return }
+                guard let self else { return }
+                guard self.currentDocument != nil else { return }
+                await self.loadPartial(partial)
             }
         }
+    }
+
+    /// Cancel all in-flight partial auto-refresh tasks. Call before state
+    /// transitions that invalidate the current page.
+    private func cancelPartialRefreshTasks() {
+        for task in partialRefreshTasks.values {
+            task.cancel()
+        }
+        partialRefreshTasks.removeAll()
     }
 
     // MARK: - Form Helpers
