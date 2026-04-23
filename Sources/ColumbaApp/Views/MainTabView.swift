@@ -32,6 +32,7 @@ struct MainTabView: View {
 
     @State private var selectedTab: Tab = .chats
     @AppStorage("map_http_enabled") private var mapHttpEnabled: Bool = true
+    @AppStorage("pendingRNodeSetup") private var pendingRNodeSetup: Bool = false
 
     // MARK: - Body
 
@@ -84,6 +85,11 @@ struct MainTabView: View {
             .tag(Tab.settings)
         }
         .tint(Theme.accentColor)
+        .onAppear {
+            if pendingRNodeSetup {
+                selectedTab = .settings
+            }
+        }
         .onChange(of: pendingDeepLink) { _, newValue in
             if newValue != nil {
                 selectedTab = .contacts

@@ -41,6 +41,7 @@ struct SettingsView: View {
     /// Persisted across body re-evaluations so showRNodeWizard=true is not lost
     /// when SettingsView re-renders due to connection status polling changes.
     @State private var interfaceViewModel: InterfaceManagementViewModel?
+    @AppStorage("pendingRNodeSetup") private var pendingRNodeSetup: Bool = false
 
     // MARK: - Body
 
@@ -159,6 +160,20 @@ struct SettingsView: View {
                 )
             }
             await viewModel?.loadSettings()
+
+            // If onboarding requested RNode configuration, launch the wizard now.
+            if pendingRNodeSetup {
+                if interfaceRepository == nil {
+                    let repo = InterfaceRepository()
+                    interfaceRepository = repo
+                    interfaceViewModel = InterfaceManagementViewModel(
+                        repository: repo,
+                        appServices: appServices
+                    )
+                }
+                interfaceViewModel?.showRNodeWizard = true
+                pendingRNodeSetup = false
+            }
 
             // Poll connection state every 2s so the card stays live
             while !Task.isCancelled {

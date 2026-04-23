@@ -132,6 +132,12 @@ final class OnboardingViewModel {
         // 5. Mark onboarding and settings as initialized
         UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
         UserDefaults.standard.set(true, forKey: "settings_initialized")
+
+        // 6. If user opted into RNode, flag the shell to open the configuration
+        // wizard once MainTabView is on screen.
+        if selectedInterfaces.contains(.rnode) {
+            UserDefaults.standard.set(true, forKey: "pendingRNodeSetup")
+        }
     }
 
     /// Skip onboarding with safe defaults.
