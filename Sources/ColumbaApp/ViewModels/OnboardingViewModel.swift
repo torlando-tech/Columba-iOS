@@ -134,11 +134,18 @@ final class OnboardingViewModel {
         UserDefaults.standard.set(true, forKey: "settings_initialized")
 
         // 6. If user opted into RNode, flag the shell to open the configuration
-        // wizard once MainTabView is on screen.
+        // wizard once MainTabView is on screen. Only meaningful on iOS — the
+        // RNode wizard's fullScreenCover is iOS-only.
+        #if os(iOS)
         if selectedInterfaces.contains(.rnode) {
-            UserDefaults.standard.set(true, forKey: "pendingRNodeSetup")
+            UserDefaults.standard.set(true, forKey: Self.pendingRNodeSetupKey)
         }
+        #endif
     }
+
+    /// UserDefaults key for signalling that onboarding requested the RNode
+    /// configuration wizard. Consumed by MainTabView on first appearance.
+    static let pendingRNodeSetupKey = "pendingRNodeSetup"
 
     /// Skip onboarding with safe defaults.
     func skipOnboarding(
