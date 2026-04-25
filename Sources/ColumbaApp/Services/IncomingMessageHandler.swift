@@ -49,7 +49,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     private let createdAt = Date()
 
     /// Logger for debugging message receipt.
-    private let logger = Logger(subsystem: "com.columba.app", category: "IncomingMessageHandler")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "IncomingMessageHandler")
 
     // MARK: - Initialization
 

@@ -19,7 +19,7 @@ actor IdentityManager {
     private static let storageKey = "localIdentities"
     static let keychainService = "com.columba.identity"
 
-    private let logger = Logger(subsystem: "com.columba.app", category: "IdentityManager")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "IdentityManager")
 
     // MARK: - State
 

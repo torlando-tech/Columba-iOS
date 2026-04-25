@@ -4,13 +4,13 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>network.columba.app.sync</string>
+		<string>network.columba.Columba.sync</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>network.columba.app.lxma</string>
+			<string>network.columba.Columba.lxma</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>lxma</string>

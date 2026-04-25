@@ -14,11 +14,6 @@ import LXMFSwift
 /// Uses App Group UserDefaults for data sharing between main app
 /// and Network Extension. Stores server configuration and identity info.
 public actor SettingsRepository {
-    // MARK: - Constants
-
-    /// App Group identifier for shared container.
-    private static let appGroupSuiteName = "group.network.columba.app"
-
     // MARK: - Keys
 
     private enum Keys {
@@ -48,7 +43,7 @@ public actor SettingsRepository {
     public init() {
         // Use App Group UserDefaults for sharing with Network Extension
         // Falls back to standard UserDefaults if App Group not available
-        self.defaults = UserDefaults(suiteName: Self.appGroupSuiteName) ?? .standard
+        self.defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
     }
 
     // MARK: - Identity

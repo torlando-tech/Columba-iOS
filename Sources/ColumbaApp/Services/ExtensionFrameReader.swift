@@ -25,7 +25,7 @@ public final class ExtensionFrameReader: @unchecked Sendable {
     // MARK: - Properties
 
     private let frameQueue: SharedFrameQueue
-    private let logger = Logger(subsystem: "com.columba.app", category: "ExtensionFrameReader")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "ExtensionFrameReader")
 
     /// Callback to inject a TCP frame into transport
     public var onTCPFrameReceived: ((Data) -> Void)?

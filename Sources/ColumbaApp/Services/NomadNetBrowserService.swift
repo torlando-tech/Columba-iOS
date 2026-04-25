@@ -2,7 +2,7 @@ import Foundation
 import ReticulumSwift
 import os.log
 
-private let logger = Logger(subsystem: "com.columba.app", category: "NomadNetBrowser")
+private let logger = Logger(subsystem: "network.columba.Columba", category: "NomadNetBrowser")
 
 /// Manages Link establishment and page fetching for NomadNet node browsing.
 public actor NomadNetBrowserService {

@@ -183,10 +183,10 @@ public final class AppServices {
     // MARK: - Internal State
 
     /// Logger for debugging service initialization.
-    private let logger = Logger(subsystem: "com.columba.app", category: "AppServices")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "AppServices")
 
     /// Static logger for use in static methods (identity loading).
-    private static let sLogger = Logger(subsystem: "com.columba.app", category: "AppServices")
+    private static let sLogger = Logger(subsystem: "network.columba.Columba", category: "AppServices")
 
 
     /// Interface state observer task (cancelled on deinit).

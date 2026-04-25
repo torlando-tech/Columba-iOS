@@ -13,7 +13,7 @@ import os.log
 import UIKit
 #endif
 
-private let logger = Logger(subsystem: "com.columba.app", category: "MessageBubble")
+private let logger = Logger(subsystem: "network.columba.Columba", category: "MessageBubble")
 
 /// Individual message bubble view.
 ///

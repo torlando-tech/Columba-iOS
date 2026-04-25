@@ -16,7 +16,7 @@ import os.log
 actor MigrationImporter {
     private let identityManager: IdentityManager
     private let settingsRepository: SettingsRepository
-    private let logger = Logger(subsystem: "com.columba.app", category: "MigrationImporter")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "MigrationImporter")
 
     init(identityManager: IdentityManager, settingsRepository: SettingsRepository) {
         self.identityManager = identityManager

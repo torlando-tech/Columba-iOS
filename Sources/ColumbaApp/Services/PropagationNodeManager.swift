@@ -87,7 +87,7 @@ public final class PropagationNodeManager {
 
     private weak var appServices: AppServices?
     private let settingsRepository = SettingsRepository()
-    private let logger = Logger(subsystem: "com.columba.app", category: "PropagationNodeManager")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "PropagationNodeManager")
 
     /// Task for listening to path table updates.
     private var listenTask: Task<Void, Never>?

@@ -92,7 +92,7 @@ public final class CallManager {
     private var database: LXMFDatabase?
     private var durationTask: Task<Void, Never>?
     private var endedDismissTask: Task<Void, Never>?
-    private let logger = Logger(subsystem: "com.columba.app", category: "CallManager")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "CallManager")
 
     // MARK: - Initialization
 

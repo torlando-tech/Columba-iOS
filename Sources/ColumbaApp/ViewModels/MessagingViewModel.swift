@@ -50,7 +50,7 @@ public final class MessagingViewModel {
     private let appServices: AppServices
     private let settingsRepository = SettingsRepository()
     private let displayName: String?
-    private let logger = Logger(subsystem: "com.columba.app", category: "MessagingViewModel")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingViewModel")
 
     /// Observation token for incoming message notifications.
     private var notificationTask: Any?

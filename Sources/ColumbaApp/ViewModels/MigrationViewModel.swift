@@ -63,7 +63,7 @@ final class MigrationViewModel {
 
     private let exporter: MigrationExporter
     private let importer: MigrationImporter
-    private let logger = Logger(subsystem: "com.columba.app", category: "MigrationViewModel")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "MigrationViewModel")
 
     // MARK: - Cached data for import flow
 

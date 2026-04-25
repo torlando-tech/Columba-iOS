@@ -11,6 +11,10 @@
 
 import Foundation
 
+/// App Group identifier shared between the main app and the Network Extension.
+/// Defined here because `Sources/Shared` is compiled into both targets.
+public let appGroupIdentifier = "group.network.columba.Columba"
+
 /// Interface tag identifying which network interface a frame arrived on.
 public enum FrameInterfaceTag: UInt8 {
     case tcp = 0x01
@@ -49,7 +53,7 @@ public final class SharedFrameQueue: @unchecked Sendable {
 
     /// Create a shared frame queue in the given App Group container.
     ///
-    /// - Parameter appGroupIdentifier: The App Group identifier (e.g., "group.network.columba.app")
+    /// - Parameter appGroupIdentifier: The App Group identifier (e.g., "group.network.columba.Columba")
     public init(appGroupIdentifier: String) {
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier

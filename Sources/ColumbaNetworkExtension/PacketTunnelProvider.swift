@@ -18,7 +18,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Constants
 
-    private static let appGroupId = "group.network.columba.app"
     private static let packetReadyNotification = "network.columba.packetReady"
     private static let interfacesKey = "com.columba.interfaces"
 
@@ -26,7 +25,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private var tcpConnection: NWConnection?
     private var autoListener: NWConnectionGroup?
-    private lazy var frameQueue = SharedFrameQueue(appGroupIdentifier: Self.appGroupId)
+    private lazy var frameQueue = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier)
 
     /// HDLC receive buffer for TCP stream framing
     private var tcpReceiveBuffer = Data()
@@ -42,7 +41,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         NSLog("[EXT] startTunnel called")
 
         // Read interface configs from shared UserDefaults
-        let defaults = UserDefaults(suiteName: Self.appGroupId) ?? .standard
+        let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
         let configs = loadInterfaceConfigs(from: defaults)
 
         // Start TCP connection if configured
@@ -117,7 +116,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         NSLog("[EXT] wake")
         // Reconnect if needed
         if tcpConnection?.state == .cancelled || tcpConnection?.state == .failed(NWError.posix(.ECONNRESET)) {
-            let defaults = UserDefaults(suiteName: Self.appGroupId) ?? .standard
+            let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
             let configs = loadInterfaceConfigs(from: defaults)
             if let tcp = configs.tcp {
                 startTCPConnection(host: tcp.host, port: tcp.port)
