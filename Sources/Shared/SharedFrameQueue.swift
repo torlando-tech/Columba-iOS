@@ -11,6 +11,10 @@
 
 import Foundation
 
+/// App Group identifier shared between the main app and the Network Extension.
+/// Defined here because `Sources/Shared` is compiled into both targets.
+public let appGroupIdentifier = "group.network.columba.Columba"
+
 /// Interface tag identifying which network interface a frame arrived on.
 public enum FrameInterfaceTag: UInt8 {
     case tcp = 0x01
