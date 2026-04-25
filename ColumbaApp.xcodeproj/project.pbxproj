@@ -674,10 +674,10 @@
 			);
 			mainGroup = ROOT;
 			packageReferences = (
-				PKGREF /* XCLocalSwiftPackageReference "../LXMF-swift" */,
-				PKGREF3 /* XCLocalSwiftPackageReference "../LXST-swift" */,
+				PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */,
+				PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */,
 				PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
-				PKGREF4 /* XCLocalSwiftPackageReference "../reticulum-swift" */,
+				PKGREF4 /* XCRemoteSwiftPackageReference "reticulum-swift" */,
 			);
 			productRefGroup = PRODS /* Products */;
 			projectDirPath = "";
@@ -1173,10 +1173,14 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		PKGREF /* XCLocalSwiftPackageReference "../LXMF-swift" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "../LXMF-swift";
+/* Begin XCRemoteSwiftPackageReference section */
+		PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/torlando-tech/LXMF-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.3.0;
+			};
 		};
 		PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -1186,20 +1190,28 @@
 				minimumVersion = 6.9.0;
 			};
 		};
-		PKGREF3 /* XCLocalSwiftPackageReference "../LXST-swift" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "../LXST-swift";
+		PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/torlando-tech/LXST-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.2.0;
+			};
 		};
-		PKGREF4 /* XCLocalSwiftPackageReference "../reticulum-swift" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "../reticulum-swift";
+		PKGREF4 /* XCRemoteSwiftPackageReference "reticulum-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/torlando-tech/reticulum-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.2.0;
+			};
 		};
-/* End XCLocalSwiftPackageReference section */
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		P001 /* LXMFSwift */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = PKGREF /* XCLocalSwiftPackageReference "../LXMF-swift" */;
+			package = PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */;
 			productName = LXMFSwift;
 		};
 		P002 /* MapLibre */ = {
@@ -1209,12 +1221,12 @@
 		};
 		P003 /* LXSTSwift */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = PKGREF3 /* XCLocalSwiftPackageReference "../LXST-swift" */;
+			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
 			productName = LXSTSwift;
 		};
 		P004 /* ReticulumSwift */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = PKGREF4 /* XCLocalSwiftPackageReference "../reticulum-swift" */;
+			package = PKGREF4 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
 			productName = ReticulumSwift;
 		};
 /* End XCSwiftPackageProductDependency section */
