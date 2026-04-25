@@ -21,13 +21,18 @@ via `.swiftpm/`):
 ```json
 {
   "version": 1,
-  "mirrors": [
+  "object": [
     { "original": "https://github.com/torlando-tech/reticulum-swift.git", "mirror": "/Users/you/repos/reticulum-swift" },
     { "original": "https://github.com/torlando-tech/LXMF-swift.git",      "mirror": "/Users/you/repos/LXMF-swift"      },
     { "original": "https://github.com/torlando-tech/LXST-swift.git",      "mirror": "/Users/you/repos/LXST-swift"      }
   ]
 }
 ```
+
+The top-level key is `object`, not `mirrors`. That's the on-disk
+format SPM's `MirrorsStorage` reads, the same shape that
+`swift package config set-mirror` writes — using `mirrors` results
+in a no-op load with no warning.
 
 SPM transparently resolves the listed URLs to your local checkouts, so
 you can iterate on a library and the iOS build picks up the changes
