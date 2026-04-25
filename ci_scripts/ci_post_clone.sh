@@ -29,9 +29,9 @@ fi
 
 BUILD_NUMBER=$(git rev-list --count HEAD)
 
-PBXPROJ=$(find "$REPO_ROOT" -maxdepth 3 -name 'project.pbxproj' -type f | head -1)
-if [ -z "$PBXPROJ" ]; then
-    echo "error: no project.pbxproj found under $REPO_ROOT" >&2
+PBXPROJ="$REPO_ROOT/Columba.xcodeproj/project.pbxproj"
+if [ ! -f "$PBXPROJ" ]; then
+    echo "error: project.pbxproj not found at $PBXPROJ" >&2
     exit 1
 fi
 
