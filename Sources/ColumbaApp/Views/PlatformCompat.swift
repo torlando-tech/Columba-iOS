@@ -7,6 +7,9 @@
 //
 
 import SwiftUI
+#if !os(iOS)
+import AppKit
+#endif
 
 // MARK: - Cross-platform Image helper
 
@@ -44,7 +47,6 @@ extension Color {
 #if os(iOS)
 typealias PlatformImage = UIImage
 #else
-import AppKit
 typealias PlatformImage = NSImage
 
 // MARK: - NavigationBarItem shim

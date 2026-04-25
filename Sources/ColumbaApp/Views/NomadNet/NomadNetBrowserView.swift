@@ -55,51 +55,11 @@ struct NomadNetBrowserView: View {
             }
 
             #if os(iOS)
-            ToolbarItem(placement: .navigationBarLeading) {
-                if viewModel.canGoBack {
-                    Button {
-                        Task { await viewModel.goBack() }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                    }
-                }
-            }
-
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    Button {
-                        Task { await viewModel.refresh() }
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-
-                    Button {
-                        Task { await viewModel.identifyToNode() }
-                    } label: {
-                        Label("Identify to Node", systemImage: "person.badge.key")
-                    }
-
-                    Divider()
-
-                    Menu {
-                        ForEach(NomadNetRenderingMode.allCases, id: \.self) { mode in
-                            Button {
-                                viewModel.renderingMode = mode
-                            } label: {
-                                if viewModel.renderingMode == mode {
-                                    Label(mode.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(mode.displayName)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label("Rendering Mode", systemImage: viewModel.renderingMode.iconName)
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-            }
+            ToolbarItem(placement: .navigationBarLeading) { backButton }
+            ToolbarItem(placement: .navigationBarTrailing) { actionsMenu }
+            #else
+            ToolbarItem(placement: .navigation) { backButton }
+            ToolbarItem(placement: .primaryAction) { actionsMenu }
             #endif
         }
         .task {
@@ -139,6 +99,53 @@ struct NomadNetBrowserView: View {
             .truncationMode(.middle)
             .foregroundStyle(.secondary)
             .frame(maxWidth: 220)
+    }
+
+    @ViewBuilder
+    private var backButton: some View {
+        if viewModel.canGoBack {
+            Button {
+                Task { await viewModel.goBack() }
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+        }
+    }
+
+    private var actionsMenu: some View {
+        Menu {
+            Button {
+                Task { await viewModel.refresh() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+
+            Button {
+                Task { await viewModel.identifyToNode() }
+            } label: {
+                Label("Identify to Node", systemImage: "person.badge.key")
+            }
+
+            Divider()
+
+            Menu {
+                ForEach(NomadNetRenderingMode.allCases, id: \.self) { mode in
+                    Button {
+                        viewModel.renderingMode = mode
+                    } label: {
+                        if viewModel.renderingMode == mode {
+                            Label(mode.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(mode.displayName)
+                        }
+                    }
+                }
+            } label: {
+                Label("Rendering Mode", systemImage: viewModel.renderingMode.iconName)
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
     }
 
     private var loadingOverlay: some View {
