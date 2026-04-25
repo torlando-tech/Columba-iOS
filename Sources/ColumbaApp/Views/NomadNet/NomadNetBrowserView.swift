@@ -54,6 +54,7 @@ struct NomadNetBrowserView: View {
                 urlBar
             }
 
+            #if os(iOS)
             ToolbarItem(placement: .navigationBarLeading) {
                 if viewModel.canGoBack {
                     Button {
@@ -99,6 +100,7 @@ struct NomadNetBrowserView: View {
                     Image(systemName: "ellipsis.circle")
                 }
             }
+            #endif
         }
         .task {
             await viewModel.loadPage()
@@ -156,7 +158,7 @@ struct NomadNetBrowserView: View {
            let color = MicronTextStyle.colorFrom3Hex(bgHex) {
             color
         } else {
-            Color(.systemBackground)
+            Color.platformSystemBackground
         }
     }
 }
