@@ -6,9 +6,33 @@ An iOS messaging app built on [Reticulum](https://reticulum.network) for encrypt
 
 Requires Xcode 15+ and iOS 17+.
 
-Open `ColumbaApp.xcodeproj` in Xcode, select a signing team, and build for your device.
+Open `ColumbaApp.xcodeproj` in Xcode, select a signing team, and build for
+your device. SPM resolves all dependencies (LXMFSwift, LXSTSwift,
+ReticulumSwift, MapLibre) automatically from their public GitHub
+repositories on first open — no sibling clones required.
 
-Dependencies are resolved automatically via Swift Package Manager.
+### Local development against unreleased library changes
+
+To work against an in-progress local clone of any of the Reticulum-stack
+libraries without committing a path-override, drop a per-machine SPM
+mirror file at `.swiftpm/configuration/mirrors.json` (already gitignored
+via `.swiftpm/`):
+
+```json
+{
+  "version": 1,
+  "mirrors": [
+    { "original": "https://github.com/torlando-tech/reticulum-swift.git", "mirror": "/Users/you/repos/reticulum-swift" },
+    { "original": "https://github.com/torlando-tech/LXMF-swift.git",      "mirror": "/Users/you/repos/LXMF-swift"      },
+    { "original": "https://github.com/torlando-tech/LXST-swift.git",      "mirror": "/Users/you/repos/LXST-swift"      }
+  ]
+}
+```
+
+SPM transparently resolves the listed URLs to your local checkouts, so
+you can iterate on a library and the iOS build picks up the changes
+without modifying `Package.swift` or the Xcode project. Remove the file
+to go back to the published versions.
 
 ## Architecture
 
