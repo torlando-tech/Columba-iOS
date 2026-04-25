@@ -6,7 +6,7 @@ An iOS messaging app built on [Reticulum](https://reticulum.network) for encrypt
 
 Requires Xcode 15+ and iOS 17+.
 
-Open `ColumbaApp.xcodeproj` in Xcode, select a signing team, and build for
+Open `Columba.xcodeproj` in Xcode, select a signing team, and build for
 your device. SPM resolves all dependencies (LXMFSwift, LXSTSwift,
 ReticulumSwift, MapLibre) automatically from their public GitHub
 repositories on first open — no sibling clones required.
