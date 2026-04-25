@@ -20,9 +20,9 @@ let package = Package(
         // `.swiftpm/configuration/mirrors.json` mapping the URL to a local
         // directory — see README "Local development against unreleased
         // library changes" for the exact recipe.
-        .package(url: "https://github.com/torlando-tech/LXMF-swift.git", from: "0.2.0"),
-        .package(url: "https://github.com/torlando-tech/LXST-swift.git", from: "0.1.0"),
-        .package(url: "https://github.com/torlando-tech/reticulum-swift.git", from: "0.1.0"),
+        .package(url: "https://github.com/torlando-tech/LXMF-swift.git", from: "0.3.0"),
+        .package(url: "https://github.com/torlando-tech/LXST-swift.git", from: "0.2.0"),
+        .package(url: "https://github.com/torlando-tech/reticulum-swift.git", from: "0.2.0"),
         .package(url: "https://github.com/maplibre/maplibre-gl-native-distribution", from: "6.9.0"),
     ],
     targets: [
