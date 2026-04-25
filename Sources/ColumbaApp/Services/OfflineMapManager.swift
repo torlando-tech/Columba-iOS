@@ -62,7 +62,7 @@ final class OfflineMapManager {
 
     private let storageKey = "com.columba.offlineMapRegions"
     private let styleURL = URL(string: "https://tiles.openfreemap.org/styles/liberty")!
-    private let logger = Logger(subsystem: "com.columba.app", category: "OfflineMapManager")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "OfflineMapManager")
     private nonisolated(unsafe) var observers: [NSObjectProtocol] = []
 
     // MARK: - Init

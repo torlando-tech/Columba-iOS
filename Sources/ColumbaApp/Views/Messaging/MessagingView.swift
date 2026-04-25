@@ -21,7 +21,7 @@ import UIKit
 import AppKit
 #endif
 
-private let logger = Logger(subsystem: "com.columba.app", category: "MessagingView")
+private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingView")
 
 /// Main messaging/chat screen view.
 ///

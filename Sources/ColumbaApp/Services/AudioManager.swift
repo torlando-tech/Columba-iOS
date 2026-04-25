@@ -84,7 +84,7 @@ public final class AudioManager {
     /// Set in start() from the engine's output node. Used to downmix decoded
     /// stereo frames to mono when the hardware can't play stereo.
     private var hwOutputChannels: Int = 1
-    private let logger = Logger(subsystem: "com.columba.app", category: "AudioManager")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "AudioManager")
 
     /// Notification observers for audio session events.
     private var interruptionObserver: NSObjectProtocol?

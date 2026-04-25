@@ -32,7 +32,7 @@ public final class AutoAnnounceManager {
 
     private weak var appServices: AppServices?
     private var announceTask: Task<Void, Never>?
-    private let logger = Logger(subsystem: "com.columba.app", category: "AutoAnnounceManager")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "AutoAnnounceManager")
 
     // MARK: - Initialization
 

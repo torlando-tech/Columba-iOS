@@ -49,7 +49,7 @@ public final class SharedFrameQueue: @unchecked Sendable {
 
     /// Create a shared frame queue in the given App Group container.
     ///
-    /// - Parameter appGroupIdentifier: The App Group identifier (e.g., "group.network.columba.app")
+    /// - Parameter appGroupIdentifier: The App Group identifier (e.g., "group.network.columba.Columba")
     public init(appGroupIdentifier: String) {
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier

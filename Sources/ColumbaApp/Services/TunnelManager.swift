@@ -35,7 +35,7 @@ public final class TunnelManager: @unchecked Sendable {
     /// The loaded tunnel provider manager
     private var manager: NETunnelProviderManager?
 
-    private let logger = Logger(subsystem: "com.columba.app", category: "TunnelManager")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "TunnelManager")
 
     // MARK: - Lifecycle
 
@@ -78,7 +78,7 @@ public final class TunnelManager: @unchecked Sendable {
         }
 
         let proto = NETunnelProviderProtocol()
-        proto.providerBundleIdentifier = "com.columba.app.tunnel"
+        proto.providerBundleIdentifier = "network.columba.Columba.tunnel"
         proto.serverAddress = "Columba Transport"
 
         mgr.protocolConfiguration = proto

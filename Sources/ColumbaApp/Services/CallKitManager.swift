@@ -34,7 +34,7 @@ public final class CallKitManager: NSObject, CXProviderDelegate {
 
     private let provider: CXProvider
     private let callController: CXCallController
-    private let logger = Logger(subsystem: "com.columba.app", category: "CallKitManager")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "CallKitManager")
 
     /// Weak reference back to CallManager for delegate callbacks.
     /// Set after initialization since CallManager creates CallKitManager.

@@ -38,7 +38,7 @@ struct ColumbaApp: App {
     init() {
         #if os(iOS)
         BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: "network.columba.app.sync",
+            forTaskWithIdentifier: "network.columba.Columba.sync",
             using: nil
         ) { task in
             NotificationCenter.default.post(name: .columbaBackgroundSync, object: task)
@@ -330,7 +330,7 @@ struct RootView: View {
     // MARK: - Background Sync
 
     private func scheduleBackgroundSync() {
-        let request = BGAppRefreshTaskRequest(identifier: "network.columba.app.sync")
+        let request = BGAppRefreshTaskRequest(identifier: "network.columba.Columba.sync")
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         try? BGTaskScheduler.shared.submit(request)
     }
@@ -522,7 +522,7 @@ struct RootView: View {
 // MARK: - Notification Names
 
 extension Notification.Name {
-    static let columbaBackgroundSync = Notification.Name("com.columba.app.backgroundSync")
+    static let columbaBackgroundSync = Notification.Name("network.columba.Columba.backgroundSync")
 }
 
 // MARK: - Tab Enum

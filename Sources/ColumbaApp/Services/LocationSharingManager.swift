@@ -128,7 +128,7 @@ public final class LocationSharingManager: NSObject {
 
     // MARK: - Private State
 
-    private let logger = Logger(subsystem: "com.columba.app", category: "LocationSharing")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "LocationSharing")
     private let locationManager = CLLocationManager()
     private var sendTimer: Timer?
     private var expirationTimer: Timer?

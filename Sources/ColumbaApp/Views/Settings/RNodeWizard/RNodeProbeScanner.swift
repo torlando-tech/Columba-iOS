@@ -81,7 +81,7 @@ final class RNodeProbeScanner: NSObject {
     /// capture their generation and no-op if it no longer matches, preventing
     /// stale 3s notify timeouts from firing on subsequent reconnect attempts.
     private var probeGeneration = 0
-    private let logger = Logger(subsystem: "com.columba.app", category: "RNodeProbe")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "RNodeProbe")
 
     /// File-based diagnostic log (readable via idevice tools).
     private static let diagURL: URL = {

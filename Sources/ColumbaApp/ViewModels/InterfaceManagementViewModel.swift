@@ -11,7 +11,7 @@ import SwiftUI
 import ReticulumSwift
 import os.log
 
-private let logger = Logger(subsystem: "com.columba.app", category: "InterfaceManagementVM")
+private let logger = Logger(subsystem: "network.columba.Columba", category: "InterfaceManagementVM")
 
 // MARK: - Interface Management ViewModel
 
