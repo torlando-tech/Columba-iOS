@@ -18,7 +18,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Constants
 
-    private static let appGroupId = "group.network.columba.app"
+    private static let appGroupId = "group.network.columba.Columba"
     private static let packetReadyNotification = "network.columba.packetReady"
     private static let interfacesKey = "com.columba.interfaces"
 

@@ -17,7 +17,7 @@ public actor SettingsRepository {
     // MARK: - Constants
 
     /// App Group identifier for shared container.
-    private static let appGroupSuiteName = "group.network.columba.app"
+    private static let appGroupSuiteName = "group.network.columba.Columba"
 
     // MARK: - Keys
 

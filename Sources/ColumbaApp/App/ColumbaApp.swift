@@ -13,7 +13,7 @@ import BackgroundTasks
 import os
 
 /// App Group identifier for shared data between app and extensions.
-public let appGroupIdentifier = "group.network.columba.app"
+public let appGroupIdentifier = "group.network.columba.Columba"
 
 /// Main SwiftUI App entry point.
 ///
