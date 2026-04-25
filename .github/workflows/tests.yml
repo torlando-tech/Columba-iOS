@@ -40,8 +40,8 @@ jobs:
       - name: Build
         run: |
           xcodebuild build \
-            -project ColumbaApp.xcodeproj \
-            -scheme ColumbaApp \
+            -project Columba.xcodeproj \
+            -scheme Columba \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             CODE_SIGN_IDENTITY=- \
@@ -53,8 +53,8 @@ jobs:
       - name: Build and run tests
         run: |
           xcodebuild test \
-            -project ColumbaApp.xcodeproj \
-            -scheme ColumbaApp \
+            -project Columba.xcodeproj \
+            -scheme Columba \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             -only-testing:ColumbaAppTests \
