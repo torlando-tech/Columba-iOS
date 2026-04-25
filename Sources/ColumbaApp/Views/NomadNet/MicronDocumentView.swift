@@ -121,7 +121,7 @@ struct MicronDocumentView: View {
                     .font(.system(size: style.fontSize, design: .monospaced))
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.systemGray6))
+                    .background(Color.platformSystemGray6)
                     .cornerRadius(6)
                     .padding(.vertical, 4)
             }
@@ -274,7 +274,7 @@ private struct MicronSimpleElementView: View {
             Text(text)
                 .font(.system(.body, design: .monospaced))
                 .padding(8)
-                .background(Color(.systemGray6))
+                .background(Color.platformSystemGray6)
                 .cornerRadius(6)
         case .formField, .partial:
             EmptyView()

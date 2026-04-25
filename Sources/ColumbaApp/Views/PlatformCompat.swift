@@ -7,6 +7,9 @@
 //
 
 import SwiftUI
+#if !os(iOS)
+import AppKit
+#endif
 
 // MARK: - Cross-platform Image helper
 
@@ -21,10 +24,29 @@ extension Image {
     }
 }
 
+// MARK: - Cross-platform system colors
+
+extension Color {
+    static var platformSystemBackground: Color {
+        #if os(iOS)
+        Color(.systemBackground)
+        #else
+        Color(NSColor.windowBackgroundColor)
+        #endif
+    }
+
+    static var platformSystemGray6: Color {
+        #if os(iOS)
+        Color(.systemGray6)
+        #else
+        Color(NSColor.controlBackgroundColor)
+        #endif
+    }
+}
+
 #if os(iOS)
 typealias PlatformImage = UIImage
 #else
-import AppKit
 typealias PlatformImage = NSImage
 
 // MARK: - NavigationBarItem shim

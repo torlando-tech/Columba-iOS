@@ -54,51 +54,13 @@ struct NomadNetBrowserView: View {
                 urlBar
             }
 
-            ToolbarItem(placement: .navigationBarLeading) {
-                if viewModel.canGoBack {
-                    Button {
-                        Task { await viewModel.goBack() }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                    }
-                }
-            }
-
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    Button {
-                        Task { await viewModel.refresh() }
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-
-                    Button {
-                        Task { await viewModel.identifyToNode() }
-                    } label: {
-                        Label("Identify to Node", systemImage: "person.badge.key")
-                    }
-
-                    Divider()
-
-                    Menu {
-                        ForEach(NomadNetRenderingMode.allCases, id: \.self) { mode in
-                            Button {
-                                viewModel.renderingMode = mode
-                            } label: {
-                                if viewModel.renderingMode == mode {
-                                    Label(mode.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(mode.displayName)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label("Rendering Mode", systemImage: viewModel.renderingMode.iconName)
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-            }
+            #if os(iOS)
+            ToolbarItem(placement: .navigationBarLeading) { backButton }
+            ToolbarItem(placement: .navigationBarTrailing) { actionsMenu }
+            #else
+            ToolbarItem(placement: .navigation) { backButton }
+            ToolbarItem(placement: .primaryAction) { actionsMenu }
+            #endif
         }
         .task {
             await viewModel.loadPage()
@@ -139,6 +101,53 @@ struct NomadNetBrowserView: View {
             .frame(maxWidth: 220)
     }
 
+    @ViewBuilder
+    private var backButton: some View {
+        if viewModel.canGoBack {
+            Button {
+                Task { await viewModel.goBack() }
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+        }
+    }
+
+    private var actionsMenu: some View {
+        Menu {
+            Button {
+                Task { await viewModel.refresh() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+
+            Button {
+                Task { await viewModel.identifyToNode() }
+            } label: {
+                Label("Identify to Node", systemImage: "person.badge.key")
+            }
+
+            Divider()
+
+            Menu {
+                ForEach(NomadNetRenderingMode.allCases, id: \.self) { mode in
+                    Button {
+                        viewModel.renderingMode = mode
+                    } label: {
+                        if viewModel.renderingMode == mode {
+                            Label(mode.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(mode.displayName)
+                        }
+                    }
+                }
+            } label: {
+                Label("Rendering Mode", systemImage: viewModel.renderingMode.iconName)
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+    }
+
     private var loadingOverlay: some View {
         VStack(spacing: 12) {
             ProgressView()
@@ -156,7 +165,7 @@ struct NomadNetBrowserView: View {
            let color = MicronTextStyle.colorFrom3Hex(bgHex) {
             color
         } else {
-            Color(.systemBackground)
+            Color.platformSystemBackground
         }
     }
 }
