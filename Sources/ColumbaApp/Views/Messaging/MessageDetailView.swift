@@ -91,7 +91,13 @@ struct MessageDetailView: View {
             #endif
         }
         .preferredColorScheme(.dark)
+        // Only kick off the path lookup for outgoing messages. Incoming
+        // messages don't need a sending-interface card, so don't waste a
+        // PathTable lookup. SwiftUI runs .task on the main actor, so the
+        // assignment in loadSendingInterface() is already main-actor isolated
+        // — no MainActor.run needed.
         .task {
+            guard message.isFromMe else { return }
             await loadSendingInterface()
         }
     }
@@ -105,16 +111,18 @@ struct MessageDetailView: View {
     /// path table can change between send and view (new announces, expiry,
     /// network changes), so the displayed interface is best-effort. If no path
     /// is known the card is omitted entirely rather than guessing.
+    @MainActor
     private func loadSendingInterface() async {
         guard message.isFromMe,
               let destinationHash,
               let pathTable
         else { return }
 
+        // SwiftUI invokes .task on the main actor and this method is
+        // @MainActor-isolated, so the @State assignment after the await is
+        // already on the main actor — no MainActor.run wrapper needed.
         let entry = await pathTable.lookup(destinationHash: destinationHash)
-        await MainActor.run {
-            self.currentSendingInterfaceId = entry?.interfaceId
-        }
+        self.currentSendingInterfaceId = entry?.interfaceId
     }
 
     // MARK: - Message Preview
@@ -175,7 +183,7 @@ struct MessageDetailView: View {
         // Sending interface (current next-hop for the destination).
         // Hidden when no path is known so we never show stale or made-up data.
         if let iface = currentSendingInterfaceId {
-            sentInterfaceCard(iface)
+            interfaceCard(title: "Sending Interface", interfaceId: iface)
         }
 
         // Error details (if failed)
@@ -213,7 +221,7 @@ struct MessageDetailView: View {
 
         // Receiving interface
         if let iface = message.receivedInterface {
-            receivedInterfaceCard(iface)
+            interfaceCard(title: "Receiving Interface", interfaceId: iface)
         }
 
         // RSSI
@@ -288,38 +296,23 @@ struct MessageDetailView: View {
         )
     }
 
-    private func receivedInterfaceCard(_ interfaceId: String) -> some View {
-        // Look up the interface by its UUID in the repository so we can show
-        // the user's configured friendly name (e.g. "beleth") and connection
-        // target (e.g. "example.com:4242") instead of raw UUID substrings.
-        let entity = interfaceRepository.getInterface(id: interfaceId)
-        let (icon, name, subtitle) = interfaceCardDisplay(for: entity, fallbackId: interfaceId)
-
-        return InfoCard(
-            icon: icon,
-            iconColor: .cyan,
-            title: "Receiving Interface",
-            content: name,
-            subtitle: subtitle
-        )
-    }
-
-    /// Card showing the interface currently used to reach the destination.
+    /// Card showing an interface (sending or receiving) by its UUID.
     ///
-    /// Reuses the same UUID-to-friendly-name resolution as the receiving card
-    /// so the user sees the configured name (e.g. "beleth") and connection
-    /// target (e.g. "rns.beleth.net:4242") rather than a raw UUID. The title
-    /// is "Sending Interface" because the value reflects the *current* path
-    /// (as-of-now), not necessarily the interface a packet was originally
-    /// transmitted on.
-    private func sentInterfaceCard(_ interfaceId: String) -> some View {
+    /// Looks up the interface in the repository so we can show the user's
+    /// configured friendly name (e.g. "beleth") and connection target
+    /// (e.g. "example.com:4242") instead of raw UUID substrings. Used for both
+    /// the receiving-interface card (the interface a packet arrived on) and
+    /// the sending-interface card (the *current* next-hop interface for the
+    /// destination, as-of-now — not necessarily the original transmit
+    /// interface).
+    private func interfaceCard(title: String, interfaceId: String) -> some View {
         let entity = interfaceRepository.getInterface(id: interfaceId)
         let (icon, name, subtitle) = interfaceCardDisplay(for: entity, fallbackId: interfaceId)
 
         return InfoCard(
             icon: icon,
             iconColor: .cyan,
-            title: "Sending Interface",
+            title: title,
             content: name,
             subtitle: subtitle
         )
