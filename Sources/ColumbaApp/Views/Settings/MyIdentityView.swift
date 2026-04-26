@@ -313,7 +313,7 @@ struct MyIdentityView: View {
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(Theme.accentColor)
 
-                Text("Share Your Identity")
+                Text("Share your contact info")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
             }
@@ -330,12 +330,6 @@ struct MyIdentityView: View {
 
                 Spacer()
             }
-
-            // Caption
-            Text("Scan to add \(viewModel.identity.displayName.isEmpty ? "peer" : viewModel.identity.displayName) as a contact")
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .center)
 
             // Full Screen and Share buttons
             HStack(spacing: 12) {
