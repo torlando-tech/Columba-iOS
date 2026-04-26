@@ -13,10 +13,15 @@ import SwiftUI
 /// Shows different cards based on message direction:
 /// - **Sent**: Timestamp, Status, Delivery Method, Error (if failed)
 /// - **Received**: Timestamp, Delivery Method, RSSI, SNR
-@available(iOS 17.0, *)
+@available(iOS 17.0, macOS 14.0, *)
 struct MessageDetailView: View {
     let message: Message
     @Environment(\.dismiss) private var dismiss
+
+    /// Lazily-loaded InterfaceRepository for resolving interface UUIDs to
+    /// their configured friendly name and connection details. Loaded on first
+    /// view appearance (UserDefaults-backed; cheap to construct).
+    @State private var interfaceRepository: InterfaceRepository?
 
     var body: some View {
         NavigationStack {
@@ -59,6 +64,14 @@ struct MessageDetailView: View {
             #endif
         }
         .preferredColorScheme(.dark)
+        .onAppear {
+            // Lazily load the interface repo so receivedInterfaceCard can
+            // resolve UUIDs to the user's configured names. The repo reads
+            // from UserDefaults in init, which is cheap.
+            if interfaceRepository == nil {
+                interfaceRepository = InterfaceRepository()
+            }
+        }
     }
 
     // MARK: - Message Preview
@@ -227,28 +240,66 @@ struct MessageDetailView: View {
     }
 
     private func receivedInterfaceCard(_ interfaceId: String) -> some View {
-        let id = interfaceId.lowercased()
-        let (icon, name): (String, String) = {
-            if id.contains("ble") {
-                return ("wave.3.right", "Bluetooth LE")
-            } else if id.contains("rnode") {
-                return ("antenna.radiowaves.left.and.right", "RNode")
-            } else if id.contains("auto") {
-                return ("wifi", "AutoInterface (WiFi/LAN)")
-            } else if id.contains("tcp") {
-                return ("globe", "TCP")
-            } else {
-                return ("globe", "Network")
-            }
-        }()
+        // Look up the interface by its UUID in the repository so we can show
+        // the user's configured friendly name (e.g. "beleth") and connection
+        // target (e.g. "example.com:4242") instead of raw UUID substrings.
+        let entity = interfaceRepository?.getInterface(id: interfaceId)
+        let (icon, name, subtitle) = interfaceCardDisplay(for: entity, fallbackId: interfaceId)
 
         return InfoCard(
             icon: icon,
             iconColor: .cyan,
             title: "Receiving Interface",
             content: name,
-            subtitle: interfaceId
+            subtitle: subtitle
         )
+    }
+
+    /// Resolve an InterfaceEntity to display values for the receiving-interface card.
+    ///
+    /// Returns `(icon, content, subtitle)`:
+    /// - `content` is the user-configured friendly name (or "Network" for an orphan).
+    /// - `subtitle` is the connection target (host:port, multicast group, BLE/USB, etc.)
+    ///   or the raw UUID when the interface no longer exists in the repository.
+    private func interfaceCardDisplay(
+        for entity: InterfaceEntity?,
+        fallbackId: String
+    ) -> (icon: String, name: String, subtitle: String) {
+        guard let entity else {
+            // Orphan: the message arrived on an interface that has since been
+            // deleted. Render gracefully with the raw UUID as the subtitle.
+            return ("globe", "Network", fallbackId)
+        }
+
+        let icon: String
+        let subtitle: String
+        switch entity.config {
+        case .tcpClient(let cfg):
+            icon = "globe"
+            subtitle = "\(cfg.targetHost):\(cfg.targetPort)"
+        case .tcpServer(let cfg):
+            icon = "globe"
+            subtitle = "Listening on \(cfg.listenIp):\(cfg.listenPort)"
+        case .autoInterface(let cfg):
+            icon = "wifi"
+            if let groupId = cfg.groupId, !groupId.isEmpty {
+                subtitle = "Auto Discovery / \(groupId)"
+            } else {
+                subtitle = "Auto Discovery (\(cfg.discoveryScope))"
+            }
+        case .ble:
+            icon = "wave.3.right"
+            subtitle = "Bluetooth LE Mesh"
+        case .rnode(let cfg):
+            icon = "antenna.radiowaves.left.and.right"
+            let device = cfg.deviceName.isEmpty ? "RNode" : cfg.deviceName
+            subtitle = "RNode LoRa / \(device)"
+        case .multipeer(let cfg):
+            icon = "apple.logo"
+            subtitle = "Nearby / \(cfg.serviceType)"
+        }
+
+        return (icon, entity.name, subtitle)
     }
 
     private func rssiCard(_ rssi: Double) -> some View {
