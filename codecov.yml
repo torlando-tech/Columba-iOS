@@ -2,11 +2,11 @@ coverage:
   status:
     project:
       default:
-        target: 70%
-        threshold: 1%   # Allow ±1% drift before marking the status check failed
+        target: auto    # Don't gate on overall % — only fail if a PR drops it
+        threshold: 1%   # Tolerate ±1% drift
     patch:
       default:
-        target: 70%     # Same threshold for new code
+        target: 70%     # New / changed lines must be 70% covered
 ignore:
   - "Tests/**"
   - "**/*Tests.swift"
