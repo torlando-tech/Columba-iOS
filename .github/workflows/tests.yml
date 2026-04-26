@@ -78,6 +78,7 @@ jobs:
             --scheme Columba \
             --configuration Debug \
             --binary-basename ColumbaApp \
+            --xcresult-path TestResults.xcresult \
             --ignore "Tests/**" \
             --ignore "**/*Tests.swift" \
             --ignore "DerivedData/**" \
