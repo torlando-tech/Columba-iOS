@@ -336,7 +336,11 @@ struct MessagingView: View {
         }
         #endif
         .sheet(item: $detailMessage) { message in
-            MessageDetailView(message: message)
+            MessageDetailView(
+                message: message,
+                destinationHash: conversation.destinationHash,
+                pathTable: appServices.pathTable
+            )
         }
         .alert("Delete Message?", isPresented: Binding(
             get: { deleteConfirmMessage != nil },
