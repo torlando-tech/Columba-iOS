@@ -12,6 +12,8 @@ import UserNotifications
 import BackgroundTasks
 import os
 
+private let logger = Logger(subsystem: "network.columba.Columba", category: "ColumbaApp")
+
 /// Main SwiftUI App entry point.
 ///
 /// Creates MainTabView as the root navigation container.
@@ -208,7 +210,13 @@ struct RootView: View {
                         // establishment (before LINKIDENTIFY), when peerName and
                         // peerHash are both nil — which would render as
                         // "Unknown" until the identify signal arrives.
-                        guard cm.peerHash != nil || cm.peerName != nil else { return }
+                        guard cm.peerHash != nil || cm.peerName != nil else {
+                            // Defensive: if this fires, CallKit's lock-screen UI
+                            // is ringing but the in-app sheet is suppressed —
+                            // a callback-ordering regression in CallManager.
+                            logger.error("[CALL] Reached .ringing with both peerHash and peerName nil; in-app sheet suppressed but CallKit UI may still be ringing — regression in CallManager identify ordering")
+                            return
+                        }
                         if !showIncomingCall {
                             showIncomingCall = true
                         }
