@@ -10,11 +10,15 @@ import SwiftUI
 import LXMFSwift
 import ReticulumSwift
 
-/// Node details screen showing identity info and a Start Chat action.
+/// Node details screen showing identity info and a primary action.
 ///
 /// Layout:
 /// - Header: Large identicon, display name, online/expired status badge
-/// - Action: "Start Chat" button (accent gradient, full width)
+/// - Action: "Start Chat" or "Browse Site" button (accent gradient, full width).
+///   For NomadNet sites (`badgeType == .node`), shows "Browse Site" when
+///   `onBrowseSite` is provided; otherwise shows "Start Chat" when
+///   `onStartChat` is provided. If neither callback is provided for the
+///   relevant badge type, no primary action is rendered.
 /// - Details cards: Destination hash, hop count, discovered/expires timestamps
 @available(iOS 17.0, macOS 14.0, *)
 struct NodeDetailsView: View {
@@ -27,7 +31,12 @@ struct NodeDetailsView: View {
     let appServices: AppServices
 
     /// Called when "Start Chat" is tapped; receives the contact.
+    /// Only rendered for non-NomadNet contacts when this callback is non-nil.
     var onStartChat: ((Contact) -> Void)?
+
+    /// Called when "Browse Site" is tapped on a NomadNet site contact.
+    /// Only rendered for `.node` badge contacts when this callback is non-nil.
+    var onBrowseSite: ((Contact) -> Void)?
 
     // MARK: - State
 
@@ -46,7 +55,7 @@ struct NodeDetailsView: View {
                 if propagationInfo != nil {
                     setAsRelayButton
                 } else {
-                    startChatButton
+                    primaryActionButton
                 }
                 detailsSection
                 if propagationInfo != nil {
@@ -110,15 +119,35 @@ struct NodeDetailsView: View {
         }
     }
 
-    // MARK: - Start Chat Button
+    // MARK: - Primary Action Button
 
-    private var startChatButton: some View {
-        Button {
-            onStartChat?(contact)
-        } label: {
+    /// Renders "Browse Site" for NomadNet sites or "Start Chat" otherwise.
+    /// Returns an `EmptyView` when no callback is provided for the contact's
+    /// badge type — the parent owns whether the action should appear.
+    @ViewBuilder
+    private var primaryActionButton: some View {
+        if contact.badgeType == .node, let onBrowseSite {
+            actionButton(
+                icon: "globe.americas",
+                title: "Browse Site"
+            ) {
+                onBrowseSite(contact)
+            }
+        } else if contact.badgeType != .node, let onStartChat {
+            actionButton(
+                icon: "bubble.left.fill",
+                title: "Start Chat"
+            ) {
+                onStartChat(contact)
+            }
+        }
+    }
+
+    private func actionButton(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: "bubble.left.fill")
-                Text("Start Chat")
+                Image(systemName: icon)
+                Text(title)
             }
             .font(.headline)
             .foregroundStyle(.white)

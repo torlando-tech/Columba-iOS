@@ -36,6 +36,9 @@ public struct ContactsView: View {
     /// Contact selected for node details navigation.
     @State private var selectedContact: Contact?
 
+    /// Contact selected for NomadNet browser navigation (set by "Browse Site" action).
+    @State private var browsingContact: Contact?
+
     /// Conversation to navigate to after "Start Chat".
     @State private var chatConversation: Conversation?
 
@@ -99,8 +102,19 @@ public struct ContactsView: View {
                     toolbarContent(vm)
                 }
                 .navigationDestination(item: $selectedContact) { contact in
-                    if contact.badgeType == .node,
-                       let transport = appServices.transport,
+                    NodeDetailsView(
+                        contact: contact,
+                        appServices: appServices,
+                        onStartChat: contact.badgeType == .node ? nil : { contact in
+                            startChat(with: contact)
+                        },
+                        onBrowseSite: contact.badgeType == .node ? { contact in
+                            browseSite(for: contact)
+                        } : nil
+                    )
+                }
+                .navigationDestination(item: $browsingContact) { contact in
+                    if let transport = appServices.transport,
                        let pathTable = appServices.pathTable,
                        let identity = appServices.identity {
                         NomadNetBrowserView(
@@ -111,12 +125,10 @@ public struct ContactsView: View {
                             identity: identity
                         )
                     } else {
-                        NodeDetailsView(
-                            contact: contact,
-                            appServices: appServices,
-                            onStartChat: { contact in
-                                startChat(with: contact)
-                            }
+                        ContentUnavailableView(
+                            "Browser Unavailable",
+                            systemImage: "globe.badge.chevron.backward",
+                            description: Text("The NomadNet browser requires an active transport.")
                         )
                     }
                 }
@@ -393,6 +405,19 @@ public struct ContactsView: View {
             // Small delay to let navigation pop before pushing new destination
             try? await Task.sleep(for: .milliseconds(300))
             chatConversation = conversation
+        }
+    }
+
+    // MARK: - Browse Site
+
+    /// Pop the node details view, then push the NomadNet browser for the given site.
+    private func browseSite(for contact: Contact) {
+        Task {
+            // Dismiss node details, then navigate to browser
+            selectedContact = nil
+            // Small delay to let navigation pop before pushing new destination
+            try? await Task.sleep(for: .milliseconds(300))
+            browsingContact = contact
         }
     }
 
