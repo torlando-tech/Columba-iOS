@@ -12,6 +12,8 @@ import UserNotifications
 import BackgroundTasks
 import os
 
+private let logger = Logger(subsystem: "network.columba.Columba", category: "ColumbaApp")
+
 /// Main SwiftUI App entry point.
 ///
 /// Creates MainTabView as the root navigation container.
@@ -194,9 +196,27 @@ struct RootView: View {
                     }
                 }
                 .onChange(of: appServices.callManager?.callState) { _, newState in
-                    guard let newState, appServices.callManager?.isIncoming == true else { return }
+                    guard let cm = appServices.callManager,
+                          let newState,
+                          cm.isIncoming else { return }
                     switch newState {
-                    case .connecting, .ringing:
+                    case .ringing:
+                        // Only present the incoming-call sheet once we know who's
+                        // calling. peerHash is populated in CallManager's ringing
+                        // callback (after LINKIDENTIFY arrives) right before the
+                        // state transitions to .ringing — so by this point peer
+                        // info is set. We deliberately do NOT trigger on
+                        // .connecting because that state is reached at link
+                        // establishment (before LINKIDENTIFY), when peerName and
+                        // peerHash are both nil — which would render as
+                        // "Unknown" until the identify signal arrives.
+                        guard cm.peerHash != nil || cm.peerName != nil else {
+                            // Defensive: if this fires, CallKit's lock-screen UI
+                            // is ringing but the in-app sheet is suppressed —
+                            // a callback-ordering regression in CallManager.
+                            logger.error("[CALL] Reached .ringing with both peerHash and peerName nil; in-app sheet suppressed but CallKit UI may still be ringing — regression in CallManager identify ordering")
+                            return
+                        }
                         if !showIncomingCall {
                             showIncomingCall = true
                         }
