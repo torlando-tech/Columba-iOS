@@ -60,7 +60,6 @@ jobs:
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
             -enableCodeCoverage YES \
-            -derivedDataPath DerivedData \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
@@ -71,20 +70,33 @@ jobs:
         run: |
           set -euo pipefail
 
-          PROF_DATA=$(find DerivedData/Build/ProfileData -name 'Coverage.profdata' | head -1)
+          # Resolve the actual DerivedData / build products dir from the
+          # same xcodebuild invocation that produced the coverage data.
+          BUILD_DIR=$(xcodebuild -project Columba.xcodeproj -scheme Columba \
+              -sdk iphonesimulator -showBuildSettings 2>/dev/null \
+              | awk -F' = ' '/ BUILD_DIR =/ {print $2; exit}')
+          if [ -z "$BUILD_DIR" ]; then
+            echo "Could not determine BUILD_DIR from xcodebuild -showBuildSettings" >&2
+            exit 1
+          fi
+          # BUILD_DIR is .../DerivedData/<hash>/Build/Products
+          DERIVED_ROOT="${BUILD_DIR%/Build/Products}"
+          echo "Derived data: $DERIVED_ROOT"
+
+          PROF_DATA=$(find "$DERIVED_ROOT/Build/ProfileData" -name 'Coverage.profdata' 2>/dev/null | head -1)
           if [ -z "$PROF_DATA" ]; then
-            echo "Coverage.profdata not found under DerivedData/Build/ProfileData" >&2
-            find DerivedData -name '*.profdata' -print >&2 || true
+            echo "Coverage.profdata not found under $DERIVED_ROOT/Build/ProfileData" >&2
+            find "$DERIVED_ROOT" -name '*.profdata' -print >&2 || true
             exit 1
           fi
 
           # The app binary contains the instrumented code that the tests
           # exercise via @testable import. Coverage lives there, not in
           # the .xctest bundle.
-          APP_BIN=$(find DerivedData/Build/Products -type f -path '*/ColumbaApp.app/ColumbaApp' | head -1)
+          APP_BIN=$(find "$DERIVED_ROOT/Build/Products" -type f -path '*/ColumbaApp.app/ColumbaApp' | head -1)
           if [ -z "$APP_BIN" ]; then
-            echo "ColumbaApp executable not found in DerivedData/Build/Products" >&2
-            find DerivedData/Build/Products -name 'ColumbaApp*' -print >&2 || true
+            echo "ColumbaApp executable not found in $DERIVED_ROOT/Build/Products" >&2
+            find "$DERIVED_ROOT/Build/Products" -name 'ColumbaApp*' -print >&2 || true
             exit 1
           fi
 
