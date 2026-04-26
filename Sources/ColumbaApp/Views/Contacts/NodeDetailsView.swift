@@ -52,6 +52,9 @@ struct NodeDetailsView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
+                if !contact.isOnline {
+                    expiredHint
+                }
                 if propagationInfo != nil {
                     setAsRelayButton
                 } else {
@@ -116,6 +119,40 @@ struct NodeDetailsView: View {
         .background {
             Capsule()
                 .fill((contact.isOnline ? Theme.success : Theme.error).opacity(0.15))
+        }
+    }
+
+    // MARK: - Expired Hint
+
+    /// Help text shown when a contact's path entry has expired (no recent
+    /// announce on the network). Most common right after scanning a QR — the
+    /// destination hash is known but the network hasn't yet relayed an
+    /// announce we can use to route to them.
+    private var expiredHint: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(Theme.accentColor)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Waiting for an announce")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.textPrimary)
+
+                Text("This contact hasn't announced themselves to the network recently. Ask them to send an announce from their app, or wait for one to arrive automatically.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
+                .fill(Theme.backgroundSecondary)
         }
     }
 
