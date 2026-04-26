@@ -94,10 +94,11 @@ struct NodeDetailsView: View {
         .task(id: contact.id) {
             // Seed the live snapshot from the parent-supplied contact so the
             // first render uses whatever the parent already knew, then keep
-            // it in sync with the path table.
-            if liveContact == nil {
-                liveContact = contact
-            }
+            // it in sync with the path table. Always overwrite — if the user
+            // navigated to a different contact on the same view instance,
+            // `liveContact` still holds the previous contact's data and would
+            // bleed through until the polling loop's first apply.
+            liveContact = contact
             await loadPathDetails()
             await observePathUpdates()
         }
@@ -498,23 +499,27 @@ struct NodeDetailsView: View {
     /// disappears or the contact changes.
     private func observePathUpdates() async {
         guard let pathTable = appServices.pathTable else { return }
-        var lastTimestamp = liveContact?.timestamp ?? contact.timestamp
+        var lastTimestamp: Date? = liveContact?.timestamp ?? contact.timestamp
+        var lastIsOnline: Bool = liveContact?.isOnline ?? contact.isOnline
         while !Task.isCancelled {
             try? await Task.sleep(for: Self.pollInterval)
             if Task.isCancelled { break }
-            guard let entry = await pathTable.lookup(destinationHash: contact.identityHash) else {
-                continue
-            }
-            // Only re-render when the announce timestamp moves forward — avoids
-            // churning state on every tick.
-            if entry.timestamp > lastTimestamp {
-                lastTimestamp = entry.timestamp
-                await applyPathEntry(entry)
-            } else if let live = liveContact, live.isOnline != (Date() < entry.expires) {
-                // Same announce, but the expires deadline crossed `now` — flip
-                // the badge between Online/Expired without waiting for a new
-                // announce.
-                await applyPathEntry(entry)
+            let entry = await pathTable.lookup(destinationHash: contact.identityHash)
+            // Compute live online state from the cached entry's expiry vs. now.
+            // This makes the badge flip Online -> Expired the instant the
+            // cached expires deadline crosses `now`, without waiting for a new
+            // announce. Using `>=` (not strict `>`) on the timestamp guards
+            // against duplicate-timestamp announces (clock collisions / fast
+            // arriving announces) where a user-visible field changed.
+            let nowIsOnline = entry.map { Date() < $0.expires } ?? false
+            let timestampChanged = entry?.timestamp != lastTimestamp
+            let onlineChanged = nowIsOnline != lastIsOnline
+            if timestampChanged || onlineChanged {
+                if let entry {
+                    await applyPathEntry(entry)
+                }
+                lastTimestamp = entry?.timestamp
+                lastIsOnline = nowIsOnline
             }
         }
     }
