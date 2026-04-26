@@ -241,7 +241,7 @@ public enum AnnounceFilter: String, Sendable, Equatable, Hashable, CaseIterable 
     case all = "All"
     case peers = "Peers"
     case audio = "Audio"
-    case nodes = "Nodes"
+    case sites = "Sites"
     case relays = "Relays"
 }
 
@@ -334,7 +334,7 @@ public final class ContactsViewModel {
             results = results.filter { $0.aspect == "lxmf.delivery" || $0.aspect == nil }
         case .audio:
             results = results.filter { $0.isAudio }
-        case .nodes:
+        case .sites:
             results = results.filter { $0.badgeType == .node }
         case .relays:
             results = results.filter { $0.isRelay }
