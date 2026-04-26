@@ -194,9 +194,21 @@ struct RootView: View {
                     }
                 }
                 .onChange(of: appServices.callManager?.callState) { _, newState in
-                    guard let newState, appServices.callManager?.isIncoming == true else { return }
+                    guard let cm = appServices.callManager,
+                          let newState,
+                          cm.isIncoming else { return }
                     switch newState {
-                    case .connecting, .ringing:
+                    case .ringing:
+                        // Only present the incoming-call sheet once we know who's
+                        // calling. peerHash is populated in CallManager's ringing
+                        // callback (after LINKIDENTIFY arrives) right before the
+                        // state transitions to .ringing — so by this point peer
+                        // info is set. We deliberately do NOT trigger on
+                        // .connecting because that state is reached at link
+                        // establishment (before LINKIDENTIFY), when peerName and
+                        // peerHash are both nil — which would render as
+                        // "Unknown" until the identify signal arrives.
+                        guard cm.peerHash != nil || cm.peerName != nil else { return }
                         if !showIncomingCall {
                             showIncomingCall = true
                         }
