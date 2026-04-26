@@ -59,8 +59,54 @@ jobs:
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
+            -enableCodeCoverage YES \
+            -derivedDataPath DerivedData \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Export coverage report (lcov)
+        run: |
+          set -euo pipefail
+
+          PROF_DATA=$(find DerivedData/Build/ProfileData -name 'Coverage.profdata' | head -1)
+          if [ -z "$PROF_DATA" ]; then
+            echo "Coverage.profdata not found under DerivedData/Build/ProfileData" >&2
+            find DerivedData -name '*.profdata' -print >&2 || true
+            exit 1
+          fi
+
+          # The app binary contains the instrumented code that the tests
+          # exercise via @testable import. Coverage lives there, not in
+          # the .xctest bundle.
+          APP_BIN=$(find DerivedData/Build/Products -type f -path '*/ColumbaApp.app/ColumbaApp' | head -1)
+          if [ -z "$APP_BIN" ]; then
+            echo "ColumbaApp executable not found in DerivedData/Build/Products" >&2
+            find DerivedData/Build/Products -name 'ColumbaApp*' -print >&2 || true
+            exit 1
+          fi
+
+          echo "Profile data: $PROF_DATA"
+          echo "App binary:   $APP_BIN"
+
+          xcrun llvm-cov export \
+            "$APP_BIN" \
+            -instr-profile="$PROF_DATA" \
+            -ignore-filename-regex='(^|/)(Tests|DerivedData|\.build|SourcePackages)(/|$)' \
+            -format=lcov \
+            > coverage.lcov
+
+          echo "--- Summary ---"
+          xcrun llvm-cov report \
+            "$APP_BIN" \
+            -instr-profile="$PROF_DATA" \
+            -ignore-filename-regex='(^|/)(Tests|DerivedData|\.build|SourcePackages)(/|$)' \
+            | tail -20
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.lcov
+          fail_ci_if_error: false

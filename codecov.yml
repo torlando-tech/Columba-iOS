@@ -1,0 +1,13 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 70%
+        threshold: 1%   # Allow ±1% drift before marking the status check failed
+    patch:
+      default:
+        target: 70%     # Same threshold for new code
+ignore:
+  - "Tests/**"
+  - "**/*Tests.swift"
+  - "**/Generated*"
