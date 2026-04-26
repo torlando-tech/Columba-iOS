@@ -66,59 +66,35 @@ jobs:
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Export coverage report (lcov)
+      - name: Export coverage report (cobertura)
         run: |
           set -euo pipefail
-
-          # Resolve the actual DerivedData / build products dir from the
-          # same xcodebuild invocation that produced the coverage data.
-          BUILD_DIR=$(xcodebuild -project Columba.xcodeproj -scheme Columba \
-              -sdk iphonesimulator -showBuildSettings 2>/dev/null \
-              | awk -F' = ' '/ BUILD_DIR =/ {print $2; exit}')
-          if [ -z "$BUILD_DIR" ]; then
-            echo "Could not determine BUILD_DIR from xcodebuild -showBuildSettings" >&2
+          gem install slather --no-document
+          # Slather reads coverage from the .xcresult bundle directly
+          # and emits cobertura XML (which Codecov happily ingests).
+          slather coverage \
+            --cobertura-xml \
+            --output-directory coverage \
+            --scheme Columba \
+            --configuration Debug \
+            --binary-basename ColumbaApp \
+            --ignore "Tests/**" \
+            --ignore "**/*Tests.swift" \
+            --ignore "DerivedData/**" \
+            --ignore "**/SourcePackages/**" \
+            Columba.xcodeproj
+          # Slather writes coverage/cobertura.xml; surface its summary.
+          if [ -f coverage/cobertura.xml ]; then
+            echo "--- coverage/cobertura.xml head ---"
+            head -3 coverage/cobertura.xml
+          else
+            echo "Slather did not produce coverage/cobertura.xml" >&2
+            ls -la coverage/ >&2 || true
             exit 1
           fi
-          # BUILD_DIR is .../DerivedData/<hash>/Build/Products
-          DERIVED_ROOT="${BUILD_DIR%/Build/Products}"
-          echo "Derived data: $DERIVED_ROOT"
-
-          PROF_DATA=$(find "$DERIVED_ROOT/Build/ProfileData" -name 'Coverage.profdata' 2>/dev/null | head -1)
-          if [ -z "$PROF_DATA" ]; then
-            echo "Coverage.profdata not found under $DERIVED_ROOT/Build/ProfileData" >&2
-            find "$DERIVED_ROOT" -name '*.profdata' -print >&2 || true
-            exit 1
-          fi
-
-          # The app binary contains the instrumented code that the tests
-          # exercise via @testable import. Coverage lives there, not in
-          # the .xctest bundle.
-          APP_BIN=$(find "$DERIVED_ROOT/Build/Products" -type f -path '*/ColumbaApp.app/ColumbaApp' | head -1)
-          if [ -z "$APP_BIN" ]; then
-            echo "ColumbaApp executable not found in $DERIVED_ROOT/Build/Products" >&2
-            find "$DERIVED_ROOT/Build/Products" -name 'ColumbaApp*' -print >&2 || true
-            exit 1
-          fi
-
-          echo "Profile data: $PROF_DATA"
-          echo "App binary:   $APP_BIN"
-
-          xcrun llvm-cov export \
-            "$APP_BIN" \
-            -instr-profile="$PROF_DATA" \
-            -ignore-filename-regex='(^|/)(Tests|DerivedData|\.build|SourcePackages)(/|$)' \
-            -format=lcov \
-            > coverage.lcov
-
-          echo "--- Summary ---"
-          xcrun llvm-cov report \
-            "$APP_BIN" \
-            -instr-profile="$PROF_DATA" \
-            -ignore-filename-regex='(^|/)(Tests|DerivedData|\.build|SourcePackages)(/|$)' \
-            | tail -20
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: coverage.lcov
+          files: coverage/cobertura.xml
           fail_ci_if_error: false
