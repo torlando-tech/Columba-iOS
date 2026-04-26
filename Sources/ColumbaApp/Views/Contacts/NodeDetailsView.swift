@@ -19,7 +19,7 @@ import ReticulumSwift
 ///   `onBrowseSite` is provided; otherwise shows "Start Chat" when
 ///   `onStartChat` is provided. If neither callback is provided for the
 ///   relevant badge type, no primary action is rendered.
-/// - Details cards: Destination hash, hop count, discovered/expires timestamps
+/// - Details cards: Destination hash, hop count, last heard/expires timestamps
 @available(iOS 17.0, macOS 14.0, *)
 struct NodeDetailsView: View {
     // MARK: - Properties
@@ -187,9 +187,9 @@ struct NodeDetailsView: View {
             )
 
             detailRow(
-                icon: "clock",
-                label: "Discovered",
-                value: formattedDate(contact.timestamp)
+                icon: "clock.arrow.circlepath",
+                label: "Last Heard",
+                value: formattedLastHeard(contact.timestamp)
             )
 
             if let expires = expiresDate {
@@ -326,8 +326,24 @@ struct NodeDetailsView: View {
         return f
     }()
 
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
     private func formattedDate(_ date: Date) -> String {
         Self.dateFormatter.string(from: date)
+    }
+
+    /// Combined relative + absolute formatting for the "Last Heard" card.
+    ///
+    /// Renders as "5 min ago  •  Apr 26, 2026 at 2:03 PM" so the user gets an
+    /// at-a-glance recency cue plus the precise wall-clock timestamp.
+    private func formattedLastHeard(_ date: Date) -> String {
+        let relative = Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
+        let absolute = Self.dateFormatter.string(from: date)
+        return "\(relative)  \u{2022}  \(absolute)"
     }
 
     private func loadPathDetails() async {
