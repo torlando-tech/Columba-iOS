@@ -186,11 +186,16 @@ struct NodeDetailsView: View {
                 value: interfaceName ?? "Unknown"
             )
 
-            detailRow(
-                icon: "clock.arrow.circlepath",
-                label: "Last Heard",
-                value: formattedLastHeard(contact.timestamp)
-            )
+            // TimelineView re-evaluates the relative portion ("5 min ago")
+            // every 60 seconds so it ticks forward while the view is open
+            // instead of freezing at first-render time.
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                detailRow(
+                    icon: "clock.arrow.circlepath",
+                    label: "Last Heard",
+                    value: formattedLastHeard(contact.timestamp, now: context.date)
+                )
+            }
 
             if let expires = expiresDate {
                 detailRow(
@@ -340,8 +345,11 @@ struct NodeDetailsView: View {
     ///
     /// Renders as "5 min ago  •  Apr 26, 2026 at 2:03 PM" so the user gets an
     /// at-a-glance recency cue plus the precise wall-clock timestamp.
-    private func formattedLastHeard(_ date: Date) -> String {
-        let relative = Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
+    ///
+    /// The `now` parameter lets callers (e.g. `TimelineView`) drive the
+    /// "relative" reference point so the string ticks forward over time.
+    private func formattedLastHeard(_ date: Date, now: Date = Date()) -> String {
+        let relative = Self.relativeFormatter.localizedString(for: date, relativeTo: now)
         let absolute = Self.dateFormatter.string(from: date)
         return "\(relative)  \u{2022}  \(absolute)"
     }
