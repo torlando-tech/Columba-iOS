@@ -18,10 +18,12 @@ struct MessageDetailView: View {
     let message: Message
     @Environment(\.dismiss) private var dismiss
 
-    /// Lazily-loaded InterfaceRepository for resolving interface UUIDs to
-    /// their configured friendly name and connection details. Loaded on first
-    /// view appearance (UserDefaults-backed; cheap to construct).
-    @State private var interfaceRepository: InterfaceRepository?
+    /// Eagerly-constructed InterfaceRepository for resolving interface UUIDs
+    /// to their configured friendly name and connection details. Init is
+    /// synchronous (UserDefaults-backed), so constructing at view init time
+    /// avoids a first-render flicker where the receiving-interface card would
+    /// briefly fall through to the orphan branch.
+    @State private var interfaceRepository: InterfaceRepository = InterfaceRepository()
 
     var body: some View {
         NavigationStack {
@@ -64,14 +66,6 @@ struct MessageDetailView: View {
             #endif
         }
         .preferredColorScheme(.dark)
-        .onAppear {
-            // Lazily load the interface repo so receivedInterfaceCard can
-            // resolve UUIDs to the user's configured names. The repo reads
-            // from UserDefaults in init, which is cheap.
-            if interfaceRepository == nil {
-                interfaceRepository = InterfaceRepository()
-            }
-        }
     }
 
     // MARK: - Message Preview
@@ -243,7 +237,7 @@ struct MessageDetailView: View {
         // Look up the interface by its UUID in the repository so we can show
         // the user's configured friendly name (e.g. "beleth") and connection
         // target (e.g. "example.com:4242") instead of raw UUID substrings.
-        let entity = interfaceRepository?.getInterface(id: interfaceId)
+        let entity = interfaceRepository.getInterface(id: interfaceId)
         let (icon, name, subtitle) = interfaceCardDisplay(for: entity, fallbackId: interfaceId)
 
         return InfoCard(
@@ -271,31 +265,27 @@ struct MessageDetailView: View {
             return ("globe", "Network", fallbackId)
         }
 
-        let icon: String
+        // Use the canonical icon from InterfaceType to keep this view aligned
+        // with the rest of the app (interface list, settings, etc.).
+        let icon = entity.type.icon
         let subtitle: String
         switch entity.config {
         case .tcpClient(let cfg):
-            icon = "globe"
             subtitle = "\(cfg.targetHost):\(cfg.targetPort)"
         case .tcpServer(let cfg):
-            icon = "globe"
             subtitle = "Listening on \(cfg.listenIp):\(cfg.listenPort)"
         case .autoInterface(let cfg):
-            icon = "wifi"
             if let groupId = cfg.groupId, !groupId.isEmpty {
                 subtitle = "Auto Discovery / \(groupId)"
             } else {
                 subtitle = "Auto Discovery (\(cfg.discoveryScope))"
             }
         case .ble:
-            icon = "wave.3.right"
             subtitle = "Bluetooth LE Mesh"
         case .rnode(let cfg):
-            icon = "antenna.radiowaves.left.and.right"
             let device = cfg.deviceName.isEmpty ? "RNode" : cfg.deviceName
             subtitle = "RNode LoRa / \(device)"
         case .multipeer(let cfg):
-            icon = "apple.logo"
             subtitle = "Nearby / \(cfg.serviceType)"
         }
 
