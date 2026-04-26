@@ -9,6 +9,20 @@
 import SwiftUI
 import LXMFSwift
 
+// MARK: - Navigation Target
+
+/// Single sum-type for the contacts navigation stack.
+///
+/// Holding all destinations in one `@State` lets us replace the stack atomically
+/// in a single render cycle (e.g. NodeDetails -> Chat) without the pop-then-push
+/// timing race that requiring a sleep between two separate state mutations.
+@available(iOS 17.0, macOS 14.0, *)
+enum ContactsNavTarget: Hashable {
+    case nodeDetails(Contact)
+    case chat(Conversation)
+    case browseSite(Contact)
+}
+
 // MARK: - Contacts View
 
 /// Main contacts screen with tabs and search.
@@ -33,14 +47,13 @@ public struct ContactsView: View {
     /// Whether search is active.
     @State private var isSearching = false
 
-    /// Contact selected for node details navigation.
-    @State private var selectedContact: Contact?
-
-    /// Contact selected for NomadNet browser navigation (set by "Browse Site" action).
-    @State private var browsingContact: Contact?
-
-    /// Conversation to navigate to after "Start Chat".
-    @State private var chatConversation: Conversation?
+    /// Active destination on the contacts navigation stack.
+    ///
+    /// Single binding for all pushable destinations so transitions like
+    /// "node details -> chat" or "node details -> browse site" can be performed
+    /// as one atomic mutation (pop + push in the same render pass), avoiding
+    /// the prior timing-heuristic workaround.
+    @State private var navTarget: ContactsNavTarget?
 
     /// Whether the QR scanner is shown.
     @State private var showQRScanner = false
@@ -101,43 +114,44 @@ public struct ContactsView: View {
                 .toolbar {
                     toolbarContent(vm)
                 }
-                .navigationDestination(item: $selectedContact) { contact in
-                    NodeDetailsView(
-                        contact: contact,
-                        appServices: appServices,
-                        onStartChat: contact.badgeType == .node ? nil : { contact in
-                            startChat(with: contact)
-                        },
-                        onBrowseSite: contact.badgeType == .node ? { contact in
-                            browseSite(for: contact)
-                        } : nil
-                    )
-                }
-                .navigationDestination(item: $browsingContact) { contact in
-                    if let transport = appServices.transport,
-                       let pathTable = appServices.pathTable,
-                       let identity = appServices.identity {
-                        NomadNetBrowserView(
-                            nodeHash: contact.identityHash,
-                            nodeName: contact.displayName,
-                            transport: transport,
-                            pathTable: pathTable,
-                            identity: identity
+                .navigationDestination(item: $navTarget) { target in
+                    switch target {
+                    case .nodeDetails(let contact):
+                        NodeDetailsView(
+                            contact: contact,
+                            appServices: appServices,
+                            onStartChat: contact.badgeType == .node ? nil : { contact in
+                                startChat(with: contact)
+                            },
+                            onBrowseSite: contact.badgeType == .node ? { contact in
+                                browseSite(for: contact)
+                            } : nil
                         )
-                    } else {
-                        ContentUnavailableView(
-                            "Browser Unavailable",
-                            systemImage: "globe.badge.chevron.backward",
-                            description: Text("The NomadNet browser requires an active transport.")
+                    case .chat(let conversation):
+                        MessagingView(
+                            conversation: conversation,
+                            appServices: appServices,
+                            messageRepository: messageRepository
                         )
+                    case .browseSite(let contact):
+                        if let transport = appServices.transport,
+                           let pathTable = appServices.pathTable,
+                           let identity = appServices.identity {
+                            NomadNetBrowserView(
+                                nodeHash: contact.identityHash,
+                                nodeName: contact.displayName,
+                                transport: transport,
+                                pathTable: pathTable,
+                                identity: identity
+                            )
+                        } else {
+                            ContentUnavailableView(
+                                "Browser Unavailable",
+                                systemImage: "globe.badge.chevron.backward",
+                                description: Text("The NomadNet browser requires an active transport.")
+                            )
+                        }
                     }
-                }
-                .navigationDestination(item: $chatConversation) { conversation in
-                    MessagingView(
-                        conversation: conversation,
-                        appServices: appServices,
-                        messageRepository: messageRepository
-                    )
                 }
                 .onAppear {
                     vm.startListening()
@@ -279,7 +293,7 @@ public struct ContactsView: View {
             NetworkAnnouncesTab(
                 viewModel: vm,
                 onContactSelected: { contact in
-                    selectedContact = contact
+                    navTarget = .nodeDetails(contact)
                 }
             )
         }
@@ -332,13 +346,13 @@ public struct ContactsView: View {
                                 vm.toggleFavorite(for: contact.id)
                             },
                             onTap: {
-                                selectedContact = contact
+                                navTarget = .nodeDetails(contact)
                             },
                             onPin: {
                                 vm.togglePin(for: contact.id)
                             },
                             onViewDetails: {
-                                selectedContact = contact
+                                navTarget = .nodeDetails(contact)
                             },
                             onEditNickname: {
                                 nicknameText = contact.displayName ?? ""
@@ -400,25 +414,19 @@ public struct ContactsView: View {
                 isFavorite: false
             )
 
-            // Dismiss node details, then navigate to chat
-            selectedContact = nil
-            // Small delay to let navigation pop before pushing new destination
-            try? await Task.sleep(for: .milliseconds(300))
-            chatConversation = conversation
+            // Atomic pop-and-push: a single mutation of `navTarget` replaces the
+            // current destination (NodeDetailsView) with the chat in one render
+            // cycle, so the back button still returns to the contacts list.
+            navTarget = .chat(conversation)
         }
     }
 
     // MARK: - Browse Site
 
-    /// Pop the node details view, then push the NomadNet browser for the given site.
+    /// Replace the node details destination with the NomadNet browser for the given site.
     private func browseSite(for contact: Contact) {
-        Task {
-            // Dismiss node details, then navigate to browser
-            selectedContact = nil
-            // Small delay to let navigation pop before pushing new destination
-            try? await Task.sleep(for: .milliseconds(300))
-            browsingContact = contact
-        }
+        // Atomic pop-and-push (see `startChat` for rationale).
+        navTarget = .browseSite(contact)
     }
 
     private var toolbarButtons: some View {
