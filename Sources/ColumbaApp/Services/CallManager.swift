@@ -142,17 +142,24 @@ public final class CallManager {
         let telephonyDestHash = telephonyDest.hash
         let hexPrefix = telephonyDestHash.prefix(8).map { String(format: "%02x", $0) }.joined()
         logger.error("[CALL] Registering LXST link callback for dest \(hexPrefix, privacy: .public)")
+        DiagLog.log("[CALL] Registering LXST link callback for dest \(telephonyDestHash.map { String(format: "%02x", $0) }.joined())")
 
         await transport.registerDestinationLinkCallback(for: telephonyDestHash) { [weak self] (link: Link) async in
             guard let self else { return }
+            let linkIdHex = await link.linkId.prefix(8).map { String(format: "%02x", $0) }.joined()
+            let linkDestHex = await link.destinationHash.prefix(8).map { String(format: "%02x", $0) }.joined()
+            DiagLog.log("[CALL] LXST destinationLinkCallback fired (pre-LRRTT) linkId=\(linkIdHex) linkDest=\(linkDestHex)")
             // This callback fires BEFORE the link is fully established (pre-LRRTT).
             // Only configure the link here — do NOT send data (no encryption keys yet).
             // Set the link established callback to handle the incoming call once
             // the link is active and we can safely send AVAILABLE/RINGING signals.
             await link.setLinkEstablishedCallback { [weak self] (establishedLink: Link) async in
                 guard let self else { return }
+                let estLinkIdHex = await establishedLink.linkId.prefix(8).map { String(format: "%02x", $0) }.joined()
+                let estLinkDestHex = await establishedLink.destinationHash.prefix(8).map { String(format: "%02x", $0) }.joined()
+                DiagLog.log("[CALL] LXST linkEstablishedCallback fired linkId=\(estLinkIdHex) linkDest=\(estLinkDestHex) — calling handleIncomingLink")
                 await MainActor.run {
-                    self.handleIncomingLink(establishedLink)
+                    self.handleIncomingLink(establishedLink, linkIdHex: estLinkIdHex, linkDestHex: estLinkDestHex)
                 }
             }
         }
@@ -455,12 +462,26 @@ public final class CallManager {
     /// On iOS, this reports the incoming call to CallKit, which shows the
     /// native incoming call UI (including on the lock screen). The Telephone
     /// actor processes the link signaling in parallel.
-    func handleIncomingLink(_ link: Link) {
+    func handleIncomingLink(_ link: Link, linkIdHex: String = "?", linkDestHex: String = "?") {
+        let expectedDestHex = telephonyDestination?.hash.prefix(8).map { String(format: "%02x", $0) }.joined() ?? "nil"
+        DiagLog.log("[CALL] handleIncomingLink ENTRY linkId=\(linkIdHex) linkDest=\(linkDestHex) expectedTelephonyDest=\(expectedDestHex)")
+
+        // Defensive: verify this link is actually addressed to our telephony
+        // destination. An off-target link reaching this callback would be a
+        // routing bug — bail out before firing CallKit so we don't ring the
+        // user for a non-call event. We compare the precomputed hex prefix
+        // because Link.destinationHash is actor-isolated and `handleIncomingLink`
+        // runs synchronously on MainActor.
+        if expectedDestHex != "nil" && linkDestHex != "?" && linkDestHex != expectedDestHex {
+            DiagLog.log("[CALL] handleIncomingLink ABORT — destination mismatch (linkDest=\(linkDestHex) != telephonyDest=\(expectedDestHex))")
+            return
+        }
+
         guard let telephone else {
             DiagLog.log("[CALL] handleIncomingLink: telephone is nil!")
             return
         }
-        DiagLog.log("[CALL] handleIncomingLink: starting incoming call setup")
+        DiagLog.log("[CALL] handleIncomingLink: starting incoming call setup, peerName=\(peerName ?? "nil")")
         self.isIncoming = true
         self.callState = .connecting
 
@@ -470,6 +491,7 @@ public final class CallManager {
 
         // Report incoming call to CallKit for native UI
         #if os(iOS)
+        DiagLog.log("[CALL] handleIncomingLink → reportIncomingCall uuid=\(callUUID) peerName=\(peerName ?? "nil")")
         callKitManager?.reportIncomingCall(uuid: callUUID, peerName: peerName) { [weak self] error in
             if let error = error {
                 Task { @MainActor in

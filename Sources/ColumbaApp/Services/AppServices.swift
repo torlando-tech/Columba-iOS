@@ -20,20 +20,36 @@ import os.log
 /// Simple file logger for diagnostics when idevicesyslog isn't available (WiFi-only device).
 /// Writes to Documents/diag.log which can be extracted via Xcode or devicectl.
 enum DiagLog {
+    /// `xcrun devicectl device copy from` truncates transfers at 20MB. We
+    /// rotate at 10MB so the active log + one rotated archive both fit
+    /// inside that envelope, which means a single pull captures the full
+    /// recent history without truncation.
+    private static let rotateThreshold: UInt64 = 10 * 1024 * 1024
+
     private static let fileURL: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return docs.appendingPathComponent("diag.log")
     }()
 
+    private static let archiveURL: URL = {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("diag.log.1")
+    }()
+
+    private static let writeQueue = DispatchQueue(label: "network.columba.DiagLog")
+
     static func clear() {
         try? "".write(to: fileURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.removeItem(at: archiveURL)
     }
 
     static func log(_ message: String) {
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)\n"
         NSLog("%@", message) // Also to ASL for USB capture
-        if let data = line.data(using: .utf8) {
+        guard let data = line.data(using: .utf8) else { return }
+        writeQueue.async {
+            rotateIfNeeded()
             if FileManager.default.fileExists(atPath: fileURL.path) {
                 if let fh = try? FileHandle(forWritingTo: fileURL) {
                     fh.seekToEndOfFile()
@@ -44,6 +60,19 @@ enum DiagLog {
                 try? data.write(to: fileURL)
             }
         }
+    }
+
+    /// Move `diag.log` to `diag.log.1` once it crosses `rotateThreshold`
+    /// so a fresh write starts a new file. Caller must already be on
+    /// `writeQueue` so we don't race with concurrent appenders.
+    private static func rotateIfNeeded() {
+        guard
+            let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+            let size = attrs[.size] as? UInt64,
+            size >= rotateThreshold
+        else { return }
+        try? FileManager.default.removeItem(at: archiveURL)
+        try? FileManager.default.moveItem(at: fileURL, to: archiveURL)
     }
 }
 
