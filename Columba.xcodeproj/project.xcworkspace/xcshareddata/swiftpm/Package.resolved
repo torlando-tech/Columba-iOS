@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/torlando-tech/LXMF-swift.git",
       "state" : {
-        "revision" : "b1f4899ae548a67ae7d95e519abbb4616b875059",
-        "version" : "0.3.2"
+        "revision" : "b31a14a8fe9ab9626ce9b333d5978098910b54ea",
+        "version" : "0.3.4"
       }
     },
     {

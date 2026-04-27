@@ -1179,7 +1179,7 @@
 			repositoryURL = "https://github.com/torlando-tech/LXMF-swift.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.3.2;
+				minimumVersion = 0.3.4;
 			};
 		};
 		PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
