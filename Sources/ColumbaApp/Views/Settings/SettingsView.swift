@@ -55,9 +55,6 @@ struct SettingsView: View {
                         // Network
                         networkCard(vm)
 
-                        // Transport Mode
-                        transportModeCard(vm)
-
                         #if ENABLE_NETWORK_EXTENSION
                         backgroundTransportCard()
                         #endif
@@ -90,6 +87,15 @@ struct SettingsView: View {
 
                         // Data Migration
                         dataMigrationCard(vm)
+
+                        // Advanced section anchor — separates Transport
+                        // Mode (and future advanced settings) from the
+                        // common day-to-day toggles above. Mirrors the
+                        // grouping introduced in Columba Android.
+                        advancedSectionHeader
+
+                        // Transport Mode (advanced)
+                        transportModeCard(vm)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -301,6 +307,25 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Advanced Section
+
+    /// Section header above the Advanced cards (Transport Mode for now).
+    /// Pure visual grouping — the cards below it are still independent
+    /// `ExpandableSettingsCard`s, this just signals "you are leaving the
+    /// common-toggles area".
+    private var advancedSectionHeader: some View {
+        HStack {
+            Text("ADVANCED")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.textSecondary)
+                .tracking(0.5)
+            Spacer()
+        }
+        .padding(.top, 16)
+        .padding(.horizontal, 4)
+    }
+
     // MARK: - Transport Mode Card
 
     private func transportModeCard(_ vm: SettingsViewModel) -> some View {
@@ -320,19 +345,26 @@ struct SettingsView: View {
                 }
             })
         ) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Act as a relay node, forwarding announces and routing packets for other devices on the network.")
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Forward traffic for the mesh network. With Transport Mode on, this device relays announces and routes packets for other peers — increasing the network's reach for everyone.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("When disabled, this device only handles its own traffic. That's the right default for most phones — battery and data usage stay low and other peers don't depend on you to be online.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if vm.isTransportEnabled {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption)
                             .foregroundStyle(Theme.warning)
-                        Text("Increases battery and data usage.")
+                        Text("Expect higher battery and data usage while enabled.")
                             .font(.caption)
                             .foregroundStyle(Theme.warning)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
