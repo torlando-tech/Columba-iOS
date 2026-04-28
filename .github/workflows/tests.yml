@@ -37,16 +37,31 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      - name: Build and run tests
+      - name: Build for testing
         run: |
-          # `xcodebuild test` builds its own dependencies (the host
-          # ColumbaApp + extensions), so a separate `xcodebuild build`
-          # step is redundant — and was actively harmful here because
-          # it ran without `-derivedDataPath`, putting artifacts in
-          # `~/Library/Developer/Xcode/DerivedData` while the test
-          # step (with `-derivedDataPath DerivedData`) couldn't find
-          # the app module and bailed with "No such module 'ColumbaApp'".
-          xcodebuild test \
+          # Split build and run into two phases. A combined
+          # `xcodebuild test` was racing the test target's
+          # `EmitSwiftModule` against the host app's swiftmodule
+          # output and failing with "No such module 'ColumbaApp'"
+          # under Xcode 16's more aggressive parallel build pipeline.
+          # `build-for-testing` finishes the dependency graph cleanly
+          # before the test runner starts.
+          xcodebuild build-for-testing \
+            -project Columba.xcodeproj \
+            -scheme Columba \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.sim.outputs.device_id }}" \
+            -enableCodeCoverage YES \
+            -derivedDataPath DerivedData \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Run tests (without building)
+        run: |
+          xcodebuild test-without-building \
             -project Columba.xcodeproj \
             -scheme Columba \
             -sdk iphonesimulator \
