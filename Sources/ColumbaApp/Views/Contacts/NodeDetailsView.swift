@@ -447,14 +447,45 @@ struct NodeDetailsView: View {
             // pull-to-refresh we have to drop stale path metadata
             // explicitly to avoid showing an "Expires" row or relay
             // button for a destination the path table doesn't know.
-            expiresDate = nil
-            interfaceName = nil
-            propagationInfo = nil
+            // Also flip the cached isOnline so a manual refresh
+            // immediately reflects the pruned state instead of waiting
+            // for the next 1.5 s poll tick.
+            applyOfflineState()
         }
         // Check if this is the currently selected relay
         if let propManager = appServices.propagationManager {
             isCurrentRelay = propManager.selectedNodeHash == contact.identityHash
         }
+    }
+
+    /// Drop all path-derived metadata and rebuild `liveContact` with
+    /// `isOnline = false`. Called when the path table reports no entry
+    /// for this destination — both from the polling loop (transition
+    /// case) and `loadPathDetails` (initial load / pull-to-refresh).
+    private func applyOfflineState() {
+        expiresDate = nil
+        interfaceName = nil
+        propagationInfo = nil
+        guard let stale = liveContact, stale.isOnline else { return }
+        liveContact = Contact(
+            id: stale.id,
+            displayName: stale.displayName,
+            identityHash: stale.identityHash,
+            identityHashHex: stale.identityHashHex,
+            badgeType: stale.badgeType,
+            hopCount: stale.hopCount,
+            signalStrength: stale.signalStrength,
+            timestamp: stale.timestamp,
+            isOnline: false,
+            isFavorite: stale.isFavorite,
+            isPinned: stale.isPinned,
+            isRelay: stale.isRelay,
+            iconName: stale.iconName,
+            iconFgColor: stale.iconFgColor,
+            iconBgColor: stale.iconBgColor,
+            interfaceId: stale.interfaceId,
+            aspect: stale.aspect
+        )
     }
 
     /// Apply a freshly-fetched `PathEntry` to the view state.
@@ -548,40 +579,14 @@ struct NodeDetailsView: View {
             if timestampChanged || onlineChanged {
                 if let entry {
                     await applyPathEntry(entry)
-                } else if onlineChanged, let stale = liveContact {
-                    // Path entry was removed (expired and pruned).
-                    // applyPathEntry runs only with a non-nil entry,
-                    // so without this branch `liveContact.isOnline`
-                    // would stay `true` indefinitely while the
-                    // sentinel `lastIsOnline` flips to `false` and
-                    // suppresses the next attempt — badge stuck on
-                    // "Online" forever. `Contact.isOnline` is `let`,
-                    // so rebuild the value with the flipped flag.
-                    liveContact = Contact(
-                        id: stale.id,
-                        displayName: stale.displayName,
-                        identityHash: stale.identityHash,
-                        identityHashHex: stale.identityHashHex,
-                        badgeType: stale.badgeType,
-                        hopCount: stale.hopCount,
-                        signalStrength: stale.signalStrength,
-                        timestamp: stale.timestamp,
-                        isOnline: false,
-                        isFavorite: stale.isFavorite,
-                        isPinned: stale.isPinned,
-                        isRelay: stale.isRelay,
-                        iconName: stale.iconName,
-                        iconFgColor: stale.iconFgColor,
-                        iconBgColor: stale.iconBgColor,
-                        interfaceId: stale.interfaceId,
-                        aspect: stale.aspect
-                    )
-                    expiresDate = nil
-                    // Clear node-specific badges/metadata so an expired
-                    // relay can't be re-selected and a stale interface
-                    // row doesn't linger after pruning.
-                    propagationInfo = nil
-                    interfaceName = nil
+                } else if onlineChanged {
+                    // Path entry was pruned. applyPathEntry only runs
+                    // with a non-nil entry, so without this branch
+                    // `liveContact.isOnline` would stay `true` while
+                    // the sentinel `lastIsOnline` flips to `false`,
+                    // suppressing the next attempt — badge stuck on
+                    // "Online" forever.
+                    applyOfflineState()
                 }
                 lastTimestamp = entry?.timestamp
                 lastIsOnline = nowIsOnline
