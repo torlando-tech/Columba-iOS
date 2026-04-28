@@ -206,6 +206,9 @@ struct NetworkAnnouncesTab: View {
     private var announcesList: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
+                if viewModel.pendingAnnounces.count > 0 {
+                    showNewBanner
+                }
                 ForEach(viewModel.filteredNetworkAnnounces) { contact in
                     ContactCard(
                         contact: contact,
@@ -225,6 +228,33 @@ struct NetworkAnnouncesTab: View {
         .refreshable {
             await viewModel.refreshAnnounces()
         }
+    }
+
+    /// Tappable banner shown above the list while new announces are buffered.
+    /// Lets the user merge them in on demand instead of having the visible
+    /// list reorder under their finger as new announces stream in.
+    private var showNewBanner: some View {
+        let count = viewModel.pendingAnnounces.count
+        return Button {
+            withAnimation(.easeOut(duration: 0.25)) {
+                viewModel.flushPendingAnnounces()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.circle.fill")
+                Text("Show \(count) new announce\(count == 1 ? "" : "s")")
+                    .fontWeight(.medium)
+            }
+            .font(.subheadline)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background {
+                Capsule().fill(Theme.accentColor)
+            }
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
     }
 }
 

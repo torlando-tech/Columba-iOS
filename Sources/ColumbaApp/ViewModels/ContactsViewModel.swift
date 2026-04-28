@@ -268,6 +268,12 @@ public final class ContactsViewModel {
     /// Network announces from the mesh (from path table).
     public var networkAnnounces: [Contact] = []
 
+    /// Buffered new announces that haven't been merged into the visible
+    /// list yet. The Network tab pushes incoming announces here instead
+    /// of inserting them inline so the rendered order stays stable while
+    /// the user is scrolling — a "show N new" pill at the top flushes.
+    public var pendingAnnounces: [Contact] = []
+
     /// Currently selected tab.
     public var selectedTab: ContactsTab = .myContacts
 
@@ -454,12 +460,23 @@ public final class ContactsViewModel {
         }
 
         if let existingIndex = networkAnnounces.firstIndex(where: { $0.id == contact.id }) {
+            // Already visible → update data in place. We deliberately do NOT
+            // re-sort here: rearranging the visible list while the user is
+            // scrolling the Network tab caused mistaps (#34). Position only
+            // refreshes on pull-to-refresh / tab reload / "show new" tap.
             networkAnnounces[existingIndex] = contact
+        } else if pendingAnnounces.contains(where: { $0.id == contact.id }) {
+            // New announce for an id we've already buffered — just refresh
+            // the buffered copy so the eventual flush has the latest data.
+            if let i = pendingAnnounces.firstIndex(where: { $0.id == contact.id }) {
+                pendingAnnounces[i] = contact
+            }
         } else {
-            networkAnnounces.insert(contact, at: 0)
+            // First time seeing this id since the last user-driven refresh.
+            // Hold it in the pending bucket so the visible list keeps its
+            // current order; the UI surfaces a banner that flushes on tap.
+            pendingAnnounces.append(contact)
         }
-
-        networkAnnounces.sort { $0.timestamp > $1.timestamp }
 
         // Update myContacts badge if this announce changes the contact type
         if let myIndex = myContacts.firstIndex(where: { $0.id == contact.id }),
@@ -471,6 +488,17 @@ public final class ContactsViewModel {
 
         // Re-sync relay state (auto-select may have picked this new node)
         syncRelayState()
+    }
+
+    /// Merge any buffered new announces into the visible list and re-sort.
+    /// Called when the user pulls to refresh, taps the "show N new" banner,
+    /// or otherwise asks for the latest data.
+    @MainActor
+    public func flushPendingAnnounces() {
+        guard !pendingAnnounces.isEmpty else { return }
+        networkAnnounces.append(contentsOf: pendingAnnounces)
+        pendingAnnounces.removeAll()
+        networkAnnounces.sort { $0.timestamp > $1.timestamp }
     }
 
     // MARK: - Public Methods
@@ -496,6 +524,11 @@ public final class ContactsViewModel {
                     .map { Contact(from: $0) }
                     .sorted { $0.timestamp > $1.timestamp }
             }
+            // Fresh load reads everything from the path table, so any
+            // announces buffered for an in-progress session no longer
+            // need to be held back — clear the bucket so the "show new"
+            // pill resets to zero.
+            pendingAnnounces.removeAll()
 
             // Mark network announces that are already saved contacts
             markSavedContacts()
@@ -544,6 +577,10 @@ public final class ContactsViewModel {
                 .map { Contact(from: $0) }
                 .sorted { $0.timestamp > $1.timestamp }
         }
+        // Refresh re-reads the full path table, so the buffered new
+        // announces are already present in the rebuilt list — drop the
+        // bucket so the "show new" pill resets.
+        pendingAnnounces.removeAll()
 
         // Mark network announces that are already saved contacts
         markSavedContacts()
