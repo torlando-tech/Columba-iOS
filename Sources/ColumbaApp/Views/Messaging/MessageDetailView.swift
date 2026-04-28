@@ -7,15 +7,27 @@
 //
 
 import SwiftUI
+import ReticulumSwift
 
 /// Message detail screen showing delivery metadata in card-based layout.
 ///
 /// Shows different cards based on message direction:
-/// - **Sent**: Timestamp, Status, Delivery Method, Error (if failed)
-/// - **Received**: Timestamp, Delivery Method, RSSI, SNR
+/// - **Sent**: Timestamp, Status, Delivery Method, Sending Interface (current
+///   path), Error (if failed), Message ID.
+/// - **Received**: Timestamp, Delivery Method, Receiving Interface, RSSI, SNR,
+///   Message ID.
 @available(iOS 17.0, macOS 14.0, *)
 struct MessageDetailView: View {
     let message: Message
+
+    /// Destination hash of the conversation peer. Used to resolve the current
+    /// outgoing path's interface for outgoing messages.
+    let destinationHash: Data?
+
+    /// Path table for resolving the current next-hop interface to the
+    /// destination. Optional so existing callers and previews can omit it.
+    let pathTable: PathTable?
+
     @Environment(\.dismiss) private var dismiss
 
     /// Eagerly-constructed InterfaceRepository for resolving interface UUIDs
@@ -24,6 +36,19 @@ struct MessageDetailView: View {
     /// avoids a first-render flicker where the receiving-interface card would
     /// briefly fall through to the orphan branch.
     @State private var interfaceRepository: InterfaceRepository = InterfaceRepository()
+
+    /// Interface UUID currently used to reach the destination, resolved
+    /// asynchronously from the path table on appear. `nil` means either the
+    /// lookup hasn't run yet, no path is known, or the path has expired.
+    @State private var currentSendingInterfaceId: String?
+
+    /// Convenience initializer that omits the path-table dependency. Used by
+    /// previews and any caller that doesn't have a path table handy.
+    init(message: Message, destinationHash: Data? = nil, pathTable: PathTable? = nil) {
+        self.message = message
+        self.destinationHash = destinationHash
+        self.pathTable = pathTable
+    }
 
     var body: some View {
         NavigationStack {
@@ -66,6 +91,38 @@ struct MessageDetailView: View {
             #endif
         }
         .preferredColorScheme(.dark)
+        // Only kick off the path lookup for outgoing messages. Incoming
+        // messages don't need a sending-interface card, so don't waste a
+        // PathTable lookup. SwiftUI runs .task on the main actor, so the
+        // assignment in loadSendingInterface() is already main-actor isolated
+        // — no MainActor.run needed.
+        .task {
+            guard message.isFromMe else { return }
+            await loadSendingInterface()
+        }
+    }
+
+    /// Resolve the current next-hop interface for the destination so the
+    /// outgoing message details can show which configured interface is
+    /// presently used to reach this peer.
+    ///
+    /// This is a *lookup at display time* — it reflects the path as it stands
+    /// now, not necessarily the interface used at the original send time. The
+    /// path table can change between send and view (new announces, expiry,
+    /// network changes), so the displayed interface is best-effort. If no path
+    /// is known the card is omitted entirely rather than guessing.
+    @MainActor
+    private func loadSendingInterface() async {
+        guard message.isFromMe,
+              let destinationHash,
+              let pathTable
+        else { return }
+
+        // SwiftUI invokes .task on the main actor and this method is
+        // @MainActor-isolated, so the @State assignment after the await is
+        // already on the main actor — no MainActor.run wrapper needed.
+        let entry = await pathTable.lookup(destinationHash: destinationHash)
+        self.currentSendingInterfaceId = entry?.interfaceId
     }
 
     // MARK: - Message Preview
@@ -123,6 +180,12 @@ struct MessageDetailView: View {
             deliveryMethodCard(method)
         }
 
+        // Sending interface (current next-hop for the destination).
+        // Hidden when no path is known so we never show stale or made-up data.
+        if let iface = currentSendingInterfaceId {
+            interfaceCard(title: "Sending Interface", interfaceId: iface)
+        }
+
         // Error details (if failed)
         if message.deliveryStatus == .failed {
             InfoCard(
@@ -158,7 +221,7 @@ struct MessageDetailView: View {
 
         // Receiving interface
         if let iface = message.receivedInterface {
-            receivedInterfaceCard(iface)
+            interfaceCard(title: "Receiving Interface", interfaceId: iface)
         }
 
         // RSSI
@@ -233,17 +296,23 @@ struct MessageDetailView: View {
         )
     }
 
-    private func receivedInterfaceCard(_ interfaceId: String) -> some View {
-        // Look up the interface by its UUID in the repository so we can show
-        // the user's configured friendly name (e.g. "beleth") and connection
-        // target (e.g. "example.com:4242") instead of raw UUID substrings.
+    /// Card showing an interface (sending or receiving) by its UUID.
+    ///
+    /// Looks up the interface in the repository so we can show the user's
+    /// configured friendly name (e.g. "beleth") and connection target
+    /// (e.g. "example.com:4242") instead of raw UUID substrings. Used for both
+    /// the receiving-interface card (the interface a packet arrived on) and
+    /// the sending-interface card (the *current* next-hop interface for the
+    /// destination, as-of-now — not necessarily the original transmit
+    /// interface).
+    private func interfaceCard(title: String, interfaceId: String) -> some View {
         let entity = interfaceRepository.getInterface(id: interfaceId)
         let (icon, name, subtitle) = interfaceCardDisplay(for: entity, fallbackId: interfaceId)
 
         return InfoCard(
             icon: icon,
             iconColor: .cyan,
-            title: "Receiving Interface",
+            title: title,
             content: name,
             subtitle: subtitle
         )
