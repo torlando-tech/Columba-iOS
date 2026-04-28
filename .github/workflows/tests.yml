@@ -37,21 +37,15 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      - name: Build
-        run: |
-          xcodebuild build \
-            -project Columba.xcodeproj \
-            -scheme Columba \
-            -sdk iphonesimulator \
-            -destination "id=${{ steps.sim.outputs.device_id }}" \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER=""
-
       - name: Build and run tests
         run: |
+          # `xcodebuild test` builds its own dependencies (the host
+          # ColumbaApp + extensions), so a separate `xcodebuild build`
+          # step is redundant — and was actively harmful here because
+          # it ran without `-derivedDataPath`, putting artifacts in
+          # `~/Library/Developer/Xcode/DerivedData` while the test
+          # step (with `-derivedDataPath DerivedData`) couldn't find
+          # the app module and bailed with "No such module 'ColumbaApp'".
           xcodebuild test \
             -project Columba.xcodeproj \
             -scheme Columba \
