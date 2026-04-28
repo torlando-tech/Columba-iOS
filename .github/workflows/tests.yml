@@ -60,42 +60,61 @@ jobs:
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
             -enableCodeCoverage YES \
+            -derivedDataPath DerivedData \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Export coverage report (cobertura)
+      - name: Export coverage report (lcov)
         run: |
           set -euo pipefail
-          gem install slather --no-document
-          # Slather reads coverage from the .xcresult bundle directly
-          # and emits cobertura XML (which Codecov happily ingests).
-          slather coverage \
-            --cobertura-xml \
-            --output-directory coverage \
-            --scheme Columba \
-            --configuration Debug \
-            --binary-basename ColumbaApp \
-            --xcresult-path TestResults.xcresult \
-            --ignore "Tests/**" \
-            --ignore "**/*Tests.swift" \
-            --ignore "DerivedData/**" \
-            --ignore "**/SourcePackages/**" \
-            Columba.xcodeproj
-          # Slather writes coverage/cobertura.xml; surface its summary.
-          if [ -f coverage/cobertura.xml ]; then
-            echo "--- coverage/cobertura.xml head ---"
-            head -3 coverage/cobertura.xml
-          else
-            echo "Slather did not produce coverage/cobertura.xml" >&2
-            ls -la coverage/ >&2 || true
+          # Locate the test bundle binary inside DerivedData so
+          # llvm-cov can resolve the source/instrumentation pairing.
+          # On macOS the bundle has Contents/MacOS/<name> for unit
+          # tests run with macCatalyst-style targets, while iOS sim
+          # tests put the binary directly inside the .xctest bundle.
+          XCTEST_BUNDLE=$(find DerivedData -type d -name '*.xctest' | head -1)
+          if [ -z "$XCTEST_BUNDLE" ]; then
+            echo "No .xctest bundle found in DerivedData" >&2
             exit 1
           fi
+          if [ -d "$XCTEST_BUNDLE/Contents/MacOS" ]; then
+            BIN_PATH="$XCTEST_BUNDLE/Contents/MacOS/$(basename "$XCTEST_BUNDLE" .xctest)"
+          else
+            BIN_PATH="$XCTEST_BUNDLE/$(basename "$XCTEST_BUNDLE" .xctest)"
+          fi
+          PROF_DATA=$(find DerivedData -name 'default.profdata' | head -1)
+          if [ -z "$PROF_DATA" ] || [ ! -f "$BIN_PATH" ]; then
+            echo "Coverage artifacts missing: bin=$BIN_PATH prof=$PROF_DATA" >&2
+            ls -la DerivedData/Build/ProfileData 2>/dev/null || true
+            exit 1
+          fi
+          echo "Test binary: $BIN_PATH"
+          echo "Profile data: $PROF_DATA"
+
+          # The `-ignore-filename-regex` filter excludes test files,
+          # SwiftPM source packages (third-party libraries) and Xcode
+          # internal SDK headers from the report. Patch coverage on
+          # codecov is computed against this filtered set.
+          xcrun llvm-cov export \
+            "$BIN_PATH" \
+            -instr-profile="$PROF_DATA" \
+            -ignore-filename-regex='\.build|Tests|SourcePackages|DerivedData|/Applications/Xcode' \
+            -format=lcov \
+            > coverage.lcov
+
+          # Surface a one-line summary so failures are diagnosable
+          # without round-tripping through the codecov dashboard.
+          xcrun llvm-cov report \
+            "$BIN_PATH" \
+            -instr-profile="$PROF_DATA" \
+            -ignore-filename-regex='\.build|Tests|SourcePackages|DerivedData|/Applications/Xcode' \
+            | tail -3
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: coverage/cobertura.xml
+          files: coverage.lcov
           fail_ci_if_error: false
