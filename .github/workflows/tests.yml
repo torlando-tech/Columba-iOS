@@ -104,6 +104,35 @@ jobs:
 
           xcrun xccov view --report --json "$XCRESULT" > coverage/coverage.json
 
+          # xccov view --file requires the bundle to contain an
+          # .xccovarchive (the per-file index). With Xcode 11+ result
+          # bundles, the archive lives one level inside the xcresult,
+          # but `xccov view --file` against a bare .xcresult expects
+          # the bundle path itself. Sanity-check the bundle layout
+          # before iterating so a missing archive surfaces with a
+          # specific message instead of N silent CalledProcessError
+          # failures.
+          echo "--- xcresult bundle inventory ---"
+          find "$XCRESULT" -maxdepth 3 -name '*.xccovarchive' -o -name '*.xccovreport' | head -10
+
+          # Try a single xccov view to capture the actual error
+          # before iterating over every file. If --file isn't
+          # supported against a bare xcresult, this surfaces the
+          # exact stderr message in the CI log.
+          SAMPLE_PATH=$(python3 -c "
+          import json
+          d=json.load(open('coverage/coverage.json'))
+          for t in d.get('targets', []):
+              for f in t.get('files', []):
+                  p = f['path']
+                  if 'Tests' not in p and 'SourcePackages' not in p:
+                      print(p); break
+              else: continue
+              break
+          ")
+          echo "--- probe xccov view --file (sample: $SAMPLE_PATH) ---"
+          xcrun xccov view --file "$SAMPLE_PATH" "$XCRESULT" 2>&1 | head -10 || true
+
           # Convert xccov JSON + per-file line dumps to lcov.
           python3 <<'PY'
           import json, subprocess, os, sys
@@ -112,6 +141,7 @@ jobs:
           out_lines = []
           file_count = 0
           line_record_count = 0
+          first_error_logged = False
           for target in data.get('targets', []):
               for f in target.get('files', []):
                   path = f['path']
@@ -134,10 +164,14 @@ jobs:
                   try:
                       text = subprocess.check_output(
                           ['xcrun', 'xccov', 'view', '--file', path, XCRESULT],
-                          text=True, stderr=subprocess.DEVNULL,
+                          text=True, stderr=subprocess.PIPE,
                       )
-                  except subprocess.CalledProcessError:
+                  except subprocess.CalledProcessError as e:
+                      if not first_error_logged:
+                          print(f"xccov view --file {path} failed: {e.stderr.strip() if e.stderr else '<no stderr>'}", file=sys.stderr)
+                          first_error_logged = True
                       out_lines.append("end_of_record")
+                      file_count += 1
                       continue
                   for raw in text.splitlines():
                       stripped = raw.strip()
