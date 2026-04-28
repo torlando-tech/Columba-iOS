@@ -99,6 +99,13 @@ struct NodeDetailsView: View {
             // `liveContact` still holds the previous contact's data and would
             // bleed through until the polling loop's first apply.
             liveContact = contact
+            // Also reset auxiliary state so the previous contact's metadata
+            // (relay button, interface name, expiry date) doesn't render for
+            // contact B during the first path-table lookup.
+            expiresDate = nil
+            interfaceName = nil
+            propagationInfo = nil
+            isCurrentRelay = false
             await loadPathDetails()
             await observePathUpdates()
         }
@@ -551,6 +558,11 @@ struct NodeDetailsView: View {
                         aspect: stale.aspect
                     )
                     expiresDate = nil
+                    // Clear node-specific badges/metadata so an expired
+                    // relay can't be re-selected and a stale interface
+                    // row doesn't linger after pruning.
+                    propagationInfo = nil
+                    interfaceName = nil
                 }
                 lastTimestamp = entry?.timestamp
                 lastIsOnline = nowIsOnline
