@@ -59,8 +59,68 @@ jobs:
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
+            -enableCodeCoverage YES \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Export coverage report (function-level lcov)
+        run: |
+          set -euo pipefail
+          # Coverage on iOS app projects with -resultBundlePath lives
+          # inside the .xcresult bundle. The only toolchain path that
+          # reads it cleanly under Xcode 16 is
+          # `xccov view --report --json`, which exposes function-level
+          # granularity (no per-line `DA:` records). Per-line data
+          # would require either a working `xccov view --file` (broken
+          # against both the bare .xcresult and `xcresulttool export
+          # coverage`'s output: "Error: unrecognized file format") or
+          # a raw .profdata (Xcode embeds it inside the xcresult, not
+          # in DerivedData). codecov's `patch` check is configured
+          # `informational: true` so the absence of line records is
+          # advisory rather than blocking.
+          XCRESULT=TestResults.xcresult
+          if [ ! -d "$XCRESULT" ]; then
+            echo "$XCRESULT does not exist" >&2
+            exit 1
+          fi
+          mkdir -p coverage
+          xcrun xccov view --report --json "$XCRESULT" > coverage/coverage.json
+
+          python3 <<'PY'
+          import json, sys
+          data = json.load(open('coverage/coverage.json'))
+          out = []
+          file_count = 0
+          for target in data.get('targets', []):
+              for f in target.get('files', []):
+                  path = f['path']
+                  # Filter out tests + third-party packages so the
+                  # report shows first-party app code only.
+                  if 'Tests' in path or 'SourcePackages' in path or 'DerivedData' in path:
+                      continue
+                  out.append(f"SF:{path}")
+                  for fn in f.get('functions', []):
+                      ln = fn.get('lineNumber', 0)
+                      hits = fn.get('executionCount', 0)
+                      name = fn.get('name', '?')
+                      out.append(f"FN:{ln},{name}")
+                      out.append(f"FNDA:{hits},{name}")
+                  out.append("end_of_record")
+                  file_count += 1
+          with open('coverage/coverage.lcov', 'w') as fh:
+              fh.write("\n".join(out) + "\n")
+          print(f"Wrote {file_count} files, {len(out)} total lcov lines")
+          if file_count == 0:
+              print("ERROR: zero files — coverage extraction is broken", file=sys.stderr)
+              sys.exit(1)
+          PY
+          head -5 coverage/coverage.lcov
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/coverage.lcov
+          fail_ci_if_error: false
