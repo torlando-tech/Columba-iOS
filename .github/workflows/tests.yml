@@ -112,12 +112,16 @@ jobs:
           xcrun xcresulttool export coverage \
             --path "$XCRESULT" \
             --output-path coverage/export
-          echo "--- exported coverage tree ---"
-          find coverage/export -maxdepth 4 -type d | head -20
-          ARCHIVE=$(find coverage/export -type d -name '*.xccovarchive' 2>/dev/null | head -1)
+          # `xcresulttool export coverage` emits an archive directory
+          # with a per-destination name like
+          # `0_Test_iPhone 16 Pro_CoverageArchive` rather than the
+          # historical `*.xccovarchive` extension. Pick the first
+          # directory inside coverage/export — there's normally just
+          # one (one test destination).
+          ARCHIVE=$(find coverage/export -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
           if [ -z "$ARCHIVE" ]; then
-            echo "Could not locate .xccovarchive in coverage/export" >&2
-            find coverage/export -type d >&2
+            echo "No coverage archive directory in coverage/export" >&2
+            ls -la coverage/export >&2 || true
             exit 1
           fi
           echo "Coverage archive: $ARCHIVE"
