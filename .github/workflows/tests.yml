@@ -104,21 +104,31 @@ jobs:
 
           xcrun xccov view --report --json "$XCRESULT" > coverage/coverage.json
 
-          # xccov view --file requires the bundle to contain an
-          # .xccovarchive (the per-file index). With Xcode 11+ result
-          # bundles, the archive lives one level inside the xcresult,
-          # but `xccov view --file` against a bare .xcresult expects
-          # the bundle path itself. Sanity-check the bundle layout
-          # before iterating so a missing archive surfaces with a
-          # specific message instead of N silent CalledProcessError
-          # failures.
-          echo "--- xcresult bundle inventory ---"
-          find "$XCRESULT" -maxdepth 3 -name '*.xccovarchive' -o -name '*.xccovreport' | head -10
+          # Locate the .xccovarchive inside the xcresult bundle. Xcode
+          # 16's result-bundle format buries it under Data/ keyed by
+          # an opaque ID; xccov view --file rejects a bare xcresult
+          # bundle ("Error: unrecognized file format") so we hand it
+          # the archive directly.
+          ARCHIVE=$(find "$XCRESULT" -type d -name '*.xccovarchive' 2>/dev/null | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            # Fall back to extracting via xcresulttool if the archive
+            # isn't visible at a normal path.
+            xcrun xcresulttool export object \
+              --path "$XCRESULT" \
+              --type directory \
+              --output-path coverage/archive_extract \
+              --legacy 2>&1 | head -5 || true
+            ARCHIVE=$(find coverage/archive_extract "$XCRESULT" -type d -name '*.xccovarchive' 2>/dev/null | head -1)
+          fi
+          if [ -z "$ARCHIVE" ]; then
+            echo "Could not locate .xccovarchive inside $XCRESULT" >&2
+            find "$XCRESULT" -type d 2>/dev/null | head -30 >&2
+            exit 1
+          fi
+          echo "Coverage archive: $ARCHIVE"
 
-          # Try a single xccov view to capture the actual error
-          # before iterating over every file. If --file isn't
-          # supported against a bare xcresult, this surfaces the
-          # exact stderr message in the CI log.
+          # Probe with the archive so any remaining xccov error
+          # surfaces here (rather than silently for every file).
           SAMPLE_PATH=$(python3 -c "
           import json
           d=json.load(open('coverage/coverage.json'))
@@ -130,13 +140,14 @@ jobs:
               else: continue
               break
           ")
-          echo "--- probe xccov view --file (sample: $SAMPLE_PATH) ---"
-          xcrun xccov view --file "$SAMPLE_PATH" "$XCRESULT" 2>&1 | head -10 || true
+          echo "--- probe xccov view --file --json (sample: $SAMPLE_PATH) ---"
+          xcrun xccov view --file "$SAMPLE_PATH" --json "$ARCHIVE" 2>&1 | head -5 || true
 
           # Convert xccov JSON + per-file line dumps to lcov.
+          export COVERAGE_ARCHIVE="$ARCHIVE"
           python3 <<'PY'
           import json, subprocess, os, sys
-          XCRESULT = 'TestResults.xcresult'
+          ARCHIVE = os.environ['COVERAGE_ARCHIVE']
           data = json.load(open('coverage/coverage.json'))
           out_lines = []
           file_count = 0
@@ -157,13 +168,13 @@ jobs:
                       name = fn.get('name', '?')
                       out_lines.append(f"FN:{ln},{name}")
                       out_lines.append(f"FNDA:{hits},{name}")
-                  # Per-line via `xccov view --file`. Output is
-                  # plain text, one entry per source line:
+                  # Per-line via `xccov view --file`. Plain-text
+                  # output, one entry per source line:
                   #   `<line>: <hits>` for executable lines
                   #   `<line>: *`     for non-executable (skip)
                   try:
                       text = subprocess.check_output(
-                          ['xcrun', 'xccov', 'view', '--file', path, XCRESULT],
+                          ['xcrun', 'xccov', 'view', '--file', path, ARCHIVE],
                           text=True, stderr=subprocess.PIPE,
                       )
                   except subprocess.CalledProcessError as e:
