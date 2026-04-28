@@ -37,31 +37,22 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      - name: Build for testing
+      - name: Build
         run: |
-          # Split build and run into two phases. A combined
-          # `xcodebuild test` was racing the test target's
-          # `EmitSwiftModule` against the host app's swiftmodule
-          # output and failing with "No such module 'ColumbaApp'"
-          # under Xcode 16's more aggressive parallel build pipeline.
-          # `build-for-testing` finishes the dependency graph cleanly
-          # before the test runner starts.
-          xcodebuild build-for-testing \
+          xcodebuild build \
             -project Columba.xcodeproj \
             -scheme Columba \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
-            -enableCodeCoverage YES \
-            -derivedDataPath DerivedData \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Run tests (without building)
+      - name: Build and run tests
         run: |
-          xcodebuild test-without-building \
+          xcodebuild test \
             -project Columba.xcodeproj \
             -scheme Columba \
             -sdk iphonesimulator \
@@ -69,7 +60,6 @@ jobs:
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
             -enableCodeCoverage YES \
-            -derivedDataPath DerivedData \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
@@ -79,25 +69,24 @@ jobs:
       - name: Export coverage report (lcov)
         run: |
           set -euo pipefail
-          # Locate the test bundle binary inside DerivedData so
-          # llvm-cov can resolve the source/instrumentation pairing.
-          # On macOS the bundle has Contents/MacOS/<name> for unit
-          # tests run with macCatalyst-style targets, while iOS sim
-          # tests put the binary directly inside the .xctest bundle.
-          XCTEST_BUNDLE=$(find DerivedData -type d -name '*.xctest' | head -1)
+          # Default DerivedData lives at ~/Library/Developer/Xcode/DerivedData
+          # because we don't pass -derivedDataPath (passing it
+          # caused "No such module 'ColumbaApp'" — the test target's
+          # swiftmodule emit was racing the host app's under
+          # Xcode 16's parallel pipeline). Search there for the
+          # test bundle + profdata.
+          DD="$HOME/Library/Developer/Xcode/DerivedData"
+          XCTEST_BUNDLE=$(find "$DD" -type d -name 'ColumbaAppTests.xctest' | head -1)
           if [ -z "$XCTEST_BUNDLE" ]; then
-            echo "No .xctest bundle found in DerivedData" >&2
+            echo "No ColumbaAppTests.xctest found in $DD" >&2
+            find "$DD" -type d -name '*.xctest' >&2 || true
             exit 1
           fi
-          if [ -d "$XCTEST_BUNDLE/Contents/MacOS" ]; then
-            BIN_PATH="$XCTEST_BUNDLE/Contents/MacOS/$(basename "$XCTEST_BUNDLE" .xctest)"
-          else
-            BIN_PATH="$XCTEST_BUNDLE/$(basename "$XCTEST_BUNDLE" .xctest)"
-          fi
-          PROF_DATA=$(find DerivedData -name 'default.profdata' | head -1)
+          # iOS sim test bundles put the binary at the top level.
+          BIN_PATH="$XCTEST_BUNDLE/$(basename "$XCTEST_BUNDLE" .xctest)"
+          PROF_DATA=$(find "$DD" -name 'default.profdata' | head -1)
           if [ -z "$PROF_DATA" ] || [ ! -f "$BIN_PATH" ]; then
             echo "Coverage artifacts missing: bin=$BIN_PATH prof=$PROF_DATA" >&2
-            ls -la DerivedData/Build/ProfileData 2>/dev/null || true
             exit 1
           fi
           echo "Test binary: $BIN_PATH"
