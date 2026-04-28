@@ -104,25 +104,20 @@ jobs:
 
           xcrun xccov view --report --json "$XCRESULT" > coverage/coverage.json
 
-          # Locate the .xccovarchive inside the xcresult bundle. Xcode
-          # 16's result-bundle format buries it under Data/ keyed by
-          # an opaque ID; xccov view --file rejects a bare xcresult
-          # bundle ("Error: unrecognized file format") so we hand it
-          # the archive directly.
-          ARCHIVE=$(find "$XCRESULT" -type d -name '*.xccovarchive' 2>/dev/null | head -1)
+          # Xcode 16's result bundle hides the .xccovarchive behind
+          # opaque content IDs; the modern way to extract it is
+          # `xcresulttool export coverage`, which materializes the
+          # archive (and supporting files) to a directory we can
+          # then point xccov at.
+          xcrun xcresulttool export coverage \
+            --path "$XCRESULT" \
+            --output-path coverage/export
+          echo "--- exported coverage tree ---"
+          find coverage/export -maxdepth 4 -type d | head -20
+          ARCHIVE=$(find coverage/export -type d -name '*.xccovarchive' 2>/dev/null | head -1)
           if [ -z "$ARCHIVE" ]; then
-            # Fall back to extracting via xcresulttool if the archive
-            # isn't visible at a normal path.
-            xcrun xcresulttool export object \
-              --path "$XCRESULT" \
-              --type directory \
-              --output-path coverage/archive_extract \
-              --legacy 2>&1 | head -5 || true
-            ARCHIVE=$(find coverage/archive_extract "$XCRESULT" -type d -name '*.xccovarchive' 2>/dev/null | head -1)
-          fi
-          if [ -z "$ARCHIVE" ]; then
-            echo "Could not locate .xccovarchive inside $XCRESULT" >&2
-            find "$XCRESULT" -type d 2>/dev/null | head -30 >&2
+            echo "Could not locate .xccovarchive in coverage/export" >&2
+            find coverage/export -type d >&2
             exit 1
           fi
           echo "Coverage archive: $ARCHIVE"
