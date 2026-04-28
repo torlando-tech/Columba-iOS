@@ -418,7 +418,16 @@ public struct ContactsView: View {
             // an unconditional assignment of `[.chat(conversation)]`
             // would push the chat onto the root anyway — silent
             // navigation the user didn't ask for.
-            guard path.last == .nodeDetails(contact) else { return }
+            //
+            // Compare by `id` rather than the whole Contact value:
+            // NodeDetailsView's polling loop refreshes `liveContact`
+            // (timestamp / isOnline / hopCount), so `displayedContact`
+            // passed in here can hold newer field values than the
+            // Contact stored when the path was first pushed. Equality
+            // over all fields would silently fail and the button
+            // would do nothing.
+            guard case .nodeDetails(let pathContact) = path.last,
+                  pathContact.id == contact.id else { return }
 
             let conversation = Conversation(
                 id: contact.id,
