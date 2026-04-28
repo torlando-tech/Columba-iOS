@@ -517,6 +517,35 @@ struct NodeDetailsView: View {
             if timestampChanged || onlineChanged {
                 if let entry {
                     await applyPathEntry(entry)
+                } else if onlineChanged, let stale = liveContact {
+                    // Path entry was removed (expired and pruned).
+                    // applyPathEntry runs only with a non-nil entry,
+                    // so without this branch `liveContact.isOnline`
+                    // would stay `true` indefinitely while the
+                    // sentinel `lastIsOnline` flips to `false` and
+                    // suppresses the next attempt — badge stuck on
+                    // "Online" forever. `Contact.isOnline` is `let`,
+                    // so rebuild the value with the flipped flag.
+                    liveContact = Contact(
+                        id: stale.id,
+                        displayName: stale.displayName,
+                        identityHash: stale.identityHash,
+                        identityHashHex: stale.identityHashHex,
+                        badgeType: stale.badgeType,
+                        hopCount: stale.hopCount,
+                        signalStrength: stale.signalStrength,
+                        timestamp: stale.timestamp,
+                        isOnline: false,
+                        isFavorite: stale.isFavorite,
+                        isPinned: stale.isPinned,
+                        isRelay: stale.isRelay,
+                        iconName: stale.iconName,
+                        iconFgColor: stale.iconFgColor,
+                        iconBgColor: stale.iconBgColor,
+                        interfaceId: stale.interfaceId,
+                        aspect: stale.aspect
+                    )
+                    expiresDate = nil
                 }
                 lastTimestamp = entry?.timestamp
                 lastIsOnline = nowIsOnline
