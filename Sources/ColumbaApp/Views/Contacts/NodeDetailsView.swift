@@ -44,7 +44,23 @@ struct NodeDetailsView: View {
     @State private var interfaceName: String?
     @State private var propagationInfo: PropagationNodeInfo?
     @State private var isCurrentRelay: Bool = false
+    /// Live snapshot seeded from the parent-supplied `contact` and refreshed
+    /// whenever the path table reports a newer entry for this destination.
+    /// All bindings in the view read from this so the badge transitions from
+    /// "Expired" to "Online" the moment an announce arrives.
+    @State private var liveContact: Contact?
     @Environment(\.dismiss) private var dismiss
+
+    /// Effective contact for view bindings: live snapshot if available,
+    /// otherwise the parent-supplied initial snapshot.
+    private var displayedContact: Contact {
+        liveContact ?? contact
+    }
+
+    /// Polling cadence for path-table observation. Path updates are bursty and
+    /// uncommon (announces, not heartbeats), so a 1.5 s tick is plenty
+    /// responsive without burning cycles.
+    private static let pollInterval: Duration = .milliseconds(1500)
 
     // MARK: - Body
 
@@ -52,7 +68,7 @@ struct NodeDetailsView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
-                if !contact.isOnline {
+                if !displayedContact.isOnline {
                     expiredHint
                 }
                 if propagationInfo != nil {
@@ -72,26 +88,45 @@ struct NodeDetailsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .task {
+        .refreshable {
+            await refreshFromNetwork()
+        }
+        .task(id: contact.id) {
+            // Seed the live snapshot from the parent-supplied contact so the
+            // first render uses whatever the parent already knew, then keep
+            // it in sync with the path table. Always overwrite — if the user
+            // navigated to a different contact on the same view instance,
+            // `liveContact` still holds the previous contact's data and would
+            // bleed through until the polling loop's first apply.
+            liveContact = contact
+            // Also reset auxiliary state so the previous contact's metadata
+            // (relay button, interface name, expiry date) doesn't render for
+            // contact B during the first path-table lookup.
+            expiresDate = nil
+            interfaceName = nil
+            propagationInfo = nil
+            isCurrentRelay = false
             await loadPathDetails()
+            await observePathUpdates()
         }
     }
 
     // MARK: - Header
 
     private var headerSection: some View {
-        VStack(spacing: 12) {
+        let c = displayedContact
+        return VStack(spacing: 12) {
             // Large profile icon (MDI or identicon fallback)
             ProfileIcon(
-                iconName: contact.iconName,
-                foregroundColor: contact.iconFgColor,
-                backgroundColor: contact.iconBgColor,
-                fallbackHash: contact.identityHash,
+                iconName: c.iconName,
+                foregroundColor: c.iconFgColor,
+                backgroundColor: c.iconBgColor,
+                fallbackHash: c.identityHash,
                 size: 80
             )
 
             // Display name
-            Text(contact.resolvedDisplayName)
+            Text(c.resolvedDisplayName)
                 .font(.title2)
                 .fontWeight(.semibold)
                 .foregroundStyle(Theme.textPrimary)
@@ -104,21 +139,22 @@ struct NodeDetailsView: View {
     }
 
     private var statusBadge: some View {
-        HStack(spacing: 6) {
+        let isOnline = displayedContact.isOnline
+        return HStack(spacing: 6) {
             Circle()
-                .fill(contact.isOnline ? Theme.success : Theme.error)
+                .fill(isOnline ? Theme.success : Theme.error)
                 .frame(width: 8, height: 8)
 
-            Text(contact.isOnline ? "Online" : "Expired")
+            Text(isOnline ? "Online" : "Expired")
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .foregroundStyle(contact.isOnline ? Theme.success : Theme.error)
+                .foregroundStyle(isOnline ? Theme.success : Theme.error)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background {
             Capsule()
-                .fill((contact.isOnline ? Theme.success : Theme.error).opacity(0.15))
+                .fill((isOnline ? Theme.success : Theme.error).opacity(0.15))
         }
     }
 
@@ -163,25 +199,27 @@ struct NodeDetailsView: View {
     /// badge type — the parent owns whether the action should appear.
     @ViewBuilder
     private var primaryActionButton: some View {
-        if contact.badgeType == .node, let onBrowseSite {
+        let c = displayedContact
+        if c.badgeType == .node, let onBrowseSite {
             actionButton(
                 icon: "globe.americas",
                 title: "Browse Site"
             ) {
-                onBrowseSite(contact)
+                onBrowseSite(c)
             }
-        } else if contact.badgeType != .node, let onStartChat {
+        } else if c.badgeType != .node, let onStartChat {
             actionButton(
                 icon: "bubble.left.fill",
                 title: "Start Chat"
             ) {
-                onStartChat(contact)
+                onStartChat(c)
             }
         }
     }
 
     private func actionButton(icon: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        let isOnline = displayedContact.isOnline
+        return Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                 Text(title)
@@ -195,18 +233,19 @@ struct NodeDetailsView: View {
                     .fill(Theme.accentGradient)
             }
         }
-        .disabled(!contact.isOnline)
-        .opacity(contact.isOnline ? 1.0 : 0.5)
+        .disabled(!isOnline)
+        .opacity(isOnline ? 1.0 : 0.5)
     }
 
     // MARK: - Details Section
 
     private var detailsSection: some View {
-        VStack(spacing: 12) {
+        let c = displayedContact
+        return VStack(spacing: 12) {
             detailRow(
                 icon: "number",
                 label: "Destination Hash",
-                value: contact.identityHashHex,
+                value: c.identityHashHex,
                 isMonospace: true,
                 isCopyable: true
             )
@@ -214,7 +253,7 @@ struct NodeDetailsView: View {
             detailRow(
                 icon: "point.3.connected.trianglepath.dotted",
                 label: "Network Distance",
-                value: contact.hopDescription
+                value: c.hopDescription
             )
 
             detailRow(
@@ -225,12 +264,14 @@ struct NodeDetailsView: View {
 
             // TimelineView re-evaluates the relative portion ("5 min ago")
             // every 60 seconds so it ticks forward while the view is open
-            // instead of freezing at first-render time.
+            // instead of freezing at first-render time. Use `c.timestamp`
+            // (the live-contact swap from this PR) so a fresh announce
+            // also refreshes the value, not just the relative phrasing.
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 detailRow(
                     icon: "clock.arrow.circlepath",
                     label: "Last Heard",
-                    value: formattedLastHeard(contact.timestamp, now: context.date)
+                    value: formattedLastHeard(c.timestamp, now: context.date)
                 )
             }
 
@@ -329,6 +370,11 @@ struct NodeDetailsView: View {
                 }
             }
         }
+        // Match the primary action button: an offline node can't be
+        // designated as a relay, so the button should look and act
+        // disabled while the badge says "Expired".
+        .disabled(!displayedContact.isOnline)
+        .opacity(displayedContact.isOnline ? 1.0 : 0.5)
     }
 
     // MARK: - Propagation Details
@@ -394,24 +440,171 @@ struct NodeDetailsView: View {
     private func loadPathDetails() async {
         guard let pathTable = appServices.pathTable else { return }
         if let entry = await pathTable.lookup(destinationHash: contact.identityHash) {
-            expiresDate = entry.expires
-            // Resolve interface ID to human-readable name via transport
-            if !entry.interfaceId.isEmpty {
-                if let transport = appServices.transport {
-                    interfaceName = await transport.getInterfaceName(for: entry.interfaceId)
-                        ?? entry.interfaceId
-                } else {
-                    interfaceName = entry.interfaceId
-                }
-            }
-            // Detect propagation node
-            if let appData = entry.appData {
-                propagationInfo = PropagationNodeInfo.parse(from: appData)
-            }
+            await applyPathEntry(entry)
+        } else {
+            // No path entry — the polling loop only clears these on a
+            // transition (online → expired), so on the initial load /
+            // pull-to-refresh we have to drop stale path metadata
+            // explicitly to avoid showing an "Expires" row or relay
+            // button for a destination the path table doesn't know.
+            // Also flip the cached isOnline so a manual refresh
+            // immediately reflects the pruned state instead of waiting
+            // for the next 1.5 s poll tick.
+            applyOfflineState()
         }
         // Check if this is the currently selected relay
         if let propManager = appServices.propagationManager {
             isCurrentRelay = propManager.selectedNodeHash == contact.identityHash
         }
+    }
+
+    /// Drop all path-derived metadata and rebuild `liveContact` with
+    /// `isOnline = false`. Called when the path table reports no entry
+    /// for this destination — both from the polling loop (transition
+    /// case) and `loadPathDetails` (initial load / pull-to-refresh).
+    private func applyOfflineState() {
+        expiresDate = nil
+        interfaceName = nil
+        propagationInfo = nil
+        guard let stale = liveContact, stale.isOnline else { return }
+        liveContact = Contact(
+            id: stale.id,
+            displayName: stale.displayName,
+            identityHash: stale.identityHash,
+            identityHashHex: stale.identityHashHex,
+            badgeType: stale.badgeType,
+            hopCount: stale.hopCount,
+            signalStrength: stale.signalStrength,
+            timestamp: stale.timestamp,
+            isOnline: false,
+            isFavorite: stale.isFavorite,
+            isPinned: stale.isPinned,
+            isRelay: stale.isRelay,
+            iconName: stale.iconName,
+            iconFgColor: stale.iconFgColor,
+            iconBgColor: stale.iconBgColor,
+            interfaceId: stale.interfaceId,
+            aspect: stale.aspect
+        )
+    }
+
+    /// Apply a freshly-fetched `PathEntry` to the view state.
+    ///
+    /// Updates `expiresDate`, `interfaceName`, `propagationInfo`, and merges
+    /// path-derived fields (status, hop count, timestamp, interface, aspect,
+    /// badge) into `liveContact` while preserving user-customized fields
+    /// (display name override, icon, favorite/pin) from the seed contact.
+    private func applyPathEntry(_ entry: PathEntry) async {
+        expiresDate = entry.expires
+        if !entry.interfaceId.isEmpty {
+            if let transport = appServices.transport {
+                interfaceName = await transport.getInterfaceName(for: entry.interfaceId)
+                    ?? entry.interfaceId
+            } else {
+                interfaceName = entry.interfaceId
+            }
+        } else {
+            // Re-announce arrived without interface attribution — drop
+            // the previously-resolved name so the row reverts to
+            // "Unknown" instead of pinning to a stale value.
+            interfaceName = nil
+        }
+        if let appData = entry.appData {
+            propagationInfo = PropagationNodeInfo.parse(from: appData)
+        } else {
+            // Clear stale info when a re-announce drops the propagation
+            // payload — otherwise the "Set as Relay" button keeps showing
+            // for nodes that have since changed roles.
+            propagationInfo = nil
+        }
+        liveContact = mergedContact(seed: contact, entry: entry)
+    }
+
+    /// Build a Contact that takes path-derived live fields from `entry` while
+    /// preserving user-customized fields (custom display name, icon overrides,
+    /// favorite/pin state) from the parent-supplied seed.
+    private func mergedContact(seed: Contact, entry: PathEntry) -> Contact {
+        let pathContact = Contact(from: entry)
+        return Contact(
+            id: seed.id,
+            // Prefer the user-set custom name; fall back to the latest announce
+            // name when the seed didn't have one.
+            displayName: seed.displayName ?? pathContact.displayName,
+            identityHash: seed.identityHash,
+            identityHashHex: seed.identityHashHex,
+            // Take live fields from the path entry.
+            badgeType: pathContact.badgeType,
+            hopCount: pathContact.hopCount,
+            signalStrength: pathContact.signalStrength,
+            timestamp: pathContact.timestamp,
+            isOnline: pathContact.isOnline,
+            // Preserve user state from the seed.
+            isFavorite: seed.isFavorite,
+            isPinned: seed.isPinned,
+            isRelay: pathContact.isRelay,
+            // Preserve any custom icon overrides set by the user.
+            iconName: seed.iconName ?? pathContact.iconName,
+            iconFgColor: seed.iconFgColor ?? pathContact.iconFgColor,
+            iconBgColor: seed.iconBgColor ?? pathContact.iconBgColor,
+            interfaceId: pathContact.interfaceId,
+            aspect: pathContact.aspect
+        )
+    }
+
+    /// Poll the path table for changes to this destination while the view is
+    /// alive. We poll instead of subscribing to `pathTable.pathUpdates`
+    /// because that AsyncStream only retains a single continuation: a second
+    /// subscriber would silently displace `ContactsViewModel`'s subscription
+    /// and break the network announces UI. Polling is consistent with
+    /// `NetworkStatusViewModel` and is cheap (one in-memory dict lookup per
+    /// tick). `.task(id:)` cancels this loop automatically when the view
+    /// disappears or the contact changes.
+    private func observePathUpdates() async {
+        guard let pathTable = appServices.pathTable else { return }
+        var lastTimestamp: Date? = liveContact?.timestamp ?? contact.timestamp
+        var lastIsOnline: Bool = liveContact?.isOnline ?? contact.isOnline
+        while !Task.isCancelled {
+            try? await Task.sleep(for: Self.pollInterval)
+            if Task.isCancelled { break }
+            let entry = await pathTable.lookup(destinationHash: contact.identityHash)
+            // Compute live online state from the cached entry's expiry vs. now.
+            // This makes the badge flip Online -> Expired the instant the
+            // cached expires deadline crosses `now`, without waiting for a new
+            // announce. Using `>=` (not strict `>`) on the timestamp guards
+            // against duplicate-timestamp announces (clock collisions / fast
+            // arriving announces) where a user-visible field changed.
+            let nowIsOnline = entry.map { Date() < $0.expires } ?? false
+            let timestampChanged = entry?.timestamp != lastTimestamp
+            let onlineChanged = nowIsOnline != lastIsOnline
+            if timestampChanged || onlineChanged {
+                if let entry {
+                    await applyPathEntry(entry)
+                } else if onlineChanged {
+                    // Path entry was pruned. applyPathEntry only runs
+                    // with a non-nil entry, so without this branch
+                    // `liveContact.isOnline` would stay `true` while
+                    // the sentinel `lastIsOnline` flips to `false`,
+                    // suppressing the next attempt — badge stuck on
+                    // "Online" forever.
+                    applyOfflineState()
+                }
+                lastTimestamp = entry?.timestamp
+                lastIsOnline = nowIsOnline
+            }
+        }
+    }
+
+    /// Pull-to-refresh handler. Re-resolves path data and, if the transport
+    /// supports it, sends an active path request to probe for the contact.
+    private func refreshFromNetwork() async {
+        // Trigger an active probe so the network has a chance to surface a
+        // fresh announce before we re-read the table. This is best-effort —
+        // if no node responds, we just re-display whatever the cache holds.
+        if let transport = appServices.transport {
+            await transport.requestPath(for: contact.identityHash)
+        }
+        // Give the path request a brief window to land before reloading.
+        try? await Task.sleep(for: .milliseconds(500))
+        await loadPathDetails()
     }
 }
