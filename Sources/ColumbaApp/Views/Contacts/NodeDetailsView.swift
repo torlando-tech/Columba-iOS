@@ -370,6 +370,11 @@ struct NodeDetailsView: View {
                 }
             }
         }
+        // Match the primary action button: an offline node can't be
+        // designated as a relay, so the button should look and act
+        // disabled while the badge says "Expired".
+        .disabled(!displayedContact.isOnline)
+        .opacity(displayedContact.isOnline ? 1.0 : 0.5)
     }
 
     // MARK: - Propagation Details
@@ -436,6 +441,15 @@ struct NodeDetailsView: View {
         guard let pathTable = appServices.pathTable else { return }
         if let entry = await pathTable.lookup(destinationHash: contact.identityHash) {
             await applyPathEntry(entry)
+        } else {
+            // No path entry — the polling loop only clears these on a
+            // transition (online → expired), so on the initial load /
+            // pull-to-refresh we have to drop stale path metadata
+            // explicitly to avoid showing an "Expires" row or relay
+            // button for a destination the path table doesn't know.
+            expiresDate = nil
+            interfaceName = nil
+            propagationInfo = nil
         }
         // Check if this is the currently selected relay
         if let propManager = appServices.propagationManager {
@@ -458,6 +472,11 @@ struct NodeDetailsView: View {
             } else {
                 interfaceName = entry.interfaceId
             }
+        } else {
+            // Re-announce arrived without interface attribution — drop
+            // the previously-resolved name so the row reverts to
+            // "Unknown" instead of pinning to a stale value.
+            interfaceName = nil
         }
         if let appData = entry.appData {
             propagationInfo = PropagationNodeInfo.parse(from: appData)
