@@ -2,11 +2,25 @@ coverage:
   status:
     project:
       default:
-        target: auto    # Don't gate on overall % — only fail if a PR drops it
-        threshold: 1%   # Tolerate ±1% drift
+        target: auto      # Don't gate on overall % — only fail if a PR drops it
+        threshold: 1%     # Tolerate ±1% drift
     patch:
       default:
-        target: 70%     # New / changed lines must be 70% covered
+        target: 70%       # New / changed lines should aim for 70% covered
+        informational: true
+        # Patch is advisory rather than blocking. Xcode 16's
+        # result-bundle format doesn't expose per-line coverage data
+        # through any toolchain path the CI can call without writing
+        # a custom .profdata extractor:
+        #   - `xccov view --file` fails with "unrecognized file format"
+        #     on the bare .xcresult and on `xcresulttool export
+        #     coverage`'s output directory.
+        #   - slather 2.8.5 doesn't accept --xcresult-path.
+        #   - Default DerivedData has no .profdata for sim tests on
+        #     iOS app projects (data lives inside the xcresult).
+        # Without per-line data codecov's patch math reads 0% on
+        # every PR. `informational: true` lets codecov still post
+        # the comment without failing CI on a tooling artifact.
 ignore:
   - "Tests/**"
   - "**/*Tests.swift"

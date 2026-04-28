@@ -66,153 +66,58 @@ jobs:
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Locate coverage artifacts
-        run: |
-          # Diagnostic — what coverage data did the test step produce?
-          DD="$HOME/Library/Developer/Xcode/DerivedData"
-          echo "--- DerivedData top-level ---"
-          ls -la "$DD" 2>&1 | head -20
-          echo "--- *.profdata ---"
-          find "$DD" -name '*.profdata' 2>&1 | head -10
-          echo "--- *.profraw ---"
-          find "$DD" -name '*.profraw' 2>&1 | head -10
-          echo "--- *.xccovarchive ---"
-          find "$DD" -name '*.xccovarchive' 2>&1 | head -10
-          echo "--- *.xccovreport ---"
-          find "$DD" -name '*.xccovreport' 2>&1 | head -10
-          echo "--- TestResults.xcresult contents ---"
-          ls -la TestResults.xcresult 2>&1 | head -20
-
-      - name: Export coverage report (lcov via xccov + python)
+      - name: Export coverage report (function-level lcov)
         run: |
           set -euo pipefail
-          # iOS app projects with -resultBundlePath embed coverage in
-          # the .xcresult bundle. Pull file metadata via
-          # `xccov view --report --json`, then call
-          # `xccov view --file <src> <xcresult>` per file to get
-          # line-level hit counts. Codecov's `patch` check needs
-          # `DA:<line>,<count>` records to intersect the diff —
-          # function-level FN/FNDA records alone produce 0% patch
-          # coverage. xccov's per-report JSON only exposes function
-          # granularity, so we reach for `--file` for the line data.
+          # Coverage on iOS app projects with -resultBundlePath lives
+          # inside the .xcresult bundle. The only toolchain path that
+          # reads it cleanly under Xcode 16 is
+          # `xccov view --report --json`, which exposes function-level
+          # granularity (no per-line `DA:` records). Per-line data
+          # would require either a working `xccov view --file` (broken
+          # against both the bare .xcresult and `xcresulttool export
+          # coverage`'s output: "Error: unrecognized file format") or
+          # a raw .profdata (Xcode embeds it inside the xcresult, not
+          # in DerivedData). codecov's `patch` check is configured
+          # `informational: true` so the absence of line records is
+          # advisory rather than blocking.
           XCRESULT=TestResults.xcresult
           if [ ! -d "$XCRESULT" ]; then
             echo "$XCRESULT does not exist" >&2
             exit 1
           fi
           mkdir -p coverage
-
           xcrun xccov view --report --json "$XCRESULT" > coverage/coverage.json
 
-          # Xcode 16's result bundle hides the .xccovarchive behind
-          # opaque content IDs; the modern way to extract it is
-          # `xcresulttool export coverage`, which materializes the
-          # archive (and supporting files) to a directory we can
-          # then point xccov at.
-          xcrun xcresulttool export coverage \
-            --path "$XCRESULT" \
-            --output-path coverage/export
-          # `xcresulttool export coverage` emits an archive directory
-          # with a per-destination name like
-          # `0_Test_iPhone 16 Pro_CoverageArchive` rather than the
-          # historical `*.xccovarchive` extension. Pick the first
-          # directory inside coverage/export — there's normally just
-          # one (one test destination).
-          ARCHIVE=$(find coverage/export -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
-          if [ -z "$ARCHIVE" ]; then
-            echo "No coverage archive directory in coverage/export" >&2
-            ls -la coverage/export >&2 || true
-            exit 1
-          fi
-          echo "Coverage archive: $ARCHIVE"
-
-          # Probe with the archive so any remaining xccov error
-          # surfaces here (rather than silently for every file).
-          SAMPLE_PATH=$(python3 -c "
-          import json
-          d=json.load(open('coverage/coverage.json'))
-          for t in d.get('targets', []):
-              for f in t.get('files', []):
-                  p = f['path']
-                  if 'Tests' not in p and 'SourcePackages' not in p:
-                      print(p); break
-              else: continue
-              break
-          ")
-          echo "--- probe xccov view --file --json (sample: $SAMPLE_PATH) ---"
-          xcrun xccov view --file "$SAMPLE_PATH" --json "$ARCHIVE" 2>&1 | head -5 || true
-
-          # Convert xccov JSON + per-file line dumps to lcov.
-          export COVERAGE_ARCHIVE="$ARCHIVE"
           python3 <<'PY'
-          import json, subprocess, os, sys
-          ARCHIVE = os.environ['COVERAGE_ARCHIVE']
+          import json, sys
           data = json.load(open('coverage/coverage.json'))
-          out_lines = []
+          out = []
           file_count = 0
-          line_record_count = 0
-          first_error_logged = False
           for target in data.get('targets', []):
               for f in target.get('files', []):
                   path = f['path']
                   # Filter out tests + third-party packages so the
-                  # coverage report and codecov's patch math see
-                  # only first-party app code.
+                  # report shows first-party app code only.
                   if 'Tests' in path or 'SourcePackages' in path or 'DerivedData' in path:
                       continue
-                  out_lines.append(f"SF:{path}")
+                  out.append(f"SF:{path}")
                   for fn in f.get('functions', []):
                       ln = fn.get('lineNumber', 0)
                       hits = fn.get('executionCount', 0)
                       name = fn.get('name', '?')
-                      out_lines.append(f"FN:{ln},{name}")
-                      out_lines.append(f"FNDA:{hits},{name}")
-                  # Per-line via `xccov view --file`. Plain-text
-                  # output, one entry per source line:
-                  #   `<line>: <hits>` for executable lines
-                  #   `<line>: *`     for non-executable (skip)
-                  try:
-                      text = subprocess.check_output(
-                          ['xcrun', 'xccov', 'view', '--file', path, ARCHIVE],
-                          text=True, stderr=subprocess.PIPE,
-                      )
-                  except subprocess.CalledProcessError as e:
-                      if not first_error_logged:
-                          print(f"xccov view --file {path} failed: {e.stderr.strip() if e.stderr else '<no stderr>'}", file=sys.stderr)
-                          first_error_logged = True
-                      out_lines.append("end_of_record")
-                      file_count += 1
-                      continue
-                  for raw in text.splitlines():
-                      stripped = raw.strip()
-                      if ':' not in stripped:
-                          continue
-                      line_part, count_part = stripped.split(':', 1)
-                      try:
-                          line_no = int(line_part.strip())
-                      except ValueError:
-                          continue
-                      count_str = count_part.strip().split()[0] if count_part.strip() else ''
-                      if not count_str or count_str == '*':
-                          continue
-                      try:
-                          hit_count = int(count_str)
-                      except ValueError:
-                          continue
-                      out_lines.append(f"DA:{line_no},{hit_count}")
-                      line_record_count += 1
-                  out_lines.append("end_of_record")
+                      out.append(f"FN:{ln},{name}")
+                      out.append(f"FNDA:{hits},{name}")
+                  out.append("end_of_record")
                   file_count += 1
           with open('coverage/coverage.lcov', 'w') as fh:
-              fh.write("\n".join(out_lines) + "\n")
-          print(f"Wrote {file_count} files, {line_record_count} DA records, {len(out_lines)} total lcov lines")
-          if line_record_count == 0:
-              print("WARNING: zero DA records — codecov patch check will see 0% coverage", file=sys.stderr)
+              fh.write("\n".join(out) + "\n")
+          print(f"Wrote {file_count} files, {len(out)} total lcov lines")
+          if file_count == 0:
+              print("ERROR: zero files — coverage extraction is broken", file=sys.stderr)
               sys.exit(1)
           PY
-          # Surface the first lcov entry so failures are diagnosable
-          # without round-tripping through the codecov dashboard.
-          awk '/^SF:/{f=1} f{print; if (/^end_of_record$/){exit}}' coverage/coverage.lcov | head -20
+          head -5 coverage/coverage.lcov
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
