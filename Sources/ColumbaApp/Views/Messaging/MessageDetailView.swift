@@ -306,7 +306,7 @@ struct MessageDetailView: View {
     /// destination, as-of-now — not necessarily the original transmit
     /// interface).
     private func interfaceCard(title: String, interfaceId: String) -> some View {
-        let entity = interfaceRepository.getInterface(id: interfaceId)
+        let entity = resolveInterfaceEntity(for: interfaceId)
         let (icon, name, subtitle) = interfaceCardDisplay(for: entity, fallbackId: interfaceId)
 
         return InfoCard(
@@ -316,6 +316,26 @@ struct MessageDetailView: View {
             content: name,
             subtitle: subtitle
         )
+    }
+
+    /// Resolve the parent `InterfaceEntity` for a (possibly peer-scoped) ID.
+    ///
+    /// BLE / AutoInterface peers are reported on packets as IDs of the form
+    /// `{type}-{parentId}-{peerSuffix}` (e.g. `ble-ble0-628188b8`,
+    /// `auto-auto0-fe80::...`). The repository keys entities by their parent
+    /// ID (`ble0`, `auto0`), so a direct lookup misses every BLE/Auto packet
+    /// and falls through to the "Network" orphan label. Try the direct
+    /// lookup first, then a peer-suffix-strip retry, before giving up.
+    private func resolveInterfaceEntity(for interfaceId: String) -> InterfaceEntity? {
+        if let direct = interfaceRepository.getInterface(id: interfaceId) {
+            return direct
+        }
+        let parts = interfaceId.split(separator: "-", maxSplits: 2)
+        guard parts.count == 3,
+              ["ble", "auto", "rnode"].contains(String(parts[0])) else {
+            return nil
+        }
+        return interfaceRepository.getInterface(id: String(parts[1]))
     }
 
     /// Resolve an InterfaceEntity to display values for the receiving-interface card.
