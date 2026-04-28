@@ -56,6 +56,11 @@ struct MessagingView: View {
     @State private var pendingRawImage: UIImage?
     @State private var selectedImagePreset: SettingsViewModel.ImageQualityPreset = .high
     @State private var isNearBottom = true
+    /// One-shot flag so the post-load scroll-to-bottom only fires the
+    /// first time messages populate. Subsequent message arrivals use
+    /// `onChange(of: messages.last?.id)` and only scroll when already
+    /// near the bottom.
+    @State private var didInitialScroll = false
     @State private var showCallScreen = false
     @State private var detailMessage: Message?
     @State private var deleteConfirmMessage: Message?
@@ -193,6 +198,21 @@ struct MessagingView: View {
                             to: nil, from: nil, for: nil
                         )
                         #endif
+                    }
+                    // First-render anchor.
+                    //
+                    // `.defaultScrollAnchor(.bottom)` is unreliable when the
+                    // LazyVStack is populated before the ScrollView lays out:
+                    // the bottom-anchor row hasn't been realized yet, so the
+                    // anchor lands somewhere inside unrendered space and the
+                    // user sees a blank viewport until they scroll. Explicit
+                    // scrollTo after the first layout pass guarantees the
+                    // latest message is visible.
+                    .task(id: vm.messages.first?.id) {
+                        guard !didInitialScroll, !vm.messages.isEmpty else { return }
+                        try? await Task.sleep(for: .milliseconds(50))
+                        proxy.scrollTo("bottom-anchor", anchor: .bottom)
+                        didInitialScroll = true
                     }
                     // Scroll to bottom when a new message arrives (if already near bottom)
                     .onChange(of: vm.messages.last?.id) { _, _ in
