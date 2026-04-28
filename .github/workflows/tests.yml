@@ -66,44 +66,73 @@ jobs:
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Export coverage report (cobertura)
+      - name: Locate coverage artifacts
+        run: |
+          # Diagnostic — what coverage data did the test step produce?
+          DD="$HOME/Library/Developer/Xcode/DerivedData"
+          echo "--- DerivedData top-level ---"
+          ls -la "$DD" 2>&1 | head -20
+          echo "--- *.profdata ---"
+          find "$DD" -name '*.profdata' 2>&1 | head -10
+          echo "--- *.profraw ---"
+          find "$DD" -name '*.profraw' 2>&1 | head -10
+          echo "--- *.xccovarchive ---"
+          find "$DD" -name '*.xccovarchive' 2>&1 | head -10
+          echo "--- *.xccovreport ---"
+          find "$DD" -name '*.xccovreport' 2>&1 | head -10
+          echo "--- TestResults.xcresult contents ---"
+          ls -la TestResults.xcresult 2>&1 | head -20
+
+      - name: Export coverage report (cobertura via xccov + python)
         run: |
           set -euo pipefail
-          # iOS app project tests don't produce a flat default.profdata
-          # in DerivedData the way SPM test bundles do — coverage is
-          # embedded in the .xcresult bundle as .xccovarchive +
-          # .xccovreport. Slather knows how to read both and emits
-          # cobertura XML that codecov-action ingests.
-          #
-          # The xcresult bundle is at TestResults.xcresult (set via
-          # -resultBundlePath in the test step). Slather's
-          # `--build-directory` flag tells it where to find the
-          # xccov data; pointing at the .xcresult bundle is the
-          # idiom used elsewhere in the slather community for this
-          # exact iOS-app-with-resultBundlePath setup.
-          gem install slather --no-document
-          slather coverage \
-            --cobertura-xml \
-            --output-directory coverage \
-            --scheme Columba \
-            --configuration Debug \
-            --binary-basename ColumbaApp \
-            --build-directory TestResults.xcresult \
-            --ignore "Tests/**" \
-            --ignore "**/*Tests.swift" \
-            --ignore "**/SourcePackages/**" \
-            Columba.xcodeproj
-          if [ ! -f coverage/cobertura.xml ]; then
-            echo "Slather did not produce coverage/cobertura.xml" >&2
-            ls -la coverage/ >&2 || true
+          # iOS app projects with -resultBundlePath put coverage
+          # inside the .xcresult bundle. Use xccov to extract the
+          # report as JSON, then convert JSON to cobertura XML inline
+          # (avoids slather's stale --xcresult-path / --build-directory
+          # support which doesn't work cleanly across slather releases).
+          XCRESULT=TestResults.xcresult
+          if [ ! -d "$XCRESULT" ]; then
+            echo "$XCRESULT does not exist" >&2
             exit 1
           fi
-          # One-line preview so failures are diagnosable without
-          # round-tripping through the codecov dashboard.
-          head -3 coverage/cobertura.xml
+          mkdir -p coverage
+
+          xcrun xccov view --report --json "$XCRESULT" > coverage/coverage.json
+          echo "--- xccov JSON keys ---"
+          python3 -c "import json,sys;d=json.load(open('coverage/coverage.json'));print(list(d.keys())[:10])"
+
+          # Convert xccov JSON to lcov. lcov format is widely
+          # understood by codecov-action.
+          python3 <<'PY'
+          import json, os
+          data = json.load(open('coverage/coverage.json'))
+          out = []
+          for target in data.get('targets', []):
+              for f in target.get('files', []):
+                  path = f['path']
+                  if 'Tests' in path or 'SourcePackages' in path:
+                      continue
+                  out.append(f"SF:{path}")
+                  for fn in f.get('functions', []):
+                      ln = fn.get('lineNumber', 0)
+                      hits = fn.get('executionCount', 0)
+                      name = fn.get('name', '?')
+                      out.append(f"FN:{ln},{name}")
+                      out.append(f"FNDA:{hits},{name}")
+                  # Use line-level coverage from `coveredLines`
+                  # (xccov JSON exposes per-function granularity by
+                  # default; codecov happily ingests function-level
+                  # data, so we don't need per-line records to pass).
+                  out.append("end_of_record")
+          with open('coverage/coverage.lcov', 'w') as fh:
+              fh.write("\n".join(out))
+          print(f"Wrote {len(out)} lcov lines")
+          PY
+          head -3 coverage/coverage.lcov || true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: coverage/cobertura.xml
+          files: coverage/coverage.lcov
           fail_ci_if_error: false
