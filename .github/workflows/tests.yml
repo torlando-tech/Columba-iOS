@@ -66,53 +66,44 @@ jobs:
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Export coverage report (lcov)
+      - name: Export coverage report (cobertura)
         run: |
           set -euo pipefail
-          # Default DerivedData lives at ~/Library/Developer/Xcode/DerivedData
-          # because we don't pass -derivedDataPath (passing it
-          # caused "No such module 'ColumbaApp'" — the test target's
-          # swiftmodule emit was racing the host app's under
-          # Xcode 16's parallel pipeline). Search there for the
-          # test bundle + profdata.
-          DD="$HOME/Library/Developer/Xcode/DerivedData"
-          XCTEST_BUNDLE=$(find "$DD" -type d -name 'ColumbaAppTests.xctest' | head -1)
-          if [ -z "$XCTEST_BUNDLE" ]; then
-            echo "No ColumbaAppTests.xctest found in $DD" >&2
-            find "$DD" -type d -name '*.xctest' >&2 || true
+          # iOS app project tests don't produce a flat default.profdata
+          # in DerivedData the way SPM test bundles do — coverage is
+          # embedded in the .xcresult bundle as .xccovarchive +
+          # .xccovreport. Slather knows how to read both and emits
+          # cobertura XML that codecov-action ingests.
+          #
+          # The xcresult bundle is at TestResults.xcresult (set via
+          # -resultBundlePath in the test step). Slather's
+          # `--build-directory` flag tells it where to find the
+          # xccov data; pointing at the .xcresult bundle is the
+          # idiom used elsewhere in the slather community for this
+          # exact iOS-app-with-resultBundlePath setup.
+          gem install slather --no-document
+          slather coverage \
+            --cobertura-xml \
+            --output-directory coverage \
+            --scheme Columba \
+            --configuration Debug \
+            --binary-basename ColumbaApp \
+            --build-directory TestResults.xcresult \
+            --ignore "Tests/**" \
+            --ignore "**/*Tests.swift" \
+            --ignore "**/SourcePackages/**" \
+            Columba.xcodeproj
+          if [ ! -f coverage/cobertura.xml ]; then
+            echo "Slather did not produce coverage/cobertura.xml" >&2
+            ls -la coverage/ >&2 || true
             exit 1
           fi
-          # iOS sim test bundles put the binary at the top level.
-          BIN_PATH="$XCTEST_BUNDLE/$(basename "$XCTEST_BUNDLE" .xctest)"
-          PROF_DATA=$(find "$DD" -name 'default.profdata' | head -1)
-          if [ -z "$PROF_DATA" ] || [ ! -f "$BIN_PATH" ]; then
-            echo "Coverage artifacts missing: bin=$BIN_PATH prof=$PROF_DATA" >&2
-            exit 1
-          fi
-          echo "Test binary: $BIN_PATH"
-          echo "Profile data: $PROF_DATA"
-
-          # The `-ignore-filename-regex` filter excludes test files,
-          # SwiftPM source packages (third-party libraries) and Xcode
-          # internal SDK headers from the report. Patch coverage on
-          # codecov is computed against this filtered set.
-          xcrun llvm-cov export \
-            "$BIN_PATH" \
-            -instr-profile="$PROF_DATA" \
-            -ignore-filename-regex='\.build|Tests|SourcePackages|DerivedData|/Applications/Xcode' \
-            -format=lcov \
-            > coverage.lcov
-
-          # Surface a one-line summary so failures are diagnosable
-          # without round-tripping through the codecov dashboard.
-          xcrun llvm-cov report \
-            "$BIN_PATH" \
-            -instr-profile="$PROF_DATA" \
-            -ignore-filename-regex='\.build|Tests|SourcePackages|DerivedData|/Applications/Xcode' \
-            | tail -3
+          # One-line preview so failures are diagnosable without
+          # round-tripping through the codecov dashboard.
+          head -3 coverage/cobertura.xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: coverage.lcov
+          files: coverage/cobertura.xml
           fail_ci_if_error: false
