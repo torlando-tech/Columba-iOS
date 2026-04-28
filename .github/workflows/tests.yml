@@ -83,14 +83,18 @@ jobs:
           echo "--- TestResults.xcresult contents ---"
           ls -la TestResults.xcresult 2>&1 | head -20
 
-      - name: Export coverage report (cobertura via xccov + python)
+      - name: Export coverage report (lcov via xccov + python)
         run: |
           set -euo pipefail
-          # iOS app projects with -resultBundlePath put coverage
-          # inside the .xcresult bundle. Use xccov to extract the
-          # report as JSON, then convert JSON to cobertura XML inline
-          # (avoids slather's stale --xcresult-path / --build-directory
-          # support which doesn't work cleanly across slather releases).
+          # iOS app projects with -resultBundlePath embed coverage in
+          # the .xcresult bundle. Pull file metadata via
+          # `xccov view --report --json`, then call
+          # `xccov view --file <src> <xcresult>` per file to get
+          # line-level hit counts. Codecov's `patch` check needs
+          # `DA:<line>,<count>` records to intersect the diff —
+          # function-level FN/FNDA records alone produce 0% patch
+          # coverage. xccov's per-report JSON only exposes function
+          # granularity, so we reach for `--file` for the line data.
           XCRESULT=TestResults.xcresult
           if [ ! -d "$XCRESULT" ]; then
             echo "$XCRESULT does not exist" >&2
@@ -99,37 +103,72 @@ jobs:
           mkdir -p coverage
 
           xcrun xccov view --report --json "$XCRESULT" > coverage/coverage.json
-          echo "--- xccov JSON keys ---"
-          python3 -c "import json,sys;d=json.load(open('coverage/coverage.json'));print(list(d.keys())[:10])"
 
-          # Convert xccov JSON to lcov. lcov format is widely
-          # understood by codecov-action.
+          # Convert xccov JSON + per-file line dumps to lcov.
           python3 <<'PY'
-          import json, os
+          import json, subprocess, os, sys
+          XCRESULT = 'TestResults.xcresult'
           data = json.load(open('coverage/coverage.json'))
-          out = []
+          out_lines = []
+          file_count = 0
+          line_record_count = 0
           for target in data.get('targets', []):
               for f in target.get('files', []):
                   path = f['path']
-                  if 'Tests' in path or 'SourcePackages' in path:
+                  # Filter out tests + third-party packages so the
+                  # coverage report and codecov's patch math see
+                  # only first-party app code.
+                  if 'Tests' in path or 'SourcePackages' in path or 'DerivedData' in path:
                       continue
-                  out.append(f"SF:{path}")
+                  out_lines.append(f"SF:{path}")
                   for fn in f.get('functions', []):
                       ln = fn.get('lineNumber', 0)
                       hits = fn.get('executionCount', 0)
                       name = fn.get('name', '?')
-                      out.append(f"FN:{ln},{name}")
-                      out.append(f"FNDA:{hits},{name}")
-                  # Use line-level coverage from `coveredLines`
-                  # (xccov JSON exposes per-function granularity by
-                  # default; codecov happily ingests function-level
-                  # data, so we don't need per-line records to pass).
-                  out.append("end_of_record")
+                      out_lines.append(f"FN:{ln},{name}")
+                      out_lines.append(f"FNDA:{hits},{name}")
+                  # Per-line via `xccov view --file`. Output is
+                  # plain text, one entry per source line:
+                  #   `<line>: <hits>` for executable lines
+                  #   `<line>: *`     for non-executable (skip)
+                  try:
+                      text = subprocess.check_output(
+                          ['xcrun', 'xccov', 'view', '--file', path, XCRESULT],
+                          text=True, stderr=subprocess.DEVNULL,
+                      )
+                  except subprocess.CalledProcessError:
+                      out_lines.append("end_of_record")
+                      continue
+                  for raw in text.splitlines():
+                      stripped = raw.strip()
+                      if ':' not in stripped:
+                          continue
+                      line_part, count_part = stripped.split(':', 1)
+                      try:
+                          line_no = int(line_part.strip())
+                      except ValueError:
+                          continue
+                      count_str = count_part.strip().split()[0] if count_part.strip() else ''
+                      if not count_str or count_str == '*':
+                          continue
+                      try:
+                          hit_count = int(count_str)
+                      except ValueError:
+                          continue
+                      out_lines.append(f"DA:{line_no},{hit_count}")
+                      line_record_count += 1
+                  out_lines.append("end_of_record")
+                  file_count += 1
           with open('coverage/coverage.lcov', 'w') as fh:
-              fh.write("\n".join(out))
-          print(f"Wrote {len(out)} lcov lines")
+              fh.write("\n".join(out_lines) + "\n")
+          print(f"Wrote {file_count} files, {line_record_count} DA records, {len(out_lines)} total lcov lines")
+          if line_record_count == 0:
+              print("WARNING: zero DA records — codecov patch check will see 0% coverage", file=sys.stderr)
+              sys.exit(1)
           PY
-          head -3 coverage/coverage.lcov || true
+          # Surface the first lcov entry so failures are diagnosable
+          # without round-tripping through the codecov dashboard.
+          awk '/^SF:/{f=1} f{print; if (/^end_of_record$/){exit}}' coverage/coverage.lcov | head -20
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
