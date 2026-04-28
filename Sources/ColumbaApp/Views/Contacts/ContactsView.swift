@@ -13,9 +13,13 @@ import LXMFSwift
 
 /// Single sum-type for the contacts navigation stack.
 ///
-/// Holding all destinations in one `@State` lets us replace the stack atomically
-/// in a single render cycle (e.g. NodeDetails -> Chat) without the pop-then-push
-/// timing race that requiring a sleep between two separate state mutations.
+/// Held inside a typed `[ContactsNavTarget]` `NavigationStack` path so that
+/// transitions like NodeDetails -> Chat can be performed by replacing the
+/// entire path array in one assignment. SwiftUI animates that as a single
+/// crossfade rather than the visible pop-to-root-then-push that
+/// `navigationDestination(item:)` produced when the item value changed —
+/// which on iOS 17 briefly exposed the underlying tab during the gap and
+/// could surface the wrong tab's root content before the new push landed.
 @available(iOS 17.0, macOS 14.0, *)
 enum ContactsNavTarget: Hashable {
     case nodeDetails(Contact)
@@ -47,13 +51,16 @@ public struct ContactsView: View {
     /// Whether search is active.
     @State private var isSearching = false
 
-    /// Active destination on the contacts navigation stack.
+    /// Explicit navigation stack for the Contacts tab.
     ///
-    /// Single binding for all pushable destinations so transitions like
-    /// "node details -> chat" or "node details -> browse site" can be performed
-    /// as one atomic mutation (pop + push in the same render pass), avoiding
-    /// the prior timing-heuristic workaround.
-    @State private var navTarget: ContactsNavTarget?
+    /// A typed array bound to `NavigationStack(path:)` lets us replace the
+    /// entire stack in one assignment — e.g. swapping `[.nodeDetails]` for
+    /// `[.chat]` from the "Start Chat" button — so SwiftUI performs a single
+    /// crossfade transition instead of pop-to-root-then-push. The latter
+    /// could briefly reveal the tab's root (or, due to TabView/NavigationStack
+    /// interaction during a transition, even a sibling tab's root) before
+    /// the new destination landed.
+    @State private var path: [ContactsNavTarget] = []
 
     /// Whether the QR scanner is shown.
     @State private var showQRScanner = false
@@ -90,7 +97,7 @@ public struct ContactsView: View {
     // MARK: - Body
 
     public var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             if let vm = viewModel {
                 VStack(spacing: 0) {
                     // Segmented picker
@@ -114,7 +121,7 @@ public struct ContactsView: View {
                 .toolbar {
                     toolbarContent(vm)
                 }
-                .navigationDestination(item: $navTarget) { target in
+                .navigationDestination(for: ContactsNavTarget.self) { target in
                     switch target {
                     case .nodeDetails(let contact):
                         NodeDetailsView(
@@ -293,7 +300,7 @@ public struct ContactsView: View {
             NetworkAnnouncesTab(
                 viewModel: vm,
                 onContactSelected: { contact in
-                    navTarget = .nodeDetails(contact)
+                    path = [.nodeDetails(contact)]
                 }
             )
         }
@@ -346,13 +353,13 @@ public struct ContactsView: View {
                                 vm.toggleFavorite(for: contact.id)
                             },
                             onTap: {
-                                navTarget = .nodeDetails(contact)
+                                path = [.nodeDetails(contact)]
                             },
                             onPin: {
                                 vm.togglePin(for: contact.id)
                             },
                             onViewDetails: {
-                                navTarget = .nodeDetails(contact)
+                                path = [.nodeDetails(contact)]
                             },
                             onEditNickname: {
                                 nicknameText = contact.displayName ?? ""
@@ -404,6 +411,15 @@ public struct ContactsView: View {
         Task {
             await viewModel?.addToContacts(contact)
 
+            // If the user popped back to the contacts list (or
+            // navigated elsewhere) while `addToContacts` was awaiting,
+            // don't yank them into the chat. The async hop opens a
+            // window where `path` can be `[]` (after a Back tap) but
+            // an unconditional assignment of `[.chat(conversation)]`
+            // would push the chat onto the root anyway — silent
+            // navigation the user didn't ask for.
+            guard path.last == .nodeDetails(contact) else { return }
+
             let conversation = Conversation(
                 id: contact.id,
                 destinationHash: contact.identityHash,
@@ -414,10 +430,14 @@ public struct ContactsView: View {
                 isFavorite: false
             )
 
-            // Atomic pop-and-push: a single mutation of `navTarget` replaces the
-            // current destination (NodeDetailsView) with the chat in one render
-            // cycle, so the back button still returns to the contacts list.
-            navTarget = .chat(conversation)
+            // Replace the entire navigation stack in one assignment so SwiftUI
+            // performs a single push-style crossfade from NodeDetails to the
+            // chat instead of popping to the Contacts root first. The
+            // intermediate pop-then-push that `navigationDestination(item:)`
+            // produced was visible as a flash of the tab's root (and on iOS
+            // 17 sometimes the wrong tab's root) before the chat appeared.
+            // The back button still returns to the contacts list (path: []).
+            path = [.chat(conversation)]
         }
     }
 
@@ -425,8 +445,8 @@ public struct ContactsView: View {
 
     /// Replace the node details destination with the NomadNet browser for the given site.
     private func browseSite(for contact: Contact) {
-        // Atomic pop-and-push (see `startChat` for rationale).
-        navTarget = .browseSite(contact)
+        // Single-assignment stack replacement (see `startChat` for rationale).
+        path = [.browseSite(contact)]
     }
 
     private var toolbarButtons: some View {
