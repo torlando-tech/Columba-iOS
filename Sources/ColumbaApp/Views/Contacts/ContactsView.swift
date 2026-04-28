@@ -411,6 +411,15 @@ public struct ContactsView: View {
         Task {
             await viewModel?.addToContacts(contact)
 
+            // If the user popped back to the contacts list (or
+            // navigated elsewhere) while `addToContacts` was awaiting,
+            // don't yank them into the chat. The async hop opens a
+            // window where `path` can be `[]` (after a Back tap) but
+            // an unconditional assignment of `[.chat(conversation)]`
+            // would push the chat onto the root anyway — silent
+            // navigation the user didn't ask for.
+            guard path.last == .nodeDetails(contact) else { return }
+
             let conversation = Conversation(
                 id: contact.id,
                 destinationHash: contact.identityHash,
