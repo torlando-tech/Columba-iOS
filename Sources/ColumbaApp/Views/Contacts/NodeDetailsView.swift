@@ -68,7 +68,7 @@ struct NodeDetailsView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
-                if !contact.isOnline {
+                if !displayedContact.isOnline {
                     expiredHint
                 }
                 if propagationInfo != nil {
@@ -454,6 +454,11 @@ struct NodeDetailsView: View {
         }
         if let appData = entry.appData {
             propagationInfo = PropagationNodeInfo.parse(from: appData)
+        } else {
+            // Clear stale info when a re-announce drops the propagation
+            // payload — otherwise the "Set as Relay" button keeps showing
+            // for nodes that have since changed roles.
+            propagationInfo = nil
         }
         liveContact = mergedContact(seed: contact, entry: entry)
     }
