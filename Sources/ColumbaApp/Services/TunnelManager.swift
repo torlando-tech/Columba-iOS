@@ -35,6 +35,14 @@ public final class TunnelManager: @unchecked Sendable {
     /// The loaded tunnel provider manager
     private var manager: NETunnelProviderManager?
 
+    /// Called whenever the tunnel's VPN status changes.
+    ///
+    /// `AppServices` uses this to coordinate transitioning each
+    /// `TCPInterface` / `AutoInterface` into and out of tunnel-mode
+    /// (where outbound is routed via the extension instead of a
+    /// duplicate local NWConnection).
+    public var onStatusChange: (@Sendable (NEVPNStatus) -> Void)?
+
     private let logger = Logger(subsystem: "network.columba.Columba", category: "TunnelManager")
 
     // MARK: - Lifecycle
@@ -60,8 +68,23 @@ public final class TunnelManager: @unchecked Sendable {
             ) { [weak self] _ in
                 guard let self else { return }
                 Task { @MainActor in
-                    self.status = self.manager?.connection.status ?? .disconnected
+                    let newStatus = self.manager?.connection.status ?? .disconnected
+                    self.status = newStatus
+                    self.onStatusChange?(newStatus)
                 }
+            }
+
+            // Fire `onStatusChange` once for the post-load state. iOS
+            // keeps the extension alive across app relaunches, so the
+            // tunnel can already be `.connected` by the time the app
+            // cold-starts and wires its callback. Without this initial
+            // fire, observers (like AppServices' tunnel-mode
+            // coordinator) would never learn the tunnel is up and the
+            // app's TCPInterface would race the extension's socket —
+            // exactly the split-horizon bug Phase 2 is meant to
+            // prevent.
+            if let cb = onStatusChange {
+                cb(status)
             }
         } catch {
             logger.error("Failed to load tunnel config: \(error)")
