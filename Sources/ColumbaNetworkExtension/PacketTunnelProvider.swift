@@ -34,11 +34,19 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     /// Currently-applied TCP endpoint (used to diff config changes
     /// from the app). nil when no TCP interface is configured.
+    /// Mutated only on `configQueue` to avoid races with Darwin
+    /// notification callbacks arriving on a Mach-port thread.
     private var currentTCP: (host: String, port: UInt16)?
 
     /// Currently-applied AutoInterface group id. nil when no Auto
-    /// interface is configured.
+    /// interface is configured. Mutated only on `configQueue`.
     private var currentAutoGroupId: String?
+
+    /// Serial queue serializing all config-state mutations and the
+    /// associated NWConnection lifecycle calls so a Darwin
+    /// notification fired by the app (`configChanged`) can't race
+    /// `startTunnel` / `stopTunnel` / NWConnection state handlers.
+    private let configQueue = DispatchQueue(label: "network.columba.tunnel.config")
 
     /// HDLC receive buffer for TCP stream framing
     private var tcpReceiveBuffer = Data()
@@ -94,7 +102,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Diffs against what's already running so a single relay change
     /// doesn't disrupt unrelated interfaces. Called both on
     /// `startTunnel` and on the `configChanged` Darwin notification.
+    /// Always serialized onto `configQueue` so a Darwin callback
+    /// arriving on a Mach-port thread can't race `startTunnel` /
+    /// `stopTunnel` / NWConnection state handlers mutating the same
+    /// properties.
     private func applyConfigs() {
+        configQueue.async { [weak self] in
+            self?.applyConfigsLocked()
+        }
+    }
+
+    /// Body of `applyConfigs` — runs on `configQueue`. Mutates
+    /// `currentTCP` / `currentAutoGroupId` / `tcpConnection` /
+    /// `autoListener` only from this serial context.
+    private func applyConfigsLocked() {
         let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
         let configs = loadInterfaceConfigs(from: defaults)
 
@@ -138,12 +159,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         NSLog("[EXT] stopTunnel reason=\(reason.rawValue)")
-        tcpConnection?.cancel()
-        tcpConnection = nil
-        autoListener?.cancel()
-        autoListener = nil
-        currentTCP = nil
-        currentAutoGroupId = nil
+
+        // Serialize teardown through the same queue `applyConfigs` uses
+        // so we can't race a config-change notification arriving on the
+        // Mach-port thread mid-shutdown. `sync` (rather than `async`)
+        // keeps the existing contract that the completion handler
+        // fires only after teardown has finished.
+        configQueue.sync {
+            tcpConnection?.cancel()
+            tcpConnection = nil
+            autoListener?.cancel()
+            autoListener = nil
+            currentTCP = nil
+            currentAutoGroupId = nil
+        }
 
         // Remove the config-changed observer registered in startTunnel.
         let center = CFNotificationCenterGetDarwinNotifyCenter()

@@ -73,6 +73,19 @@ public final class TunnelManager: @unchecked Sendable {
                     self.onStatusChange?(newStatus)
                 }
             }
+
+            // Fire `onStatusChange` once for the post-load state. iOS
+            // keeps the extension alive across app relaunches, so the
+            // tunnel can already be `.connected` by the time the app
+            // cold-starts and wires its callback. Without this initial
+            // fire, observers (like AppServices' tunnel-mode
+            // coordinator) would never learn the tunnel is up and the
+            // app's TCPInterface would race the extension's socket —
+            // exactly the split-horizon bug Phase 2 is meant to
+            // prevent.
+            if let cb = onStatusChange {
+                cb(status)
+            }
         } catch {
             logger.error("Failed to load tunnel config: \(error)")
         }
