@@ -631,18 +631,36 @@ public final class AppServices {
         let defaults = UserDefaults(suiteName: appGroupIdentifier)
         let tunnelShouldStart = defaults?.bool(forKey: SharedDefaultsConstants.tunnelEnabledKey) ?? false
         if tunnelShouldStart && !tunnel.isRunning {
-            do {
-                try await tunnel.start()
-                DiagLog.log("[TUNNEL] auto-started from saved pref")
-            } catch {
-                // Persistent auto-start failures (revoked profile,
-                // missing entitlement, OS-level VPN restriction) would
-                // silently retry on every launch. Clear the pref so
-                // the user has to re-enable from Settings — where the
-                // toggle's error label can show what actually went
-                // wrong instead of dying silently in DiagLog.
-                DiagLog.log("[TUNNEL] auto-start failed; clearing pref so user can re-enable: \(error)")
-                defaults?.set(false, forKey: SharedDefaultsConstants.tunnelEnabledKey)
+            // Run auto-start in a detached Task so the polling wait
+            // doesn't block the rest of `initialize()` — the user can
+            // start using the app while the VPN comes up. We still
+            // observe the outcome so a persistent failure can clear
+            // the pref instead of looping silently every launch.
+            Task { @MainActor [weak tunnel] in
+                guard let tunnel else { return }
+                do {
+                    try await tunnel.start()
+                    DiagLog.log("[TUNNEL] auto-start launched from saved pref")
+                } catch {
+                    DiagLog.log("[TUNNEL] auto-start threw synchronously; clearing pref: \(error)")
+                    defaults?.set(false, forKey: SharedDefaultsConstants.tunnelEnabledKey)
+                    return
+                }
+                // `startVPNTunnel()` is fire-and-forget — async
+                // failures (airplane mode, routing, extension crash)
+                // never throw. Mirror the Settings toggle's settle
+                // window: wait up to 30s for the connection to come
+                // up; if it doesn't, clear the pref so the next
+                // launch doesn't loop the same failure.
+                let deadline = Date().addingTimeInterval(30)
+                while !tunnel.isRunning && Date() < deadline {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                if !tunnel.isRunning {
+                    let reason = await tunnel.lastFailureReason() ?? "unknown"
+                    DiagLog.log("[TUNNEL] auto-start did not reach .connected; clearing pref: \(reason)")
+                    defaults?.set(false, forKey: SharedDefaultsConstants.tunnelEnabledKey)
+                }
             }
         }
         #endif
