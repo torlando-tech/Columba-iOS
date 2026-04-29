@@ -138,8 +138,13 @@ final class OnboardingViewModel {
         // reads this from the App Group container on first launch and
         // auto-starts the tunnel (which triggers the VPN-profile prompt
         // the first time). The Settings toggle keeps the same key in sync.
+        // Gated on `ENABLE_NETWORK_EXTENSION` so non-extension builds
+        // (simulator, builds without the entitlement) don't write a
+        // stale `true` that nothing reads.
+        #if ENABLE_NETWORK_EXTENSION
         UserDefaults(suiteName: appGroupIdentifier)?
             .set(backgroundTunnelEnabled, forKey: SharedDefaultsConstants.tunnelEnabledKey)
+        #endif
 
         // 5. Mark onboarding and settings as initialized
         UserDefaults.standard.set(true, forKey: "has_completed_onboarding")

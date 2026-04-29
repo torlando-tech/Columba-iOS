@@ -51,6 +51,14 @@ struct SettingsView: View {
     /// App ID, user denying the VPN-profile prompt) are visible
     /// instead of silently bouncing the toggle off.
     @State private var tunnelErrorMessage: String?
+    /// User's pending intent during a tunnel start/disable transition.
+    /// `tunnel.isRunning` only flips `true` once iOS reaches `.connected`,
+    /// but the VPN passes through `.connecting` first — and the
+    /// `@Observable` polling re-renders during that window would snap
+    /// the toggle back to OFF. While set, this overrides the binding
+    /// `get` so the toggle stays where the user put it. Cleared once
+    /// the actual status matches the intent (or after a timeout).
+    @State private var tunnelPending: Bool?
     #endif
 
     // MARK: - Body
@@ -382,8 +390,9 @@ struct SettingsView: View {
                     Spacer()
 
                     Toggle("", isOn: Binding(
-                        get: { tunnel.isRunning },
+                        get: { tunnelPending ?? tunnel.isRunning },
                         set: { newValue in
+                            tunnelPending = newValue
                             Task {
                                 do {
                                     if newValue {
@@ -394,12 +403,23 @@ struct SettingsView: View {
                                     UserDefaults(suiteName: appGroupIdentifier)?
                                         .set(newValue, forKey: SharedDefaultsConstants.tunnelEnabledKey)
                                     tunnelErrorMessage = nil
+                                    // Wait briefly for the VPN status to
+                                    // settle into the requested state
+                                    // before letting the toggle reflect
+                                    // `tunnel.isRunning` again — `.connecting`
+                                    // and `.disconnecting` are transient and
+                                    // would otherwise flicker the toggle.
+                                    let deadline = Date().addingTimeInterval(30)
+                                    while tunnel.isRunning != newValue && Date() < deadline {
+                                        try? await Task.sleep(nanoseconds: 200_000_000)
+                                    }
                                 } catch {
                                     let action = newValue ? "start" : "disable"
                                     let msg = "Background Transport \(action) failed: \(error.localizedDescription)"
                                     DiagLog.log(msg)
                                     tunnelErrorMessage = error.localizedDescription
                                 }
+                                tunnelPending = nil
                             }
                         }
                     ))

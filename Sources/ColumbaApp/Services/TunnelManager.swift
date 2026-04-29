@@ -125,6 +125,12 @@ public final class TunnelManager: @unchecked Sendable {
             return
         }
 
+        // Reflect user intent on the observable up-front so re-enable
+        // paths (where `disable()` previously cleared `self.isEnabled`)
+        // don't leave the published value stale while the profile is
+        // being re-saved.
+        isEnabled = true
+
         if !manager.isEnabled {
             manager.isEnabled = true
             try await manager.saveToPreferences()
@@ -147,12 +153,16 @@ public final class TunnelManager: @unchecked Sendable {
     /// VPN profile from iOS Settings entirely.
     public func disable() async throws {
         guard let manager else { return }
+        // Reflect user intent on the observable before any throwing
+        // call so observers see "off" even if `saveToPreferences()`
+        // fails. Without this, a thrown save leaves `self.isEnabled`
+        // stuck at `true` while the profile is partially mutated.
+        isEnabled = false
         manager.connection.stopVPNTunnel()
         if manager.isEnabled {
             manager.isEnabled = false
             try await manager.saveToPreferences()
         }
-        isEnabled = false
         logger.info("Tunnel disabled")
     }
 
