@@ -55,9 +55,6 @@ struct SettingsView: View {
                         // Network
                         networkCard(vm)
 
-                        // Transport Mode
-                        transportModeCard(vm)
-
                         #if ENABLE_NETWORK_EXTENSION
                         backgroundTransportCard()
                         #endif
@@ -90,6 +87,15 @@ struct SettingsView: View {
 
                         // Data Migration
                         dataMigrationCard(vm)
+
+                        // Advanced section anchor — separates Transport
+                        // Mode (and future advanced settings) from the
+                        // common day-to-day toggles above. Mirrors the
+                        // grouping introduced in Columba Android.
+                        advancedSectionHeader
+
+                        // Transport Mode (advanced)
+                        transportModeCard(vm)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -301,6 +307,25 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Advanced Section
+
+    /// Section header above the Advanced cards (Transport Mode for now).
+    /// Pure visual grouping — the cards below it are still independent
+    /// `ExpandableSettingsCard`s, this just signals "you are leaving the
+    /// common-toggles area".
+    private var advancedSectionHeader: some View {
+        HStack {
+            Text("ADVANCED")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.textSecondary)
+                .tracking(0.5)
+            Spacer()
+        }
+        .padding(.top, 16)
+        .padding(.horizontal, 4)
+    }
+
     // MARK: - Transport Mode Card
 
     private func transportModeCard(_ vm: SettingsViewModel) -> some View {
@@ -320,22 +345,13 @@ struct SettingsView: View {
                 }
             })
         ) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Act as a relay node, forwarding announces and routing packets for other devices on the network.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
-
-                if vm.isTransportEnabled {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(Theme.warning)
-                        Text("Increases battery and data usage.")
-                            .font(.caption)
-                            .foregroundStyle(Theme.warning)
-                    }
-                }
-            }
+            // Copy kept verbatim with Columba Android's AdvancedCard so the
+            // two clients describe Transport Node identically. Update both
+            // sides together if either changes.
+            Text("Forward traffic for the mesh network. When disabled, this device will only handle its own traffic and won't relay messages for other peers. It's generally not recommended for mobile devices to be transport nodes. They are less likely to maintain a fixed position in the network, and thus can negatively impact multihop routing. Enabling this will increase data usage and battery drain. However, in a BLE-only mesh, it's required for multi-hop messaging.")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
