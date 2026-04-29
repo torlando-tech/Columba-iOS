@@ -45,6 +45,42 @@ public enum SharedDefaultsConstants {
     public static let tunnelEnabledKey = "com.columba.tunnelEnabled"
 }
 
+/// Append-only log file in the App Group container. Both the app and
+/// the Network Extension can write to it; the extension uses it
+/// because `os.log` from extensions is hard to surface (no
+/// `NSLog`-equivalent that lands in the app's `DiagLog`). The app
+/// can copy it into its Documents/diag.log on next foreground for
+/// `xcrun devicectl device copy from` retrieval.
+public enum ExtensionDiagLog {
+    private static let logURL: URL? = {
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        ) else { return nil }
+        return containerURL.appendingPathComponent("ext_diag.log")
+    }()
+
+    public static func log(_ message: String) {
+        guard let url = logURL else { return }
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(ts)] \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        if FileManager.default.fileExists(atPath: url.path) {
+            if let fh = try? FileHandle(forWritingTo: url) {
+                fh.seekToEndOfFile()
+                fh.write(data)
+                fh.closeFile()
+            }
+        } else {
+            try? data.write(to: url)
+        }
+    }
+
+    /// Path on disk — useful so the app can copy this into its
+    /// Documents container for `devicectl copy from` retrieval.
+    public static var path: String? { logURL?.path }
+}
+
+
 /// Interface tag identifying which network interface a frame arrived on.
 public enum FrameInterfaceTag: UInt8 {
     case tcp = 0x01

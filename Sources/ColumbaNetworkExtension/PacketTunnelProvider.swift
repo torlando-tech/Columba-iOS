@@ -68,6 +68,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         NSLog("[EXT] startTunnel called")
+        ExtensionDiagLog.log("[EXT] startTunnel called")
 
         // Apply current interface configs.
         applyConfigs()
@@ -164,11 +165,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 // No change.
             } else {
                 NSLog("[EXT] Auto config (re)applying: groupId=\(groupId)")
+                ExtensionDiagLog.log("[EXT] Auto config (re)applying: groupId=\(groupId)")
                 autoBridge.start(groupId: groupId)
                 currentAutoGroupId = groupId
             }
         } else if currentAutoGroupId != nil {
             NSLog("[EXT] Auto config removed; tearing down bridge")
+            ExtensionDiagLog.log("[EXT] Auto config removed; tearing down bridge")
             autoBridge.stop()
             currentAutoGroupId = nil
         }

@@ -45,6 +45,19 @@ enum DiagLog {
             }
         }
     }
+
+    /// Snapshot the extension's diag log (App Group container) into
+    /// the app's Documents directory so it can be retrieved via
+    /// `xcrun devicectl device copy from`. Called from
+    /// `AppServices.initialize()` and is best-effort.
+    static func snapshotExtensionLog() {
+        guard let extPath = ExtensionDiagLog.path,
+              FileManager.default.fileExists(atPath: extPath),
+              let extData = try? Data(contentsOf: URL(fileURLWithPath: extPath)) else { return }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let snapshotURL = docs.appendingPathComponent("ext_diag.log")
+        try? extData.write(to: snapshotURL)
+    }
 }
 
 /// Central LXMF service layer for the SwiftUI application.
@@ -666,6 +679,7 @@ public final class AppServices {
         #endif
 
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
+        DiagLog.snapshotExtensionLog()
     }
 
     #if ENABLE_NETWORK_EXTENSION

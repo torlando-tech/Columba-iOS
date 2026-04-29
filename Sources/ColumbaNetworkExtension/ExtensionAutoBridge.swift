@@ -67,14 +67,23 @@ final class ExtensionAutoBridge: NSObject, InterfaceDelegate, @unchecked Sendabl
     /// AutoInterface, which fans them out per-peer.
     func send(_ data: Data) {
         Task {
-            try? await self.autoInterface?.send(data)
+            guard let auto = self.autoInterface else {
+                ExtensionDiagLog.log("[EXT/Auto] TX dropped \(data.count)B — autoInterface nil")
+                return
+            }
+            do {
+                try await auto.send(data)
+                ExtensionDiagLog.log("[EXT/Auto] TX \(data.count)B fanned out")
+            } catch {
+                ExtensionDiagLog.log("[EXT/Auto] TX \(data.count)B failed: \(error)")
+            }
         }
     }
 
     // MARK: - InterfaceDelegate
 
     func interface(id: String, didChangeState state: InterfaceState) {
-        NSLog("[EXT/Auto] interface \(id) state: \(state)")
+        ExtensionDiagLog.log("[EXT/Auto] iface \(id) state: \(state)")
     }
 
     func interface(id: String, didReceivePacket data: Data) {
@@ -84,12 +93,13 @@ final class ExtensionAutoBridge: NSObject, InterfaceDelegate, @unchecked Sendabl
         // re-injects them via `transport.handleReceivedData(from:)`,
         // so the transport sees the same byte stream the app's own
         // AutoInterface would have produced — just one process over.
+        ExtensionDiagLog.log("[EXT/Auto] RX \(data.count)B from \(id)")
         frameQueue.append(frame: data, interfaceTag: FrameInterfaceTag.auto.rawValue)
         postNotif()
     }
 
     func interface(id: String, didFailWithError error: Error) {
-        NSLog("[EXT/Auto] interface \(id) failed: \(error)")
+        ExtensionDiagLog.log("[EXT/Auto] iface \(id) failed: \(error)")
     }
 
     // MARK: - Private
@@ -116,10 +126,14 @@ final class ExtensionAutoBridge: NSObject, InterfaceDelegate, @unchecked Sendabl
         await auto.setPeerCallbacks(
             onPeerAdded: { [weak self] (peer: AutoInterfacePeer) in
                 guard let self else { return }
-                Task { await peer.setDelegate(self) }
+                Task {
+                    let pid = await peer.id
+                    ExtensionDiagLog.log("[EXT/Auto] peer added: \(pid)")
+                    await peer.setDelegate(self)
+                }
             },
             onPeerRemoved: { (peerId: String) in
-                NSLog("[EXT/Auto] peer removed: \(peerId)")
+                ExtensionDiagLog.log("[EXT/Auto] peer removed: \(peerId)")
             }
         )
 
@@ -127,9 +141,9 @@ final class ExtensionAutoBridge: NSObject, InterfaceDelegate, @unchecked Sendabl
             try await auto.connect()
             self.autoInterface = auto
             self.groupId = groupId
-            NSLog("[EXT/Auto] AutoInterface started for groupId=\(groupId)")
+            ExtensionDiagLog.log("[EXT/Auto] AutoInterface started for groupId=\(groupId)")
         } catch {
-            NSLog("[EXT/Auto] AutoInterface connect failed: \(error)")
+            ExtensionDiagLog.log("[EXT/Auto] AutoInterface connect failed: \(error)")
         }
     }
 
@@ -138,6 +152,6 @@ final class ExtensionAutoBridge: NSObject, InterfaceDelegate, @unchecked Sendabl
         await auto.disconnect()
         autoInterface = nil
         groupId = nil
-        NSLog("[EXT/Auto] AutoInterface stopped")
+        ExtensionDiagLog.log("[EXT/Auto] AutoInterface stopped")
     }
 }
