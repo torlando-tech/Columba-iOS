@@ -206,7 +206,7 @@ struct NetworkAnnouncesTab: View {
     private var announcesList: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                if !viewModel.pendingAnnounces.isEmpty {
+                if !viewModel.filteredPendingAnnounces.isEmpty {
                     showNewBanner
                 }
                 ForEach(viewModel.filteredNetworkAnnounces) { contact in
@@ -234,7 +234,9 @@ struct NetworkAnnouncesTab: View {
     /// Lets the user merge them in on demand instead of having the visible
     /// list reorder under their finger as new announces stream in.
     private var showNewBanner: some View {
-        let count = viewModel.pendingAnnounces.count
+        // Use the filter-aware count so the pill matches what will
+        // actually appear in the list after a flush.
+        let count = viewModel.filteredPendingAnnounces.count
         return Button {
             withAnimation(.easeOut(duration: 0.25)) {
                 viewModel.flushPendingAnnounces()

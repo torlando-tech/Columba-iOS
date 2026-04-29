@@ -330,7 +330,25 @@ public final class ContactsViewModel {
 
     /// Filtered network announces based on search, aspect filter, and interface filter.
     public var filteredNetworkAnnounces: [Contact] {
-        var results = networkAnnounces
+        applyAnnounceFilters(to: networkAnnounces)
+    }
+
+    /// `pendingAnnounces` filtered by the currently-active announce
+    /// filters. Used to drive the "Show N new" pill so the count
+    /// reflects how many will actually appear in the visible list
+    /// after a flush, not the raw buffer size — otherwise an active
+    /// filter (peers / audio / sites / relays / interface / search)
+    /// could overstate the pill and surprise the user.
+    public var filteredPendingAnnounces: [Contact] {
+        applyAnnounceFilters(to: pendingAnnounces)
+    }
+
+    /// Apply the active aspect / interface / search filters to a
+    /// list of announces. Shared between `filteredNetworkAnnounces`
+    /// (drives the rendered list) and `filteredPendingAnnounces`
+    /// (drives the pill count) so both stay in sync.
+    private func applyAnnounceFilters(to announces: [Contact]) -> [Contact] {
+        var results = announces
 
         // Apply aspect filter
         switch announceFilter {
