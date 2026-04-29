@@ -56,6 +56,11 @@ struct MessagingView: View {
     @State private var pendingRawImage: UIImage?
     @State private var selectedImagePreset: SettingsViewModel.ImageQualityPreset = .high
     @State private var isNearBottom = true
+    /// One-shot flag so the post-load scroll-to-bottom only fires the
+    /// first time messages populate. Subsequent message arrivals use
+    /// `onChange(of: messages.last?.id)` and only scroll when already
+    /// near the bottom.
+    @State private var didInitialScroll = false
     @State private var showCallScreen = false
     @State private var detailMessage: Message?
     @State private var deleteConfirmMessage: Message?
@@ -121,11 +126,30 @@ struct MessagingView: View {
                                 ))
                             }
 
-                            // Invisible anchor at bottom to track scroll position
+                            // Invisible anchor at bottom: tracks scroll position
+                            // AND drives the one-shot initial scroll. `onAppear`
+                            // fires only once SwiftUI has actually realized this
+                            // 1px row in the layout — which is the exact signal
+                            // the previous `.task` + 50 ms sleep was guessing
+                            // at, but without the arbitrary delay or the
+                            // cancellation race that came with it. If
+                            // `.defaultScrollAnchor(.bottom)` lands the
+                            // viewport correctly, this row is realized
+                            // immediately and the scroll is a no-op; if the
+                            // anchor lands inside unrealized space, the
+                            // explicit `scrollTo` here forces the LazyVStack
+                            // to lay out the bottom and the user sees the
+                            // latest message.
                             Color.clear
                                 .frame(height: 1)
                                 .id("bottom-anchor")
-                                .onAppear { isNearBottom = true }
+                                .onAppear {
+                                    isNearBottom = true
+                                    if !didInitialScroll {
+                                        proxy.scrollTo("bottom-anchor", anchor: .bottom)
+                                        didInitialScroll = true
+                                    }
+                                }
                                 .onDisappear { isNearBottom = false }
                         }
                         .padding(.horizontal, 16)
@@ -194,6 +218,13 @@ struct MessagingView: View {
                         )
                         #endif
                     }
+                    // First-render anchor is now driven from the
+                    // bottom-anchor's `onAppear` (see the LazyVStack
+                    // above). That fires exactly when SwiftUI has
+                    // realized the 1px row, eliminating both the
+                    // arbitrary 50 ms timing window and the
+                    // task-cancellation race that the prior
+                    // `.task(id:)` approach needed.
                     // Scroll to bottom when a new message arrives (if already near bottom)
                     .onChange(of: vm.messages.last?.id) { _, _ in
                         if isNearBottom {
