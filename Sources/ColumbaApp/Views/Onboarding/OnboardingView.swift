@@ -12,6 +12,11 @@ import SwiftUI
 struct OnboardingView: View {
     let identityManager: IdentityManager
     let settingsRepository: SettingsRepository
+    /// True when the flow is being shown to an existing user from
+    /// Settings → Advanced — `OnboardingViewModel.completeOnboarding`
+    /// skips identity / interface / display-name creation in that
+    /// mode so we don't duplicate the user's data.
+    var isRestart: Bool = false
     let onComplete: () -> Void
 
     @State private var viewModel = OnboardingViewModel()
@@ -23,6 +28,14 @@ struct OnboardingView: View {
             Theme.backgroundPrimary.ignoresSafeArea()
 
             VStack(spacing: 0) {
+                // Propagate the isRestart flag to the view model
+                // exactly once. Doing it here (vs. in init) keeps
+                // `@State` initialization clean.
+                Color.clear.frame(height: 0).onAppear {
+                    if isRestart && !viewModel.isRestart {
+                        viewModel.isRestart = true
+                    }
+                }
                 // Skip button (pages 0-3)
                 HStack {
                     Spacer()

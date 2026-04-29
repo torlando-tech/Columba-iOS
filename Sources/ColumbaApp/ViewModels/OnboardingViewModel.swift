@@ -28,6 +28,13 @@ final class OnboardingViewModel {
     /// not auto-started on first launch and the toggle in Settings →
     /// Background Transport defaults off until flipped manually.
     var backgroundTunnelEnabled: Bool = true
+    /// True when the flow is being re-run from Settings → Advanced
+    /// (existing user who wants to walk through onboarding again,
+    /// e.g. to see a newly-added step). `completeOnboarding()` skips
+    /// identity / interface / display-name creation in this mode so
+    /// re-running the flow doesn't duplicate data — it only commits
+    /// the values that the new onboarding steps drive.
+    var isRestart: Bool = false
 
     /// Identity created during onboarding (set by prepareIdentity).
     var createdIdentity: LocalIdentity?
@@ -119,21 +126,23 @@ final class OnboardingViewModel {
         isSaving = true
         defer { isSaving = false }
 
-        // 1. Use existing identity or create one
-        let local: LocalIdentity
-        if let existing = createdIdentity {
-            local = existing
-        } else {
-            local = try await identityManager.createIdentity(displayName: effectiveDisplayName)
+        if !isRestart {
+            // 1. Use existing identity or create one
+            let local: LocalIdentity
+            if let existing = createdIdentity {
+                local = existing
+            } else {
+                local = try await identityManager.createIdentity(displayName: effectiveDisplayName)
+            }
+            let _ = try await identityManager.switchToIdentity(local.identityHash)
+
+            // 2. Save display name to settings
+            await settingsRepository.setDisplayName(effectiveDisplayName)
+
+            // 3. Create selected interfaces
+            let interfaceRepo = InterfaceRepository()
+            createInterfaces(in: interfaceRepo)
         }
-        let _ = try await identityManager.switchToIdentity(local.identityHash)
-
-        // 2. Save display name to settings
-        await settingsRepository.setDisplayName(effectiveDisplayName)
-
-        // 3. Create selected interfaces
-        let interfaceRepo = InterfaceRepository()
-        createInterfaces(in: interfaceRepo)
 
         // 4. Save notification preference
         if notificationsGranted {
@@ -158,9 +167,10 @@ final class OnboardingViewModel {
 
         // 6. If user opted into RNode, flag the shell to open the configuration
         // wizard once MainTabView is on screen. Only meaningful on iOS — the
-        // RNode wizard's fullScreenCover is iOS-only.
+        // RNode wizard's fullScreenCover is iOS-only. Skipped on restart
+        // since the user already configured their interfaces.
         #if os(iOS)
-        if selectedInterfaces.contains(.rnode) {
+        if !isRestart && selectedInterfaces.contains(.rnode) {
             UserDefaults.standard.set(true, forKey: Self.pendingRNodeSetupKey)
         }
         #endif

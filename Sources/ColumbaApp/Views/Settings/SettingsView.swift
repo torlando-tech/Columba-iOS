@@ -44,6 +44,11 @@ struct SettingsView: View {
     /// Persisted across body re-evaluations so showRNodeWizard=true is not lost
     /// when SettingsView re-renders due to connection status polling changes.
     @State private var interfaceViewModel: InterfaceManagementViewModel?
+    #if DEBUG
+    /// Drives the fullScreenCover that re-shows the onboarding flow
+    /// from the Advanced → Re-run Onboarding debug card.
+    @State private var showRestartOnboarding = false
+    #endif
     #if ENABLE_NETWORK_EXTENSION
     /// Last error message from the Background Transport toggle. Cleared
     /// on the next successful toggle. Surfaced inline below the toggle
@@ -118,6 +123,10 @@ struct SettingsView: View {
 
                         // Transport Mode (advanced)
                         transportModeCard(vm)
+
+                        #if DEBUG
+                        restartOnboardingCard()
+                        #endif
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -376,6 +385,54 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
+
+    #if DEBUG
+    // MARK: - Re-run Onboarding (DEBUG only)
+
+    /// Debug entry point for an existing user to walk through the
+    /// onboarding flow again — useful when verifying a newly-added
+    /// onboarding step (e.g. Background Transport) without losing
+    /// chats / identities. The OnboardingView is presented with
+    /// `isRestart = true` so `OnboardingViewModel.completeOnboarding()`
+    /// skips identity / interface / display-name creation and only
+    /// commits the values that the new step drives.
+    private func restartOnboardingCard() -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.accentColor)
+
+                Text("Re-run Onboarding")
+                    .font(.headline)
+                    .foregroundStyle(Theme.textPrimary)
+
+                Spacer()
+
+                Button("Start") {
+                    showRestartOnboarding = true
+                }
+                .buttonStyle(.bordered)
+                .tint(Theme.accentColor)
+            }
+
+            Text("Walks through the onboarding pages again. Existing identity, interfaces, and display name are preserved — only new flags (e.g. Background Transport) are committed. Debug builds only.")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .glassCard()
+        .fullScreenCover(isPresented: $showRestartOnboarding) {
+            OnboardingView(
+                identityManager: identityManager,
+                settingsRepository: settingsRepository,
+                isRestart: true,
+                onComplete: { showRestartOnboarding = false }
+            )
+        }
+    }
+    #endif
 
     #if ENABLE_NETWORK_EXTENSION
     // MARK: - Background Transport Card
