@@ -320,24 +320,67 @@ struct MessageDetailView: View {
 
     /// Resolve the parent `InterfaceEntity` for a (possibly peer-scoped) ID.
     ///
-    /// BLE / AutoInterface / RNode peers are reported on packets as IDs of
-    /// the form `{type}-{parentId}-{peerSuffix}` — e.g.
-    /// `ble-ble0-628188b8`, `auto-auto0-fe80::...`,
-    /// `rnode-rnode0-<peerHex>`. The repository keys entities by their
-    /// parent ID (`ble0`, `auto0`, `rnode0`), so a direct lookup misses
-    /// every peer-scoped packet and falls through to the "Network"
-    /// orphan label. Try the direct lookup first, then a
-    /// peer-suffix-strip retry, before giving up.
+    /// BLE / AutoInterface / RNode / Multipeer peers are reported on
+    /// packets as IDs of the form `{type}-{parentId}-{peerSuffix}` —
+    /// e.g. `ble-ble0-628188b8`, `auto-auto0-fe80::...`,
+    /// `rnode-rnode0-<peerHex>`. There's no shared key between the
+    /// transport-layer parent ID (`ble0` etc., used by `InterfaceConfig`
+    /// when the transport adds the interface) and the
+    /// `InterfaceEntity` stored in `InterfaceRepository` (whose `id` is
+    /// usually a `UUID()` from `OnboardingViewModel` /
+    /// `InterfaceManagementViewModel`). Direct equality lookups miss
+    /// for every peer-scoped packet and the "Network" orphan label gets
+    /// rendered.
+    ///
+    /// Resolution order:
+    /// 1. Direct lookup — covers TCP and any future IDs that happen to
+    ///    match the entity ID exactly.
+    /// 2. Parent-segment strip — covers the unlikely case where someone
+    ///    wires the entity with the transport's parent string ("ble0").
+    /// 3. Type-prefix match — the load-bearing case: any entity whose
+    ///    `type` matches the leading `ble-` / `auto-` / `rnode-` /
+    ///    `mpc-` prefix. With the standard "one BLE / one Auto / one
+    ///    RNode" config, this returns the right entity unambiguously.
     private func resolveInterfaceEntity(for interfaceId: String) -> InterfaceEntity? {
         if let direct = interfaceRepository.getInterface(id: interfaceId) {
             return direct
         }
+
         let parts = interfaceId.split(separator: "-", maxSplits: 2)
-        guard parts.count == 3,
-              ["ble", "auto", "rnode"].contains(String(parts[0])) else {
+        let prefix = parts.first.map(String.init)
+
+        // 2. Parent-segment strip — works only for the legacy/explicit
+        //    "id matches transport parent" wiring.
+        if parts.count == 3,
+           let p = prefix,
+           ["ble", "auto", "rnode", "mpc"].contains(p),
+           let parent = interfaceRepository.getInterface(id: String(parts[1])) {
+            return parent
+        }
+
+        // 3. Type-prefix match — fall back to any entity whose `type`
+        //    matches the prefix segment. Prefer enabled entities so a
+        //    disabled-and-still-stored interface doesn't shadow the
+        //    active one.
+        guard let p = prefix, let typeForPrefix = typeForInterfacePrefix(p) else {
             return nil
         }
-        return interfaceRepository.getInterface(id: String(parts[1]))
+        let candidates = interfaceRepository.interfaces.filter { $0.type == typeForPrefix }
+        return candidates.first(where: { $0.enabled }) ?? candidates.first
+    }
+
+    /// Map a packet-id prefix segment (`ble`, `auto`, `rnode`, `mpc`) to
+    /// the corresponding `InterfaceType`. Returns nil for unrecognized
+    /// prefixes (e.g. `tcp-` IDs hit the direct-lookup path before
+    /// reaching here).
+    private func typeForInterfacePrefix(_ prefix: String) -> InterfaceType? {
+        switch prefix {
+        case "ble":   return .ble
+        case "auto":  return .autoInterface
+        case "rnode": return .rnode
+        case "mpc":   return .multipeer
+        default:      return nil
+        }
     }
 
     /// Resolve an InterfaceEntity to display values for the receiving-interface card.
