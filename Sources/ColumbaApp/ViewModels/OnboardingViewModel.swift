@@ -34,8 +34,14 @@ final class OnboardingViewModel {
     /// QR code string for the created identity.
     var qrCodeString: String = ""
 
-    /// Total number of onboarding pages.
+    /// Total number of onboarding pages. Includes the Background
+    /// Transport step only when `ENABLE_NETWORK_EXTENSION` is
+    /// compiled in — otherwise the toggle would drive nothing.
+    #if ENABLE_NETWORK_EXTENSION
     static let pageCount = 6
+    #else
+    static let pageCount = 5
+    #endif
 
     // MARK: - Computed
 

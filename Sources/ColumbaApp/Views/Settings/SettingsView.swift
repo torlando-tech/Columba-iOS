@@ -428,6 +428,20 @@ struct SettingsView: View {
                                         if Task.isCancelled { break }
                                         try? await Task.sleep(nanoseconds: 200_000_000)
                                     }
+                                    // If we asked for ON but the tunnel
+                                    // never reached `.connected`, the
+                                    // failure happened asynchronously
+                                    // after `startVPNTunnel()` returned
+                                    // successfully (airplane mode, routing
+                                    // failure, extension crash). Surface
+                                    // the localized reason so the toggle
+                                    // doesn't silently bounce.
+                                    if !Task.isCancelled && newValue && !tunnel.isRunning {
+                                        let reason = await tunnel.lastFailureReason()
+                                            ?? "Background Transport could not connect"
+                                        DiagLog.log("[TUNNEL] start did not reach .connected: \(reason)")
+                                        tunnelErrorMessage = reason
+                                    }
                                 } catch is CancellationError {
                                     // Superseded by a newer toggle —
                                     // leave state alone; the newer

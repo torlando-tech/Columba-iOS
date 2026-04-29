@@ -76,6 +76,7 @@ struct OnboardingView: View {
                             onBack: { viewModel.previousPage() },
                             onContinue: { viewModel.nextPage() }
                         )
+                    #if ENABLE_NETWORK_EXTENSION
                     case 3:
                         BackgroundTransportPage(
                             enabled: $viewModel.backgroundTunnelEnabled,
@@ -83,36 +84,15 @@ struct OnboardingView: View {
                             onContinue: { viewModel.nextPage() }
                         )
                     case 4:
-                        PermissionsPage(
-                            notificationsGranted: viewModel.notificationsGranted,
-                            onRequestNotifications: {
-                                Task { await viewModel.requestNotificationPermission() }
-                            },
-                            onBack: { viewModel.previousPage() },
-                            onContinue: { viewModel.nextPage() }
-                        )
+                        permissionsPageView()
                     case 5:
-                        CompletePage(
-                            displayName: viewModel.effectiveDisplayName,
-                            interfaceNames: viewModel.selectedInterfaceNames,
-                            notificationsGranted: viewModel.notificationsGranted,
-                            isSaving: viewModel.isSaving,
-                            selectedRNode: viewModel.selectedInterfaces.contains(.rnode),
-                            identityManager: identityManager,
-                            qrCodeString: viewModel.qrCodeString,
-                            onPrepare: {
-                                await viewModel.prepareIdentity(identityManager: identityManager)
-                            },
-                            onFinish: {
-                                Task {
-                                    try? await viewModel.completeOnboarding(
-                                        identityManager: identityManager,
-                                        settingsRepository: settingsRepository
-                                    )
-                                    onComplete()
-                                }
-                            }
-                        )
+                        completePageView()
+                    #else
+                    case 3:
+                        permissionsPageView()
+                    case 4:
+                        completePageView()
+                    #endif
                     default:
                         EmptyView()
                     }
@@ -148,5 +128,42 @@ struct OnboardingView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func permissionsPageView() -> some View {
+        PermissionsPage(
+            notificationsGranted: viewModel.notificationsGranted,
+            onRequestNotifications: {
+                Task { await viewModel.requestNotificationPermission() }
+            },
+            onBack: { viewModel.previousPage() },
+            onContinue: { viewModel.nextPage() }
+        )
+    }
+
+    @ViewBuilder
+    private func completePageView() -> some View {
+        CompletePage(
+            displayName: viewModel.effectiveDisplayName,
+            interfaceNames: viewModel.selectedInterfaceNames,
+            notificationsGranted: viewModel.notificationsGranted,
+            isSaving: viewModel.isSaving,
+            selectedRNode: viewModel.selectedInterfaces.contains(.rnode),
+            identityManager: identityManager,
+            qrCodeString: viewModel.qrCodeString,
+            onPrepare: {
+                await viewModel.prepareIdentity(identityManager: identityManager)
+            },
+            onFinish: {
+                Task {
+                    try? await viewModel.completeOnboarding(
+                        identityManager: identityManager,
+                        settingsRepository: settingsRepository
+                    )
+                    onComplete()
+                }
+            }
+        )
     }
 }

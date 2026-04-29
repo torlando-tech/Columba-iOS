@@ -35,6 +35,25 @@ public final class TunnelManager: @unchecked Sendable {
     /// The loaded tunnel provider manager
     private var manager: NETunnelProviderManager?
 
+    /// Fetch the last disconnect error from the underlying VPN
+    /// connection, if any. `startVPNTunnel()` is fire-and-forget —
+    /// when the tunnel fails to connect (airplane mode, routing
+    /// failure, extension crash) the launch call returns successfully
+    /// and the failure is reported asynchronously. The Settings toggle
+    /// uses this after a polling timeout to surface a meaningful
+    /// reason instead of silently bouncing.
+    ///
+    /// `fetchLastDisconnectError` is iOS 16+; we already require
+    /// iOS 17.
+    public func lastFailureReason() async -> String? {
+        guard let connection = manager?.connection else { return nil }
+        return await withCheckedContinuation { continuation in
+            connection.fetchLastDisconnectError { error in
+                continuation.resume(returning: (error as NSError?)?.localizedDescription)
+            }
+        }
+    }
+
     /// Called whenever the tunnel's VPN status changes.
     ///
     /// `AppServices` uses this to coordinate transitioning each
