@@ -300,11 +300,24 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
         }
 
-        connection.start(queue: .main)
+        // Run state callbacks AND receive callbacks on configQueue so
+        // the receive buffer (`tcpReceiveBuffer`) and connection
+        // pointer are touched only from one serial context. Without
+        // this, a `.main` receive completion could race
+        // `teardownTCPConnectionLocked` resetting the buffer on
+        // configQueue and the clear would silently lose to a stale
+        // append, corrupting the next session's HDLC framing.
+        connection.start(queue: configQueue)
     }
 
+    /// Continuation of inbound TCP receive. Must run on `configQueue`
+    /// because it both reads `tcpConnection` and feeds `handleTCPData`
+    /// which touches `tcpReceiveBuffer` — both serialized there.
     private func receiveTCPData() {
         tcpConnection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            // Callback runs on the connection's queue (configQueue
+            // since startTCPConnection switched it). No extra dispatch
+            // needed.
             if let data, !data.isEmpty {
                 self?.handleTCPData(data)
             }
@@ -324,7 +337,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    /// Buffer TCP data and extract HDLC frames.
+    /// Buffer TCP data and extract HDLC frames. Runs on configQueue
+    /// (called from `receiveTCPData`'s completion which now executes
+    /// on configQueue too).
     private func handleTCPData(_ data: Data) {
         tcpReceiveBuffer.append(data)
 
