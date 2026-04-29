@@ -59,6 +59,12 @@ struct SettingsView: View {
     /// `get` so the toggle stays where the user put it. Cleared once
     /// the actual status matches the intent (or after a timeout).
     @State private var tunnelPending: Bool?
+    /// In-flight tunnel start/disable Task. Cancelled before a new
+    /// one is spawned so a rapid ON→OFF tap can't race the previous
+    /// `start()`'s `install()` flow — without cancellation the older
+    /// Task would still call `startVPNTunnel()` after the user's
+    /// last intent was OFF.
+    @State private var tunnelTask: Task<Void, Never>?
     #endif
 
     // MARK: - Body
@@ -393,13 +399,21 @@ struct SettingsView: View {
                         get: { tunnelPending ?? tunnel.isRunning },
                         set: { newValue in
                             tunnelPending = newValue
-                            Task {
+                            // Cancel any in-flight start/disable so a
+                            // rapid re-tap doesn't race the previous
+                            // operation — otherwise an older `start()`
+                            // can finish `install()` and call
+                            // `startVPNTunnel()` after the user's
+                            // last intent was already OFF.
+                            tunnelTask?.cancel()
+                            tunnelTask = Task {
                                 do {
                                     if newValue {
                                         try await tunnel.start()
                                     } else {
                                         try await tunnel.disable()
                                     }
+                                    try Task.checkCancellation()
                                     UserDefaults(suiteName: appGroupIdentifier)?
                                         .set(newValue, forKey: SharedDefaultsConstants.tunnelEnabledKey)
                                     tunnelErrorMessage = nil
@@ -411,15 +425,23 @@ struct SettingsView: View {
                                     // would otherwise flicker the toggle.
                                     let deadline = Date().addingTimeInterval(30)
                                     while tunnel.isRunning != newValue && Date() < deadline {
+                                        if Task.isCancelled { break }
                                         try? await Task.sleep(nanoseconds: 200_000_000)
                                     }
+                                } catch is CancellationError {
+                                    // Superseded by a newer toggle —
+                                    // leave state alone; the newer
+                                    // Task will own the next state.
+                                    return
                                 } catch {
                                     let action = newValue ? "start" : "disable"
                                     let msg = "Background Transport \(action) failed: \(error.localizedDescription)"
                                     DiagLog.log(msg)
                                     tunnelErrorMessage = error.localizedDescription
                                 }
-                                tunnelPending = nil
+                                if !Task.isCancelled {
+                                    tunnelPending = nil
+                                }
                             }
                         }
                     ))

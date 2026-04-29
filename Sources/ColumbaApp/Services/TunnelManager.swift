@@ -136,6 +136,11 @@ public final class TunnelManager: @unchecked Sendable {
             try await manager.saveToPreferences()
         }
 
+        // Bail before firing `startVPNTunnel()` if our caller's Task
+        // was cancelled during the awaited install/save above —
+        // otherwise a rapid OFF tap during a still-running ON would
+        // still bring the tunnel up despite the user's last intent.
+        try Task.checkCancellation()
         try manager.connection.startVPNTunnel()
         logger.info("Tunnel started")
     }
