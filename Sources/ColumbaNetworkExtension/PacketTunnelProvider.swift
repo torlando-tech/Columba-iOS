@@ -263,9 +263,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 self?.receiveTCPData()
             case .failed(let error):
                 NSLog("[EXT] TCP failed: \(error), reconnecting in 5s")
-                self?.tcpConnection?.cancel()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                    self?.startTCPConnection(host: host, port: port)
+                // Reconnect must go through configQueue — otherwise the
+                // .failed handler's main-queue write to `tcpConnection`
+                // would race `applyConfigsLocked` writing the same
+                // property. Routing through `applyConfigs` re-reads the
+                // current config, clears the stale connection, and
+                // starts a fresh one all on the serial queue.
+                guard let self else { return }
+                self.configQueue.async {
+                    self.tcpConnection?.cancel()
+                    self.tcpConnection = nil
+                    self.currentTCP = nil
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [weak self] in
+                    self?.applyConfigs()
                 }
             case .waiting(let error):
                 NSLog("[EXT] TCP waiting: \(error)")
