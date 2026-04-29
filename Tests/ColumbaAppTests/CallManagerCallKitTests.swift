@@ -139,10 +139,15 @@ final class CallManagerCallKitTests: XCTestCase {
         manager.callKitManager = mock
 
         manager.prepareForIncomingCall()
-        // Simulate resetState() running mid-flight (e.g. user dismissed
-        // an in-app surface, or a hangup raced identify).
-        let resetCallState = manager.callState
+        // Simulate `resetState()` running mid-flight (e.g. user dismissed
+        // an in-app surface, or a hangup raced identify). resetState
+        // clears the UUID *and* drops callState back to .idle — both
+        // need to be reflected here, otherwise the test only exercises
+        // the `.connecting → no-change` transition and misses the
+        // dangerous `.idle → .ringing` regression that motivated
+        // hoisting the UUID guard to the top of handleCallerIdentified.
         manager.currentCallUUID = nil
+        manager.callState = .idle
 
         let stubIdentity = Identity()
         manager.handleCallerIdentified(stubIdentity)
@@ -157,7 +162,7 @@ final class CallManagerCallKitTests: XCTestCase {
         // CallKit registration to drive a dismissal.
         XCTAssertEqual(
             manager.callState,
-            resetCallState,
+            .idle,
             "callState must not advance to .ringing when the UUID has been cleared by a reset race"
         )
         XCTAssertNil(manager.peerHash, "peerHash must not be populated on a reset-race")
