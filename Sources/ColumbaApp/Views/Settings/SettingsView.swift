@@ -345,29 +345,13 @@ struct SettingsView: View {
                 }
             })
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Forward traffic for the mesh network. With Transport Mode on, this device relays announces and routes packets for other peers — increasing the network's reach for everyone.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text("When disabled, this device only handles its own traffic. That's the right default for most phones — battery and data usage stay low and other peers don't depend on you to be online.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if vm.isTransportEnabled {
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(Theme.warning)
-                        Text("Expect higher battery and data usage while enabled.")
-                            .font(.caption)
-                            .foregroundStyle(Theme.warning)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
+            // Copy kept verbatim with Columba Android's AdvancedCard so the
+            // two clients describe Transport Node identically. Update both
+            // sides together if either changes.
+            Text("Forward traffic for the mesh network. When disabled, this device will only handle its own traffic and won't relay messages for other peers. It's generally not recommended for mobile devices to be transport nodes. They are less likely to maintain a fixed position in the network, and thus can negatively impact multihop routing. Enabling this will increase data usage and battery drain. However, in a BLE-only mesh, it's required for multi-hop messaging.")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
