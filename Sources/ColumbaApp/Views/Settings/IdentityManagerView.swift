@@ -313,20 +313,12 @@ struct IdentityManagerView: View {
             // Update display name in settings repo for announce compatibility
             await settingsRepository.setDisplayName(localId.displayName)
 
-            // Get server address
-            let interfaceRepo = InterfaceRepository()
-            let serverAddress: String
-            if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
-               case .tcpClient(let config) = tcpEntity.config {
-                serverAddress = "\(config.targetHost):\(config.targetPort)"
-            } else {
-                serverAddress = ""
-            }
-
+            // Switch identity. Interface reconnection is handled by the
+            // parent `onIdentitySwitch` hook below, which re-runs the
+            // app's Step 7 loop against `InterfaceRepository`.
             try await appServices.switchIdentity(
                 to: identity,
-                identityHash: localId.identityHash,
-                tcpServerAddress: serverAddress
+                identityHash: localId.identityHash
             )
 
             await loadIdentities()

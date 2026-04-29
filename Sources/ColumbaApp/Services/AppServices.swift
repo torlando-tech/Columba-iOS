@@ -74,7 +74,8 @@ enum DiagLog {
 /// Example usage:
 /// ```swift
 /// let services = AppServices()
-/// try await services.initialize(tcpServerAddress: "tcp://10.0.0.1:4242")
+/// try await services.initialize(identity: identity, identityHash: hash)
+/// try await services.connectTCPInterface(entityId: id, host: "10.0.0.1", port: 4242)
 ///
 /// // Access the router for sending messages
 /// var message = LXMessage(...)
@@ -146,6 +147,15 @@ public final class AppServices {
     #if ENABLE_NETWORK_EXTENSION
     /// Network Extension tunnel manager.
     public private(set) var tunnelManager: TunnelManager?
+
+    /// Debounce-disable task. When the tunnel briefly drops (debug
+    /// reload, transient drop) we don't want to immediately tear
+    /// down tunnel mode on the app's interfaces — that re-binds the
+    /// AutoInterface multicast / data ports while iOS is in the
+    /// middle of bringing up a fresh extension instance, racing the
+    /// extension's `NWMulticastGroup` / `NWListener` and producing
+    /// `EADDRINUSE`.
+    private var pendingTunnelDisableTask: Task<Void, Never>?
 
     /// Extension frame reader for processing queued frames from the extension.
     private var extensionFrameReader: ExtensionFrameReader?
@@ -340,7 +350,8 @@ public final class AppServices {
 
     /// Create uninitialized AppServices.
     ///
-    /// Call `initialize(tcpServerAddress:)` to set up all components.
+    /// Call `initialize(identity:identityHash:)` to set up all components,
+    /// then connect interfaces via `connectTCPInterface`/`startAutoInterface`/etc.
     public init() {}
 
     // Note: No deinit needed - stateObserverTask is automatically cancelled
@@ -472,15 +483,16 @@ public final class AppServices {
     /// Initialize all LXMF components with an externally-provided identity.
     ///
     /// Used by multi-identity flow where IdentityManager loads the identity
-    /// from Keychain and passes it in directly.
+    /// from Keychain and passes it in directly. Interfaces are connected
+    /// separately via `connectTCPInterface`/`startAutoInterface`/etc. by
+    /// the app-level Step 7 loop, which iterates `InterfaceRepository`.
     ///
     /// - Parameters:
     ///   - identity: Pre-loaded Reticulum identity with private keys
     ///   - identityHash: Hex hash of the identity (used for DB filename)
-    ///   - tcpServerAddress: TCP server address (e.g., "10.0.0.1:4242")
-    public func initialize(identity: Identity, identityHash: String, tcpServerAddress: String) async throws {
+    public func initialize(identity: Identity, identityHash: String) async throws {
         DiagLog.clear()
-        DiagLog.log("[INIT2] Starting with identity: \(identityHash), tcp: \(tcpServerAddress)")
+        DiagLog.log("[INIT2] Starting with identity: \(identityHash)")
 
         self.identity = identity
         self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
@@ -539,27 +551,13 @@ public final class AppServices {
         }
         #endif
 
-        // 8. Parse server address and create TCP interface
-        if let (host, port) = parseHostPort(tcpServerAddress) {
-            let config = InterfaceConfig(
-                id: "tcp-server",
-                name: "TCP Server",
-                type: .tcp,
-                enabled: true,
-                mode: .full,
-                host: host,
-                port: port
-            )
-            do {
-                let newInterface = try TCPInterface(config: config)
-                tcpInterfaces["tcp-server"] = newInterface
-                try await newTransport.addInterface(newInterface)
-            } catch {
-                logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        // 9. Register delivery destination with router
+        // 8. Register delivery destination with router. Interface
+        //    connections are owned by the app-level Step 7 loop, which
+        //    iterates `InterfaceRepository.getEnabledInterfaces()` and
+        //    calls `connectTCPInterface`/`startAutoInterface`/etc. We
+        //    deliberately don't synthesize a "tcp-server" interface
+        //    here — doing so created a duplicate alongside the
+        //    repository-managed entity after `switchIdentity`.
         try await newRouter.registerDeliveryDestination(newDestination)
 
         startStateObserver()
@@ -638,9 +636,28 @@ public final class AppServices {
             Task { @MainActor in
                 switch newStatus {
                 case .connected:
+                    // Cancel any pending disable — we're back up
+                    // before the debounce fired.
+                    self.pendingTunnelDisableTask?.cancel()
+                    self.pendingTunnelDisableTask = nil
                     await self.applyTunnelModeToInterfaces(active: true)
                 case .disconnected, .invalid:
-                    await self.applyTunnelModeToInterfaces(active: false)
+                    // Debounce disable: a debug reload (extension
+                    // calls `cancelTunnelWithError`) takes the
+                    // tunnel through .disconnected for a couple of
+                    // seconds while iOS spawns the new instance.
+                    // If we tear down tunnel mode immediately, the
+                    // app's AutoInterface re-binds the multicast /
+                    // data ports while the new extension is trying
+                    // to bind them — `EADDRINUSE`. Wait a few
+                    // seconds; if status comes back to .connected
+                    // the .connected branch above cancels us.
+                    self.pendingTunnelDisableTask?.cancel()
+                    self.pendingTunnelDisableTask = Task { [weak self] in
+                        try? await Task.sleep(for: .seconds(5))
+                        guard !Task.isCancelled else { return }
+                        await self?.applyTunnelModeToInterfaces(active: false)
+                    }
                 default:
                     break
                 }
@@ -708,33 +725,35 @@ public final class AppServices {
     /// Switch every TCPInterface into or out of tunnel mode in
     /// response to the VPN extension's status.
     ///
-    /// In tunnel mode the interface tears down its own NWConnection
+    /// In tunnel mode the TCPInterface tears down its own NWConnection
     /// and routes outbound bytes through `TunnelManager.sendFrame`,
     /// which the extension forwards on its authoritative socket.
     /// Inbound continues to flow via `ExtensionFrameReader` →
     /// `transport.handleReceivedData` regardless.
     ///
-    /// AutoInterface is intentionally left running locally even
-    /// when the tunnel is up. We tried two implementations of the
-    /// AutoInterface protocol inside the Network Extension:
-    ///   - reticulum-swift's `AutoInterface` (POSIX sockets bound
-    ///     to link-local IPv6 + per-peer `sendto`) — bind succeeds
-    ///     but iOS routes inbound unicast UDP to the system stack,
-    ///     not the extension's socket.
-    ///   - A from-scratch implementation on Apple's Network
-    ///     framework (`NWMulticastGroup` for HELLO + `NWListener`
-    ///     for inbound data + per-peer `NWConnection` for outbound)
-    ///     — same outcome: zero `newConnectionHandler` callbacks
-    ///     ever fire on the listener, even with no interface
-    ///     constraint. NEPacketTunnelProvider's sandbox doesn't
-    ///     deliver inbound UDP unicast to extension sockets.
+    /// AutoInterface is intentionally NOT tunneled. We tested every
+    /// API combination iOS exposes for putting AutoInterface in the
+    /// extension and proved empirically (with Mac-side `tcpdump` and
+    /// listening sockets) that **NEPacketTunnelProvider extensions
+    /// cannot send any UDP to the LAN**:
+    ///   - `NWConnection` to link-local IPv6: completion fires
+    ///     `success` but the packet never reaches the wire.
+    ///   - POSIX `sendto`: returns `ENETUNREACH`.
+    ///   - Replies on `NWListener`-accepted connections: fail with
+    ///     `ECANCELED` even though the inbound was received.
+    /// The sandbox is asymmetric — the extension can RECEIVE UDP
+    /// (NWListener and POSIX `recvfrom` both work) but cannot SEND.
+    /// Without outbound UDP we can't multicast HELLO discovery, can't
+    /// reverse-peer, and can't respond to peers — so AutoInterface
+    /// in the extension is fundamentally broken regardless of
+    /// architecture.
     ///
-    /// Phase 1 ships with TCP-only background. AutoInterface stays
-    /// local-Wi-Fi only, foreground-only — same behaviour the user
-    /// had before background transport existed. Background
-    /// AutoInterface is a follow-up that needs a different
-    /// architecture (e.g. configuring the tunnel's `includedRoutes`
-    /// to capture multicast/data packets via `packetFlow`).
+    /// AutoInterface stays in its local app-process implementation,
+    /// foreground-only — same behaviour the user had before this
+    /// PR. TCP — which actually does work outbound from the extension
+    /// because NWConnection to a global IP relay does transmit — is
+    /// the background path. That's the win for the lock-screen bug
+    /// (#54).
     @MainActor
     private func applyTunnelModeToInterfaces(active: Bool) async {
         guard let tunnel = tunnelManager else { return }
@@ -745,7 +764,7 @@ public final class AppServices {
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
                 }
             }
-            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s); Auto stays local")
+            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s); Auto stays local (foreground-only)")
         } else {
             for (_, iface) in tcpInterfaces {
                 await iface.endTunnelMode()
@@ -757,11 +776,15 @@ public final class AppServices {
 
     /// Switch to a different identity, tearing down and re-initializing the full stack.
     ///
+    /// Interface connections are not started here — the caller's
+    /// `onIdentitySwitch` hook re-runs the app's Step 7 loop, which
+    /// iterates `InterfaceRepository` and connects every enabled
+    /// interface against the new transport.
+    ///
     /// - Parameters:
     ///   - newIdentity: The identity to switch to (already loaded from Keychain)
     ///   - identityHash: Hex hash of the new identity
-    ///   - tcpServerAddress: TCP server address to reconnect to
-    public func switchIdentity(to newIdentity: Identity, identityHash: String, tcpServerAddress: String) async throws {
+    public func switchIdentity(to newIdentity: Identity, identityHash: String) async throws {
         logger.info("Switching identity to: \(identityHash)")
 
         // Tear down current stack
@@ -775,7 +798,7 @@ public final class AppServices {
         try? await Task.sleep(for: .milliseconds(200))
 
         // Re-initialize with new identity
-        try await initialize(identity: newIdentity, identityHash: identityHash, tcpServerAddress: tcpServerAddress)
+        try await initialize(identity: newIdentity, identityHash: identityHash)
 
         logger.info("Identity switch complete: \(identityHash)")
     }
@@ -1345,6 +1368,22 @@ public final class AppServices {
         if let identity = identity, SharedDefaults.suite.bool(forKey: "transport_enabled") {
             await transport.setTransportEnabled(true, identity: identity)
         }
+
+        // If the tunnel is already running by the time this TCP
+        // interface is added (race during cold start: auto-restart
+        // can fire and the tunnel can reach `.connected` before the
+        // interface-loading Tasks have populated `tcpInterfaces`),
+        // put the new interface into tunnel mode now. Without this
+        // the interface stays on its local NWConnection — works in
+        // foreground, dies when the app is suspended.
+        #if ENABLE_NETWORK_EXTENSION
+        if let tunnel = tunnelManager, tunnel.isRunning {
+            await newInterface.beginTunnelMode { [weak tunnel] frame in
+                await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
+            }
+            DiagLog.log("[TUNNEL] late-added TCP interface \(entityId) put into tunnel mode")
+        }
+        #endif
 
         startStateObserver()
     }

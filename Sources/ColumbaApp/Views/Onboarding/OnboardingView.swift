@@ -19,23 +19,36 @@ struct OnboardingView: View {
     var isRestart: Bool = false
     let onComplete: () -> Void
 
-    @State private var viewModel = OnboardingViewModel()
+    @State private var viewModel: OnboardingViewModel
     @State private var showRestoreSheet = false
     @State private var migrationVM: MigrationViewModel?
+
+    init(
+        identityManager: IdentityManager,
+        settingsRepository: SettingsRepository,
+        isRestart: Bool = false,
+        onComplete: @escaping () -> Void
+    ) {
+        self.identityManager = identityManager
+        self.settingsRepository = settingsRepository
+        self.isRestart = isRestart
+        self.onComplete = onComplete
+        // Initialize the view model with the correct restart flag at
+        // construction time so `prepareIdentity` /
+        // `completeOnboarding` see it before any onboarding-page
+        // `onAppear` fires. The previous `Color.clear.onAppear` hack
+        // raced the page lifecycle and could let
+        // `CompletePage.onAppear → prepareIdentity` create a fresh
+        // identity, swap it in as active, and orphan the user's
+        // chats.
+        self._viewModel = State(initialValue: OnboardingViewModel(isRestart: isRestart))
+    }
 
     var body: some View {
         ZStack {
             Theme.backgroundPrimary.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Propagate the isRestart flag to the view model
-                // exactly once. Doing it here (vs. in init) keeps
-                // `@State` initialization clean.
-                Color.clear.frame(height: 0).onAppear {
-                    if isRestart && !viewModel.isRestart {
-                        viewModel.isRestart = true
-                    }
-                }
                 // Skip button (pages 0-3)
                 HStack {
                     Spacer()

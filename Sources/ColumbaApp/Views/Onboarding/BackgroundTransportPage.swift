@@ -40,12 +40,19 @@ struct BackgroundTransportPage: View {
                 .padding(.bottom, 24)
 
             VStack(alignment: .leading, spacing: 14) {
-                featureRow("Receive messages without opening the app")
-                featureRow("Voice calls ring even when locked")
+                featureRow("Receive messages over the internet (TCP) when locked")
+                featureRow("Voice calls ring even when the app is closed")
                 featureRow("Reconnects automatically across networks")
             }
             .padding(.horizontal, 40)
-            .padding(.bottom, 32)
+            .padding(.bottom, 16)
+
+            Text("Auto Discovery and Nearby only work while the app is open — iOS doesn't allow extensions to send LAN packets in the background.")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 16)
 
             // Toggle card
             HStack(spacing: 14) {

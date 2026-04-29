@@ -126,6 +126,9 @@ struct SettingsView: View {
 
                         #if DEBUG
                         restartOnboardingCard()
+                        #if ENABLE_NETWORK_EXTENSION
+                        reloadExtensionCard()
+                        #endif
                         #endif
                     }
                     .padding(.horizontal, 16)
@@ -386,6 +389,49 @@ struct SettingsView: View {
         }
     }
 
+    #if DEBUG && ENABLE_NETWORK_EXTENSION
+    // MARK: - Reload Extension (DEBUG only)
+
+    /// Force the Network Extension to reload its binary by sending
+    /// the debug-reload appMessage. The extension calls
+    /// `cancelTunnelWithError`, iOS spawns a fresh extension
+    /// process on the next start, and the new binary on disk is
+    /// loaded — without the user manually deleting and re-adding
+    /// the VPN profile in iOS Settings.
+    private func reloadExtensionCard() -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.accentColor)
+
+                Text("Reload Extension")
+                    .font(.headline)
+                    .foregroundStyle(Theme.textPrimary)
+
+                Spacer()
+
+                Button("Reload") {
+                    Task {
+                        if let tunnel = appServices.tunnelManager {
+                            await tunnel.debugReloadExtension()
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(Theme.accentColor)
+            }
+
+            Text("Force the Network Extension to reload its binary after a build. Sends `cancelTunnelWithError` so iOS spawns a fresh extension process on the next start. Debug builds only.")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .glassCard()
+    }
+    #endif
+
     #if DEBUG
     // MARK: - Re-run Onboarding (DEBUG only)
 
@@ -539,9 +585,10 @@ struct SettingsView: View {
                     .tint(Theme.accentColor)
                 }
 
-                Text("Keep TCP and LAN connections alive when the app is backgrounded. Enables receiving messages and notifications without opening the app.")
+                Text("Keeps the TCP relay connection alive while the app is backgrounded so messages arrive when your phone is locked. Auto Discovery and Nearby need the app to be open — iOS doesn't let extensions send LAN packets in the background.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 6) {
                     let displayedRunning = tunnelPending ?? tunnel.isRunning

@@ -30,11 +30,16 @@ final class OnboardingViewModel {
     var backgroundTunnelEnabled: Bool = true
     /// True when the flow is being re-run from Settings → Advanced
     /// (existing user who wants to walk through onboarding again,
-    /// e.g. to see a newly-added step). `completeOnboarding()` skips
-    /// identity / interface / display-name creation in this mode so
-    /// re-running the flow doesn't duplicate data — it only commits
-    /// the values that the new onboarding steps drive.
-    var isRestart: Bool = false
+    /// e.g. to see a newly-added step). `completeOnboarding()` and
+    /// `prepareIdentity()` both skip identity / interface /
+    /// display-name creation in this mode so re-running the flow
+    /// doesn't duplicate data or replace the active identity — it
+    /// only commits the values that the new onboarding steps drive.
+    let isRestart: Bool
+
+    init(isRestart: Bool = false) {
+        self.isRestart = isRestart
+    }
 
     /// Identity created during onboarding (set by prepareIdentity).
     var createdIdentity: LocalIdentity?
@@ -99,7 +104,25 @@ final class OnboardingViewModel {
     // MARK: - Identity Preparation
 
     /// Create the identity eagerly so the QR code is available on the complete page.
+    ///
+    /// Bails out when re-running onboarding for an existing user
+    /// (`isRestart == true`) — creating a fresh identity here was
+    /// silently switching them onto a brand-new empty one and
+    /// hiding their existing chats. For restart we use the active
+    /// identity to populate the QR string.
     func prepareIdentity(identityManager: IdentityManager) async {
+        if isRestart {
+            // Build the QR from the currently-active identity, no
+            // new keys created.
+            if qrCodeString.isEmpty,
+               let active = await identityManager.getActiveIdentity() {
+                if let identity = try? await identityManager.loadIdentityKeys(for: active.identityHash) {
+                    let pubKeyHex = identity.publicKeys.map { String(format: "%02x", $0) }.joined()
+                    qrCodeString = "lxma://\(active.destinationHash):\(pubKeyHex)"
+                }
+            }
+            return
+        }
         guard createdIdentity == nil else { return }
         do {
             let local = try await identityManager.createIdentity(displayName: effectiveDisplayName)

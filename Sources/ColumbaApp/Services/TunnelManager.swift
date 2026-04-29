@@ -227,6 +227,25 @@ public final class TunnelManager: @unchecked Sendable {
         logger.info("Tunnel disabled")
     }
 
+    /// Tell the extension to terminate its current session via
+    /// `cancelTunnelWithError`, forcing iOS to spawn a fresh
+    /// extension process the next time the tunnel starts. Used by
+    /// `tools/auto-test/run_test.sh` to reload the extension binary
+    /// after a build without the user manually deleting and
+    /// re-adding the VPN profile in iOS Settings.
+    public func debugReloadExtension() async {
+        guard let session = manager?.connection as? NETunnelProviderSession else {
+            return
+        }
+        let message = Data([0xFE]) // DEBUG_RELOAD_COMMAND in extension
+        do {
+            try session.sendProviderMessage(message) { _ in }
+            logger.info("Debug reload requested")
+        } catch {
+            logger.error("Debug reload failed: \(error)")
+        }
+    }
+
     /// Send a raw frame to the extension for transmission.
     ///
     /// The extension will route this to the appropriate NWConnection

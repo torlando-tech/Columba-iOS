@@ -59,10 +59,22 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// HDLC receive buffer for TCP stream framing
     private var tcpReceiveBuffer = Data()
 
+    /// One-shot diagnostic UDP listener on port 9999. Used by
+    /// `tools/auto-test/run_test.sh` to determine whether an
+    /// iOS Network Extension can receive inbound UDP unicast at
+    /// all — independent of any AutoInterface protocol logic.
+    /// We hold the reference here so it stays alive across
+    /// `startTunnel` / `applyConfigs` calls.
+    private var diagListener: NWListener?
+
     /// HDLC constants
     private static let FLAG: UInt8 = 0x7E
     private static let ESC: UInt8 = 0x7D
     private static let ESC_MASK: UInt8 = 0x20
+
+    /// AppMessage tag commands sent from the app to the extension
+    /// for debugging-only purposes.
+    private static let DEBUG_RELOAD_COMMAND: UInt8 = 0xFE
 
     // MARK: - Tunnel Lifecycle
 
@@ -84,6 +96,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             NSLog("[EXT] containerURL returned nil at startTunnel — App Group not accessible from extension")
         }
         ExtensionDiagLog.log("[EXT] startTunnel called")
+
+        // Diagnostic listener — answers the question "can a
+        // NEPacketTunnelProvider extension receive inbound UDP
+        // unicast at all" independent of AutoInterface protocol
+        // wiring. Test harness sends a UDP datagram to port 9999
+        // from a Mac on the same Wi-Fi and checks whether
+        // `[EXT/Diag] received` lands in the diag log.
+        startDiagListener()
+
+        // Diagnostic outbound test — answers "can the extension
+        // send UDP unicast to the LAN at all". Sends to a hard-
+        // coded test peer (the Mac's link-local address used by
+        // `tools/auto-test/`); the test harness listens on
+        // port 9998 and reports whether the packet arrived.
+        sendDiagOutboundProbe()
 
         // Apply current interface configs.
         applyConfigs()
@@ -171,13 +198,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             currentTCP = nil
         }
 
-        // Auto: not tunneled in Phase 1. NEPacketTunnelProvider's
-        // sandbox doesn't deliver inbound UDP unicast to extension
-        // sockets — verified empirically with both POSIX sockets
-        // (reticulum-swift AutoInterface) and Apple's Network
-        // framework (`NWListener`). The app keeps AutoInterface
-        // running locally for foreground use; background Auto needs
-        // a different architecture and is out of scope for this PR.
+        // Auto: not tunneled. NEPacketTunnelProvider extensions
+        // can receive UDP unicast and subscribe to multicast (we
+        // verified with Mac-side test traffic + tcpdump), but
+        // cannot send any UDP to the LAN — `NWConnection` reports
+        // success while the packet silently never reaches the wire,
+        // POSIX `sendto` returns `ENETUNREACH`, and even responses
+        // on `NWListener`-accepted connections fail with
+        // `ECANCELED`. Without outbound UDP we can't HELLO out for
+        // discovery, can't reverse-peer to known peers, and can't
+        // reply to peers that send us data — so AutoInterface in
+        // the extension is fundamentally non-functional. The app's
+        // local AutoInterface owns Auto for foreground use.
         _ = configs.autoGroupId
     }
 
@@ -211,6 +243,29 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         // Format: [1-byte interface tag][N-byte HDLC-framed data]
+        guard messageData.count >= 1 else {
+            completionHandler?(nil)
+            return
+        }
+
+        // Debug commands (tags reserved 0xF0-0xFF). Lets the test
+        // harness force-reload the extension so it picks up the
+        // freshly-installed binary without the user toggling the
+        // VPN profile in iOS Settings.
+        if messageData[0] == Self.DEBUG_RELOAD_COMMAND {
+            ExtensionDiagLog.log("[EXT] debug reload requested via handleAppMessage")
+            completionHandler?(Data([0x01]))
+            // Killing the tunnel session forces iOS to re-spawn the
+            // extension process on the next start, picking up the
+            // new binary on disk.
+            cancelTunnelWithError(NSError(
+                domain: "ColumbaDebug",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "Debug reload"]
+            ))
+            return
+        }
+
         guard messageData.count >= 2 else {
             completionHandler?(nil)
             return
@@ -232,10 +287,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     }
                 })
             case FrameInterfaceTag.auto.rawValue:
-                // Auto isn't tunneled (see `applyConfigsLocked`).
-                // The app's local AutoInterface should not be in
-                // tunnel mode; if we do see auto frames here the
-                // wiring drifted somewhere upstream.
+                // Auto isn't tunneled (extension can't send UDP to
+                // the LAN — see `applyConfigsLocked`). The app's
+                // AutoInterface should never enter tunnel mode, so
+                // we shouldn't see auto frames here.
                 NSLog("[EXT] Unexpected auto frame; auto isn't tunneled")
                 ExtensionDiagLog.log("[EXT] Unexpected auto frame; auto isn't tunneled")
             default:
@@ -367,6 +422,74 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         if !frames.isEmpty {
             postDarwinNotification()
         }
+    }
+
+    // MARK: - Diagnostic Listener helpers
+
+    private static func hexString(_ data: Data) -> String {
+        return data.map { String(format: "%02x", $0) }.joined()
+    }
+
+    // MARK: - Diagnostic Listener
+
+    /// Open a plain `NWListener` on UDP port 9999 with no parameter
+    /// constraints whatsoever. Logs every state transition + every
+    /// inbound packet. Lets us answer empirically whether an iOS
+    /// `NEPacketTunnelProvider` extension can receive inbound UDP
+    /// unicast at all, instead of speculating about it.
+    private func startDiagListener() {
+        guard let port = NWEndpoint.Port(rawValue: 9999) else { return }
+        let listener: NWListener
+        do {
+            listener = try NWListener(using: .udp, on: port)
+        } catch {
+            ExtensionDiagLog.log("[EXT/Diag] NWListener init failed: \(error)")
+            return
+        }
+        self.diagListener = listener
+        listener.stateUpdateHandler = { state in
+            ExtensionDiagLog.log("[EXT/Diag] listener state: \(state)")
+        }
+        listener.newConnectionHandler = { conn in
+            ExtensionDiagLog.log("[EXT/Diag] received from \(conn.endpoint)")
+            conn.start(queue: .global(qos: .utility))
+            conn.receiveMessage { content, _, _, _ in
+                if let content {
+                    ExtensionDiagLog.log("[EXT/Diag] payload \(content.count)B: \(Self.hexString(Data(content.prefix(32))))")
+                }
+                conn.cancel()
+            }
+        }
+        listener.start(queue: .global(qos: .utility))
+        ExtensionDiagLog.log("[EXT/Diag] listening on udp/9999")
+    }
+
+    // MARK: - Diagnostic Outbound
+
+    /// Send a UDP datagram to a hard-coded Mac test address to
+    /// verify whether the extension's outbound socket actually
+    /// reaches the LAN. The Mac's address is the one we use from
+    /// `tools/auto-test/` (`fe80::c2d:e309:eb09:6343`); listen on
+    /// the Mac with `nc -lu -6 9998` while running this build.
+    private func sendDiagOutboundProbe() {
+        guard let host = IPv6Address("fe80::c2d:e309:eb09:6343"),
+              let port = NWEndpoint.Port(rawValue: 9998) else { return }
+        let conn = NWConnection(host: .ipv6(host), port: port, using: .udp)
+        conn.stateUpdateHandler = { state in
+            ExtensionDiagLog.log("[EXT/Diag] outbound conn state: \(state)")
+            if state == .ready {
+                let payload = "diag-outbound-probe-\(Date().timeIntervalSince1970)".data(using: .utf8)!
+                conn.send(content: payload, completion: .contentProcessed { error in
+                    if let error {
+                        ExtensionDiagLog.log("[EXT/Diag] outbound probe failed: \(error)")
+                    } else {
+                        ExtensionDiagLog.log("[EXT/Diag] outbound probe sent (\(payload.count)B)")
+                    }
+                    conn.cancel()
+                })
+            }
+        }
+        conn.start(queue: .global(qos: .utility))
     }
 
     // MARK: - HDLC Frame Extraction

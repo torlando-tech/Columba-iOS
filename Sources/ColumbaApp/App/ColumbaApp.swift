@@ -415,12 +415,11 @@ struct RootView: View {
             let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
             DiagLog.log("[STARTUP] Step 4: \(enabledInterfaces.count) enabled interfaces")
 
-            // 5. Initialize AppServices with identity (TCP connected separately below)
+            // 5. Initialize AppServices with identity (interfaces connected in Step 7)
             DiagLog.log("[STARTUP] Step 5: initialize AppServices")
             try await appServices.initialize(
                 identity: identity,
-                identityHash: active.identityHash,
-                tcpServerAddress: ""
+                identityHash: active.identityHash
             )
             DiagLog.log("[STARTUP] Step 5: AppServices initialized OK")
 
