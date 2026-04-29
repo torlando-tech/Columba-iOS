@@ -110,6 +110,8 @@ public struct Contact: Identifiable, Sendable, Hashable {
     public func copy(
         displayName: String?? = nil,
         badgeType: ContactBadgeType? = nil,
+        hopCount: Int? = nil,
+        signalStrength: Int? = nil,
         isFavorite: Bool? = nil,
         isPinned: Bool? = nil,
         isRelay: Bool? = nil
@@ -119,7 +121,8 @@ public struct Contact: Identifiable, Sendable, Hashable {
             displayName: displayName ?? self.displayName,
             identityHash: identityHash, identityHashHex: identityHashHex,
             badgeType: badgeType ?? self.badgeType,
-            hopCount: hopCount, signalStrength: signalStrength,
+            hopCount: hopCount ?? self.hopCount,
+            signalStrength: signalStrength ?? self.signalStrength,
             timestamp: timestamp, isOnline: isOnline,
             isFavorite: isFavorite ?? self.isFavorite,
             isPinned: isPinned ?? self.isPinned,
@@ -496,12 +499,26 @@ public final class ContactsViewModel {
             pendingAnnounces.append(contact)
         }
 
-        // Update myContacts badge if this announce changes the contact type
-        if let myIndex = myContacts.firstIndex(where: { $0.id == contact.id }),
-           myContacts[myIndex].badgeType != contact.badgeType {
-            myContacts[myIndex] = myContacts[myIndex].copy(
-                badgeType: contact.badgeType, isRelay: contact.isRelay
-            )
+        // Update myContacts from this announce — badge, relay state, and
+        // hops/signal all flow through PathEntry only, so a contact already
+        // saved under the My Contacts tab refreshes the moment a new
+        // announce arrives instead of waiting for a manual refresh.
+        // (Note: the `networkAnnounces.sort` call removed by #44 used to
+        // sit just above this block — sorting on every announce is what
+        // caused the scrolling-jumps regression.)
+        if let myIndex = myContacts.firstIndex(where: { $0.id == contact.id }) {
+            let existing = myContacts[myIndex]
+            if existing.badgeType != contact.badgeType
+                || existing.hopCount != contact.hopCount
+                || existing.signalStrength != contact.signalStrength
+                || existing.isRelay != contact.isRelay {
+                myContacts[myIndex] = existing.copy(
+                    badgeType: contact.badgeType,
+                    hopCount: contact.hopCount,
+                    signalStrength: contact.signalStrength,
+                    isRelay: contact.isRelay
+                )
+            }
         }
 
         // Re-sync relay state (auto-select may have picked this new node)
@@ -829,11 +846,13 @@ public final class ContactsViewModel {
         return data
     }
 
-    /// Enrich myContacts badge types from network announces.
+    /// Enrich myContacts from network announces.
     ///
-    /// ConversationRecord has no badge/relay fields, so Contact(from: ConversationRecord)
-    /// always produces badgeType=.peer. Cross-reference with networkAnnounces (built from
-    /// PathEntry which CAN detect relay/audio) to restore the correct badge.
+    /// ConversationRecord has no badge / relay / hops / signal fields, so
+    /// Contact(from: ConversationRecord) always produces `badgeType=.peer`,
+    /// `hopCount=0`, `signalStrength=4`. Cross-reference with networkAnnounces
+    /// (built from PathEntry which has all of these) to restore the correct
+    /// values whenever an announce is currently visible.
     @MainActor
     private func enrichMyContactBadges() {
         let announceById = Dictionary(
@@ -841,11 +860,17 @@ public final class ContactsViewModel {
             uniquingKeysWith: { first, _ in first }
         )
         myContacts = myContacts.map { contact in
-            if let announce = announceById[contact.id],
-               announce.badgeType != contact.badgeType {
-                return contact.copy(badgeType: announce.badgeType, isRelay: announce.isRelay)
-            }
-            return contact
+            guard let announce = announceById[contact.id] else { return contact }
+            let badgeNeedsUpdate = announce.badgeType != contact.badgeType
+            let hopsNeedUpdate = announce.hopCount != contact.hopCount
+                || announce.signalStrength != contact.signalStrength
+            guard badgeNeedsUpdate || hopsNeedUpdate else { return contact }
+            return contact.copy(
+                badgeType: announce.badgeType,
+                hopCount: announce.hopCount,
+                signalStrength: announce.signalStrength,
+                isRelay: announce.isRelay
+            )
         }
     }
 
