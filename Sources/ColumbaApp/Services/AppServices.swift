@@ -669,14 +669,27 @@ public final class AppServices {
     }
 
     #if ENABLE_NETWORK_EXTENSION
-    /// Switch every TCPInterface and AutoInterface into or out of
-    /// tunnel mode in response to the VPN extension's status.
+    /// Switch every TCPInterface into or out of tunnel mode in
+    /// response to the VPN extension's status.
     ///
     /// In tunnel mode the interface tears down its own NWConnection
     /// and routes outbound bytes through `TunnelManager.sendFrame`,
     /// which the extension forwards on its authoritative socket.
     /// Inbound continues to flow via `ExtensionFrameReader` →
     /// `transport.handleReceivedData` regardless.
+    ///
+    /// AutoInterface is intentionally left running locally even when
+    /// the tunnel is up. The extension's current `NWConnectionGroup`
+    /// uses a hard-coded `ff02::1` and a single port, but reticulum-
+    /// swift's AutoInterface derives its multicast address per
+    /// `groupId` (`ff12:0:...`) and runs per-peer unicast on a
+    /// separate data port — so putting Auto into tunnel mode tears
+    /// down the local NWConnectionGroup and replaces it with a
+    /// non-functional one in the extension. AutoInterface is
+    /// intrinsically local-Wi-Fi only anyway; iOS suspending
+    /// multicast in the background is an OS limitation, not one the
+    /// tunnel can paper over. TCP keeps delivering messages while
+    /// backgrounded, which is the whole point of Phase 1.
     @MainActor
     private func applyTunnelModeToInterfaces(active: Bool) async {
         guard let tunnel = tunnelManager else { return }
@@ -687,20 +700,12 @@ public final class AppServices {
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
                 }
             }
-            if let auto = autoInterface {
-                await auto.beginTunnelMode { [weak tunnel] frame in
-                    await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.auto.rawValue)
-                }
-            }
-            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP + \(self.autoInterface != nil ? 1 : 0) Auto interface(s)")
+            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s); Auto stays local")
         } else {
             for (_, iface) in tcpInterfaces {
                 await iface.endTunnelMode()
             }
-            if let auto = autoInterface {
-                await auto.endTunnelMode()
-            }
-            DiagLog.log("[TUNNEL] disabled tunnel mode; interfaces resuming local connections")
+            DiagLog.log("[TUNNEL] disabled tunnel mode; TCP interfaces resuming local connections")
         }
     }
     #endif
