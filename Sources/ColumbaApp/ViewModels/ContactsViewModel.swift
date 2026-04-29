@@ -524,11 +524,15 @@ public final class ContactsViewModel {
                     .map { Contact(from: $0) }
                     .sorted { $0.timestamp > $1.timestamp }
             }
-            // Fresh load reads everything from the path table, so any
-            // announces buffered for an in-progress session no longer
-            // need to be held back — clear the bucket so the "show new"
-            // pill resets to zero.
-            pendingAnnounces.removeAll()
+            // Drop only the pending entries that the fresh path-table
+            // snapshot already covers. `handleNewPathEntry` is also
+            // @MainActor and can interleave with the await above, so a
+            // blanket `removeAll()` would silently delete announces
+            // that arrived *during* the suspension and aren't in the
+            // snapshot yet. Filtering by id keeps those late arrivals
+            // queued for the next flush.
+            let visibleIds = Set(networkAnnounces.map(\.id))
+            pendingAnnounces.removeAll { visibleIds.contains($0.id) }
 
             // Mark network announces that are already saved contacts
             markSavedContacts()
@@ -577,10 +581,13 @@ public final class ContactsViewModel {
                 .map { Contact(from: $0) }
                 .sorted { $0.timestamp > $1.timestamp }
         }
-        // Refresh re-reads the full path table, so the buffered new
-        // announces are already present in the rebuilt list — drop the
-        // bucket so the "show new" pill resets.
-        pendingAnnounces.removeAll()
+        // Drop only the pending entries the fresh path-table snapshot
+        // already covers — see `loadContacts` for the same race
+        // (handleNewPathEntry can interleave with the await above and
+        // queue announces that aren't in the snapshot yet; a blanket
+        // removeAll() would silently lose them).
+        let visibleIds = Set(networkAnnounces.map(\.id))
+        pendingAnnounces.removeAll { visibleIds.contains($0.id) }
 
         // Mark network announces that are already saved contacts
         markSavedContacts()

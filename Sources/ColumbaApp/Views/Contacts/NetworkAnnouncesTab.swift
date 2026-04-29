@@ -206,7 +206,7 @@ struct NetworkAnnouncesTab: View {
     private var announcesList: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                if viewModel.pendingAnnounces.count > 0 {
+                if !viewModel.pendingAnnounces.isEmpty {
                     showNewBanner
                 }
                 ForEach(viewModel.filteredNetworkAnnounces) { contact in
