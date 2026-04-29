@@ -414,8 +414,6 @@ struct SettingsView: View {
                                         try await tunnel.disable()
                                     }
                                     try Task.checkCancellation()
-                                    UserDefaults(suiteName: appGroupIdentifier)?
-                                        .set(newValue, forKey: SharedDefaultsConstants.tunnelEnabledKey)
                                     tunnelErrorMessage = nil
                                     // Wait briefly for the VPN status to
                                     // settle into the requested state
@@ -428,19 +426,26 @@ struct SettingsView: View {
                                         if Task.isCancelled { break }
                                         try? await Task.sleep(nanoseconds: 200_000_000)
                                     }
-                                    // If we asked for ON but the tunnel
-                                    // never reached `.connected`, the
-                                    // failure happened asynchronously
-                                    // after `startVPNTunnel()` returned
-                                    // successfully (airplane mode, routing
-                                    // failure, extension crash). Surface
-                                    // the localized reason so the toggle
-                                    // doesn't silently bounce.
                                     if !Task.isCancelled && newValue && !tunnel.isRunning {
+                                        // We asked for ON but the tunnel
+                                        // never reached `.connected` —
+                                        // failure happened asynchronously
+                                        // after `startVPNTunnel()` returned
+                                        // (airplane mode, routing failure,
+                                        // extension crash). Surface the
+                                        // reason and *don't* persist the
+                                        // user's intent to the App Group,
+                                        // otherwise auto-restart would loop
+                                        // the same failure on every relaunch.
                                         let reason = await tunnel.lastFailureReason()
                                             ?? "Background Transport could not connect"
                                         DiagLog.log("[TUNNEL] start did not reach .connected: \(reason)")
                                         tunnelErrorMessage = reason
+                                    } else if !Task.isCancelled {
+                                        // The actual outcome matches the
+                                        // user's intent; safe to persist.
+                                        UserDefaults(suiteName: appGroupIdentifier)?
+                                            .set(newValue, forKey: SharedDefaultsConstants.tunnelEnabledKey)
                                     }
                                 } catch is CancellationError {
                                     // Superseded by a newer toggle —
@@ -468,13 +473,17 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.textSecondary)
 
                 HStack(spacing: 6) {
+                    let displayedRunning = tunnelPending ?? tunnel.isRunning
+                    let isTransitional = tunnelPending != nil && tunnelPending != tunnel.isRunning
                     Circle()
-                        .fill(tunnel.isRunning ? Theme.success : Theme.textSecondary)
+                        .fill(displayedRunning ? Theme.success : Theme.textSecondary)
                         .frame(width: 8, height: 8)
 
-                    Text(tunnel.isRunning ? "Running" : "Stopped")
+                    Text(isTransitional
+                        ? (displayedRunning ? "Starting…" : "Stopping…")
+                        : (displayedRunning ? "Running" : "Stopped"))
                         .font(.caption)
-                        .foregroundStyle(tunnel.isRunning ? Theme.success : Theme.textSecondary)
+                        .foregroundStyle(displayedRunning ? Theme.success : Theme.textSecondary)
                 }
 
                 if let tunnelErrorMessage {
