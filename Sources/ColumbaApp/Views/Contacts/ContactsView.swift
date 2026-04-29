@@ -411,21 +411,17 @@ public struct ContactsView: View {
         Task {
             await viewModel?.addToContacts(contact)
 
-            // If the user popped back to the contacts list (or
-            // navigated elsewhere) while `addToContacts` was awaiting,
-            // don't yank them into the chat. The async hop opens a
-            // window where `path` can be `[]` (after a Back tap) but
-            // an unconditional assignment of `[.chat(conversation)]`
-            // would push the chat onto the root anyway — silent
-            // navigation the user didn't ask for.
+            // Bail if the user navigated away during the async hop —
+            // either popped Back to the contacts list (`path == []`)
+            // or replaced the destination another way. Without this
+            // guard an unconditional `path` write would push the chat
+            // onto whatever stack they navigated to, hijacking their
+            // navigation.
             //
-            // Compare by `id` rather than the whole Contact value:
-            // NodeDetailsView's polling loop refreshes `liveContact`
-            // (timestamp / isOnline / hopCount), so `displayedContact`
-            // passed in here can hold newer field values than the
-            // Contact stored when the path was first pushed. Equality
-            // over all fields would silently fail and the button
-            // would do nothing.
+            // Compare by `id`, not full Contact equality: NodeDetails
+            // polls the path table and refreshes `liveContact`
+            // (timestamp / isOnline / hopCount), so the contact passed
+            // in here will not `==` the value held in `path`.
             guard case .nodeDetails(let pathContact) = path.last,
                   pathContact.id == contact.id else { return }
 
@@ -439,23 +435,34 @@ public struct ContactsView: View {
                 isFavorite: false
             )
 
-            // Replace the entire navigation stack in one assignment so SwiftUI
-            // performs a single push-style crossfade from NodeDetails to the
-            // chat instead of popping to the Contacts root first. The
-            // intermediate pop-then-push that `navigationDestination(item:)`
-            // produced was visible as a flash of the tab's root (and on iOS
-            // 17 sometimes the wrong tab's root) before the chat appeared.
-            // The back button still returns to the contacts list (path: []).
-            path = [.chat(conversation)]
+            // Append, don't replace.
+            //
+            // `NavigationStack(path:)` reconciles by diffing the array.
+            // Replacing `[.nodeDetails]` with `[.chat]` is computed as
+            // "pop nodeDetails, push chat" — and SwiftUI runs that as a
+            // pop-to-root-then-push, briefly exposing the contacts list
+            // (the regression the user reported on issue #30 follow-up).
+            // PR #25 claimed single-assignment was a "single crossfade"
+            // but that wasn't really how NavigationStack works; the
+            // flash was just tighter on the device that PR was tested
+            // on.
+            //
+            // Pushing instead means the chat slides in over NodeDetails
+            // — no root flash. Trade-off: Back from the chat now lands
+            // on NodeDetails (one tap to contacts list), which is
+            // arguably better UX anyway since that's the screen they
+            // came from.
+            path.append(.chat(conversation))
         }
     }
 
     // MARK: - Browse Site
 
-    /// Replace the node details destination with the NomadNet browser for the given site.
+    /// Push the NomadNet browser on top of the current node details screen.
     private func browseSite(for contact: Contact) {
-        // Single-assignment stack replacement (see `startChat` for rationale).
-        path = [.browseSite(contact)]
+        // Append rather than replace — see `startChat` for the rationale on
+        // why `path = [..]` causes a contacts-root flash.
+        path.append(.browseSite(contact))
     }
 
     private var toolbarButtons: some View {
