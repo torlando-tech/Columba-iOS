@@ -77,6 +77,12 @@ struct OnboardingView: View {
                             onContinue: { viewModel.nextPage() }
                         )
                     case 3:
+                        BackgroundTransportPage(
+                            enabled: $viewModel.backgroundTunnelEnabled,
+                            onBack: { viewModel.previousPage() },
+                            onContinue: { viewModel.nextPage() }
+                        )
+                    case 4:
                         PermissionsPage(
                             notificationsGranted: viewModel.notificationsGranted,
                             onRequestNotifications: {
@@ -85,7 +91,7 @@ struct OnboardingView: View {
                             onBack: { viewModel.previousPage() },
                             onContinue: { viewModel.nextPage() }
                         )
-                    case 4:
+                    case 5:
                         CompletePage(
                             displayName: viewModel.effectiveDisplayName,
                             interfaceNames: viewModel.selectedInterfaceNames,

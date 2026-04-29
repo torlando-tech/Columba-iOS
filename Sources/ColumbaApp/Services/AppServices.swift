@@ -622,6 +622,22 @@ public final class AppServices {
             }
         }
         await tunnel.load()
+
+        // Auto-restart the tunnel if the user previously enabled
+        // Background Transport (Settings toggle or onboarding step
+        // both write this key). Without this the user has to re-flip
+        // the toggle every relaunch — iOS keeps the VPN profile but
+        // not the running session across app launches.
+        let tunnelShouldStart = UserDefaults(suiteName: appGroupIdentifier)?
+            .bool(forKey: SharedDefaultsConstants.tunnelEnabledKey) ?? false
+        if tunnelShouldStart && !tunnel.isRunning {
+            do {
+                try await tunnel.start()
+                DiagLog.log("[TUNNEL] auto-started from saved pref")
+            } catch {
+                DiagLog.log("[TUNNEL] auto-start failed: \(error)")
+            }
+        }
         #endif
 
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")

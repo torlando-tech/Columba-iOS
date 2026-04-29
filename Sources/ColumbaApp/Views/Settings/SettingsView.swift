@@ -44,6 +44,14 @@ struct SettingsView: View {
     /// Persisted across body re-evaluations so showRNodeWizard=true is not lost
     /// when SettingsView re-renders due to connection status polling changes.
     @State private var interfaceViewModel: InterfaceManagementViewModel?
+    #if ENABLE_NETWORK_EXTENSION
+    /// Last error message from the Background Transport toggle. Cleared
+    /// on the next successful toggle. Surfaced inline below the toggle
+    /// so install / start failures (entitlement mismatch, unregistered
+    /// App ID, user denying the VPN-profile prompt) are visible
+    /// instead of silently bouncing the toggle off.
+    @State private var tunnelErrorMessage: String?
+    #endif
 
     // MARK: - Body
 
@@ -377,10 +385,20 @@ struct SettingsView: View {
                         get: { tunnel.isRunning },
                         set: { newValue in
                             Task {
-                                if newValue {
-                                    try? await tunnel.start()
-                                } else {
-                                    tunnel.stop()
+                                do {
+                                    if newValue {
+                                        try await tunnel.start()
+                                    } else {
+                                        try await tunnel.disable()
+                                    }
+                                    UserDefaults(suiteName: appGroupIdentifier)?
+                                        .set(newValue, forKey: SharedDefaultsConstants.tunnelEnabledKey)
+                                    tunnelErrorMessage = nil
+                                } catch {
+                                    let action = newValue ? "start" : "disable"
+                                    let msg = "Background Transport \(action) failed: \(error.localizedDescription)"
+                                    DiagLog.log(msg)
+                                    tunnelErrorMessage = error.localizedDescription
                                 }
                             }
                         }
@@ -401,6 +419,13 @@ struct SettingsView: View {
                     Text(tunnel.isRunning ? "Running" : "Stopped")
                         .font(.caption)
                         .foregroundStyle(tunnel.isRunning ? Theme.success : Theme.textSecondary)
+                }
+
+                if let tunnelErrorMessage {
+                    Text(tunnelErrorMessage)
+                        .font(.caption)
+                        .foregroundStyle(Theme.error)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(16)

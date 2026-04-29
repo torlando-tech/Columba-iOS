@@ -36,6 +36,13 @@ public enum SharedDefaultsConstants {
     /// app's `InterfaceRepository` and the extension's
     /// `loadInterfaceConfigs` read from this key.
     public static let interfacesKey = "com.columba.interfaces"
+
+    /// Shared UserDefaults key for the user's "Background Transport"
+    /// preference. Persisted across launches so `AppServices` can
+    /// auto-restart the tunnel without waiting for the user to
+    /// re-toggle every relaunch. Written by the Settings toggle and
+    /// by the onboarding step; read by `AppServices.initialize()`.
+    public static let tunnelEnabledKey = "com.columba.tunnelEnabled"
 }
 
 /// Interface tag identifying which network interface a frame arrived on.

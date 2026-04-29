@@ -23,6 +23,11 @@ final class OnboardingViewModel {
     var selectedTcpServer: TcpCommunityServer? = nil
     var notificationsGranted: Bool = false
     var isSaving: Bool = false
+    /// Pre-checked default for the Background Transport onboarding step.
+    /// User can opt out before finishing — when they do, the tunnel is
+    /// not auto-started on first launch and the toggle in Settings →
+    /// Background Transport defaults off until flipped manually.
+    var backgroundTunnelEnabled: Bool = true
 
     /// Identity created during onboarding (set by prepareIdentity).
     var createdIdentity: LocalIdentity?
@@ -30,7 +35,7 @@ final class OnboardingViewModel {
     var qrCodeString: String = ""
 
     /// Total number of onboarding pages.
-    static let pageCount = 5
+    static let pageCount = 6
 
     // MARK: - Computed
 
@@ -128,6 +133,13 @@ final class OnboardingViewModel {
         if notificationsGranted {
             UserDefaults.standard.set(true, forKey: "notifications_enabled")
         }
+
+        // 4b. Persist Background Transport preference. AppServices.initialize()
+        // reads this from the App Group container on first launch and
+        // auto-starts the tunnel (which triggers the VPN-profile prompt
+        // the first time). The Settings toggle keeps the same key in sync.
+        UserDefaults(suiteName: appGroupIdentifier)?
+            .set(backgroundTunnelEnabled, forKey: SharedDefaultsConstants.tunnelEnabledKey)
 
         // 5. Mark onboarding and settings as initialized
         UserDefaults.standard.set(true, forKey: "has_completed_onboarding")

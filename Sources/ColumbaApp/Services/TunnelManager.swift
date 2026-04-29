@@ -134,10 +134,26 @@ public final class TunnelManager: @unchecked Sendable {
         logger.info("Tunnel started")
     }
 
-    /// Stop the tunnel extension.
-    public func stop() {
-        manager?.connection.stopVPNTunnel()
-        logger.info("Tunnel stopped")
+    /// Disable the tunnel: stop the VPN session and clear `isEnabled`
+    /// in the saved profile so iOS releases routing fully.
+    ///
+    /// Calling `stopVPNTunnel()` alone leaves `manager.isEnabled == true`,
+    /// which iOS treats as "the tunnel can be auto-resumed" and can
+    /// keep parts of the routing table installed. That is what caused
+    /// the previous "toggle off but TCP stays broken" report — the
+    /// profile was still partially live.
+    ///
+    /// Use `uninstall()` instead if the user wants to remove the
+    /// VPN profile from iOS Settings entirely.
+    public func disable() async throws {
+        guard let manager else { return }
+        manager.connection.stopVPNTunnel()
+        if manager.isEnabled {
+            manager.isEnabled = false
+            try await manager.saveToPreferences()
+        }
+        isEnabled = false
+        logger.info("Tunnel disabled")
     }
 
     /// Send a raw frame to the extension for transmission.
