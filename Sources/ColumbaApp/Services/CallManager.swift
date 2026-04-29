@@ -494,6 +494,19 @@ public final class CallManager {
     /// Outgoing calls reach this with `isIncoming == false` and report
     /// the connecting state via `reportOutgoingCall`.
     func handleCallerIdentified(_ remoteIdentity: Identity) {
+        // Bail BEFORE mutating call state if the call was reset between
+        // prepareForIncomingCall (or the outgoing-call setup) and
+        // identify completing — e.g. an abort or remote hangup raced
+        // the LXST identify exchange. Setting `callState = .ringing`
+        // here without a UUID would leave the in-app UI stuck on
+        // ringing with no CallKit registration to dismiss it through.
+        guard let uuid = self.currentCallUUID else {
+            self.logger.warning(
+                "[CALL] handleCallerIdentified: no currentCallUUID — call was reset before identify completed, skipping (isIncoming=\(self.isIncoming, privacy: .public))"
+            )
+            return
+        }
+
         self.peerHash = remoteIdentity.hexHash
         self.callState = .ringing
         self.logger.error("[CALL] Ringing from: \(remoteIdentity.hexHash, privacy: .public)")
@@ -508,15 +521,6 @@ public final class CallManager {
             // `updateCallerName` after the UUID is registered with
             // CallKit (i.e. after this `reportIncomingCall` lands).
             #if os(iOS)
-            guard let uuid = self.currentCallUUID else {
-                // currentCallUUID was cleared by resetState() between
-                // prepareForIncomingCall() and identify completing —
-                // e.g. an abort or remote hangup raced the LXST identify
-                // exchange. Without a UUID we can't surface the call to
-                // CallKit; log so the silent-skip is observable.
-                self.logger.warning("[CALL] handleCallerIdentified (incoming): no currentCallUUID — call was reset before identify completed, skipping CallKit")
-                return
-            }
             self.callKitManager?.reportIncomingCall(uuid: uuid, peerName: peerName) { [weak self] error in
                 if let error = error {
                     Task { @MainActor in
@@ -528,10 +532,6 @@ public final class CallManager {
         } else {
             // Outgoing call: report connecting state to CallKit
             #if os(iOS)
-            guard let uuid = self.currentCallUUID else {
-                self.logger.warning("[CALL] handleCallerIdentified (outgoing): no currentCallUUID — outgoing call was reset before remote identified, skipping CallKit")
-                return
-            }
             self.callKitManager?.reportOutgoingCall(uuid: uuid)
             #endif
         }

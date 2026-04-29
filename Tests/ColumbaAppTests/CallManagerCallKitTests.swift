@@ -141,6 +141,7 @@ final class CallManagerCallKitTests: XCTestCase {
         manager.prepareForIncomingCall()
         // Simulate resetState() running mid-flight (e.g. user dismissed
         // an in-app surface, or a hangup raced identify).
+        let resetCallState = manager.callState
         manager.currentCallUUID = nil
 
         let stubIdentity = Identity()
@@ -151,6 +152,15 @@ final class CallManagerCallKitTests: XCTestCase {
             0,
             "CallKit must not be invoked once the call's UUID has been reset"
         )
+        // callState must NOT be flipped to .ringing on a reset-race —
+        // doing so would leave the in-app UI stuck on ringing with no
+        // CallKit registration to drive a dismissal.
+        XCTAssertEqual(
+            manager.callState,
+            resetCallState,
+            "callState must not advance to .ringing when the UUID has been cleared by a reset race"
+        )
+        XCTAssertNil(manager.peerHash, "peerHash must not be populated on a reset-race")
     }
 }
 
