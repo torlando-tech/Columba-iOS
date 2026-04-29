@@ -628,14 +628,21 @@ public final class AppServices {
         // both write this key). Without this the user has to re-flip
         // the toggle every relaunch — iOS keeps the VPN profile but
         // not the running session across app launches.
-        let tunnelShouldStart = UserDefaults(suiteName: appGroupIdentifier)?
-            .bool(forKey: SharedDefaultsConstants.tunnelEnabledKey) ?? false
+        let defaults = UserDefaults(suiteName: appGroupIdentifier)
+        let tunnelShouldStart = defaults?.bool(forKey: SharedDefaultsConstants.tunnelEnabledKey) ?? false
         if tunnelShouldStart && !tunnel.isRunning {
             do {
                 try await tunnel.start()
                 DiagLog.log("[TUNNEL] auto-started from saved pref")
             } catch {
-                DiagLog.log("[TUNNEL] auto-start failed: \(error)")
+                // Persistent auto-start failures (revoked profile,
+                // missing entitlement, OS-level VPN restriction) would
+                // silently retry on every launch. Clear the pref so
+                // the user has to re-enable from Settings — where the
+                // toggle's error label can show what actually went
+                // wrong instead of dying silently in DiagLog.
+                DiagLog.log("[TUNNEL] auto-start failed; clearing pref so user can re-enable: \(error)")
+                defaults?.set(false, forKey: SharedDefaultsConstants.tunnelEnabledKey)
             }
         }
         #endif

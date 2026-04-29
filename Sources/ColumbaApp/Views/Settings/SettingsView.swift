@@ -406,7 +406,7 @@ struct SettingsView: View {
                             // `startVPNTunnel()` after the user's
                             // last intent was already OFF.
                             tunnelTask?.cancel()
-                            tunnelTask = Task {
+                            tunnelTask = Task { @MainActor in
                                 do {
                                     if newValue {
                                         try await tunnel.start()
