@@ -508,12 +508,19 @@ public final class CallManager {
             // `updateCallerName` after the UUID is registered with
             // CallKit (i.e. after this `reportIncomingCall` lands).
             #if os(iOS)
-            if let uuid = self.currentCallUUID {
-                self.callKitManager?.reportIncomingCall(uuid: uuid, peerName: peerName) { [weak self] error in
-                    if let error = error {
-                        Task { @MainActor in
-                            self?.logger.warning("CallKit rejected incoming call: \(error.localizedDescription)")
-                        }
+            guard let uuid = self.currentCallUUID else {
+                // currentCallUUID was cleared by resetState() between
+                // prepareForIncomingCall() and identify completing —
+                // e.g. an abort or remote hangup raced the LXST identify
+                // exchange. Without a UUID we can't surface the call to
+                // CallKit; log so the silent-skip is observable.
+                self.logger.warning("[CALL] handleCallerIdentified (incoming): no currentCallUUID — call was reset before identify completed, skipping CallKit")
+                return
+            }
+            self.callKitManager?.reportIncomingCall(uuid: uuid, peerName: peerName) { [weak self] error in
+                if let error = error {
+                    Task { @MainActor in
+                        self?.logger.warning("CallKit rejected incoming call: \(error.localizedDescription)")
                     }
                 }
             }
@@ -521,9 +528,11 @@ public final class CallManager {
         } else {
             // Outgoing call: report connecting state to CallKit
             #if os(iOS)
-            if let uuid = self.currentCallUUID {
-                self.callKitManager?.reportOutgoingCall(uuid: uuid)
+            guard let uuid = self.currentCallUUID else {
+                self.logger.warning("[CALL] handleCallerIdentified (outgoing): no currentCallUUID — outgoing call was reset before remote identified, skipping CallKit")
+                return
             }
+            self.callKitManager?.reportOutgoingCall(uuid: uuid)
             #endif
         }
     }

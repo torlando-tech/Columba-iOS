@@ -96,7 +96,7 @@ final class CallManagerCallKitTests: XCTestCase {
     /// report to CallKit via `reportOutgoingCall`, NOT
     /// `reportIncomingCall`. The post-identify path must respect the
     /// `isIncoming` flag.
-    func test_handleCallerIdentified_doesNotReportIncoming_forOutgoingCall() {
+    func test_handleCallerIdentified_reportsOutgoingCall_forOutgoingCall() {
         let mock = MockCallKitReporter()
         let manager = CallManager()
         manager.callKitManager = mock
@@ -105,7 +105,8 @@ final class CallManagerCallKitTests: XCTestCase {
         // they're set up via `call(...)` which sets isIncoming = false
         // and pre-allocates a UUID.
         manager.isIncoming = false
-        manager.currentCallUUID = UUID()
+        let outgoingUUID = UUID()
+        manager.currentCallUUID = outgoingUUID
 
         let stubIdentity = Identity()
         manager.handleCallerIdentified(stubIdentity)
@@ -114,6 +115,41 @@ final class CallManagerCallKitTests: XCTestCase {
             mock.reportIncomingCallInvocations.count,
             0,
             "Outgoing calls must not be reported as incoming"
+        )
+        XCTAssertEqual(
+            mock.reportOutgoingCallInvocations.count,
+            1,
+            "Outgoing calls must be reported via reportOutgoingCall when remote rings"
+        )
+        XCTAssertEqual(
+            mock.reportOutgoingCallInvocations.first,
+            outgoingUUID,
+            "reportOutgoingCall should reuse the UUID allocated when the call was placed"
+        )
+    }
+
+    /// If the call is reset (abort, remote hangup) between
+    /// `prepareForIncomingCall` and the LXST identify completing, the
+    /// `currentCallUUID` may be nil by the time the ringing callback
+    /// fires. The post-identify path must skip CallKit instead of
+    /// crashing or invoking with a stale UUID.
+    func test_handleCallerIdentified_skipsCallKit_whenUUIDClearedByReset() {
+        let mock = MockCallKitReporter()
+        let manager = CallManager()
+        manager.callKitManager = mock
+
+        manager.prepareForIncomingCall()
+        // Simulate resetState() running mid-flight (e.g. user dismissed
+        // an in-app surface, or a hangup raced identify).
+        manager.currentCallUUID = nil
+
+        let stubIdentity = Identity()
+        manager.handleCallerIdentified(stubIdentity)
+
+        XCTAssertEqual(
+            mock.reportIncomingCallInvocations.count,
+            0,
+            "CallKit must not be invoked once the call's UUID has been reset"
         )
     }
 }
