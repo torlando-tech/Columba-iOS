@@ -112,6 +112,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Tear down the current TCP connection and clear the HDLC
+    /// receive buffer so a reconnect doesn't prepend a partial frame
+    /// from the previous session to the new connection's first
+    /// bytes (which would corrupt the next decoded packet). Always
+    /// called from `configQueue`.
+    private func teardownTCPConnectionLocked() {
+        tcpConnection?.cancel()
+        tcpConnection = nil
+        tcpReceiveBuffer = Data()
+    }
+
     /// Body of `applyConfigs` — runs on `configQueue`. Mutates
     /// `currentTCP` / `currentAutoGroupId` / `tcpConnection` /
     /// `autoListener` only from this serial context.
@@ -126,15 +137,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 // No change.
             } else {
                 NSLog("[EXT] TCP config (re)applying: \(tcp.host):\(tcp.port)")
-                tcpConnection?.cancel()
-                tcpConnection = nil
+                teardownTCPConnectionLocked()
                 startTCPConnection(host: tcp.host, port: tcp.port)
                 currentTCP = (tcp.host, tcp.port)
             }
         } else if currentTCP != nil {
             NSLog("[EXT] TCP config removed; tearing down connection")
-            tcpConnection?.cancel()
-            tcpConnection = nil
+            teardownTCPConnectionLocked()
             currentTCP = nil
         }
 
@@ -166,8 +175,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // keeps the existing contract that the completion handler
         // fires only after teardown has finished.
         configQueue.sync {
-            tcpConnection?.cancel()
-            tcpConnection = nil
+            teardownTCPConnectionLocked()
             autoListener?.cancel()
             autoListener = nil
             currentTCP = nil
@@ -237,9 +245,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // changed, so re-applying on wake is cheap.
         configQueue.async { [weak self] in
             guard let self else { return }
-            if self.tcpConnection?.state == .cancelled || self.tcpConnection == nil {
-                self.tcpConnection = nil
+            // Treat cancelled / failed / nil connections as gone so
+            // applyConfigsLocked starts a fresh one rather than seeing
+            // the cached endpoint as already-applied. Use the helper
+            // so the receive buffer is reset alongside the connection
+            // — see `teardownTCPConnectionLocked`.
+            switch self.tcpConnection?.state {
+            case .cancelled, .failed, .none:
+                self.teardownTCPConnectionLocked()
                 self.currentTCP = nil
+            default:
+                break
             }
             self.applyConfigsLocked()
         }
@@ -271,8 +287,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 // starts a fresh one all on the serial queue.
                 guard let self else { return }
                 self.configQueue.async {
-                    self.tcpConnection?.cancel()
-                    self.tcpConnection = nil
+                    self.teardownTCPConnectionLocked()
                     self.currentTCP = nil
                 }
                 DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [weak self] in
