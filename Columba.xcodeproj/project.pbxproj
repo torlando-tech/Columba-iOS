@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		T001 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT01 /* AudioRingBufferTests.swift */; };
 		T002 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT02 /* AudioManagerConfigChangeTests.swift */; };
+		T004 /* CallManagerCallKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT04 /* CallManagerCallKitTests.swift */; };
 		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* ColumbaApp.swift */; };
 		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
 		003 /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* ChatsViewModel.swift */; };
@@ -136,6 +137,7 @@
 /* Begin PBXFileReference section */
 		FT01 /* AudioRingBufferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRingBufferTests.swift; sourceTree = "<group>"; };
 		FT02 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
+		FT04 /* CallManagerCallKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallManagerCallKitTests.swift; sourceTree = "<group>"; };
 		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -552,6 +554,7 @@
 				FT01 /* AudioRingBufferTests.swift */,
 				FT02 /* AudioManagerConfigChangeTests.swift */,
 				FT03 /* MicronParserTests.swift */,
+				FT04 /* CallManagerCallKitTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -718,6 +721,7 @@
 				T001 /* AudioRingBufferTests.swift in Sources */,
 				T002 /* AudioManagerConfigChangeTests.swift in Sources */,
 				T003 /* MicronParserTests.swift in Sources */,
+				T004 /* CallManagerCallKitTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

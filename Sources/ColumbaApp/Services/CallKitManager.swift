@@ -16,6 +16,29 @@ import os.log
 import CallKit
 import AVFoundation
 
+/// Test seam for CallKit invocation.
+///
+/// Lets `CallManager` collaborate with the system call provider through a
+/// protocol the test target can mock. The production conformer is
+/// `CallKitManager`; tests inject a recorder. Method names mirror
+/// `CallKitManager`'s existing surface so the migration is purely
+/// "change the static type of the field".
+///
+/// Not `@MainActor`-isolated because `CallKitManager` is also not isolated
+/// — its CXProviderDelegate callbacks arrive on arbitrary queues, so it
+/// dispatches to MainActor only when calling back into CallManager.
+@available(iOS 17.0, *)
+protocol CallKitReporting: AnyObject {
+    func reportIncomingCall(uuid: UUID, peerName: String?, completion: @escaping (Error?) -> Void)
+    func updateCallerName(uuid: UUID, name: String)
+    func reportOutgoingCall(uuid: UUID)
+    func reportCallConnected(uuid: UUID)
+    func reportCallEnded(uuid: UUID, reason: CXCallEndedReason)
+    func startCall(uuid: UUID, handle: String)
+    func answerCall(uuid: UUID)
+    func endCall(uuid: UUID)
+}
+
 /// Manages CallKit integration for native iOS call handling.
 ///
 /// Responsibilities:
@@ -28,7 +51,7 @@ import AVFoundation
 /// on an arbitrary queue. It dispatches to MainActor when calling back into
 /// CallManager.
 @available(iOS 17.0, *)
-public final class CallKitManager: NSObject, CXProviderDelegate {
+public final class CallKitManager: NSObject, CXProviderDelegate, CallKitReporting {
 
     // MARK: - Properties
 
