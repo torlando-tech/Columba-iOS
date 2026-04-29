@@ -457,6 +457,20 @@ struct SettingsView: View {
                                     let msg = "Background Transport \(action) failed: \(error.localizedDescription)"
                                     DiagLog.log(msg)
                                     tunnelErrorMessage = error.localizedDescription
+                                    // If `disable()` threw mid-flight
+                                    // (e.g. `saveToPreferences()` failed
+                                    // after `stopVPNTunnel()`), the user
+                                    // still asked for OFF — persist that
+                                    // intent so a relaunch doesn't
+                                    // auto-restart the tunnel against
+                                    // their wishes. We don't write the
+                                    // intent on `start()` failures
+                                    // because committing to a failing
+                                    // start would loop the same failure.
+                                    if !newValue {
+                                        UserDefaults(suiteName: appGroupIdentifier)?
+                                            .set(false, forKey: SharedDefaultsConstants.tunnelEnabledKey)
+                                    }
                                 }
                                 if !Task.isCancelled {
                                     tunnelPending = nil
