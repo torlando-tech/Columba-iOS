@@ -466,10 +466,20 @@ public final class CallManager {
     /// (`handleCallerIdentified`) can hand it to CallKit. CallKit itself
     /// is NOT invoked here — that's the whole point of separating this
     /// step from the protocol-correct ringing trigger.
+    ///
+    /// Also clears `peerName`/`peerHash` from any previous call so that
+    /// when a fresh inbound link arrives within the 1.5 s
+    /// `endedDismissTask` window (before `resetState()` runs), a stale
+    /// resolved name doesn't survive into the new call.
+    /// `resolveContactName`'s "skip if already set" guard would otherwise
+    /// keep the previous caller's name pinned across the new call's
+    /// lookups.
     func prepareForIncomingCall() {
         self.isIncoming = true
         self.callState = .connecting
         self.currentCallUUID = UUID()
+        self.peerName = nil
+        self.peerHash = nil
     }
 
     /// Run the post-identify ringing flow: update UI state, resolve the
@@ -490,10 +500,13 @@ public final class CallManager {
 
         if self.isIncoming {
             self.resolveContactName(remoteIdentity: remoteIdentity)
-            // Now that the caller is verified, surface the incoming call
-            // to the system. peerName has just been populated by
-            // resolveContactName, so the lock-screen UI shows a real
-            // name instead of "Unknown".
+            // Surface the incoming call to the system now that the caller
+            // is verified. `resolveContactName` has populated `peerName`
+            // synchronously with the `"Peer XXXXXXXX"` truncated-hash
+            // fallback — the actual contact name from the DB / path
+            // table arrives later via an async task that calls
+            // `updateCallerName` after the UUID is registered with
+            // CallKit (i.e. after this `reportIncomingCall` lands).
             #if os(iOS)
             if let uuid = self.currentCallUUID {
                 self.callKitManager?.reportIncomingCall(uuid: uuid, peerName: peerName) { [weak self] error in
@@ -775,12 +788,13 @@ public final class CallManager {
             self.peerName = "Peer " + hexPrefix
         }
 
-        // Update CallKit with resolved name
-        #if os(iOS)
-        if self.isIncoming, let uuid = self.currentCallUUID, let name = self.peerName {
-            callKitManager?.updateCallerName(uuid: uuid, name: name)
-        }
-        #endif
+        // Note: no synchronous CallKit update here. For incoming calls
+        // this method runs *before* `reportIncomingCall` registers the
+        // UUID with CallKit, so any `updateCallerName` call would be
+        // dropped. The fallback `peerName` set above is passed straight
+        // into `reportIncomingCall`, and the async DB / path-table tasks
+        // above call `updateCallerName` themselves once they resolve a
+        // real display name (by which time the UUID is registered).
     }
 
     /// Resolve a destination hash to a known Identity via the path table.
