@@ -402,6 +402,18 @@ struct MessageDetailView: View {
         // Use the canonical icon from InterfaceType to keep this view aligned
         // with the rest of the app (interface list, settings, etc.).
         let icon = entity.type.icon
+
+        // Peer-scoped IDs (`ble-ble0-628188b8`, `auto-auto0-fe80::...`,
+        // `rnode-rnode0-<peerHex>`, `mpc-mpc0-<peer>`) carry the actual
+        // peer identifier in the suffix. That's what the user wants on
+        // the second line of the card — "via this specific peer", not
+        // a generic protocol description. Fall back to the type-level
+        // subtitle only for non-peer IDs (e.g. TCP, or a parent
+        // interface seen directly).
+        if let peerSubtitle = peerSubtitle(forInterfaceId: fallbackId) {
+            return (icon, entity.name, peerSubtitle)
+        }
+
         let subtitle: String
         switch entity.config {
         case .tcpClient(let cfg):
@@ -424,6 +436,26 @@ struct MessageDetailView: View {
         }
 
         return (icon, entity.name, subtitle)
+    }
+
+    /// Format the peer-scoped suffix of an interfaceId for display on
+    /// the message-details card subtitle. Returns nil if the id isn't
+    /// in the peer-scoped `{type}-{parent}-{suffix}` form, which lets
+    /// the caller fall through to the entity's protocol-level subtitle.
+    ///
+    /// For BLE the suffix is the first 8 hex chars of the peer's
+    /// identity; for AutoInterface it's the IPv6 link-local; for
+    /// RNode / Multipeer it's the peer-specific identifier the
+    /// transport assigned. Either way, surfacing it on the subtitle
+    /// answers the user's "which specific peer was this routed
+    /// through?" question.
+    private func peerSubtitle(forInterfaceId interfaceId: String) -> String? {
+        let parts = interfaceId.split(separator: "-", maxSplits: 2)
+        guard parts.count == 3,
+              ["ble", "auto", "rnode", "mpc"].contains(String(parts[0])) else {
+            return nil
+        }
+        return "Peer \(parts[2])"
     }
 
     private func rssiCard(_ rssi: Double) -> some View {
