@@ -63,13 +63,16 @@ public final class CallManager {
     // MARK: - CallKit
 
     #if os(iOS)
-    /// CallKit manager for native iOS call integration (lock screen UI, audio routing).
-    /// Created lazily on first use. nil on non-iOS platforms.
-    private(set) var callKitManager: CallKitManager?
+    /// CallKit reporter for native iOS call integration (lock screen UI, audio routing).
+    /// Production type is `CallKitManager`; tests inject a mock conforming to
+    /// `CallKitReporting`. Created lazily on first use. nil on non-iOS platforms.
+    var callKitManager: (any CallKitReporting)?
     #endif
 
     /// UUID for the currently active call, used by CallKit to track the call.
-    private(set) var currentCallUUID: UUID?
+    /// Internally settable so tests can pre-stage a UUID without going through
+    /// the full `prepareForIncomingCall` / `call` flow.
+    var currentCallUUID: UUID?
 
     /// Flag to prevent re-entrant hangup when CallKit triggers CXEndCallAction.
     private var isHangingUpFromCallKit = false
@@ -159,22 +162,7 @@ public final class CallManager {
 
         await phone.setRingingCallback { [weak self] remoteIdentity in
             await MainActor.run {
-                guard let self else { return }
-                self.peerHash = remoteIdentity.hexHash
-                self.callState = .ringing
-                self.logger.error("[CALL] Ringing from: \(remoteIdentity.hexHash, privacy: .public)")
-
-                // Resolve contact name for incoming calls
-                if self.isIncoming {
-                    self.resolveContactName(remoteIdentity: remoteIdentity)
-                }
-
-                // Report outgoing call connecting state to CallKit
-                #if os(iOS)
-                if !self.isIncoming, let uuid = self.currentCallUUID {
-                    self.callKitManager?.reportOutgoingCall(uuid: uuid)
-                }
-                #endif
+                self?.handleCallerIdentified(remoteIdentity)
             }
         }
 
@@ -452,36 +440,100 @@ public final class CallManager {
 
     /// Handle an incoming link from the transport layer.
     ///
-    /// On iOS, this reports the incoming call to CallKit, which shows the
-    /// native incoming call UI (including on the lock screen). The Telephone
-    /// actor processes the link signaling in parallel.
+    /// Per the LXST protocol, link establishment alone is NOT a call —
+    /// it's just "we have a secure pipe". The Telephone actor takes over
+    /// from here, sends `STATUS_AVAILABLE`, and waits for the caller to
+    /// `link.identify(...)`. CallKit is invoked only after that
+    /// identification completes (see `handleCallerIdentified`), so
+    /// scanners / probes / aborted dials that open a link without
+    /// identifying don't surface as phantom "Unknown" calls.
     func handleIncomingLink(_ link: Link) {
         guard let telephone else {
             DiagLog.log("[CALL] handleIncomingLink: telephone is nil!")
             return
         }
-        DiagLog.log("[CALL] handleIncomingLink: starting incoming call setup")
-        self.isIncoming = true
-        self.callState = .connecting
-
-        // Generate a UUID for CallKit tracking
-        let callUUID = UUID()
-        self.currentCallUUID = callUUID
-
-        // Report incoming call to CallKit for native UI
-        #if os(iOS)
-        callKitManager?.reportIncomingCall(uuid: callUUID, peerName: peerName) { [weak self] error in
-            if let error = error {
-                Task { @MainActor in
-                    self?.logger.warning("CallKit rejected incoming call: \(error.localizedDescription)")
-                    // If CallKit rejects (e.g., Do Not Disturb), still show in-app UI
-                }
-            }
-        }
-        #endif
+        DiagLog.log("[CALL] handleIncomingLink: starting incoming call setup (deferring CallKit until caller identifies)")
+        prepareForIncomingCall()
 
         Task {
             await telephone.handleIncomingLink(link)
+        }
+    }
+
+    /// Reset call state for an incoming link before the caller identifies.
+    ///
+    /// Allocates the call UUID up front so the post-identify path
+    /// (`handleCallerIdentified`) can hand it to CallKit. CallKit itself
+    /// is NOT invoked here — that's the whole point of separating this
+    /// step from the protocol-correct ringing trigger.
+    ///
+    /// Also clears `peerName`/`peerHash` from any previous call so that
+    /// when a fresh inbound link arrives within the 1.5 s
+    /// `endedDismissTask` window (before `resetState()` runs), a stale
+    /// resolved name doesn't survive into the new call.
+    /// `resolveContactName`'s "skip if already set" guard would otherwise
+    /// keep the previous caller's name pinned across the new call's
+    /// lookups.
+    func prepareForIncomingCall() {
+        self.isIncoming = true
+        self.callState = .connecting
+        self.currentCallUUID = UUID()
+        self.peerName = nil
+        self.peerHash = nil
+    }
+
+    /// Run the post-identify ringing flow: update UI state, resolve the
+    /// caller's display name, and report the call to CallKit.
+    ///
+    /// Wired from `LXSTSwift.Telephone.setRingingCallback`, which fires
+    /// only after the LXST `STATUS_AVAILABLE` → `link.identify(...)` →
+    /// `handleCallerIdentified` exchange completes inside the Telephone
+    /// actor. By that point the caller's `Identity` is verified and we
+    /// have a real peer to ring on.
+    ///
+    /// Outgoing calls reach this with `isIncoming == false` and report
+    /// the connecting state via `reportOutgoingCall`.
+    func handleCallerIdentified(_ remoteIdentity: Identity) {
+        // Bail BEFORE mutating call state if the call was reset between
+        // prepareForIncomingCall (or the outgoing-call setup) and
+        // identify completing — e.g. an abort or remote hangup raced
+        // the LXST identify exchange. Setting `callState = .ringing`
+        // here without a UUID would leave the in-app UI stuck on
+        // ringing with no CallKit registration to dismiss it through.
+        guard let uuid = self.currentCallUUID else {
+            self.logger.warning(
+                "[CALL] handleCallerIdentified: no currentCallUUID — call was reset before identify completed, skipping (isIncoming=\(self.isIncoming, privacy: .public))"
+            )
+            return
+        }
+
+        self.peerHash = remoteIdentity.hexHash
+        self.callState = .ringing
+        self.logger.error("[CALL] Ringing from: \(remoteIdentity.hexHash, privacy: .public)")
+
+        if self.isIncoming {
+            self.resolveContactName(remoteIdentity: remoteIdentity)
+            // Surface the incoming call to the system now that the caller
+            // is verified. `resolveContactName` has populated `peerName`
+            // synchronously with the `"Peer XXXXXXXX"` truncated-hash
+            // fallback — the actual contact name from the DB / path
+            // table arrives later via an async task that calls
+            // `updateCallerName` after the UUID is registered with
+            // CallKit (i.e. after this `reportIncomingCall` lands).
+            #if os(iOS)
+            self.callKitManager?.reportIncomingCall(uuid: uuid, peerName: peerName) { [weak self] error in
+                if let error = error {
+                    Task { @MainActor in
+                        self?.logger.warning("CallKit rejected incoming call: \(error.localizedDescription)")
+                    }
+                }
+            }
+            #endif
+        } else {
+            // Outgoing call: report connecting state to CallKit
+            #if os(iOS)
+            self.callKitManager?.reportOutgoingCall(uuid: uuid)
+            #endif
         }
     }
 
@@ -745,12 +797,13 @@ public final class CallManager {
             self.peerName = "Peer " + hexPrefix
         }
 
-        // Update CallKit with resolved name
-        #if os(iOS)
-        if self.isIncoming, let uuid = self.currentCallUUID, let name = self.peerName {
-            callKitManager?.updateCallerName(uuid: uuid, name: name)
-        }
-        #endif
+        // Note: no synchronous CallKit update here. For incoming calls
+        // this method runs *before* `reportIncomingCall` registers the
+        // UUID with CallKit, so any `updateCallerName` call would be
+        // dropped. The fallback `peerName` set above is passed straight
+        // into `reportIncomingCall`, and the async DB / path-table tasks
+        // above call `updateCallerName` themselves once they resolve a
+        // real display name (by which time the UUID is registered).
     }
 
     /// Resolve a destination hash to a known Identity via the path table.
