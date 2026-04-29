@@ -52,32 +52,50 @@ public enum SharedDefaultsConstants {
 /// can copy it into its Documents/diag.log on next foreground for
 /// `xcrun devicectl device copy from` retrieval.
 public enum ExtensionDiagLog {
-    private static let logURL: URL? = {
+    /// Compute on every call so a transient `containerURL` failure
+    /// at static-init time doesn't permanently disable logging.
+    /// Writes under `Library/Caches/` which is already auto-created
+    /// in the App Group container — writing to the container root
+    /// silently fails on at least some iOS versions when invoked
+    /// from a Network Extension process.
+    private static func resolveLogURL() -> URL? {
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
         ) else { return nil }
-        return containerURL.appendingPathComponent("ext_diag.log")
-    }()
+        let cachesDir = containerURL.appendingPathComponent("Library/Caches", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cachesDir, withIntermediateDirectories: true)
+        return cachesDir.appendingPathComponent("ext_diag.log")
+    }
 
     public static func log(_ message: String) {
-        guard let url = logURL else { return }
+        // Mirror to NSLog so it shows up in ASL / Console.app even
+        // if the file write below silently fails.
+        NSLog("%@", message)
+
+        guard let url = resolveLogURL() else {
+            NSLog("[ExtensionDiagLog] containerURL returned nil — App Group not accessible?")
+            return
+        }
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)\n"
         guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: url.path) {
-            if let fh = try? FileHandle(forWritingTo: url) {
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let fh = try FileHandle(forWritingTo: url)
                 fh.seekToEndOfFile()
                 fh.write(data)
                 fh.closeFile()
+            } else {
+                try data.write(to: url)
             }
-        } else {
-            try? data.write(to: url)
+        } catch {
+            NSLog("[ExtensionDiagLog] write failed: %@", "\(error)")
         }
     }
 
     /// Path on disk — useful so the app can copy this into its
     /// Documents container for `devicectl copy from` retrieval.
-    public static var path: String? { logURL?.path }
+    public static var path: String? { resolveLogURL()?.path }
 }
 
 

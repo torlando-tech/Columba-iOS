@@ -68,6 +68,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         NSLog("[EXT] startTunnel called")
+        // Write a heartbeat file we can pull from the App Group
+        // container even if `ExtensionDiagLog`'s file path resolution
+        // is silently failing — confirms the extension actually ran
+        // and that file writes from the extension reach the shared
+        // container.
+        if let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        ) {
+            let heartbeat = containerURL.appendingPathComponent("ext_heartbeat.txt")
+            let line = "startTunnel @ \(ISO8601DateFormatter().string(from: Date()))\n"
+            try? line.data(using: .utf8)?.write(to: heartbeat)
+            NSLog("[EXT] heartbeat path: %@", heartbeat.path)
+        } else {
+            NSLog("[EXT] containerURL returned nil at startTunnel — App Group not accessible from extension")
+        }
         ExtensionDiagLog.log("[EXT] startTunnel called")
 
         // Apply current interface configs.
@@ -156,25 +171,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             currentTCP = nil
         }
 
-        // Auto: same diff. Driven through `ExtensionAutoBridge`,
-        // which owns a real `ReticulumSwift.AutoInterface` —
-        // multicast HELLO discovery on the per-groupId derived
-        // address, plus per-peer unicast data on the data port.
-        if let groupId = configs.autoGroupId {
-            if currentAutoGroupId == groupId {
-                // No change.
-            } else {
-                NSLog("[EXT] Auto config (re)applying: groupId=\(groupId)")
-                ExtensionDiagLog.log("[EXT] Auto config (re)applying: groupId=\(groupId)")
-                autoBridge.start(groupId: groupId)
-                currentAutoGroupId = groupId
-            }
-        } else if currentAutoGroupId != nil {
-            NSLog("[EXT] Auto config removed; tearing down bridge")
-            ExtensionDiagLog.log("[EXT] Auto config removed; tearing down bridge")
-            autoBridge.stop()
-            currentAutoGroupId = nil
-        }
+        // Auto: not tunneled in Phase 1. NEPacketTunnelProvider's
+        // sandbox doesn't deliver inbound UDP unicast to extension
+        // sockets — verified empirically with both POSIX sockets
+        // (reticulum-swift AutoInterface) and Apple's Network
+        // framework (`NWListener`). The app keeps AutoInterface
+        // running locally for foreground use; background Auto needs
+        // a different architecture and is out of scope for this PR.
+        _ = configs.autoGroupId
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
@@ -228,12 +232,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     }
                 })
             case FrameInterfaceTag.auto.rawValue:
-                // Hand off to the extension's AutoInterface, which
-                // does its own per-peer fan-out (multicast HELLO for
-                // discovery + unicast data to each peer on the
-                // data port). Replaces the previous incorrect
-                // multicast-only path.
-                self.autoBridge.send(Data(frameData))
+                // Auto isn't tunneled (see `applyConfigsLocked`).
+                // The app's local AutoInterface should not be in
+                // tunnel mode; if we do see auto frames here the
+                // wiring drifted somewhere upstream.
+                NSLog("[EXT] Unexpected auto frame; auto isn't tunneled")
+                ExtensionDiagLog.log("[EXT] Unexpected auto frame; auto isn't tunneled")
             default:
                 NSLog("[EXT] Unknown interface tag: \(interfaceTag)")
             }

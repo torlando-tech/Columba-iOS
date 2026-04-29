@@ -593,18 +593,30 @@ public final class AppServices {
         let reader = ExtensionFrameReader()
         self.extensionFrameReader = reader
 
-        // Wire frame injection: extension sends unframed packets -> transport
-        let tcpId = await tcpInterface?.id ?? "ext-tcp"
-        let autoId = await autoInterface?.id ?? "ext-auto"
-
+        // Wire frame injection: extension sends unframed packets -> transport.
+        // Resolve the interface IDs lazily inside the callback so that
+        // auto/TCP interfaces created later (e.g. `startAutoInterface`
+        // runs after this block) end up tagged with their real IDs
+        // instead of the "ext-tcp" / "ext-auto" fallbacks. Without
+        // this the transport never sees Sideband's auto announces
+        // matched against the registered AutoInterface, and announce
+        // routing silently drops them.
         reader.onTCPFrameReceived = { [weak self] data in
-            guard let transport = self?.transport else { return }
-            Task { await transport.handleReceivedData(data: data, from: tcpId) }
+            guard let self else { return }
+            Task {
+                let tcpId = await self.tcpInterface?.id ?? "ext-tcp"
+                guard let transport = self.transport else { return }
+                await transport.handleReceivedData(data: data, from: tcpId)
+            }
         }
 
         reader.onAutoFrameReceived = { [weak self] data in
-            guard let transport = self?.transport else { return }
-            Task { await transport.handleReceivedData(data: data, from: autoId) }
+            guard let self else { return }
+            Task {
+                let autoId = await self.autoInterface?.id ?? "ext-auto"
+                guard let transport = self.transport else { return }
+                await transport.handleReceivedData(data: data, from: autoId)
+            }
         }
 
         reader.startListening()
@@ -643,6 +655,16 @@ public final class AppServices {
         // not the running session across app launches.
         let defaults = UserDefaults(suiteName: appGroupIdentifier)
         let tunnelShouldStart = defaults?.bool(forKey: SharedDefaultsConstants.tunnelEnabledKey) ?? false
+
+        // Note on app-update behaviour: when the App Store / TestFlight
+        // replaces the .app bundle, iOS automatically replaces the
+        // running extension instance with the new .appex binary on
+        // the next tunnel start. No manual reload is needed in
+        // production. (Dev installs via `xcrun devicectl` are
+        // different — iOS keeps the previous extension alive across
+        // re-deploys; the workaround is to delete and re-add the
+        // VPN profile in iOS Settings.)
+
         if tunnelShouldStart && !tunnel.isRunning {
             // Run auto-start in a detached Task so the polling wait
             // doesn't block the rest of `initialize()` — the user can
@@ -683,19 +705,36 @@ public final class AppServices {
     }
 
     #if ENABLE_NETWORK_EXTENSION
-    /// Switch every TCPInterface and AutoInterface into or out of
-    /// tunnel mode in response to the VPN extension's status.
+    /// Switch every TCPInterface into or out of tunnel mode in
+    /// response to the VPN extension's status.
     ///
     /// In tunnel mode the interface tears down its own NWConnection
     /// and routes outbound bytes through `TunnelManager.sendFrame`,
     /// which the extension forwards on its authoritative socket.
-    /// The extension runs its own `ReticulumSwift.AutoInterface` so
-    /// peer discovery (`ff12:0:…` multicast for the configured group
-    /// id) plus per-peer unicast data continues while the app is
-    /// backgrounded.
-    ///
     /// Inbound continues to flow via `ExtensionFrameReader` →
     /// `transport.handleReceivedData` regardless.
+    ///
+    /// AutoInterface is intentionally left running locally even
+    /// when the tunnel is up. We tried two implementations of the
+    /// AutoInterface protocol inside the Network Extension:
+    ///   - reticulum-swift's `AutoInterface` (POSIX sockets bound
+    ///     to link-local IPv6 + per-peer `sendto`) — bind succeeds
+    ///     but iOS routes inbound unicast UDP to the system stack,
+    ///     not the extension's socket.
+    ///   - A from-scratch implementation on Apple's Network
+    ///     framework (`NWMulticastGroup` for HELLO + `NWListener`
+    ///     for inbound data + per-peer `NWConnection` for outbound)
+    ///     — same outcome: zero `newConnectionHandler` callbacks
+    ///     ever fire on the listener, even with no interface
+    ///     constraint. NEPacketTunnelProvider's sandbox doesn't
+    ///     deliver inbound UDP unicast to extension sockets.
+    ///
+    /// Phase 1 ships with TCP-only background. AutoInterface stays
+    /// local-Wi-Fi only, foreground-only — same behaviour the user
+    /// had before background transport existed. Background
+    /// AutoInterface is a follow-up that needs a different
+    /// architecture (e.g. configuring the tunnel's `includedRoutes`
+    /// to capture multicast/data packets via `packetFlow`).
     @MainActor
     private func applyTunnelModeToInterfaces(active: Bool) async {
         guard let tunnel = tunnelManager else { return }
@@ -706,20 +745,12 @@ public final class AppServices {
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
                 }
             }
-            if let auto = autoInterface {
-                await auto.beginTunnelMode { [weak tunnel] frame in
-                    await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.auto.rawValue)
-                }
-            }
-            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP + \(self.autoInterface != nil ? 1 : 0) Auto interface(s)")
+            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s); Auto stays local")
         } else {
             for (_, iface) in tcpInterfaces {
                 await iface.endTunnelMode()
             }
-            if let auto = autoInterface {
-                await auto.endTunnelMode()
-            }
-            DiagLog.log("[TUNNEL] disabled tunnel mode; interfaces resuming local connections")
+            DiagLog.log("[TUNNEL] disabled tunnel mode; TCP interfaces resuming local connections")
         }
     }
     #endif

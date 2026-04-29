@@ -62,6 +62,15 @@ public final class TunnelManager: @unchecked Sendable {
     /// duplicate local NWConnection).
     public var onStatusChange: (@Sendable (NEVPNStatus) -> Void)?
 
+    /// Called once just before `startVPNTunnel()` fires, so the app
+    /// can put its interfaces in tunnel mode (release UDP sockets,
+    /// install the outbound hook) before the extension starts and
+    /// tries to bind the same ports. Without this, the extension's
+    /// `NWMulticastGroup` and `NWListener` race the app for the
+    /// AutoInterface multicast / data ports and fail with
+    /// `EADDRINUSE`.
+    public var onWillStart: (@Sendable () async -> Void)?
+
     private let logger = Logger(subsystem: "network.columba.Columba", category: "TunnelManager")
 
     // MARK: - Lifecycle
@@ -79,10 +88,16 @@ public final class TunnelManager: @unchecked Sendable {
                 logger.info("No tunnel config found")
             }
 
-            // Observe status changes
+            // Observe status changes. Bind to `object: nil` (all VPN
+            // status notifications) so a later `install()` / fresh
+            // profile after a delete-and-re-add doesn't leave the
+            // observer stuck on the old connection — we re-resolve
+            // `self.manager?.connection.status` inside the callback,
+            // which always reflects whichever manager we currently
+            // hold.
             NotificationCenter.default.addObserver(
                 forName: .NEVPNStatusDidChange,
-                object: manager?.connection,
+                object: nil,
                 queue: .main
             ) { [weak self] _ in
                 guard let self else { return }
@@ -138,6 +153,19 @@ public final class TunnelManager: @unchecked Sendable {
 
     /// Start the tunnel extension.
     public func start() async throws {
+        // Refresh from system preferences in case the user deleted
+        // the VPN profile from iOS Settings while we held a cached
+        // reference. Without this, `startVPNTunnel()` would fail with
+        // `NEVPNErrorConfigurationInvalid` (error 1) on the stale
+        // manager and the toggle would never recover.
+        if let managers = try? await NETunnelProviderManager.loadAllFromPreferences() {
+            if let existing = managers.first {
+                manager = existing
+            } else {
+                manager = nil
+            }
+        }
+
         guard let manager else {
             try await install()
             try await start()
@@ -160,6 +188,15 @@ public final class TunnelManager: @unchecked Sendable {
         // otherwise a rapid OFF tap during a still-running ON would
         // still bring the tunnel up despite the user's last intent.
         try Task.checkCancellation()
+
+        // Release any per-interface UDP sockets the app holds before
+        // the extension launches and tries to bind the same ports.
+        // The hook is awaited so we don't return from `start()`
+        // until interfaces are fully in tunnel mode.
+        if let willStart = onWillStart {
+            await willStart()
+        }
+
         try manager.connection.startVPNTunnel()
         logger.info("Tunnel started")
     }
