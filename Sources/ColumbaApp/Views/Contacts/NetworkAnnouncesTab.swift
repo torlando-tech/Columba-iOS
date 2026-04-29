@@ -211,7 +211,12 @@ struct NetworkAnnouncesTab: View {
                         contact: contact,
                         showInterfaceIcon: true,
                         onFavoriteToggle: {
-                            Task { await viewModel.addToContacts(contact) }
+                            // Route through `toggleFavorite` so an
+                            // already-favorited announce can be un-starred
+                            // without first switching to the My Contacts
+                            // tab. Calling `addToContacts` directly was a
+                            // no-op when the contact was already saved.
+                            viewModel.toggleFavorite(for: contact.id)
                         },
                         onTap: {
                             onContactSelected?(contact)
