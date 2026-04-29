@@ -29,6 +29,17 @@ struct NetworkAnnouncesTab: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Hoist the pill to body-level so it's visible regardless
+            // of whether the visible list is empty / filter-empty /
+            // populated. Otherwise an active filter or a fresh-empty
+            // network tab would suppress the pill even though new
+            // matching announces are pending.
+            if !viewModel.filteredPendingAnnounces.isEmpty {
+                showNewBanner
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+            }
+
             // Always show filter bar when there are any announces
             if !viewModel.networkAnnounces.isEmpty {
                 filterBar
@@ -230,6 +241,35 @@ struct NetworkAnnouncesTab: View {
         .refreshable {
             await viewModel.refreshAnnounces()
         }
+    }
+
+    /// Tappable banner shown above the list while new announces are buffered.
+    /// Lets the user merge them in on demand instead of having the visible
+    /// list reorder under their finger as new announces stream in.
+    private var showNewBanner: some View {
+        // Use the filter-aware count so the pill matches what will
+        // actually appear in the list after a flush.
+        let count = viewModel.filteredPendingAnnounces.count
+        return Button {
+            withAnimation(.easeOut(duration: 0.25)) {
+                viewModel.flushPendingAnnounces()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.circle.fill")
+                Text("Show \(count) new announce\(count == 1 ? "" : "s")")
+                    .fontWeight(.medium)
+            }
+            .font(.subheadline)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background {
+                Capsule().fill(Theme.accentColor)
+            }
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
     }
 }
 
