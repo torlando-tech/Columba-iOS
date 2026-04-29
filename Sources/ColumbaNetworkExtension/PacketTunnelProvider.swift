@@ -29,8 +29,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: - Properties
 
     private var tcpConnection: NWConnection?
-    private var autoListener: NWConnectionGroup?
     private lazy var frameQueue = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier)
+    /// Drives the extension's AutoInterface — peer discovery
+    /// (`ff12:0:…` multicast derived from the group id) plus
+    /// per-peer unicast data on the data port. Replaces the
+    /// previous single-`NWConnectionGroup` path that hard-coded
+    /// `ff02::1` and never delivered data to peers.
+    private lazy var autoBridge = ExtensionAutoBridge(
+        frameQueue: frameQueue,
+        postNotif: { [weak self] in self?.postDarwinNotification() }
+    )
 
     /// Currently-applied TCP endpoint (used to diff config changes
     /// from the app). nil when no TCP interface is configured.
@@ -147,21 +155,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             currentTCP = nil
         }
 
-        // Auto: same diff.
+        // Auto: same diff. Driven through `ExtensionAutoBridge`,
+        // which owns a real `ReticulumSwift.AutoInterface` —
+        // multicast HELLO discovery on the per-groupId derived
+        // address, plus per-peer unicast data on the data port.
         if let groupId = configs.autoGroupId {
             if currentAutoGroupId == groupId {
                 // No change.
             } else {
                 NSLog("[EXT] Auto config (re)applying: groupId=\(groupId)")
-                autoListener?.cancel()
-                autoListener = nil
-                startAutoListener(groupId: groupId)
+                autoBridge.start(groupId: groupId)
                 currentAutoGroupId = groupId
             }
         } else if currentAutoGroupId != nil {
-            NSLog("[EXT] Auto config removed; tearing down listener")
-            autoListener?.cancel()
-            autoListener = nil
+            NSLog("[EXT] Auto config removed; tearing down bridge")
+            autoBridge.stop()
             currentAutoGroupId = nil
         }
     }
@@ -176,8 +184,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // fires only after teardown has finished.
         configQueue.sync {
             teardownTCPConnectionLocked()
-            autoListener?.cancel()
-            autoListener = nil
+            autoBridge.stop()
             currentTCP = nil
             currentAutoGroupId = nil
         }
@@ -218,12 +225,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     }
                 })
             case FrameInterfaceTag.auto.rawValue:
-                // Auto frames are sent as UDP datagrams via the connection group
-                self.autoListener?.send(content: frameData) { error in
-                    if let error {
-                        NSLog("[EXT] Auto send error: \(error)")
-                    }
-                }
+                // Hand off to the extension's AutoInterface, which
+                // does its own per-peer fan-out (multicast HELLO for
+                // discovery + unicast data to each peer on the
+                // data port). Replaces the previous incorrect
+                // multicast-only path.
+                self.autoBridge.send(Data(frameData))
             default:
                 NSLog("[EXT] Unknown interface tag: \(interfaceTag)")
             }
@@ -353,44 +360,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         if !frames.isEmpty {
             postDarwinNotification()
         }
-    }
-
-    // MARK: - AutoInterface Multicast Listener
-
-    private func startAutoListener(groupId: String) {
-        // AutoInterface uses link-local multicast on a well-known group/port
-        // The discovery and data ports match ReticulumSwift AutoInterface defaults
-        let discoveryPort: UInt16 = 29716
-        let multicastGroup: NWMulticastGroup
-        do {
-            multicastGroup = try NWMulticastGroup(for: [
-                .hostPort(host: .ipv6(IPv6Address("ff02::1")!), port: NWEndpoint.Port(rawValue: discoveryPort)!)
-            ])
-        } catch {
-            NSLog("[EXT] Failed to create multicast group: %@", "\(error)")
-            return
-        }
-
-        let params = NWParameters.udp
-        params.allowLocalEndpointReuse = true
-        params.requiredInterfaceType = .other
-
-        let group = NWConnectionGroup(with: multicastGroup, using: params)
-        self.autoListener = group
-
-        group.stateUpdateHandler = { state in
-            NSLog("[EXT] Auto multicast state: \(state)")
-        }
-
-        group.setReceiveHandler(maximumMessageSize: 2048, rejectOversizedMessages: false) { [weak self] message, content, isComplete in
-            guard let content, !content.isEmpty else { return }
-
-            // Auto frames are complete UDP datagrams (no HDLC framing needed)
-            self?.frameQueue.append(frame: content, interfaceTag: FrameInterfaceTag.auto.rawValue)
-            self?.postDarwinNotification()
-        }
-
-        group.start(queue: .main)
     }
 
     // MARK: - HDLC Frame Extraction

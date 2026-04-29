@@ -121,8 +121,10 @@
 		085B /* BackgroundTransportPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F086 /* BackgroundTransportPage.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
 		2F3D64B12F7227E100049252 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P004 /* ReticulumSwift */; };
+		ERETIC /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P005 /* ReticulumSwift */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
+		E004 /* ExtensionAutoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE04 /* ExtensionAutoBridge.swift */; };
 		EAPPEX /* ColumbaNetworkExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EPROD /* ColumbaNetworkExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -277,6 +279,7 @@
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
+		FE04 /* ExtensionAutoBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionAutoBridge.swift; sourceTree = "<group>"; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -285,6 +288,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ERETIC /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -366,6 +370,7 @@
 			isa = PBXGroup;
 			children = (
 				FE01 /* PacketTunnelProvider.swift */,
+				FE04 /* ExtensionAutoBridge.swift */,
 				FE02 /* Info.plist */,
 				FE03 /* ColumbaNetworkExtension.entitlements */,
 			);
@@ -626,6 +631,9 @@
 			dependencies = (
 			);
 			name = ColumbaNetworkExtension;
+			packageProductDependencies = (
+				P005 /* ReticulumSwift */,
+			);
 			productName = ColumbaNetworkExtension;
 			productReference = EPROD /* ColumbaNetworkExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
@@ -763,6 +771,7 @@
 			files = (
 				E001 /* PacketTunnelProvider.swift in Sources */,
 				E002 /* SharedFrameQueue.swift in Sources */,
+				E004 /* ExtensionAutoBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1266,6 +1275,11 @@
 			productName = LXSTSwift;
 		};
 		P004 /* ReticulumSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PKGREF4 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
+			productName = ReticulumSwift;
+		};
+		P005 /* ReticulumSwift */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = PKGREF4 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
 			productName = ReticulumSwift;
