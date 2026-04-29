@@ -29,6 +29,17 @@ struct NetworkAnnouncesTab: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Hoist the pill to body-level so it's visible regardless
+            // of whether the visible list is empty / filter-empty /
+            // populated. Otherwise an active filter or a fresh-empty
+            // network tab would suppress the pill even though new
+            // matching announces are pending.
+            if !viewModel.filteredPendingAnnounces.isEmpty {
+                showNewBanner
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+            }
+
             // Always show filter bar when there are any announces
             if !viewModel.networkAnnounces.isEmpty {
                 filterBar
@@ -206,9 +217,6 @@ struct NetworkAnnouncesTab: View {
     private var announcesList: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                if !viewModel.filteredPendingAnnounces.isEmpty {
-                    showNewBanner
-                }
                 ForEach(viewModel.filteredNetworkAnnounces) { contact in
                     ContactCard(
                         contact: contact,
