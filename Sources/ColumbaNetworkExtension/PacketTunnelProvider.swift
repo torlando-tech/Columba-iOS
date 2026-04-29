@@ -197,25 +197,30 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let interfaceTag = messageData[0]
         let frameData = messageData.dropFirst()
 
-        switch interfaceTag {
-        case FrameInterfaceTag.tcp.rawValue:
-            tcpConnection?.send(content: frameData, completion: .contentProcessed { error in
-                if let error {
-                    NSLog("[EXT] TCP send error: \(error)")
+        // Read the connection / listener under configQueue so we can't
+        // observe a half-mutated state while applyConfigsLocked() is
+        // diffing or stopTunnel() is tearing things down.
+        configQueue.async { [weak self] in
+            guard let self else { completionHandler?(nil); return }
+            switch interfaceTag {
+            case FrameInterfaceTag.tcp.rawValue:
+                self.tcpConnection?.send(content: frameData, completion: .contentProcessed { error in
+                    if let error {
+                        NSLog("[EXT] TCP send error: \(error)")
+                    }
+                })
+            case FrameInterfaceTag.auto.rawValue:
+                // Auto frames are sent as UDP datagrams via the connection group
+                self.autoListener?.send(content: frameData) { error in
+                    if let error {
+                        NSLog("[EXT] Auto send error: \(error)")
+                    }
                 }
-            })
-        case FrameInterfaceTag.auto.rawValue:
-            // Auto frames are sent as UDP datagrams via the connection group
-            autoListener?.send(content: frameData) { error in
-                if let error {
-                    NSLog("[EXT] Auto send error: \(error)")
-                }
+            default:
+                NSLog("[EXT] Unknown interface tag: \(interfaceTag)")
             }
-        default:
-            NSLog("[EXT] Unknown interface tag: \(interfaceTag)")
+            completionHandler?(nil)
         }
-
-        completionHandler?(nil)
     }
 
     override func sleep(completionHandler: @escaping () -> Void) {
@@ -225,13 +230,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func wake() {
         NSLog("[EXT] wake")
-        // Reconnect if needed
-        if tcpConnection?.state == .cancelled || tcpConnection?.state == .failed(NWError.posix(.ECONNRESET)) {
-            let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
-            let configs = loadInterfaceConfigs(from: defaults)
-            if let tcp = configs.tcp {
-                startTCPConnection(host: tcp.host, port: tcp.port)
+        // Re-apply configs through the serial queue so a dropped TCP
+        // connection (cancelled / failed) gets restarted without
+        // racing applyConfigsLocked / stopTunnel writes. The diff
+        // logic in applyConfigsLocked is a no-op when nothing
+        // changed, so re-applying on wake is cheap.
+        configQueue.async { [weak self] in
+            guard let self else { return }
+            if self.tcpConnection?.state == .cancelled || self.tcpConnection == nil {
+                self.tcpConnection = nil
+                self.currentTCP = nil
             }
+            self.applyConfigsLocked()
         }
     }
 
