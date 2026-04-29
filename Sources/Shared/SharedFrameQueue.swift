@@ -15,6 +15,29 @@ import Foundation
 /// Defined here because `Sources/Shared` is compiled into both targets.
 public let appGroupIdentifier = "group.network.columba.Columba"
 
+/// Identifiers shared between the Columba app target and the
+/// `ColumbaNetworkExtension` so both refer to the same notification
+/// names / UserDefaults keys without duplicating string literals.
+public enum SharedDefaultsConstants {
+    /// Darwin notification posted when the app writes to the
+    /// interface-config UserDefaults. The extension observes this and
+    /// reloads its sockets so user-facing changes (added relay,
+    /// disabled interface, etc.) take effect without a tunnel
+    /// restart.
+    public static let configChangedNotificationName = "network.columba.configChanged"
+
+    /// Darwin notification posted by the extension when inbound
+    /// frames have been written to `SharedFrameQueue`. The app's
+    /// `ExtensionFrameReader` observes this to drain the queue.
+    public static let packetReadyNotificationName = "network.columba.packetReady"
+
+    /// Shared UserDefaults key holding the JSON-encoded interface
+    /// configuration array (full `InterfaceEntity` objects). Both the
+    /// app's `InterfaceRepository` and the extension's
+    /// `loadInterfaceConfigs` read from this key.
+    public static let interfacesKey = "com.columba.interfaces"
+}
+
 /// Interface tag identifying which network interface a frame arrived on.
 public enum FrameInterfaceTag: UInt8 {
     case tcp = 0x01

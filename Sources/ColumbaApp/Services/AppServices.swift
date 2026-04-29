@@ -599,11 +599,70 @@ public final class AppServices {
         // 13. Load tunnel manager
         let tunnel = TunnelManager()
         self.tunnelManager = tunnel
+
+        // Wire tunnel state -> per-interface tunnel-mode coordination.
+        // When the VPN extension reports `.connected`, switch each
+        // TCPInterface / AutoInterface into tunnel mode so its
+        // outbound traffic flows through the extension's authoritative
+        // socket instead of through a duplicate local NWConnection.
+        // When the extension goes back to `.disconnected`, restore the
+        // local NWConnection-managed path. The closure is invoked on
+        // the main actor by TunnelManager.
+        tunnel.onStatusChange = { [weak self] newStatus in
+            guard let self else { return }
+            Task { @MainActor in
+                switch newStatus {
+                case .connected:
+                    await self.applyTunnelModeToInterfaces(active: true)
+                case .disconnected, .invalid:
+                    await self.applyTunnelModeToInterfaces(active: false)
+                default:
+                    break
+                }
+            }
+        }
         await tunnel.load()
         #endif
 
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
+
+    #if ENABLE_NETWORK_EXTENSION
+    /// Switch every TCPInterface and AutoInterface into or out of
+    /// tunnel mode in response to the VPN extension's status.
+    ///
+    /// In tunnel mode the interface tears down its own NWConnection
+    /// and routes outbound bytes through `TunnelManager.sendFrame`,
+    /// which the extension forwards on its authoritative socket.
+    /// Inbound continues to flow via `ExtensionFrameReader` →
+    /// `transport.handleReceivedData` regardless.
+    @MainActor
+    private func applyTunnelModeToInterfaces(active: Bool) async {
+        guard let tunnel = tunnelManager else { return }
+
+        if active {
+            for (_, iface) in tcpInterfaces {
+                await iface.beginTunnelMode { [weak tunnel] frame in
+                    await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
+                }
+            }
+            if let auto = autoInterface {
+                await auto.beginTunnelMode { [weak tunnel] frame in
+                    await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.auto.rawValue)
+                }
+            }
+            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP + \(self.autoInterface != nil ? 1 : 0) Auto interface(s)")
+        } else {
+            for (_, iface) in tcpInterfaces {
+                await iface.endTunnelMode()
+            }
+            if let auto = autoInterface {
+                await auto.endTunnelMode()
+            }
+            DiagLog.log("[TUNNEL] disabled tunnel mode; interfaces resuming local connections")
+        }
+    }
+    #endif
 
     /// Switch to a different identity, tearing down and re-initializing the full stack.
     ///

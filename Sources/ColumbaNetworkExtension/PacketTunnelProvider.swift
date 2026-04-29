@@ -18,14 +18,27 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Constants
 
-    private static let packetReadyNotification = "network.columba.packetReady"
-    private static let interfacesKey = "com.columba.interfaces"
+    /// Notification posted to the app when inbound frames are queued.
+    private static let packetReadyNotification = SharedDefaultsConstants.packetReadyNotificationName
+    /// Notification observed when the app writes interface-config
+    /// changes; triggers a reload so unrelated interfaces stay
+    /// connected while a single relay is added/removed/edited.
+    private static let configChangedNotification = SharedDefaultsConstants.configChangedNotificationName
+    private static let interfacesKey = SharedDefaultsConstants.interfacesKey
 
     // MARK: - Properties
 
     private var tcpConnection: NWConnection?
     private var autoListener: NWConnectionGroup?
     private lazy var frameQueue = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier)
+
+    /// Currently-applied TCP endpoint (used to diff config changes
+    /// from the app). nil when no TCP interface is configured.
+    private var currentTCP: (host: String, port: UInt16)?
+
+    /// Currently-applied AutoInterface group id. nil when no Auto
+    /// interface is configured.
+    private var currentAutoGroupId: String?
 
     /// HDLC receive buffer for TCP stream framing
     private var tcpReceiveBuffer = Data()
@@ -40,19 +53,27 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         NSLog("[EXT] startTunnel called")
 
-        // Read interface configs from shared UserDefaults
-        let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
-        let configs = loadInterfaceConfigs(from: defaults)
+        // Apply current interface configs.
+        applyConfigs()
 
-        // Start TCP connection if configured
-        if let tcp = configs.tcp {
-            startTCPConnection(host: tcp.host, port: tcp.port)
-        }
-
-        // Start AutoInterface multicast listener if configured
-        if let groupId = configs.autoGroupId {
-            startAutoListener(groupId: groupId)
-        }
+        // Subscribe to live config changes so the user adding /
+        // removing / editing an interface in the app updates the
+        // extension's sockets without a tunnel restart. The handler
+        // diffs and only restarts what actually changed.
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(observer).takeUnretainedValue()
+                provider.applyConfigs()
+            },
+            Self.configChangedNotification as CFString,
+            nil,
+            .deliverImmediately
+        )
 
         // Set up dummy tunnel settings (required by NEPacketTunnelProvider)
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
@@ -67,12 +88,73 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Read the current interface configs from shared UserDefaults
+    /// and bring up / tear down the matching `NWConnection`s.
+    ///
+    /// Diffs against what's already running so a single relay change
+    /// doesn't disrupt unrelated interfaces. Called both on
+    /// `startTunnel` and on the `configChanged` Darwin notification.
+    private func applyConfigs() {
+        let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
+        let configs = loadInterfaceConfigs(from: defaults)
+
+        // TCP: bring up if newly configured; tear down if removed;
+        // restart if endpoint changed.
+        if let tcp = configs.tcp {
+            if let existing = currentTCP, existing.host == tcp.host && existing.port == tcp.port {
+                // No change.
+            } else {
+                NSLog("[EXT] TCP config (re)applying: \(tcp.host):\(tcp.port)")
+                tcpConnection?.cancel()
+                tcpConnection = nil
+                startTCPConnection(host: tcp.host, port: tcp.port)
+                currentTCP = (tcp.host, tcp.port)
+            }
+        } else if currentTCP != nil {
+            NSLog("[EXT] TCP config removed; tearing down connection")
+            tcpConnection?.cancel()
+            tcpConnection = nil
+            currentTCP = nil
+        }
+
+        // Auto: same diff.
+        if let groupId = configs.autoGroupId {
+            if currentAutoGroupId == groupId {
+                // No change.
+            } else {
+                NSLog("[EXT] Auto config (re)applying: groupId=\(groupId)")
+                autoListener?.cancel()
+                autoListener = nil
+                startAutoListener(groupId: groupId)
+                currentAutoGroupId = groupId
+            }
+        } else if currentAutoGroupId != nil {
+            NSLog("[EXT] Auto config removed; tearing down listener")
+            autoListener?.cancel()
+            autoListener = nil
+            currentAutoGroupId = nil
+        }
+    }
+
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         NSLog("[EXT] stopTunnel reason=\(reason.rawValue)")
         tcpConnection?.cancel()
         tcpConnection = nil
         autoListener?.cancel()
         autoListener = nil
+        currentTCP = nil
+        currentAutoGroupId = nil
+
+        // Remove the config-changed observer registered in startTunnel.
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterRemoveObserver(
+            center,
+            observer,
+            CFNotificationName(Self.configChangedNotification as CFString),
+            nil
+        )
+
         completionHandler()
     }
 

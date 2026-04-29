@@ -499,6 +499,20 @@ public final class InterfaceRepository: @unchecked Sendable {
         } catch {
             logger.error("Failed to encode interfaces: \(error)")
         }
+
+        // Notify the Network Extension (if running) that interface
+        // configs changed so it can diff its current sockets against
+        // the new state and start/stop only what changed. Unrelated
+        // interfaces stay connected. The notification name lives in
+        // SharedFrameQueue because both targets need to reference it.
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterPostNotification(
+            center,
+            CFNotificationName(SharedDefaultsConstants.configChangedNotificationName as CFString),
+            nil,
+            nil,
+            true
+        )
     }
 
     /// Add a new interface.
