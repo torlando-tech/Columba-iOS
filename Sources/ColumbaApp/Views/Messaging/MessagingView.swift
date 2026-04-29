@@ -211,6 +211,15 @@ struct MessagingView: View {
                     .task(id: vm.messages.first?.id) {
                         guard !didInitialScroll, !vm.messages.isEmpty else { return }
                         try? await Task.sleep(for: .milliseconds(50))
+                        // Re-check cancellation after the sleep. `try?`
+                        // swallows CancellationError, so without this guard
+                        // a task that was cancelled mid-sleep (e.g. because
+                        // loadMoreMessages prepended older messages and the
+                        // observed id changed) would still issue the scroll
+                        // and flip `didInitialScroll = true`, racing the
+                        // freshly-spawned task that exits early via the
+                        // top-of-block guard.
+                        guard !Task.isCancelled else { return }
                         proxy.scrollTo("bottom-anchor", anchor: .bottom)
                         didInitialScroll = true
                     }
