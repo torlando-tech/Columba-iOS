@@ -208,6 +208,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 continue
             }
             NSLog("[EXT] TCP config (re)applying [\(entityId)]: \(endpoint.host):\(endpoint.port)")
+            ExtensionDiagLog.log("[EXT/TCP] (re)applying [\(entityId)]: \(endpoint.host):\(endpoint.port)")
             teardownTCPConnectionLocked(entityId: entityId)
             startTCPConnection(entityId: entityId, host: endpoint.host, port: endpoint.port)
             currentTCPs[entityId] = endpoint
@@ -217,6 +218,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let desiredIds = Set(configs.tcps.keys)
         for staleId in currentTCPs.keys where !desiredIds.contains(staleId) {
             NSLog("[EXT] TCP config removed [\(staleId)]; tearing down connection")
+            ExtensionDiagLog.log("[EXT/TCP] removed [\(staleId)]; tearing down")
             teardownTCPConnectionLocked(entityId: staleId)
             currentTCPs.removeValue(forKey: staleId)
         }
@@ -399,11 +401,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         connection.stateUpdateHandler = { [weak self, entityId] state in
             NSLog("[EXT] TCP state [\(entityId)]: \(state)")
+            ExtensionDiagLog.log("[EXT/TCP] state [\(entityId)]: \(state)")
             switch state {
             case .ready:
                 self?.receiveTCPData(entityId: entityId)
             case .failed(let error):
                 NSLog("[EXT] TCP failed [\(entityId)]: \(error), reconnecting in 5s")
+                ExtensionDiagLog.log("[EXT/TCP] failed [\(entityId)]: \(error)")
                 // Reconnect must go through configQueue — otherwise the
                 // state-handler's write to `tcpConnections` would race
                 // `applyConfigsLocked` writing the same map. Routing
