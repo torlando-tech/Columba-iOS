@@ -618,11 +618,34 @@ public final class AppServices {
         // this the transport never sees Sideband's auto announces
         // matched against the registered AutoInterface, and announce
         // routing silently drops them.
-        reader.onTCPFrameReceived = { [weak self] data in
+        reader.onTCPFrameReceived = { [weak self] entityId, data in
             guard let self else { return }
             Task {
-                let tcpId = await self.tcpInterface?.id ?? "ext-tcp"
-                guard let transport = self.transport else { return }
+                // Prefer the per-frame entity ID supplied by the
+                // extension (so each TCP connection's inbound routes
+                // back to the correct `TCPInterface`). Fall back to
+                // the first TCP interface for legacy single-TCP frames
+                // and finally to a synthetic id so the transport never
+                // drops the frame. `tcpInterfaces` is `@MainActor`-
+                // isolated so we read both the lookup and the fallback
+                // id in one hop to avoid two round-trips.
+                let (tcpId, transport): (String, ReticulumTransport?) = await MainActor.run {
+                    // The dict keys are the `InterfaceEntity.id`
+                    // values used to register each `TCPInterface`,
+                    // which is exactly what the transport routes
+                    // against — so we can pick the fallback id from
+                    // the keys without touching the actor-isolated
+                    // `TCPInterface.id`.
+                    let firstId = self.tcpInterfaces.keys.first
+                    if !entityId.isEmpty, self.tcpInterfaces[entityId] != nil {
+                        return (entityId, self.transport)
+                    } else if let first = firstId {
+                        return (first, self.transport)
+                    } else {
+                        return ("ext-tcp", self.transport)
+                    }
+                }
+                guard let transport else { return }
                 await transport.handleReceivedData(data: data, from: tcpId)
             }
         }
@@ -778,9 +801,9 @@ public final class AppServices {
         guard let tunnel = tunnelManager else { return }
 
         if active {
-            for (_, iface) in tcpInterfaces {
-                await iface.beginTunnelMode { [weak tunnel] frame in
-                    await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
+            for (entityId, iface) in tcpInterfaces {
+                await iface.beginTunnelMode { [weak tunnel, entityId] frame in
+                    await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue, entityId: entityId)
                 }
             }
             DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s); Auto stays local (foreground-only)")
@@ -1408,8 +1431,8 @@ public final class AppServices {
         // foreground, dies when the app is suspended.
         #if ENABLE_NETWORK_EXTENSION
         if let tunnel = tunnelManager, tunnel.isRunning {
-            await newInterface.beginTunnelMode { [weak tunnel] frame in
-                await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
+            await newInterface.beginTunnelMode { [weak tunnel, entityId] frame in
+                await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue, entityId: entityId)
             }
             DiagLog.log("[TUNNEL] late-added TCP interface \(entityId) put into tunnel mode")
         }

@@ -249,17 +249,32 @@ public final class TunnelManager: @unchecked Sendable {
     /// Send a raw frame to the extension for transmission.
     ///
     /// The extension will route this to the appropriate NWConnection
-    /// based on the interface tag.
+    /// based on the interface tag and entity ID.
+    ///
+    /// Wire format (matches `PacketTunnelProvider.handleAppMessage`):
+    /// `[1B tag][1B idLen][N idBytes][M frameData]`
     ///
     /// - Parameters:
     ///   - data: Raw frame data (already HDLC-framed for TCP)
     ///   - interfaceTag: Which interface to send on (TCP=0x01, Auto=0x02)
-    public func sendFrame(_ data: Data, interfaceTag: UInt8) async {
+    ///   - entityId: Identifier of the source `TCPInterface` so the
+    ///     extension picks the right `NWConnection` when multiple TCP
+    ///     interfaces are tunneled simultaneously. Empty string keeps
+    ///     the legacy behaviour where the extension routes to its sole
+    ///     connection (used by Auto and by single-TCP fallbacks).
+    public func sendFrame(_ data: Data, interfaceTag: UInt8, entityId: String = "") async {
         guard let session = manager?.connection as? NETunnelProviderSession else {
             return
         }
 
-        var message = Data([interfaceTag])
+        let idBytes = Array(entityId.utf8.prefix(255))
+        var message = Data()
+        message.reserveCapacity(2 + idBytes.count + data.count)
+        message.append(interfaceTag)
+        message.append(UInt8(idBytes.count))
+        if !idBytes.isEmpty {
+            message.append(contentsOf: idBytes)
+        }
         message.append(data)
 
         do {

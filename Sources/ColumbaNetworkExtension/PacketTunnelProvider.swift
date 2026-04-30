@@ -28,7 +28,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Properties
 
-    private var tcpConnection: NWConnection?
     private lazy var frameQueue = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier)
     /// Drives the extension's AutoInterface — peer discovery
     /// (`ff12:0:…` multicast derived from the group id) plus
@@ -40,11 +39,23 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         postNotif: { [weak self] in self?.postDarwinNotification() }
     )
 
-    /// Currently-applied TCP endpoint (used to diff config changes
-    /// from the app). nil when no TCP interface is configured.
+    /// Per-entity TCP `NWConnection`s. Multiple TCP relays can be
+    /// tunneled simultaneously — each `InterfaceEntity` from the app
+    /// gets its own connection and its own HDLC receive buffer here.
     /// Mutated only on `configQueue` to avoid races with Darwin
     /// notification callbacks arriving on a Mach-port thread.
-    private var currentTCP: (host: String, port: UInt16)?
+    private var tcpConnections: [String: NWConnection] = [:]
+
+    /// Currently-applied TCP endpoints, keyed by entity id. Used to
+    /// diff config changes so an unrelated entry doesn't get its
+    /// connection torn down when the user adds or edits a different
+    /// one.
+    private var currentTCPs: [String: (host: String, port: UInt16)] = [:]
+
+    /// Per-connection HDLC receive buffer. Each TCP relay has its own
+    /// stream so they cannot share a single buffer without corrupting
+    /// frame boundaries.
+    private var tcpReceiveBuffers: [String: Data] = [:]
 
     /// Currently-applied AutoInterface group id. nil when no Auto
     /// interface is configured. Mutated only on `configQueue`.
@@ -55,9 +66,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// notification fired by the app (`configChanged`) can't race
     /// `startTunnel` / `stopTunnel` / NWConnection state handlers.
     private let configQueue = DispatchQueue(label: "network.columba.tunnel.config")
-
-    /// HDLC receive buffer for TCP stream framing
-    private var tcpReceiveBuffer = Data()
 
     /// One-shot diagnostic UDP listener on port 9999. Used by
     /// `tools/auto-test/run_test.sh` to determine whether an
@@ -163,39 +171,54 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    /// Tear down the current TCP connection and clear the HDLC
-    /// receive buffer so a reconnect doesn't prepend a partial frame
-    /// from the previous session to the new connection's first
-    /// bytes (which would corrupt the next decoded packet). Always
-    /// called from `configQueue`.
-    private func teardownTCPConnectionLocked() {
-        tcpConnection?.cancel()
-        tcpConnection = nil
-        tcpReceiveBuffer = Data()
+    /// Tear down a single TCP connection by entity id and clear its
+    /// HDLC receive buffer so a reconnect doesn't prepend a partial
+    /// frame from the previous session to the new connection's first
+    /// bytes. Always called from `configQueue`.
+    private func teardownTCPConnectionLocked(entityId: String) {
+        tcpConnections[entityId]?.cancel()
+        tcpConnections.removeValue(forKey: entityId)
+        tcpReceiveBuffers.removeValue(forKey: entityId)
+    }
+
+    /// Tear down every TCP connection (used on `stopTunnel`).
+    /// Always called from `configQueue`.
+    private func teardownAllTCPConnectionsLocked() {
+        for (_, conn) in tcpConnections {
+            conn.cancel()
+        }
+        tcpConnections.removeAll()
+        tcpReceiveBuffers.removeAll()
     }
 
     /// Body of `applyConfigs` — runs on `configQueue`. Mutates
-    /// `currentTCP` / `currentAutoGroupId` / `tcpConnection` /
-    /// `autoListener` only from this serial context.
+    /// `currentTCPs` / `currentAutoGroupId` / `tcpConnections` only
+    /// from this serial context.
     private func applyConfigsLocked() {
         let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
         let configs = loadInterfaceConfigs(from: defaults)
 
-        // TCP: bring up if newly configured; tear down if removed;
-        // restart if endpoint changed.
-        if let tcp = configs.tcp {
-            if let existing = currentTCP, existing.host == tcp.host && existing.port == tcp.port {
-                // No change.
-            } else {
-                NSLog("[EXT] TCP config (re)applying: \(tcp.host):\(tcp.port)")
-                teardownTCPConnectionLocked()
-                startTCPConnection(host: tcp.host, port: tcp.port)
-                currentTCP = (tcp.host, tcp.port)
+        // TCP: per-entity diff. Bring up newly-configured entries,
+        // tear down removed ones, restart only entries whose endpoint
+        // changed. Untouched entries keep their existing connection.
+        for (entityId, endpoint) in configs.tcps {
+            if let existing = currentTCPs[entityId],
+               existing.host == endpoint.host && existing.port == endpoint.port {
+                // No change for this entity.
+                continue
             }
-        } else if currentTCP != nil {
-            NSLog("[EXT] TCP config removed; tearing down connection")
-            teardownTCPConnectionLocked()
-            currentTCP = nil
+            NSLog("[EXT] TCP config (re)applying [\(entityId)]: \(endpoint.host):\(endpoint.port)")
+            teardownTCPConnectionLocked(entityId: entityId)
+            startTCPConnection(entityId: entityId, host: endpoint.host, port: endpoint.port)
+            currentTCPs[entityId] = endpoint
+        }
+
+        // Tear down entities the app removed.
+        let desiredIds = Set(configs.tcps.keys)
+        for staleId in currentTCPs.keys where !desiredIds.contains(staleId) {
+            NSLog("[EXT] TCP config removed [\(staleId)]; tearing down connection")
+            teardownTCPConnectionLocked(entityId: staleId)
+            currentTCPs.removeValue(forKey: staleId)
         }
 
         // Auto: not tunneled. NEPacketTunnelProvider extensions
@@ -222,9 +245,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // keeps the existing contract that the completion handler
         // fires only after teardown has finished.
         configQueue.sync {
-            teardownTCPConnectionLocked()
+            teardownAllTCPConnectionsLocked()
             autoBridge.stop()
-            currentTCP = nil
+            currentTCPs.removeAll()
             currentAutoGroupId = nil
         }
 
@@ -242,7 +265,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
-        // Format: [1-byte interface tag][N-byte HDLC-framed data]
+        // Format: [1B tag][1B idLen][N idBytes][M HDLC-framed data]
         guard messageData.count >= 1 else {
             completionHandler?(nil)
             return
@@ -272,7 +295,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
 
         let interfaceTag = messageData[0]
-        let frameData = messageData.dropFirst()
+        let idLen = Int(messageData[1])
+        guard messageData.count >= 2 + idLen else {
+            completionHandler?(nil)
+            return
+        }
+        let entityId: String
+        if idLen > 0 {
+            let idStart = messageData.index(messageData.startIndex, offsetBy: 2)
+            let idEnd = messageData.index(idStart, offsetBy: idLen)
+            entityId = String(data: messageData[idStart..<idEnd], encoding: .utf8) ?? ""
+        } else {
+            entityId = ""
+        }
+        let frameData = messageData.suffix(from: messageData.index(messageData.startIndex, offsetBy: 2 + idLen))
 
         // Read the connection / listener under configQueue so we can't
         // observe a half-mutated state while applyConfigsLocked() is
@@ -281,11 +317,28 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let self else { completionHandler?(nil); return }
             switch interfaceTag {
             case FrameInterfaceTag.tcp.rawValue:
-                self.tcpConnection?.send(content: frameData, completion: .contentProcessed { error in
-                    if let error {
-                        NSLog("[EXT] TCP send error: \(error)")
-                    }
-                })
+                // Pick the connection by entity id. If the app didn't
+                // tag the frame (legacy / single-TCP build), fall back
+                // to the only existing connection so behaviour matches
+                // the old single-TCP path.
+                let connection: NWConnection?
+                if !entityId.isEmpty {
+                    connection = self.tcpConnections[entityId]
+                } else if self.tcpConnections.count == 1 {
+                    connection = self.tcpConnections.values.first
+                } else {
+                    connection = nil
+                }
+
+                if let connection {
+                    connection.send(content: frameData, completion: .contentProcessed { error in
+                        if let error {
+                            NSLog("[EXT] TCP send error [\(entityId)]: \(error)")
+                        }
+                    })
+                } else {
+                    NSLog("[EXT] No TCP connection for entityId='\(entityId)' (\(self.tcpConnections.count) connection(s) running); dropping frame")
+                }
             case FrameInterfaceTag.auto.rawValue:
                 // Auto isn't tunneled (extension can't send UDP to
                 // the LAN — see `applyConfigsLocked`). The app's
@@ -307,8 +360,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func wake() {
         NSLog("[EXT] wake")
-        // Re-apply configs through the serial queue so a dropped TCP
-        // connection (cancelled / failed) gets restarted without
+        // Re-apply configs through the serial queue so dropped TCP
+        // connections (cancelled / failed) get restarted without
         // racing applyConfigsLocked / stopTunnel writes. The diff
         // logic in applyConfigsLocked is a no-op when nothing
         // changed, so re-applying on wake is cheap.
@@ -319,12 +372,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // the cached endpoint as already-applied. Use the helper
             // so the receive buffer is reset alongside the connection
             // — see `teardownTCPConnectionLocked`.
-            switch self.tcpConnection?.state {
-            case .cancelled, .failed, .none:
-                self.teardownTCPConnectionLocked()
-                self.currentTCP = nil
-            default:
-                break
+            for entityId in self.tcpConnections.keys {
+                switch self.tcpConnections[entityId]?.state {
+                case .cancelled, .failed, .none:
+                    self.teardownTCPConnectionLocked(entityId: entityId)
+                    self.currentTCPs.removeValue(forKey: entityId)
+                default:
+                    break
+                }
             }
             self.applyConfigsLocked()
         }
@@ -332,91 +387,101 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - TCP Connection
 
-    private func startTCPConnection(host: String, port: UInt16) {
+    private func startTCPConnection(entityId: String, host: String, port: UInt16) {
         let nwHost = NWEndpoint.Host(host)
         let nwPort = NWEndpoint.Port(rawValue: port)!
         let params = NWParameters.tcp
         params.requiredInterfaceType = .other // Allow any interface
 
         let connection = NWConnection(host: nwHost, port: nwPort, using: params)
-        self.tcpConnection = connection
+        self.tcpConnections[entityId] = connection
+        self.tcpReceiveBuffers[entityId] = Data()
 
-        connection.stateUpdateHandler = { [weak self] state in
-            NSLog("[EXT] TCP state: \(state)")
+        connection.stateUpdateHandler = { [weak self, entityId] state in
+            NSLog("[EXT] TCP state [\(entityId)]: \(state)")
             switch state {
             case .ready:
-                self?.receiveTCPData()
+                self?.receiveTCPData(entityId: entityId)
             case .failed(let error):
-                NSLog("[EXT] TCP failed: \(error), reconnecting in 5s")
+                NSLog("[EXT] TCP failed [\(entityId)]: \(error), reconnecting in 5s")
                 // Reconnect must go through configQueue — otherwise the
-                // .failed handler's main-queue write to `tcpConnection`
-                // would race `applyConfigsLocked` writing the same
-                // property. Routing through `applyConfigs` re-reads the
-                // current config, clears the stale connection, and
-                // starts a fresh one all on the serial queue.
+                // state-handler's write to `tcpConnections` would race
+                // `applyConfigsLocked` writing the same map. Routing
+                // through `applyConfigs` re-reads the current config,
+                // clears the stale connection, and starts a fresh one
+                // all on the serial queue.
                 guard let self else { return }
                 self.configQueue.async {
-                    self.teardownTCPConnectionLocked()
-                    self.currentTCP = nil
+                    self.teardownTCPConnectionLocked(entityId: entityId)
+                    self.currentTCPs.removeValue(forKey: entityId)
                 }
                 DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [weak self] in
                     self?.applyConfigs()
                 }
             case .waiting(let error):
-                NSLog("[EXT] TCP waiting: \(error)")
+                NSLog("[EXT] TCP waiting [\(entityId)]: \(error)")
             default:
                 break
             }
         }
 
         // Run state callbacks AND receive callbacks on configQueue so
-        // the receive buffer (`tcpReceiveBuffer`) and connection
-        // pointer are touched only from one serial context. Without
-        // this, a `.main` receive completion could race
-        // `teardownTCPConnectionLocked` resetting the buffer on
-        // configQueue and the clear would silently lose to a stale
-        // append, corrupting the next session's HDLC framing.
+        // the receive buffer and connection map are touched only from
+        // one serial context. Without this, a `.main` receive
+        // completion could race `teardownTCPConnectionLocked`
+        // resetting the buffer on configQueue and the clear would
+        // silently lose to a stale append, corrupting the next
+        // session's HDLC framing.
         connection.start(queue: configQueue)
     }
 
-    /// Continuation of inbound TCP receive. Must run on `configQueue`
-    /// because it both reads `tcpConnection` and feeds `handleTCPData`
-    /// which touches `tcpReceiveBuffer` — both serialized there.
-    private func receiveTCPData() {
-        tcpConnection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+    /// Continuation of inbound TCP receive for a specific entity.
+    /// Must run on `configQueue` because it both reads
+    /// `tcpConnections[entityId]` and feeds `handleTCPData` which
+    /// touches `tcpReceiveBuffers` — both serialized there.
+    private func receiveTCPData(entityId: String) {
+        tcpConnections[entityId]?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self, entityId] data, _, isComplete, error in
             // Callback runs on the connection's queue (configQueue
             // since startTCPConnection switched it). No extra dispatch
             // needed.
             if let data, !data.isEmpty {
-                self?.handleTCPData(data)
+                self?.handleTCPData(entityId: entityId, data: data)
             }
 
             if isComplete {
-                NSLog("[EXT] TCP connection complete (EOF)")
+                NSLog("[EXT] TCP connection complete [\(entityId)] (EOF)")
                 return
             }
 
             if let error {
-                NSLog("[EXT] TCP receive error: \(error)")
+                NSLog("[EXT] TCP receive error [\(entityId)]: \(error)")
                 return
             }
 
             // Continue receiving
-            self?.receiveTCPData()
+            self?.receiveTCPData(entityId: entityId)
         }
     }
 
     /// Buffer TCP data and extract HDLC frames. Runs on configQueue
     /// (called from `receiveTCPData`'s completion which now executes
-    /// on configQueue too).
-    private func handleTCPData(_ data: Data) {
-        tcpReceiveBuffer.append(data)
+    /// on configQueue too). Each entity has its own receive buffer
+    /// so two concurrent TCP connections cannot interleave their
+    /// HDLC frame boundaries.
+    private func handleTCPData(entityId: String, data: Data) {
+        var buffer = tcpReceiveBuffers[entityId] ?? Data()
+        buffer.append(data)
 
         // Extract complete HDLC frames
-        let frames = extractHDLCFrames(from: &tcpReceiveBuffer)
+        let frames = extractHDLCFrames(from: &buffer)
+        tcpReceiveBuffers[entityId] = buffer
 
         for frame in frames {
-            frameQueue.append(frame: frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
+            frameQueue.append(
+                frame: frame,
+                interfaceTag: FrameInterfaceTag.tcp.rawValue,
+                entityId: entityId
+            )
         }
 
         if !frames.isEmpty {
@@ -555,7 +620,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: - Config Loading
 
     private struct InterfaceConfigs {
-        var tcp: (host: String, port: UInt16)?
+        /// Keyed by `InterfaceEntity.id` so each enabled TCP relay
+        /// gets its own connection. The previous single-optional
+        /// shape silently dropped every TCP entry except the last.
+        var tcps: [String: (host: String, port: UInt16)] = [:]
         var autoGroupId: String?
     }
 
@@ -577,6 +645,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         for entity in array {
             guard let enabled = entity["enabled"] as? Bool, enabled,
+                  let entityId = entity["id"] as? String,
                   let configWrapper = entity["config"] as? [String: Any],
                   let type = configWrapper["type"] as? String,
                   let config = configWrapper["config"] as? [String: Any] else {
@@ -587,8 +656,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             case "tcpClient":
                 if let host = config["targetHost"] as? String,
                    let port = config["targetPort"] as? Int {
-                    result.tcp = (host: host, port: UInt16(port))
-                    NSLog("[EXT] Found TCP config: \(host):\(port)")
+                    result.tcps[entityId] = (host: host, port: UInt16(port))
+                    NSLog("[EXT] Found TCP config [\(entityId)]: \(host):\(port)")
                 }
             case "autoInterface":
                 let groupId = config["groupId"] as? String ?? "reticulum"
