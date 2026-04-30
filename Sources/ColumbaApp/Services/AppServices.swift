@@ -76,6 +76,15 @@ enum DiagLog {
 @Observable
 @MainActor
 public final class AppServices {
+
+    /// Host:port pair identifying a TCP interface's destination. Used to
+    /// detect whether a `connectTCPInterface` call would change the
+    /// interface's configuration or just re-apply the same one.
+    public struct TCPEndpoint: Equatable, Hashable, Sendable {
+        public let host: String
+        public let port: UInt16
+    }
+
     // MARK: - Components
 
     /// Local Reticulum identity for signing and encryption.
@@ -92,6 +101,15 @@ public final class AppServices {
 
     /// TCP interfaces keyed by entity ID. Multiple concurrent connections are supported.
     public private(set) var tcpInterfaces: [String: TCPInterface] = [:]
+
+    /// Last-applied host:port per TCP entity. Used by `connectTCPInterface`
+    /// to short-circuit when the caller is re-applying an already-running
+    /// config (e.g. `InterfaceManagementViewModel.applyChanges` loops over
+    /// every enabled TCP entity on every toggle, so an unchanged interface
+    /// would otherwise be torn down and recreated alongside the genuinely-
+    /// changed one — triggering the relay to redeliver its full announce
+    /// table per reconnect).
+    public private(set) var tcpEndpoints: [String: TCPEndpoint] = [:]
 
     /// Convenience accessor for the first TCP interface (backward compat).
     public var tcpInterface: TCPInterface? { tcpInterfaces.values.first }
@@ -425,6 +443,7 @@ public final class AppServices {
             do {
                 let newInterface = try TCPInterface(config: config)
                 tcpInterfaces["tcp-server"] = newInterface
+                tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
                 try await newTransport.addInterface(newInterface)
             } catch {
                 logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
@@ -540,6 +559,7 @@ public final class AppServices {
             do {
                 let newInterface = try TCPInterface(config: config)
                 tcpInterfaces["tcp-server"] = newInterface
+                tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
                 try await newTransport.addInterface(newInterface)
             } catch {
                 logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
@@ -1210,12 +1230,22 @@ public final class AppServices {
     /// Connect a TCP interface by entity ID, replacing any existing one with the same ID.
     ///
     /// Multiple concurrent TCP interfaces are supported — each entity ID is independent.
+    /// Idempotent: if an interface is already running for `entityId` with the same
+    /// `host:port`, returns without disturbing it.
     public func connectTCPInterface(entityId: String, host: String, port: UInt16) async throws {
-        // Stop any existing interface with this entity ID
+        let endpoint = TCPEndpoint(host: host, port: port)
+
+        // Already running with the same endpoint — leave it alone.
+        if tcpInterfaces[entityId] != nil, tcpEndpoints[entityId] == endpoint {
+            return
+        }
+
+        // Stop any existing interface with this entity ID (config changed)
         if let existing = tcpInterfaces[entityId] {
             await existing.disconnect()
             await transport?.removeInterface(id: entityId)
             tcpInterfaces.removeValue(forKey: entityId)
+            tcpEndpoints.removeValue(forKey: entityId)
         }
 
         // Ensure base stack exists
@@ -1237,6 +1267,7 @@ public final class AppServices {
         )
         let newInterface = try TCPInterface(config: config)
         tcpInterfaces[entityId] = newInterface
+        tcpEndpoints[entityId] = endpoint
         try await transport.addInterface(newInterface)
 
         if let dest = deliveryDestination {
@@ -1264,6 +1295,7 @@ public final class AppServices {
         await interface.disconnect()
         await transport?.removeInterface(id: entityId)
         tcpInterfaces.removeValue(forKey: entityId)
+        tcpEndpoints.removeValue(forKey: entityId)
     }
 
     /// Stop all TCP interfaces.
@@ -1273,6 +1305,7 @@ public final class AppServices {
             await transport?.removeInterface(id: entityId)
         }
         tcpInterfaces.removeAll()
+        tcpEndpoints.removeAll()
         isConnected = false
     }
 
@@ -1356,6 +1389,7 @@ public final class AppServices {
         )
         let newInterface = try TCPInterface(config: config)
         tcpInterfaces["tcp-server"] = newInterface
+        tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
 
         // Add interface to transport (connects it)
         try await newTransport.addInterface(newInterface)

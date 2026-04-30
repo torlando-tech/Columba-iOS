@@ -298,9 +298,20 @@ public final class InterfaceManagementViewModel {
         let enabledTCPs = enabledInterfaces.filter { $0.type == .tcpClient }
         let enabledTCPIds = Set(enabledTCPs.map { $0.id })
 
-        // Connect/reconnect each enabled TCP interface
+        // Connect/reconnect each enabled TCP interface, skipping ones that
+        // are already running with the same host:port. Without the skip,
+        // toggling or editing any single interface caused this loop to
+        // tear down every other healthy TCP connection alongside the one
+        // the user actually changed — and reconnecting prompted the relay
+        // to redeliver its full announce table per interface, swamping
+        // the app for ~90s per change.
         for tcpIf in enabledTCPs {
             if case .tcpClient(let config) = tcpIf.config {
+                let desired = AppServices.TCPEndpoint(host: config.targetHost, port: config.targetPort)
+                if appServices.tcpInterfaces[tcpIf.id] != nil,
+                   appServices.tcpEndpoints[tcpIf.id] == desired {
+                    continue
+                }
                 logger.info("Applying TCP[\(tcpIf.id)]: \(config.targetHost):\(config.targetPort)")
                 interfaceStatus[tcpIf.id] = .connecting
                 do {
