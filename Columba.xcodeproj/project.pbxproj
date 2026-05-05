@@ -10,6 +10,7 @@
 		T001 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT01 /* AudioRingBufferTests.swift */; };
 		T002 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT02 /* AudioManagerConfigChangeTests.swift */; };
 		T004 /* CallManagerCallKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT04 /* CallManagerCallKitTests.swift */; };
+		T005 /* MapStyleURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT05 /* MapStyleURLTests.swift */; };
 		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* ColumbaApp.swift */; };
 		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
 		003 /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* ChatsViewModel.swift */; };
@@ -147,6 +148,7 @@
 		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
 		FTAA /* AutoAnnouncePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnouncePolicyTests.swift; sourceTree = "<group>"; };
 		FTPC /* PeerChildInterfaceRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerChildInterfaceRegistryTests.swift; sourceTree = "<group>"; };
+		FT05 /* MapStyleURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapStyleURLTests.swift; sourceTree = "<group>"; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
@@ -573,6 +575,7 @@
 				FT04 /* CallManagerCallKitTests.swift */,
 				FTAA /* AutoAnnouncePolicyTests.swift */,
 				FTPC /* PeerChildInterfaceRegistryTests.swift */,
+				FT05 /* MapStyleURLTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -744,6 +747,7 @@
 				T004 /* CallManagerCallKitTests.swift in Sources */,
 				TAA0 /* AutoAnnouncePolicyTests.swift in Sources */,
 				TPCR /* PeerChildInterfaceRegistryTests.swift in Sources */,
+				T005 /* MapStyleURLTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

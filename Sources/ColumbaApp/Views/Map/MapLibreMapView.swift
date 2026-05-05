@@ -11,6 +11,19 @@ import SwiftUI
 import MapLibre
 import LXMFSwift
 
+/// Returns the OpenFreeMap style URL for the active color scheme.
+/// MLNOfflineStorage caches the style JSON + tiles during region download,
+/// so loading this URL offline serves everything from the local cache —
+/// but cached regions are pinned to one style at download time, so the
+/// dark style assets are not served offline if a region was downloaded
+/// while light was active. TODO(#59 follow-up): cache both style packs.
+@available(iOS 17.0, *)
+func mapStyleURL(forDarkMode dark: Bool) -> URL {
+    URL(string: dark
+        ? "https://tiles.openfreemap.org/styles/dark"
+        : "https://tiles.openfreemap.org/styles/liberty")!
+}
+
 @available(iOS 17.0, *)
 struct MapLibreMapView: UIViewRepresentable {
     @Binding var centerOnUser: Bool
@@ -18,11 +31,7 @@ struct MapLibreMapView: UIViewRepresentable {
     var showsUserLocation: Bool
     var peerLocations: [PeerLocation]
     var httpEnabled: Bool
-
-    /// Style URL from OpenFreeMap — used for both online and offline modes.
-    /// MLNOfflineStorage caches the style JSON + tiles during region download,
-    /// so loading this URL offline serves everything from the local cache.
-    private static let styleURL = URL(string: "https://tiles.openfreemap.org/styles/liberty")!
+    var isDark: Bool
 
     func makeUIView(context: Context) -> MLNMapView {
         // Set up network delegate to block HTTP when toggle is off.
@@ -31,7 +40,9 @@ struct MapLibreMapView: UIViewRepresentable {
         context.coordinator.httpEnabled = httpEnabled
         MLNNetworkConfiguration.sharedManager.delegate = context.coordinator
 
-        let mapView = MLNMapView(frame: .zero, styleURL: Self.styleURL)
+        let initialStyleURL = mapStyleURL(forDarkMode: isDark)
+        context.coordinator.lastStyleURL = initialStyleURL
+        let mapView = MLNMapView(frame: .zero, styleURL: initialStyleURL)
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         mapView.showsUserLocation = showsUserLocation
         mapView.delegate = context.coordinator
@@ -52,6 +63,15 @@ struct MapLibreMapView: UIViewRepresentable {
 
         // Update network blocking state when HTTP toggle changes
         context.coordinator.httpEnabled = httpEnabled
+
+        // Swap style URL when color scheme changes; lastStyleURL avoids
+        // a no-op assignment (which would still trigger a reload) on every
+        // peer-location tick.
+        let desiredStyleURL = mapStyleURL(forDarkMode: isDark)
+        if context.coordinator.lastStyleURL != desiredStyleURL {
+            context.coordinator.lastStyleURL = desiredStyleURL
+            mapView.styleURL = desiredStyleURL
+        }
 
         if centerOnUser {
             DispatchQueue.main.async {
@@ -130,6 +150,11 @@ struct MapLibreMapView: UIViewRepresentable {
 
         /// Whether HTTP tile fetching is allowed.
         var httpEnabled = true
+
+        /// Last style URL applied to the underlying MLNMapView; used to skip
+        /// no-op assignments on the frequent SwiftUI updates that don't change
+        /// the color scheme.
+        var lastStyleURL: URL?
 
         /// Tracks peer annotations by hash for efficient updates.
         var peerAnnotations: [Data: PeerPointAnnotation] = [:]
