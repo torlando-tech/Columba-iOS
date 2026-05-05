@@ -118,6 +118,9 @@
 		082B /* MicronRenderContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F083 /* MicronRenderContainer.swift */; };
 		083B /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		084B /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
+		086B /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F086 /* TCPClientWizardViewModel.swift */; };
+		087B /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F087 /* TCPClientWizard.swift */; };
+		T005 /* TCPClientWizardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT05 /* TCPClientWizardViewModelTests.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
 		2F3D64B12F7227E100049252 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P004 /* ReticulumSwift */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
@@ -248,6 +251,9 @@
 		F083 /* MicronRenderContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronRenderContainer.swift; sourceTree = "<group>"; };
 		F084 /* MonospaceLineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonospaceLineView.swift; sourceTree = "<group>"; };
 		F085 /* ZoomableScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomableScrollView.swift; sourceTree = "<group>"; };
+		F086 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
+		F087 /* TCPClientWizard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPClientWizard.swift; sourceTree = "<group>"; };
+		FT05 /* TCPClientWizardViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModelTests.swift; sourceTree = "<group>"; };
 		F07B /* Config/Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
 		F07C /* Config/LocalSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/LocalSigning.xcconfig.example; sourceTree = SOURCE_ROOT; };
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
@@ -450,6 +456,7 @@
 				F066 /* AppearanceCard.swift */,
 				F067 /* CustomThemeEditorView.swift */,
 				F071 /* BLEConnectionsView.swift */,
+				F087 /* TCPClientWizard.swift */,
 				GRNW /* RNodeWizard */,
 			);
 			path = Settings;
@@ -534,6 +541,7 @@
 				F05A /* RNodeWizardViewModel.swift */,
 				F05F /* MigrationViewModel.swift */,
 				F080 /* NomadNetBrowserViewModel.swift */,
+				F086 /* TCPClientWizardViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -555,6 +563,7 @@
 				FT02 /* AudioManagerConfigChangeTests.swift */,
 				FT03 /* MicronParserTests.swift */,
 				FT04 /* CallManagerCallKitTests.swift */,
+				FT05 /* TCPClientWizardViewModelTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -722,6 +731,7 @@
 				T002 /* AudioManagerConfigChangeTests.swift in Sources */,
 				T003 /* MicronParserTests.swift in Sources */,
 				T004 /* CallManagerCallKitTests.swift in Sources */,
+				T005 /* TCPClientWizardViewModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -841,6 +851,8 @@
 				082B /* MicronRenderContainer.swift in Sources */,
 				083B /* MonospaceLineView.swift in Sources */,
 				084B /* ZoomableScrollView.swift in Sources */,
+				086B /* TCPClientWizardViewModel.swift in Sources */,
+				087B /* TCPClientWizard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

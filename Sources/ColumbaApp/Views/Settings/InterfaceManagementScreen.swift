@@ -122,6 +122,11 @@ struct InterfaceManagementScreen: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $viewModel.showTCPWizard) {
+            TCPClientWizard(viewModel: viewModel)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
         .alert("Delete Interface?", isPresented: $viewModel.showDeleteConfirmation) {
             Button("Cancel", role: .cancel) {
                 viewModel.interfaceToDelete = nil
