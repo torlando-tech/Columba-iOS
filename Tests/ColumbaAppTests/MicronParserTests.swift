@@ -172,6 +172,173 @@ final class MicronParserTests: XCTestCase {
         } else { XCTFail("Expected text") }
     }
 
+    // MARK: - Cross-line Formatting State (issue #31)
+
+    func testStylePersistsAcrossLines() {
+        let doc = MicronParser.parse("`!bold-on-line-1\nplain-on-line-2")
+        XCTAssertEqual(doc.elements.count, 2)
+        guard case .paragraph(let line1Spans, _, _) = doc.elements[0] else {
+            XCTFail("Expected paragraph at 0"); return
+        }
+        XCTAssertEqual(line1Spans.count, 1)
+        guard case .text(let t1, let s1) = line1Spans[0] else {
+            XCTFail("Expected text on line 1"); return
+        }
+        XCTAssertEqual(t1, "bold-on-line-1")
+        XCTAssertTrue(s1.bold)
+
+        guard case .paragraph(let line2Spans, _, _) = doc.elements[1] else {
+            XCTFail("Expected paragraph at 1"); return
+        }
+        XCTAssertEqual(line2Spans.count, 1)
+        guard case .text(let t2, let s2) = line2Spans[0] else {
+            XCTFail("Expected text on line 2"); return
+        }
+        XCTAssertEqual(t2, "plain-on-line-2")
+        XCTAssertTrue(s2.bold) // bold from line 1 carries because never toggled off
+    }
+
+    func testColorPreambleAppliesToFollowingLine() {
+        let doc = MicronParser.parse("`F0ff`B52f\nART")
+        XCTAssertEqual(doc.elements.count, 2)
+        guard case .paragraph(let preambleSpans, _, _) = doc.elements[0] else {
+            XCTFail("Expected paragraph at 0"); return
+        }
+        XCTAssertEqual(preambleSpans.count, 0) // color codes consumed; no text
+
+        guard case .paragraph(let artSpans, _, _) = doc.elements[1] else {
+            XCTFail("Expected paragraph at 1"); return
+        }
+        XCTAssertEqual(artSpans.count, 1)
+        guard case .text(let text, let style) = artSpans[0] else {
+            XCTFail("Expected text on ART line"); return
+        }
+        XCTAssertEqual(text, "ART")
+        XCTAssertEqual(style.foregroundColor, "0ff")
+        XCTAssertEqual(style.backgroundColor, "52f")
+    }
+
+    func testResetSequenceClearsStyleAcrossLines() {
+        let doc = MicronParser.parse("`Ff00colored\n`f\nplain")
+        XCTAssertEqual(doc.elements.count, 3)
+
+        guard case .paragraph(let line1Spans, _, _) = doc.elements[0] else {
+            XCTFail("Expected paragraph at 0"); return
+        }
+        XCTAssertEqual(line1Spans.count, 1)
+        if case .text(let t, let s) = line1Spans[0] {
+            XCTAssertEqual(t, "colored")
+            XCTAssertEqual(s.foregroundColor, "f00")
+        } else { XCTFail("Expected text on line 1") }
+
+        guard case .paragraph(let line2Spans, _, _) = doc.elements[1] else {
+            XCTFail("Expected paragraph at 1"); return
+        }
+        XCTAssertEqual(line2Spans.count, 0) // bare `f consumes; no text spans
+
+        guard case .paragraph(let line3Spans, _, _) = doc.elements[2] else {
+            XCTFail("Expected paragraph at 2"); return
+        }
+        XCTAssertEqual(line3Spans.count, 1)
+        if case .text(let t, let s) = line3Spans[0] {
+            XCTAssertEqual(t, "plain")
+            XCTAssertNil(s.foregroundColor) // reset on line 2 must persist to line 3
+        } else { XCTFail("Expected text on line 3") }
+    }
+
+    func testDoubleBacktickResetPersists() {
+        // `!`*styled`` carries no styles into the next line.
+        let doc = MicronParser.parse("`!`*styled``\nplain")
+        XCTAssertEqual(doc.elements.count, 2)
+
+        guard case .paragraph(let line2Spans, _, _) = doc.elements[1] else {
+            XCTFail("Expected paragraph at 1"); return
+        }
+        XCTAssertEqual(line2Spans.count, 1)
+        guard case .text(let t, let s) = line2Spans[0] else {
+            XCTFail("Expected text on line 2"); return
+        }
+        XCTAssertEqual(t, "plain")
+        XCTAssertFalse(s.bold)
+        XCTAssertFalse(s.italic)
+        XCTAssertFalse(s.underline)
+        XCTAssertNil(s.foregroundColor)
+        XCTAssertNil(s.backgroundColor)
+    }
+
+    /// Regression sentinel for the chat-room page (issue #31). A trimmed but
+    /// structurally representative chunk: `Faff prefix, then `F0ff`B52f
+    /// preamble before the ASCII art, then `f`b reset.
+    func testTheChatRoomFixture() {
+        let markup = """
+        `Faff Welcome To:
+
+        `F0ff`B52f
+        ART
+        `f`b
+        """
+        let doc = MicronParser.parse(markup)
+        XCTAssertEqual(doc.elements.count, 5)
+
+        // Line 0: `Faff Welcome To: → fg=aff
+        guard case .paragraph(let welcomeSpans, _, _) = doc.elements[0] else {
+            XCTFail("Expected paragraph at 0"); return
+        }
+        XCTAssertEqual(welcomeSpans.count, 1)
+        if case .text(let t, let s) = welcomeSpans[0] {
+            XCTAssertEqual(t, " Welcome To:")
+            XCTAssertEqual(s.foregroundColor, "aff")
+            XCTAssertNil(s.backgroundColor)
+        } else { XCTFail("Expected text") }
+
+        // Line 1: blank line → empty paragraph
+        guard case .paragraph(let blankSpans, _, _) = doc.elements[1] else {
+            XCTFail("Expected paragraph at 1"); return
+        }
+        XCTAssertEqual(blankSpans.count, 1)
+        if case .text(let t, _) = blankSpans[0] {
+            XCTAssertEqual(t, "")
+        } else { XCTFail("Expected empty text") }
+
+        // Line 2: `F0ff`B52f preamble → no text spans
+        guard case .paragraph(let preambleSpans, _, _) = doc.elements[2] else {
+            XCTFail("Expected paragraph at 2"); return
+        }
+        XCTAssertEqual(preambleSpans.count, 0)
+
+        // Line 3: ART must carry fg=0ff, bg=52f from the preamble
+        guard case .paragraph(let artSpans, _, _) = doc.elements[3] else {
+            XCTFail("Expected paragraph at 3"); return
+        }
+        XCTAssertEqual(artSpans.count, 1)
+        if case .text(let t, let s) = artSpans[0] {
+            XCTAssertEqual(t, "ART")
+            XCTAssertEqual(s.foregroundColor, "0ff")
+            XCTAssertEqual(s.backgroundColor, "52f")
+        } else { XCTFail("Expected text") }
+
+        // Line 4: `f`b reset → no text spans
+        guard case .paragraph(let resetSpans, _, _) = doc.elements[4] else {
+            XCTFail("Expected paragraph at 4"); return
+        }
+        XCTAssertEqual(resetSpans.count, 0)
+    }
+
+    func testIndentResetClearsStyle() {
+        // `< at line-start resets formatting state in addition to indent.
+        let doc = MicronParser.parse("`!bold-line\n<plain-after-reset")
+        XCTAssertEqual(doc.elements.count, 2)
+
+        guard case .paragraph(let line2Spans, _, _) = doc.elements[1] else {
+            XCTFail("Expected paragraph at 1"); return
+        }
+        XCTAssertEqual(line2Spans.count, 1)
+        if case .text(let t, let s) = line2Spans[0] {
+            XCTAssertEqual(t, "plain-after-reset")
+            XCTAssertFalse(s.bold) // `< wiped the persisted bold from line 1
+        } else { XCTFail("Expected text") }
+    }
+
     // MARK: - Colors
 
     func testForegroundColor() {
