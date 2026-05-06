@@ -19,6 +19,10 @@ struct MonospaceLineView: View {
     let cellHeight: CGFloat
     let alignment: MicronAlignment
     let bold: Bool
+    /// Force the UIKit label to be at least this wide so center/right alignment
+    /// resolves against the visible viewport, not just the text's intrinsic width.
+    /// Pass 0 to opt out (label sizes to its own intrinsic only).
+    var minWidth: CGFloat = 0
     var onLinkTapped: ((MicronLink) -> Void)?
 
     var body: some View {
@@ -27,6 +31,7 @@ struct MonospaceLineView: View {
             attributedString: buildAttributedString(),
             cellHeight: cellHeight,
             alignment: alignment,
+            minWidth: minWidth,
             onTap: handleTap
         )
         .frame(height: cellHeight)
@@ -52,13 +57,24 @@ struct MonospaceLineView: View {
         paragraph.maximumLineHeight = cellHeight
         paragraph.lineSpacing = 0
         paragraph.lineHeightMultiple = 0
-        switch alignment {
-        case .left: paragraph.alignment = .left
-        case .center: paragraph.alignment = .center
-        case .right: paragraph.alignment = .right
-        }
+        // Always render content left-aligned within the UILabel. SwiftUI
+        // `.frame(alignment:)` at the call site handles visual centering /
+        // right-alignment for narrow rows. This avoids Core Text's
+        // trailing-whitespace stripping under .center / .right alignment.
+        paragraph.alignment = .left
 
+        // Prefer bundled JetBrains Mono — its Unicode block-drawing glyphs are
+        // truly cell-uniform with ASCII spaces, which the iOS system monospaced
+        // font (SF Mono) is not. SF Mono renders ▗▄▖█ at slightly different
+        // pixel widths than space, so a row of mixed box-chars + spaces ends
+        // up at a different intrinsic width than the next row, breaking
+        // column alignment in NomadNet ASCII art (e.g. fr33n0w/thechatroom).
+        // Falls back to the system font if the bundled font fails to load.
         let baseFont: UIFont = {
+            let name = bold ? "JetBrainsMono-Bold" : "JetBrainsMono-Regular"
+            if let custom = UIFont(name: name, size: fontSize) {
+                return custom
+            }
             if bold {
                 return UIFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)
             }
@@ -105,7 +121,8 @@ struct MonospaceLineView: View {
     private func font(for style: MicronTextStyle, base: UIFont) -> UIFont {
         var font = base
         if style.bold {
-            font = UIFont.monospacedSystemFont(ofSize: base.pointSize, weight: .bold)
+            font = UIFont(name: "JetBrainsMono-Bold", size: base.pointSize)
+                ?? UIFont.monospacedSystemFont(ofSize: base.pointSize, weight: .bold)
         }
         if style.italic,
            let desc = font.fontDescriptor.withSymbolicTraits(.traitItalic) {
@@ -142,7 +159,20 @@ private struct UIMonospaceLine: UIViewRepresentable {
     let attributedString: NSAttributedString
     let cellHeight: CGFloat
     let alignment: MicronAlignment
+    let minWidth: CGFloat
     var onTap: ((Int) -> Void)?
+
+    /// Return only the label's intrinsic content width. SwiftUI `.frame`
+    /// at the call site handles minimum-width / alignment for narrow rows,
+    /// which avoids Core Text's trailing-whitespace stripping under
+    /// `textAlignment = .center` (a row ending in a regular space would
+    /// otherwise center as if it were one cell narrower than its sibling
+    /// rows that have no trailing space, breaking column alignment in
+    /// ASCII art — see fr33n0w/thechatroom letter "T").
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UILabel, context: Context) -> CGSize? {
+        let intrinsicWidth = uiView.intrinsicContentSize.width
+        return CGSize(width: intrinsicWidth, height: cellHeight)
+    }
 
     func makeUIView(context: Context) -> UILabel {
         let label = UILabel()
@@ -164,11 +194,9 @@ private struct UIMonospaceLine: UIViewRepresentable {
     func updateUIView(_ uiView: UILabel, context: Context) {
         uiView.attributedText = attributedString
         context.coordinator.onTap = onTap
-        switch alignment {
-        case .left: uiView.textAlignment = .left
-        case .center: uiView.textAlignment = .center
-        case .right: uiView.textAlignment = .right
-        }
+        // Always left — SwiftUI .frame(alignment:) handles visual centering
+        // outside the label so trailing whitespace isn't stripped.
+        uiView.textAlignment = .left
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

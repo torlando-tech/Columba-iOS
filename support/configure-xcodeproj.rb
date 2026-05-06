@@ -224,6 +224,27 @@ app_target.build_configurations.each do |config|
   end
 end
 
+# Bundled JetBrains Mono TTFs — needed for stable cell metrics on the Micron
+# renderer (SF Mono renders block-element glyphs ▗▄▖▝▀▘ at slightly different
+# widths than ASCII, which breaks ASCII-art alignment on NomadNet pages).
+# See commit cf00c97 — the same fix Columba Android ships under
+# MicronComposables.kt::JetBrainsMonoFamily.
+resources_group = columba_group.children.find do |g|
+  g.is_a?(Xcodeproj::Project::Object::PBXGroup) && (g.name == 'Resources' || g.path == 'Resources')
+end || columba_group.new_group('Resources').tap { |g| g.set_source_tree('<group>') }
+
+['JetBrainsMono-Regular.ttf', 'JetBrainsMono-Bold.ttf'].each do |ttf|
+  rel = "Sources/ColumbaApp/Resources/#{ttf}"
+  full = File.expand_path(rel, File.dirname(PROJECT_PATH))
+  next unless File.exist?(full)
+  ref = resources_group.files.find { |f| f.real_path.to_s == full } ||
+        resources_group.new_file(full)
+  unless app_target.resources_build_phase.files.any? { |bf| bf.file_ref == ref }
+    app_target.resources_build_phase.add_file_reference(ref)
+    puts "  Added resource: #{ttf}"
+  end
+end
+
 # ──────────────────────────────────────────────────────────────────────────
 # (4) Link + embed Frameworks/Python.xcframework.
 # ──────────────────────────────────────────────────────────────────────────

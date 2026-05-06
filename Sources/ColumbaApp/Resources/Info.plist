@@ -28,6 +28,8 @@
 	<key>UIAppFonts</key>
 	<array>
 		<string>materialdesignicons.ttf</string>
+		<string>JetBrainsMono-Regular.ttf</string>
+		<string>JetBrainsMono-Bold.ttf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
