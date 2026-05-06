@@ -49,6 +49,8 @@
 		037 /* ProfileIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F037 /* ProfileIcon.swift */; };
 		038 /* IconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F038 /* IconPickerView.swift */; };
 		039 /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039 /* materialdesignicons.ttf */; };
+		FNT1 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FNT1F /* JetBrainsMono-Regular.ttf */; };
+		FNT2 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FNT2F /* JetBrainsMono-Bold.ttf */; };
 		040 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F040 /* NotificationService.swift */; };
 		041 /* AutoAnnounceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041 /* AutoAnnounceManager.swift */; };
 		042 /* LocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F042 /* LocalIdentity.swift */; };
@@ -180,6 +182,8 @@
 		F037 /* ProfileIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileIcon.swift; sourceTree = "<group>"; };
 		F038 /* IconPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconPickerView.swift; sourceTree = "<group>"; };
 		F039 /* materialdesignicons.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = materialdesignicons.ttf; sourceTree = "<group>"; };
+		FNT1F /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
+		FNT2F /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		F040 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		F041 /* AutoAnnounceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnounceManager.swift; sourceTree = "<group>"; };
 		F042 /* LocalIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalIdentity.swift; sourceTree = "<group>"; };
@@ -415,6 +419,8 @@
 				F022 /* Assets.xcassets */,
 				F023 /* Info.plist */,
 				F039 /* materialdesignicons.ttf */,
+				FNT1F /* JetBrainsMono-Regular.ttf */,
+				FNT2F /* JetBrainsMono-Bold.ttf */,
 				F075 /* ColumbaApp.entitlements */,
 			);
 			path = Resources;
@@ -700,6 +706,8 @@
 			files = (
 				022 /* Assets.xcassets in Resources */,
 				039 /* materialdesignicons.ttf in Resources */,
+				FNT1 /* JetBrainsMono-Regular.ttf in Resources */,
+				FNT2 /* JetBrainsMono-Bold.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
