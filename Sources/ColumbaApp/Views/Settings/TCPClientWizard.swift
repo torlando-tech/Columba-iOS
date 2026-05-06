@@ -142,24 +142,12 @@ struct TCPServerSelectionStep: View {
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 16)
 
-                // Bootstrap section
-                let bootstrap = TcpCommunityServer.servers.filter { $0.isBootstrap }
-                if !bootstrap.isEmpty {
-                    sectionHeader("Bootstrap Servers")
-                    VStack(spacing: 8) {
-                        ForEach(bootstrap) { server in
-                            serverRow(server)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-
-                // Community section
-                let community = TcpCommunityServer.servers.filter { !$0.isBootstrap }
-                if !community.isEmpty {
+                // Community servers. Reticulum-Swift does not yet support
+                // bootstrap interfaces, so all servers share a single section.
+                if !TcpCommunityServer.servers.isEmpty {
                     sectionHeader("Community Servers")
                     VStack(spacing: 8) {
-                        ForEach(community) { server in
+                        ForEach(TcpCommunityServer.servers) { server in
                             serverRow(server)
                         }
                     }
