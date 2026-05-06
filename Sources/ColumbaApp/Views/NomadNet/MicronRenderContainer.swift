@@ -80,18 +80,28 @@ struct MonospaceScrollContainer: View {
 
     var body: some View {
         #if os(iOS)
-        ZoomableScrollView {
-            MicronDocumentView(
-                document: document,
-                formFields: $formFields,
-                checkboxFields: $checkboxFields,
-                radioFields: $radioFields,
-                partialDocuments: partialDocuments,
-                loadingPartials: loadingPartials,
-                onLinkTapped: onLinkTapped,
-                style: .monospaceScroll
-            )
-            .fixedSize()
+        // Capture the actual screen viewport width before the inner
+        // ZoomableScrollView's UIHostingController gets sized to its (much
+        // larger) intrinsic content width. We pass this down so each row is
+        // at least viewport-wide, which keeps `\`c`-centered content visually
+        // centered on screen rather than centered relative to the document's
+        // max line width — matching Android's
+        // `Modifier.widthIn(min = viewportLineWidth)` pattern.
+        GeometryReader { geo in
+            ZoomableScrollView {
+                MicronDocumentView(
+                    document: document,
+                    formFields: $formFields,
+                    checkboxFields: $checkboxFields,
+                    radioFields: $radioFields,
+                    partialDocuments: partialDocuments,
+                    loadingPartials: loadingPartials,
+                    onLinkTapped: onLinkTapped,
+                    style: .monospaceScroll,
+                    viewportWidth: geo.size.width
+                )
+                .fixedSize()
+            }
         }
         #else
         ScrollView([.horizontal, .vertical]) {
