@@ -1,0 +1,35 @@
+appId: network.columba.Columba
+name: map
+tags:
+  - smoke
+  - screenshot
+---
+# Capture the Map tab. PR #59/#65 changes this view's style URL based on
+# system appearance. We screenshot it in the Sim's default light appearance —
+# Stage 2 will add a dark-mode capture column.
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- waitForAnimationToEnd:
+    timeout: 5000
+- runFlow:
+    when:
+      visible: "Skip"
+    commands:
+      - tapOn: "Skip"
+      - waitForAnimationToEnd:
+          timeout: 3000
+- runFlow:
+    when:
+      visible: "Get Started"
+    commands:
+      - tapOn: "Get Started"
+      - waitForAnimationToEnd:
+          timeout: 3000
+- tapOn:
+    text: "Map"
+    optional: true
+# Maps need a beat to load tile JSON + first-render
+- waitForAnimationToEnd:
+    timeout: 8000
+- takeScreenshot: "map"

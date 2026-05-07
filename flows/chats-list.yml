@@ -1,0 +1,34 @@
+appId: network.columba.Columba
+name: chats-list
+tags:
+  - smoke
+  - screenshot
+---
+# Capture the Chats tab — the default landing tab. Stable enough that the
+# onboarding-skip path lands here naturally without further taps.
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- waitForAnimationToEnd:
+    timeout: 5000
+- runFlow:
+    when:
+      visible: "Skip"
+    commands:
+      - tapOn: "Skip"
+      - waitForAnimationToEnd:
+          timeout: 3000
+- runFlow:
+    when:
+      visible: "Get Started"
+    commands:
+      - tapOn: "Get Started"
+      - waitForAnimationToEnd:
+          timeout: 3000
+# Default tab is Chats — no tap needed if onboarding lands there.
+- tapOn:
+    text: "Chats"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: "chats-list"
