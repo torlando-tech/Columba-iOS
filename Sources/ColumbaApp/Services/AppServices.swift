@@ -784,12 +784,25 @@ public final class AppServices {
                     return needsAnnounce
                 }
 
-                // Auto-announce on connect (outside the MainActor.run to avoid blocking UI)
+                // Auto-announce on connect (outside the MainActor.run to avoid blocking UI).
+                // This polled path is functionally similar to the event-driven
+                // `onInterfaceConnected` hook in `configureTransportCallbacks` —
+                // it fires once when any interface aggregates to connected. We
+                // gate it behind the same toggles for consistency. The
+                // `resetTimer()` side-effect is not gated because it's a no-op
+                // when the on-interval trigger is off (AutoAnnounceManager.start
+                // re-checks the setting and bails).
                 if shouldAnnounce {
                     try? await Task.sleep(for: .seconds(1))
                     _ = await MainActor.run {
                         Task {
-                            await self.autoAnnounce()
+                            let defaults = UserDefaults.standard
+                            if defaults.bool(forKey: "auto_announce_enabled")
+                                && defaults.bool(forKey: "auto_announce_on_tcp_reconnect") {
+                                await self.autoAnnounce()
+                            } else {
+                                DiagLog.log("[AUTO_ANNOUNCE] state-observer connect trigger gated off (master=\(defaults.bool(forKey: "auto_announce_enabled")), tcp_reconnect=\(defaults.bool(forKey: "auto_announce_on_tcp_reconnect")))")
+                            }
                             self.autoAnnounceManager?.resetTimer()
                         }
                     }
@@ -1493,9 +1506,45 @@ public final class AppServices {
     #endif
 
     /// Wire transport callbacks that need app-layer context.
+    ///
+    /// Auto-announce triggers are split across two reticulum-swift hooks
+    /// and gated independently behind user-facing settings:
+    ///
+    /// - `onInterfaceConnected` fires whenever any interface transitions to
+    ///   `.connected` (TCP / RNode reconnects, plus the connected transition
+    ///   of peer-children). Gated by `auto_announce_on_tcp_reconnect`.
+    /// - `onInterfacePeerSpawned` fires when AutoInterface / BLE / MPC
+    ///   accepts a new peer. Gated by `auto_announce_on_peer_spawned`.
+    ///
+    /// Both are also gated behind the master `auto_announce_enabled`. If
+    /// the user has disabled auto-announce entirely, neither path fires.
     private func configureTransportCallbacks(_ transport: ReticulumTransport) async {
-        await transport.setOnInterfaceAdded { [weak self] _ in
+        await transport.setOnInterfaceConnected { [weak self] id in
             guard let self else { return }
+            let defaults = UserDefaults.standard
+            guard defaults.bool(forKey: "auto_announce_enabled") else {
+                DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — master toggle off, skipping")
+                return
+            }
+            guard defaults.bool(forKey: "auto_announce_on_tcp_reconnect") else {
+                DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — on-tcp-reconnect off, skipping")
+                return
+            }
+            DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — firing")
+            await self.autoAnnounce()
+        }
+        await transport.setOnInterfacePeerSpawned { [weak self] id in
+            guard let self else { return }
+            let defaults = UserDefaults.standard
+            guard defaults.bool(forKey: "auto_announce_enabled") else {
+                DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — master toggle off, skipping")
+                return
+            }
+            guard defaults.bool(forKey: "auto_announce_on_peer_spawned") else {
+                DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — on-peer-spawned off, skipping")
+                return
+            }
+            DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — firing")
             await self.autoAnnounce()
         }
         // Wire diagnostic logging from transport to DiagLog
@@ -1513,9 +1562,18 @@ public final class AppServices {
     /// so peers can discover us for both messaging and voice calls.
     ///
     /// Debounced to at most once per 5 seconds — AutoInterface peers fire
-    /// onInterfaceAdded from both the peer callback and the state-change
-    /// delegate, so this prevents redundant announces.
+    /// the connected-trigger from both the peer callback and the
+    /// state-change delegate, so this prevents redundant announces.
+    ///
+    /// Defensive master-gate: even though every individual call site checks
+    /// the master `auto_announce_enabled` toggle, this method also bails if
+    /// the master is off, so a future caller that forgets to gate doesn't
+    /// silently emit announces against the user's preference.
     private func autoAnnounce() async {
+        guard UserDefaults.standard.bool(forKey: "auto_announce_enabled") else {
+            DiagLog.log("[AUTO_ANNOUNCE] master toggle off — skipping at autoAnnounce() entry")
+            return
+        }
         let now = Date()
         guard now.timeIntervalSince(lastAutoAnnounce) > 5.0 else {
             DiagLog.log("[AUTO_ANNOUNCE] debounced (last announce \(String(format: "%.1f", now.timeIntervalSince(lastAutoAnnounce)))s ago)")

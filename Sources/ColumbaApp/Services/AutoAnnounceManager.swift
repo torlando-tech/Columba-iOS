@@ -54,6 +54,14 @@ public final class AutoAnnounceManager {
             logger.info("Auto-announce disabled, not starting")
             return
         }
+        // Granular gate: respect the per-trigger toggle. The interval loop
+        // is one of three triggers (interval / TCP reconnect / peer spawned).
+        // If the user turned the interval trigger off, don't spin up the
+        // periodic loop even though the master is on.
+        guard defaults.bool(forKey: "auto_announce_on_interval") else {
+            logger.info("Auto-announce on-interval trigger disabled, not starting periodic loop")
+            return
+        }
 
         let intervalHours = defaults.integer(forKey: "announce_interval_hours")
         let effectiveInterval = intervalHours > 0 ? intervalHours : 3
@@ -113,6 +121,10 @@ public final class AutoAnnounceManager {
             let defaults = UserDefaults.standard
             guard defaults.bool(forKey: "auto_announce_enabled") else {
                 logger.info("Auto-announce disabled during sleep, stopping")
+                return
+            }
+            guard defaults.bool(forKey: "auto_announce_on_interval") else {
+                logger.info("Auto-announce on-interval trigger disabled during sleep, stopping")
                 return
             }
 
