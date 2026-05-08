@@ -214,9 +214,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             currentTCPs[entityId] = endpoint
         }
 
-        // Tear down entities the app removed.
+        // Tear down entities the app removed. Snapshot the stale ids
+        // before iterating: `currentTCPs.keys` is a live view over the
+        // backing dictionary, and `teardownTCPConnectionLocked` +
+        // `removeValue(forKey:)` below both mutate that dictionary
+        // (and `tcpConnections` / `tcpReceiveBuffers`) inside the loop.
+        // Mutating the dictionary while its `Keys` iterator holds an
+        // index into the hash table is undefined behaviour per the
+        // Swift docs and can silently skip remaining entries or crash.
         let desiredIds = Set(configs.tcps.keys)
-        for staleId in currentTCPs.keys where !desiredIds.contains(staleId) {
+        let staleIds = currentTCPs.keys.filter { !desiredIds.contains($0) }
+        for staleId in staleIds {
             NSLog("[EXT] TCP config removed [\(staleId)]; tearing down connection")
             ExtensionDiagLog.log("[EXT/TCP] removed [\(staleId)]; tearing down")
             teardownTCPConnectionLocked(entityId: staleId)
@@ -374,7 +382,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // the cached endpoint as already-applied. Use the helper
             // so the receive buffer is reset alongside the connection
             // — see `teardownTCPConnectionLocked`.
-            for entityId in self.tcpConnections.keys {
+            //
+            // Snapshot the keys before iterating: `Dictionary.Keys` is
+            // a live view, and `teardownTCPConnectionLocked` mutates
+            // `tcpConnections` mid-loop. Mutating the dictionary while
+            // its iterator holds a hash-table index is undefined
+            // behaviour per the Swift docs and can silently skip
+            // remaining entries or crash.
+            for entityId in Array(self.tcpConnections.keys) {
                 switch self.tcpConnections[entityId]?.state {
                 case .cancelled, .failed, .none:
                     self.teardownTCPConnectionLocked(entityId: entityId)
