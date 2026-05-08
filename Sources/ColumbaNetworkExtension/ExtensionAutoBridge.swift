@@ -375,12 +375,17 @@ final class ExtensionAutoBridge: @unchecked Sendable {
                 self?.postNotif()
                 ExtensionDiagLog.log("[EXT/Auto] RX \(content.count)B")
 
+                #if DEBUG
                 // Diagnostic: send a synthetic response on the same
                 // connection. iOS might block *initiating* outbound
                 // flows but allow responses on accepted ones; if so,
                 // a Mac listener that sent a probe will receive this
                 // back, confirming bidirectional via established
                 // connections.
+                //
+                // Gated behind `#if DEBUG` so production builds don't
+                // flood every Auto peer with synthetic ASCII payloads
+                // that aren't valid Reticulum frames.
                 let probe = "ext-rx-ack-\(Date().timeIntervalSince1970)".data(using: .utf8)!
                 connection?.send(content: probe, completion: .contentProcessed { error in
                     if let error {
@@ -389,6 +394,7 @@ final class ExtensionAutoBridge: @unchecked Sendable {
                         ExtensionDiagLog.log("[EXT/Auto] RX-ack sent (\(probe.count)B) on accepted conn")
                     }
                 })
+                #endif
             }
             if let error {
                 ExtensionDiagLog.log("[EXT/Auto] data RX error: \(error)")

@@ -103,14 +103,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // wiring. Test harness sends a UDP datagram to port 9999
         // from a Mac on the same Wi-Fi and checks whether
         // `[EXT/Diag] received` lands in the diag log.
-        startDiagListener()
-
+        //
         // Diagnostic outbound test — answers "can the extension
         // send UDP unicast to the LAN at all". Sends to a hard-
         // coded test peer (the Mac's link-local address used by
         // `tools/auto-test/`); the test harness listens on
         // port 9998 and reports whether the packet arrived.
+        //
+        // Both probes are gated behind `#if DEBUG` so production
+        // builds neither bind extra listening ports nor leak the
+        // developer's hard-coded link-local IPv6 to every user's
+        // device on every tunnel start.
+        #if DEBUG
+        startDiagListener()
         sendDiagOutboundProbe()
+        #endif
 
         // Apply current interface configs.
         applyConfigs()
