@@ -443,9 +443,22 @@ public final class AppServices {
             do {
                 let newInterface = try TCPInterface(config: config)
                 tcpInterfaces["tcp-server"] = newInterface
-                tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
                 try await newTransport.addInterface(newInterface)
+                // Record the applied endpoint only after the interface
+                // has been successfully attached. See the matching catch
+                // block below for why this ordering matters.
+                tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
             } catch {
+                // Initialization is "non-fatal" with respect to TCP — the
+                // rest of init proceeds without it, and the user can
+                // retry via reconnectTCPOnly. But that retry routes
+                // through connectTCPInterface, whose new idempotency
+                // guard would silently no-op if a stale tcpEndpoints
+                // entry survived this catch. Roll back any partial
+                // dictionary writes so a same-address retry isn't
+                // stuck.
+                tcpInterfaces.removeValue(forKey: "tcp-server")
+                tcpEndpoints.removeValue(forKey: "tcp-server")
                 logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -559,9 +572,20 @@ public final class AppServices {
             do {
                 let newInterface = try TCPInterface(config: config)
                 tcpInterfaces["tcp-server"] = newInterface
-                tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
                 try await newTransport.addInterface(newInterface)
+                // Record the applied endpoint only after the interface
+                // has been successfully attached. See the matching catch
+                // block below — same rationale as the first overload.
+                tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
             } catch {
+                // Non-fatal: init proceeds without TCP. But roll back
+                // any partial dictionary writes so a later
+                // reconnectTCPOnly retry with the same address doesn't
+                // hit a stuck idempotency guard in connectTCPInterface
+                // and silently no-op. See the first initialize overload
+                // for the full rationale.
+                tcpInterfaces.removeValue(forKey: "tcp-server")
+                tcpEndpoints.removeValue(forKey: "tcp-server")
                 logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -1404,10 +1428,22 @@ public final class AppServices {
         )
         let newInterface = try TCPInterface(config: config)
         tcpInterfaces["tcp-server"] = newInterface
-        tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
 
         // Add interface to transport (connects it)
-        try await newTransport.addInterface(newInterface)
+        do {
+            try await newTransport.addInterface(newInterface)
+        } catch {
+            // addInterface failed — roll back the dictionary write so a
+            // retry via reconnectTCPOnly with the same address isn't
+            // silently no-op'd by connectTCPInterface's idempotency
+            // guard. See connectTCPInterface's catch block for the full
+            // rationale.
+            tcpInterfaces.removeValue(forKey: "tcp-server")
+            throw error
+        }
+        // Only record the applied endpoint after the interface has been
+        // successfully attached to the transport.
+        tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
 
         // Set transport on router and re-register delivery destination
         if let router = router {
