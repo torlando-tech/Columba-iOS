@@ -5,7 +5,9 @@
 #   - Mac on the same Wi-Fi as the iPhone
 #   - iPhone paired via `xcrun devicectl` (Wi-Fi pairing OK)
 #   - VPN profile installed and Background Transport ON in Columba
-#   - $DEVICE_UDID set or passed via `--device`
+#   - $DEVICE_UDID set or passed via `--device` (no default — UDID is
+#     personally-identifying and not tracked in source)
+#   - $DEVELOPMENT_TEAM set to your Apple Developer Team ID (no default)
 #
 # What this does (each iteration):
 #   1. Build + install the latest Columba.app
@@ -35,8 +37,13 @@
 
 set -euo pipefail
 
-DEVICE_UDID="${DEVICE_UDID:-330CDDB1-B2C2-5AE0-B3FC-2442F7E1AF60}"
-DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-M2977H5PM5}"
+# DEVICE_UDID and DEVELOPMENT_TEAM must be supplied by the contributor.
+# We deliberately don't ship defaults — both are personally-identifying
+# values (a specific physical device UDID; an Apple Developer Team ID)
+# that should not be tracked in source control. Set them via env or
+# pass `--device <UDID>` for the UDID.
+DEVICE_UDID="${DEVICE_UDID:-}"
+DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-}"
 PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_BUNDLE_ID="network.columba.Columba"
 APP_GROUP_ID="group.network.columba.Columba"
@@ -89,6 +96,17 @@ done
 
 if [[ -z "$TARGET_IP" ]]; then
     echo "ERROR: target IP not set. Use --target-ip or \$TARGET_IP."
+    exit 1
+fi
+
+if [[ -z "$DEVICE_UDID" ]]; then
+    echo "ERROR: \$DEVICE_UDID not set. Use --device <UDID> or export DEVICE_UDID."
+    exit 1
+fi
+
+if [[ "$SKIP_BUILD" == "0" && -z "$DEVELOPMENT_TEAM" ]]; then
+    echo "ERROR: \$DEVELOPMENT_TEAM not set. Export DEVELOPMENT_TEAM with your Apple Developer Team ID."
+    echo "       (skip with --skip-build if you already have a built .app at \$DERIVED)"
     exit 1
 fi
 
