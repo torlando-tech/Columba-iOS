@@ -1267,8 +1267,23 @@ public final class AppServices {
         )
         let newInterface = try TCPInterface(config: config)
         tcpInterfaces[entityId] = newInterface
+        do {
+            try await transport.addInterface(newInterface)
+        } catch {
+            // addInterface failed — roll back the dictionary write so a
+            // retry with the same endpoint isn't silently no-op'd by the
+            // idempotency guard at the top of this function. Without
+            // this cleanup, a transient addInterface failure would leave
+            // a stuck entry that permanently blocks self-healing
+            // reconnects for this entityId until the user edits its
+            // host or port.
+            tcpInterfaces.removeValue(forKey: entityId)
+            throw error
+        }
+        // Only record the applied endpoint after the interface has been
+        // successfully attached to the transport — see the catch block
+        // above for the reasoning.
         tcpEndpoints[entityId] = endpoint
-        try await transport.addInterface(newInterface)
 
         if let dest = deliveryDestination {
             await transport.registerDestination(dest)
