@@ -180,6 +180,56 @@ final class AutoAnnouncePolicyTests: XCTestCase {
         XCTAssertTrue(p.shouldFireOnPeerSpawned)
     }
 
+    // MARK: - Peer-child attribution
+    //
+    // `onInterfaceConnected` fires for peer-children of AutoInterface / BLE /
+    // MPC parents in addition to standalone TCP / RNode interfaces. When the
+    // user disables the peer-spawned toggle but leaves tcp-reconnect on, a
+    // peer joining must NOT produce an announce — even though the peer's
+    // child transport's `.connected` transition triggers `onInterfaceConnected`.
+    // The policy attributes peer-child connected events to the peer-spawned
+    // gate, not tcp-reconnect.
+
+    func testPeerChildConnectedGatedByPeerSpawnedNotTcpReconnect() {
+        // peer-spawned OFF, tcp-reconnect ON — peer-child connected must NOT fire
+        let p1 = AutoAnnouncePolicy(masterEnabled: true, onInterval: false,
+                                    onTcpReconnect: true, onPeerSpawned: false)
+        XCTAssertFalse(p1.shouldFireOnInterfaceConnected(isPeerChild: true),
+                       "peer-child connected gated by peer-spawned (off)")
+        XCTAssertTrue(p1.shouldFireOnInterfaceConnected(isPeerChild: false),
+                      "non-peer-child connected gated by tcp-reconnect (on)")
+
+        // peer-spawned ON, tcp-reconnect OFF — peer-child connected must fire
+        let p2 = AutoAnnouncePolicy(masterEnabled: true, onInterval: false,
+                                    onTcpReconnect: false, onPeerSpawned: true)
+        XCTAssertTrue(p2.shouldFireOnInterfaceConnected(isPeerChild: true),
+                      "peer-child connected gated by peer-spawned (on)")
+        XCTAssertFalse(p2.shouldFireOnInterfaceConnected(isPeerChild: false),
+                       "non-peer-child connected gated by tcp-reconnect (off)")
+    }
+
+    func testPeerChildAttributionRespectsMasterGate() {
+        // master off → never fires regardless of peer-child or granulars
+        let p = AutoAnnouncePolicy(masterEnabled: false, onInterval: true,
+                                   onTcpReconnect: true, onPeerSpawned: true)
+        XCTAssertFalse(p.shouldFireOnInterfaceConnected(isPeerChild: true))
+        XCTAssertFalse(p.shouldFireOnInterfaceConnected(isPeerChild: false))
+    }
+
+    func testPeerChildAttributionAllOn() {
+        let p = AutoAnnouncePolicy(masterEnabled: true, onInterval: true,
+                                   onTcpReconnect: true, onPeerSpawned: true)
+        XCTAssertTrue(p.shouldFireOnInterfaceConnected(isPeerChild: true))
+        XCTAssertTrue(p.shouldFireOnInterfaceConnected(isPeerChild: false))
+    }
+
+    func testPeerChildAttributionAllGranularsOff() {
+        let p = AutoAnnouncePolicy(masterEnabled: true, onInterval: false,
+                                   onTcpReconnect: false, onPeerSpawned: false)
+        XCTAssertFalse(p.shouldFireOnInterfaceConnected(isPeerChild: true))
+        XCTAssertFalse(p.shouldFireOnInterfaceConnected(isPeerChild: false))
+    }
+
     /// Explicit user writes always override the registered default.
     func testExplicitFalseOverridesRegisteredDefaultTrue() {
         defaults.register(defaults: [

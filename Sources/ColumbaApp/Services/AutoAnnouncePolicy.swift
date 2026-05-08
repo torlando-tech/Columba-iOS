@@ -70,4 +70,26 @@ public struct AutoAnnouncePolicy: Equatable, Sendable {
     public var shouldFireOnPeerSpawned: Bool {
         masterEnabled && onPeerSpawned
     }
+
+    /// Decide whether an `onInterfaceConnected` event should fire an
+    /// announce, taking into account whether the interface is a *peer-child*
+    /// of an AutoInterface / BLE / MPC parent.
+    ///
+    /// Reticulum-swift fires `onInterfacePeerSpawned` when a peer joins,
+    /// then a moment later fires `onInterfaceConnected` for the peer's own
+    /// child transport. Both events describe the same peer-add, so the
+    /// connected transition for a peer-child must be attributed to the
+    /// peer-spawned trigger — *not* tcp-reconnect — otherwise turning the
+    /// peer-spawned toggle off but leaving tcp-reconnect on would still
+    /// produce an announce every time a peer joined, which contradicts the
+    /// user's mental model.
+    ///
+    /// - Parameter isPeerChild: whether this interface id is a child of a
+    ///   peer-spawning parent (`AutoInterface` / `BLEInterface` /
+    ///   `MPCInterface`). The caller maintains this attribution by
+    ///   tracking the ids passed to `onInterfacePeerSpawned`.
+    public func shouldFireOnInterfaceConnected(isPeerChild: Bool) -> Bool {
+        guard masterEnabled else { return false }
+        return isPeerChild ? onPeerSpawned : onTcpReconnect
+    }
 }

@@ -192,6 +192,20 @@ public final class AppServices {
     /// Interface state observer task (cancelled on deinit).
     private var stateObserverTask: Task<Void, Never>?
 
+    /// Set of interface ids that were spawned as peer-children of an
+    /// AutoInterface / BLEInterface / MPCInterface parent, recorded
+    /// from `onInterfacePeerSpawned`. Used to attribute the subsequent
+    /// `onInterfaceConnected` event for the same id to the peer-spawned
+    /// trigger rather than the tcp-reconnect trigger — see
+    /// `AutoAnnouncePolicy.shouldFireOnInterfaceConnected(isPeerChild:)`.
+    ///
+    /// Grows monotonically — entries are not removed on peer departure.
+    /// Peer-children are typically dozens at most on a Columba mesh, so
+    /// memory is a non-concern. If that ever becomes meaningful, add
+    /// removal in a `setOnInterfacePeerRemoved` callback when reticulum-swift
+    /// exposes one.
+    private var peerChildInterfaceIds: Set<String> = []
+
     // MARK: - Identity Persistence Constants
 
     /// Keychain service identifier for storing identity.
@@ -1521,20 +1535,32 @@ public final class AppServices {
     private func configureTransportCallbacks(_ transport: ReticulumTransport) async {
         await transport.setOnInterfaceConnected { [weak self] id in
             guard let self else { return }
+            // Attribute peer-child connected transitions to the peer-spawn
+            // trigger, not tcp-reconnect: a peer joining causes both an
+            // `onInterfacePeerSpawned` and (a moment later) an
+            // `onInterfaceConnected` for the peer's child transport, but
+            // they describe the same user-visible event.
+            let isPeerChild = await self.isPeerChildInterface(id)
             let policy = AutoAnnouncePolicy.current()
             guard policy.masterEnabled else {
                 DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — master toggle off, skipping")
                 return
             }
-            guard policy.shouldFireOnTcpReconnect else {
-                DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — on-tcp-reconnect off, skipping")
+            guard policy.shouldFireOnInterfaceConnected(isPeerChild: isPeerChild) else {
+                let gate = isPeerChild ? "on-peer-spawned (peer-child reconnect)" : "on-tcp-reconnect"
+                DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — \(gate) off, skipping")
                 return
             }
-            DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — firing")
+            let gate = isPeerChild ? "on-peer-spawned (peer-child reconnect)" : "on-tcp-reconnect"
+            DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — firing via \(gate)")
             await self.autoAnnounce()
         }
         await transport.setOnInterfacePeerSpawned { [weak self] id in
             guard let self else { return }
+            // Record this id so that the subsequent `onInterfaceConnected`
+            // for the same id is gated by the peer-spawned trigger rather
+            // than tcp-reconnect.
+            await self.recordPeerChildInterface(id)
             let policy = AutoAnnouncePolicy.current()
             guard policy.masterEnabled else {
                 DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — master toggle off, skipping")
@@ -1565,6 +1591,19 @@ public final class AppServices {
     /// the connected-trigger from both the peer callback and the
     /// state-change delegate, so this prevents redundant announces.
     ///
+    /// Mark an interface id as a peer-child of an AutoInterface / BLE /
+    /// MPC parent so its later `onInterfaceConnected` event is attributed
+    /// to the peer-spawned trigger.
+    private func recordPeerChildInterface(_ id: String) {
+        peerChildInterfaceIds.insert(id)
+    }
+
+    /// True if this interface id was previously recorded as a peer-child
+    /// via `recordPeerChildInterface`.
+    private func isPeerChildInterface(_ id: String) -> Bool {
+        peerChildInterfaceIds.contains(id)
+    }
+
     /// Defensive master-gate: even though every individual call site checks
     /// the master `auto_announce_enabled` toggle, this method also bails if
     /// the master is off, so a future caller that forgets to gate doesn't
