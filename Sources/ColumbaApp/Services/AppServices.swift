@@ -797,13 +797,12 @@ public final class AppServices {
                     try? await Task.sleep(for: .seconds(1))
                     _ = await MainActor.run {
                         Task {
-                            let defaults = UserDefaults.standard
-                            if defaults.bool(forKey: "auto_announce_enabled")
-                                && defaults.bool(forKey: "auto_announce_on_tcp_reconnect") {
+                            let policy = AutoAnnouncePolicy.current()
+                            if policy.shouldFireOnTcpReconnect {
                                 await self.autoAnnounce()
                                 self.autoAnnounceManager?.resetTimer()
                             } else {
-                                DiagLog.log("[AUTO_ANNOUNCE] state-observer connect trigger gated off (master=\(defaults.bool(forKey: "auto_announce_enabled")), tcp_reconnect=\(defaults.bool(forKey: "auto_announce_on_tcp_reconnect")))")
+                                DiagLog.log("[AUTO_ANNOUNCE] state-observer connect trigger gated off (master=\(policy.masterEnabled), tcp_reconnect=\(policy.onTcpReconnect))")
                             }
                         }
                     }
@@ -1522,12 +1521,12 @@ public final class AppServices {
     private func configureTransportCallbacks(_ transport: ReticulumTransport) async {
         await transport.setOnInterfaceConnected { [weak self] id in
             guard let self else { return }
-            let defaults = UserDefaults.standard
-            guard defaults.bool(forKey: "auto_announce_enabled") else {
+            let policy = AutoAnnouncePolicy.current()
+            guard policy.masterEnabled else {
                 DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — master toggle off, skipping")
                 return
             }
-            guard defaults.bool(forKey: "auto_announce_on_tcp_reconnect") else {
+            guard policy.shouldFireOnTcpReconnect else {
                 DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — on-tcp-reconnect off, skipping")
                 return
             }
@@ -1536,12 +1535,12 @@ public final class AppServices {
         }
         await transport.setOnInterfacePeerSpawned { [weak self] id in
             guard let self else { return }
-            let defaults = UserDefaults.standard
-            guard defaults.bool(forKey: "auto_announce_enabled") else {
+            let policy = AutoAnnouncePolicy.current()
+            guard policy.masterEnabled else {
                 DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — master toggle off, skipping")
                 return
             }
-            guard defaults.bool(forKey: "auto_announce_on_peer_spawned") else {
+            guard policy.shouldFireOnPeerSpawned else {
                 DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — on-peer-spawned off, skipping")
                 return
             }
@@ -1571,7 +1570,7 @@ public final class AppServices {
     /// the master is off, so a future caller that forgets to gate doesn't
     /// silently emit announces against the user's preference.
     private func autoAnnounce() async {
-        guard UserDefaults.standard.bool(forKey: "auto_announce_enabled") else {
+        guard AutoAnnouncePolicy.current().masterEnabled else {
             DiagLog.log("[AUTO_ANNOUNCE] master toggle off — skipping at autoAnnounce() entry")
             return
         }

@@ -50,7 +50,8 @@ public final class AutoAnnounceManager {
         stop()
 
         let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: "auto_announce_enabled") else {
+        let policy = AutoAnnouncePolicy.current(defaults: defaults)
+        guard policy.masterEnabled else {
             logger.info("Auto-announce disabled, not starting")
             return
         }
@@ -58,7 +59,7 @@ public final class AutoAnnounceManager {
         // is one of three triggers (interval / TCP reconnect / peer spawned).
         // If the user turned the interval trigger off, don't spin up the
         // periodic loop even though the master is on.
-        guard defaults.bool(forKey: "auto_announce_on_interval") else {
+        guard policy.shouldFireOnInterval else {
             logger.info("Auto-announce on-interval trigger disabled, not starting periodic loop")
             return
         }
@@ -119,11 +120,12 @@ public final class AutoAnnounceManager {
 
             // Re-check settings in case they changed during sleep
             let defaults = UserDefaults.standard
-            guard defaults.bool(forKey: "auto_announce_enabled") else {
+            let policy = AutoAnnouncePolicy.current(defaults: defaults)
+            guard policy.masterEnabled else {
                 logger.info("Auto-announce disabled during sleep, stopping")
                 return
             }
-            guard defaults.bool(forKey: "auto_announce_on_interval") else {
+            guard policy.shouldFireOnInterval else {
                 logger.info("Auto-announce on-interval trigger disabled during sleep, stopping")
                 return
             }

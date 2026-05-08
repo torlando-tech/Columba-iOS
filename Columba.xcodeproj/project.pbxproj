@@ -53,6 +53,7 @@
 		FNT2 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FNT2F /* JetBrainsMono-Bold.ttf */; };
 		040 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F040 /* NotificationService.swift */; };
 		041 /* AutoAnnounceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041 /* AutoAnnounceManager.swift */; };
+		041P /* AutoAnnouncePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041P /* AutoAnnouncePolicy.swift */; };
 		042 /* LocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F042 /* LocalIdentity.swift */; };
 		043 /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043 /* IdentityManager.swift */; };
 		044 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044 /* IdentityManagerView.swift */; };
@@ -121,6 +122,7 @@
 		083B /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		084B /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
+		TAA0 /* AutoAnnouncePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FTAA /* AutoAnnouncePolicyTests.swift */; };
 		2F3D64B12F7227E100049252 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P004 /* ReticulumSwift */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
@@ -141,6 +143,7 @@
 		FT02 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
 		FT04 /* CallManagerCallKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallManagerCallKitTests.swift; sourceTree = "<group>"; };
 		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
+		FTAA /* AutoAnnouncePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnouncePolicyTests.swift; sourceTree = "<group>"; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
@@ -186,6 +189,7 @@
 		FNT2F /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		F040 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		F041 /* AutoAnnounceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnounceManager.swift; sourceTree = "<group>"; };
+		F041P /* AutoAnnouncePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnouncePolicy.swift; sourceTree = "<group>"; };
 		F042 /* LocalIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalIdentity.swift; sourceTree = "<group>"; };
 		F043 /* IdentityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManager.swift; sourceTree = "<group>"; };
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
@@ -481,6 +485,7 @@
 				F033 /* PropagationNodeManager.swift */,
 				F040 /* NotificationService.swift */,
 				F041 /* AutoAnnounceManager.swift */,
+				F041P /* AutoAnnouncePolicy.swift */,
 				F042 /* LocalIdentity.swift */,
 				F043 /* IdentityManager.swift */,
 				F04B /* LocationSharingManager.swift */,
@@ -561,6 +566,7 @@
 				FT02 /* AudioManagerConfigChangeTests.swift */,
 				FT03 /* MicronParserTests.swift */,
 				FT04 /* CallManagerCallKitTests.swift */,
+				FTAA /* AutoAnnouncePolicyTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -730,6 +736,7 @@
 				T002 /* AudioManagerConfigChangeTests.swift in Sources */,
 				T003 /* MicronParserTests.swift in Sources */,
 				T004 /* CallManagerCallKitTests.swift in Sources */,
+				TAA0 /* AutoAnnouncePolicyTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -786,6 +793,7 @@
 				038 /* IconPickerView.swift in Sources */,
 				040 /* NotificationService.swift in Sources */,
 				041 /* AutoAnnounceManager.swift in Sources */,
+				041P /* AutoAnnouncePolicy.swift in Sources */,
 				042 /* LocalIdentity.swift in Sources */,
 				043 /* IdentityManager.swift in Sources */,
 				044 /* IdentityManagerView.swift in Sources */,
