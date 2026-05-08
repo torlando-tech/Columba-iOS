@@ -718,7 +718,14 @@ public final class AppServices {
         #endif
 
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
+        // Mirror the extension's diag log into the app's Documents on
+        // cold launch so `xcrun devicectl device copy from` can pull
+        // it. Gated to debug builds — production users shouldn't have
+        // connection diagnostics surfaced via File Sharing on every
+        // launch.
+        #if DEBUG
         DiagLog.snapshotExtensionLog()
+        #endif
     }
 
     #if ENABLE_NETWORK_EXTENSION
