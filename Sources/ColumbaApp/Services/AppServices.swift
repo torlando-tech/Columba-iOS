@@ -788,10 +788,11 @@ public final class AppServices {
                 // This polled path is functionally similar to the event-driven
                 // `onInterfaceConnected` hook in `configureTransportCallbacks` —
                 // it fires once when any interface aggregates to connected. We
-                // gate it behind the same toggles for consistency. The
-                // `resetTimer()` side-effect is not gated because it's a no-op
-                // when the on-interval trigger is off (AutoAnnounceManager.start
-                // re-checks the setting and bails).
+                // gate both the announce *and* the resetTimer() call behind the
+                // same toggles: if the announce wasn't sent, restarting the
+                // periodic loop would push the next interval-announce a full
+                // interval into the future every reconnect, starving the
+                // periodic schedule on a flap-y network.
                 if shouldAnnounce {
                     try? await Task.sleep(for: .seconds(1))
                     _ = await MainActor.run {
@@ -800,10 +801,10 @@ public final class AppServices {
                             if defaults.bool(forKey: "auto_announce_enabled")
                                 && defaults.bool(forKey: "auto_announce_on_tcp_reconnect") {
                                 await self.autoAnnounce()
+                                self.autoAnnounceManager?.resetTimer()
                             } else {
                                 DiagLog.log("[AUTO_ANNOUNCE] state-observer connect trigger gated off (master=\(defaults.bool(forKey: "auto_announce_enabled")), tcp_reconnect=\(defaults.bool(forKey: "auto_announce_on_tcp_reconnect")))")
                             }
-                            self.autoAnnounceManager?.resetTimer()
                         }
                     }
                 }
