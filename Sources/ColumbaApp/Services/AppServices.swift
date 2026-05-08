@@ -192,19 +192,29 @@ public final class AppServices {
     /// Interface state observer task (cancelled on deinit).
     private var stateObserverTask: Task<Void, Never>?
 
-    /// Set of interface ids that were spawned as peer-children of an
-    /// AutoInterface / BLEInterface / MPCInterface parent, recorded
-    /// from `onInterfacePeerSpawned`. Used to attribute the subsequent
+    /// Registry of interface ids that were spawned as peer-children of an
+    /// AutoInterface / BLEInterface / MPCInterface parent, recorded from
+    /// `onInterfacePeerSpawned`. Used to attribute the subsequent
     /// `onInterfaceConnected` event for the same id to the peer-spawned
     /// trigger rather than the tcp-reconnect trigger — see
     /// `AutoAnnouncePolicy.shouldFireOnInterfaceConnected(isPeerChild:)`.
+    ///
+    /// Synchronous lock-protected (rather than actor-isolated) so the
+    /// peer-spawned closure can commit a record before any `await`
+    /// suspension. If both record and lookup hopped to the main actor,
+    /// Swift's task scheduler would not guarantee record-before-lookup
+    /// ordering: both events fire from independent reticulum-swift Tasks,
+    /// and a connected-event Task could win the actor enqueue race even
+    /// though peer-spawn fired first in wall-clock time. The lock makes
+    /// the record a synchronous, atomic side-effect of the peer-spawned
+    /// callback's first line, before any await.
     ///
     /// Grows monotonically — entries are not removed on peer departure.
     /// Peer-children are typically dozens at most on a Columba mesh, so
     /// memory is a non-concern. If that ever becomes meaningful, add
     /// removal in a `setOnInterfacePeerRemoved` callback when reticulum-swift
     /// exposes one.
-    private var peerChildInterfaceIds: Set<String> = []
+    private let peerChildRegistry = PeerChildInterfaceRegistry()
 
     // MARK: - Identity Persistence Constants
 
@@ -1540,7 +1550,13 @@ public final class AppServices {
             // `onInterfacePeerSpawned` and (a moment later) an
             // `onInterfaceConnected` for the peer's child transport, but
             // they describe the same user-visible event.
-            let isPeerChild = await self.isPeerChildInterface(id)
+            //
+            // The lookup is synchronous (lock-protected, not actor-hop),
+            // and the corresponding record on the peer-spawn side is also
+            // synchronous and runs before any await — see
+            // `peerChildRegistry`'s docstring for why this ordering is
+            // load-bearing for the attribution.
+            let isPeerChild = self.isPeerChildInterface(id)
             let policy = AutoAnnouncePolicy.current()
             guard policy.masterEnabled else {
                 DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — master toggle off, skipping")
@@ -1560,7 +1576,15 @@ public final class AppServices {
             // Record this id so that the subsequent `onInterfaceConnected`
             // for the same id is gated by the peer-spawned trigger rather
             // than tcp-reconnect.
-            await self.recordPeerChildInterface(id)
+            //
+            // SYNCHRONOUS — runs before any await suspension in this
+            // closure. This guarantees that even if the peer's child
+            // transport reaches `.connected` immediately and fires its own
+            // Task before this one completes its policy/announce work, the
+            // connected closure's `isPeerChildInterface(id)` lookup will
+            // already see the recorded id. Without that synchronous
+            // guarantee, the two MainActor hops would race.
+            self.recordPeerChildInterface(id)
             let policy = AutoAnnouncePolicy.current()
             guard policy.masterEnabled else {
                 DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — master toggle off, skipping")
@@ -1593,15 +1617,16 @@ public final class AppServices {
     ///
     /// Mark an interface id as a peer-child of an AutoInterface / BLE /
     /// MPC parent so its later `onInterfaceConnected` event is attributed
-    /// to the peer-spawned trigger.
-    private func recordPeerChildInterface(_ id: String) {
-        peerChildInterfaceIds.insert(id)
+    /// to the peer-spawned trigger. Safe to call from any thread; the
+    /// underlying registry uses a lock, not actor isolation.
+    nonisolated private func recordPeerChildInterface(_ id: String) {
+        peerChildRegistry.record(id)
     }
 
     /// True if this interface id was previously recorded as a peer-child
-    /// via `recordPeerChildInterface`.
-    private func isPeerChildInterface(_ id: String) -> Bool {
-        peerChildInterfaceIds.contains(id)
+    /// via `recordPeerChildInterface`. Safe to call from any thread.
+    nonisolated private func isPeerChildInterface(_ id: String) -> Bool {
+        peerChildRegistry.contains(id)
     }
 
     /// Defensive master-gate: even though every individual call site checks
