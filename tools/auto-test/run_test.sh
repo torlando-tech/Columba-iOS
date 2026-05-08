@@ -36,10 +36,28 @@
 set -euo pipefail
 
 DEVICE_UDID="${DEVICE_UDID:-330CDDB1-B2C2-5AE0-B3FC-2442F7E1AF60}"
+DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-M2977H5PM5}"
 PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_BUNDLE_ID="network.columba.Columba"
 APP_GROUP_ID="group.network.columba.Columba"
-DERIVED="$HOME/Library/Developer/Xcode/DerivedData/Columba-becujespmnafubfqtyodqzziuqxx/Build/Products/Debug-iphoneos/ColumbaApp.app"
+# Resolve `DERIVED` from xcodebuild's BUILD_DIR rather than baking in
+# a DerivedData hash — Xcode regenerates that hash on rename / clone /
+# fresh checkout, so the literal path was breaking even on Tyler's
+# machine after a re-clone, and never worked for any other contributor.
+# Override DERIVED via env to skip this query (e.g. when --skip-build
+# is used).
+if [[ -z "${DERIVED:-}" ]]; then
+    DERIVED_BUILD_DIR=$(cd "$PROJECT_DIR" && xcodebuild \
+        -project Columba.xcodeproj -scheme Columba \
+        -configuration Debug -sdk iphoneos \
+        -showBuildSettings 2>/dev/null \
+        | awk '/^[[:space:]]*BUILD_DIR = /{print $3; exit}')
+    if [[ -z "$DERIVED_BUILD_DIR" ]]; then
+        echo "ERROR: could not resolve BUILD_DIR from xcodebuild — set \$DERIVED manually." >&2
+        exit 1
+    fi
+    DERIVED="$DERIVED_BUILD_DIR/Debug-iphoneos/ColumbaApp.app"
+fi
 
 usage() {
     cat <<EOF
@@ -81,7 +99,7 @@ if [[ "$SKIP_BUILD" == "0" ]]; then
     xcodebuild build -project Columba.xcodeproj -scheme Columba \
         -configuration Debug -sdk iphoneos \
         -destination "id=$DEVICE_UDID" \
-        CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=M2977H5PM5 \
+        CODE_SIGN_STYLE=Automatic "DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM" \
         -allowProvisioningUpdates 2>&1 | tail -3
 
     echo "[2/8] Installing..."

@@ -51,7 +51,21 @@ public enum SharedDefaultsConstants {
 /// `NSLog`-equivalent that lands in the app's `DiagLog`). The app
 /// can copy it into its Documents/diag.log on next foreground for
 /// `xcrun devicectl device copy from` retrieval.
+///
+/// The log is bounded at `maxBytes` with a tail-keep rotation: when
+/// a write would push the file past the cap, the oldest ~half of
+/// the file is dropped. The extension is always-on by design and
+/// `ExtensionAutoBridge` logs every received packet / HELLO beacon,
+/// so an unbounded file would eventually exhaust the App Group
+/// container and silently break `SharedFrameQueue.append` (same
+/// container, different file).
 public enum ExtensionDiagLog {
+    /// Soft cap on the on-disk log size. When exceeded, the oldest
+    /// ~half of the file is dropped on the next write. 1 MiB chosen
+    /// to comfortably exceed a single test session's output while
+    /// being small relative to the App Group quota.
+    public static let maxBytes: UInt64 = 1 * 1024 * 1024
+
     /// Compute on every call so a transient `containerURL` failure
     /// at static-init time doesn't permanently disable logging.
     /// Writes under `Library/Caches/` which is already auto-created
@@ -67,6 +81,24 @@ public enum ExtensionDiagLog {
         return cachesDir.appendingPathComponent("ext_diag.log")
     }
 
+    /// Drop the oldest ~half of the log when it exceeds `maxBytes`.
+    /// Best-effort; if any step fails we silently leave the file
+    /// alone — losing a rotation is preferable to losing a log line.
+    private static func rotateIfNeeded(at url: URL) {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? UInt64,
+              size > maxBytes else { return }
+        guard let data = try? Data(contentsOf: url) else { return }
+        // Keep the newest half; align to the next newline so we
+        // don't truncate mid-line.
+        let cutoff = data.count / 2
+        var start = cutoff
+        while start < data.count, data[start] != 0x0A /* \n */ { start += 1 }
+        if start < data.count { start += 1 } // skip the newline itself
+        let tail = data[start..<data.count]
+        try? Data(tail).write(to: url, options: .atomic)
+    }
+
     public static func log(_ message: String) {
         // Mirror to NSLog so it shows up in ASL / Console.app even
         // if the file write below silently fails.
@@ -76,6 +108,7 @@ public enum ExtensionDiagLog {
             NSLog("[ExtensionDiagLog] containerURL returned nil — App Group not accessible?")
             return
         }
+        rotateIfNeeded(at: url)
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)\n"
         guard let data = line.data(using: .utf8) else { return }
