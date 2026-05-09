@@ -17,7 +17,6 @@ import LXMFSwift
 /// but cached regions are pinned to one style at download time, so the
 /// dark style assets are not served offline if a region was downloaded
 /// while light was active. TODO(#59 follow-up): cache both style packs.
-@available(iOS 17.0, *)
 func mapStyleURL(forDarkMode dark: Bool) -> URL {
     URL(string: dark
         ? "https://tiles.openfreemap.org/styles/dark"
