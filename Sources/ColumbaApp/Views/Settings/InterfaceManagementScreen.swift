@@ -122,7 +122,7 @@ struct InterfaceManagementScreen: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $viewModel.showTCPWizard) {
+        .sheet(isPresented: $viewModel.showTCPWizard, onDismiss: { viewModel.dismissConfigSheet() }) {
             TCPClientWizard(viewModel: viewModel)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
