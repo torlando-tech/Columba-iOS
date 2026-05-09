@@ -76,6 +76,15 @@ enum DiagLog {
 @Observable
 @MainActor
 public final class AppServices {
+
+    /// Host:port pair identifying a TCP interface's destination. Used to
+    /// detect whether a `connectTCPInterface` call would change the
+    /// interface's configuration or just re-apply the same one.
+    public struct TCPEndpoint: Equatable, Hashable, Sendable {
+        public let host: String
+        public let port: UInt16
+    }
+
     // MARK: - Components
 
     /// Local Reticulum identity for signing and encryption.
@@ -92,6 +101,15 @@ public final class AppServices {
 
     /// TCP interfaces keyed by entity ID. Multiple concurrent connections are supported.
     public private(set) var tcpInterfaces: [String: TCPInterface] = [:]
+
+    /// Last-applied host:port per TCP entity. Used by `connectTCPInterface`
+    /// to short-circuit when the caller is re-applying an already-running
+    /// config (e.g. `InterfaceManagementViewModel.applyChanges` loops over
+    /// every enabled TCP entity on every toggle, so an unchanged interface
+    /// would otherwise be torn down and recreated alongside the genuinely-
+    /// changed one — triggering the relay to redeliver its full announce
+    /// table per reconnect).
+    public private(set) var tcpEndpoints: [String: TCPEndpoint] = [:]
 
     /// Convenience accessor for the first TCP interface (backward compat).
     public var tcpInterface: TCPInterface? { tcpInterfaces.values.first }
@@ -450,7 +468,21 @@ public final class AppServices {
                 let newInterface = try TCPInterface(config: config)
                 tcpInterfaces["tcp-server"] = newInterface
                 try await newTransport.addInterface(newInterface)
+                // Record the applied endpoint only after the interface
+                // has been successfully attached. See the matching catch
+                // block below for why this ordering matters.
+                tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
             } catch {
+                // Initialization is "non-fatal" with respect to TCP — the
+                // rest of init proceeds without it, and the user can
+                // retry via reconnectTCPOnly. But that retry routes
+                // through connectTCPInterface, whose new idempotency
+                // guard would silently no-op if a stale tcpEndpoints
+                // entry survived this catch. Roll back any partial
+                // dictionary writes so a same-address retry isn't
+                // stuck.
+                tcpInterfaces.removeValue(forKey: "tcp-server")
+                tcpEndpoints.removeValue(forKey: "tcp-server")
                 logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -565,7 +597,19 @@ public final class AppServices {
                 let newInterface = try TCPInterface(config: config)
                 tcpInterfaces["tcp-server"] = newInterface
                 try await newTransport.addInterface(newInterface)
+                // Record the applied endpoint only after the interface
+                // has been successfully attached. See the matching catch
+                // block below — same rationale as the first overload.
+                tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
             } catch {
+                // Non-fatal: init proceeds without TCP. But roll back
+                // any partial dictionary writes so a later
+                // reconnectTCPOnly retry with the same address doesn't
+                // hit a stuck idempotency guard in connectTCPInterface
+                // and silently no-op. See the first initialize overload
+                // for the full rationale.
+                tcpInterfaces.removeValue(forKey: "tcp-server")
+                tcpEndpoints.removeValue(forKey: "tcp-server")
                 logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -1247,12 +1291,22 @@ public final class AppServices {
     /// Connect a TCP interface by entity ID, replacing any existing one with the same ID.
     ///
     /// Multiple concurrent TCP interfaces are supported — each entity ID is independent.
+    /// Idempotent: if an interface is already running for `entityId` with the same
+    /// `host:port`, returns without disturbing it.
     public func connectTCPInterface(entityId: String, host: String, port: UInt16) async throws {
-        // Stop any existing interface with this entity ID
+        let endpoint = TCPEndpoint(host: host, port: port)
+
+        // Already running with the same endpoint — leave it alone.
+        if tcpInterfaces[entityId] != nil, tcpEndpoints[entityId] == endpoint {
+            return
+        }
+
+        // Stop any existing interface with this entity ID (config changed)
         if let existing = tcpInterfaces[entityId] {
             await existing.disconnect()
             await transport?.removeInterface(id: entityId)
             tcpInterfaces.removeValue(forKey: entityId)
+            tcpEndpoints.removeValue(forKey: entityId)
         }
 
         // Ensure base stack exists
@@ -1274,7 +1328,23 @@ public final class AppServices {
         )
         let newInterface = try TCPInterface(config: config)
         tcpInterfaces[entityId] = newInterface
-        try await transport.addInterface(newInterface)
+        do {
+            try await transport.addInterface(newInterface)
+        } catch {
+            // addInterface failed — roll back the dictionary write so a
+            // retry with the same endpoint isn't silently no-op'd by the
+            // idempotency guard at the top of this function. Without
+            // this cleanup, a transient addInterface failure would leave
+            // a stuck entry that permanently blocks self-healing
+            // reconnects for this entityId until the user edits its
+            // host or port.
+            tcpInterfaces.removeValue(forKey: entityId)
+            throw error
+        }
+        // Only record the applied endpoint after the interface has been
+        // successfully attached to the transport — see the catch block
+        // above for the reasoning.
+        tcpEndpoints[entityId] = endpoint
 
         if let dest = deliveryDestination {
             await transport.registerDestination(dest)
@@ -1301,6 +1371,7 @@ public final class AppServices {
         await interface.disconnect()
         await transport?.removeInterface(id: entityId)
         tcpInterfaces.removeValue(forKey: entityId)
+        tcpEndpoints.removeValue(forKey: entityId)
     }
 
     /// Stop all TCP interfaces.
@@ -1310,6 +1381,7 @@ public final class AppServices {
             await transport?.removeInterface(id: entityId)
         }
         tcpInterfaces.removeAll()
+        tcpEndpoints.removeAll()
         isConnected = false
     }
 
@@ -1395,7 +1467,20 @@ public final class AppServices {
         tcpInterfaces["tcp-server"] = newInterface
 
         // Add interface to transport (connects it)
-        try await newTransport.addInterface(newInterface)
+        do {
+            try await newTransport.addInterface(newInterface)
+        } catch {
+            // addInterface failed — roll back the dictionary write so a
+            // retry via reconnectTCPOnly with the same address isn't
+            // silently no-op'd by connectTCPInterface's idempotency
+            // guard. See connectTCPInterface's catch block for the full
+            // rationale.
+            tcpInterfaces.removeValue(forKey: "tcp-server")
+            throw error
+        }
+        // Only record the applied endpoint after the interface has been
+        // successfully attached to the transport.
+        tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
 
         // Set transport on router and re-register delivery destination
         if let router = router {
