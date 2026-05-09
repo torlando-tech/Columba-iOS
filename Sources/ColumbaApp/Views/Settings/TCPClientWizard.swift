@@ -16,7 +16,6 @@ import SwiftUI
 struct TCPClientWizard: View {
 
     @Bindable var viewModel: InterfaceManagementViewModel
-    @Environment(\.dismiss) private var dismiss
     @State private var wizard = TCPClientWizardViewModel()
 
     var body: some View {
@@ -101,6 +100,10 @@ struct TCPClientWizard: View {
             .foregroundStyle(Theme.textSecondary)
     }
 
+    private var canProceed: Bool {
+        wizard.canProceed(from: wizard.currentStep)
+    }
+
     private var primaryActionButton: some View {
         Button {
             switch wizard.currentStep {
@@ -120,10 +123,10 @@ struct TCPClientWizard: View {
             .foregroundStyle(.white)
             .padding(.vertical, 12)
             .padding(.horizontal, 20)
-            .background(wizard.canProceed(from: wizard.currentStep) ? Theme.accentColor : Theme.textDisabled)
+            .background(canProceed ? Theme.accentColor : Theme.textDisabled)
             .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
         }
-        .disabled(!wizard.canProceed(from: wizard.currentStep))
+        .disabled(!canProceed)
     }
 }
 

@@ -175,7 +175,7 @@ final class TCPClientWizardViewModel {
         let trimmedHost = targetHost.trimmingCharacters(in: .whitespaces)
         let port = UInt16(targetPort.trimmingCharacters(in: .whitespaces)) ?? 4242
         let trimmedNetwork = networkName.trimmingCharacters(in: .whitespaces)
-        let trimmedPassphrase = passphrase
+        let trimmedPassphrase = passphrase.trimmingCharacters(in: .whitespaces)
 
         let config = TCPClientConfig(
             targetHost: trimmedHost,
