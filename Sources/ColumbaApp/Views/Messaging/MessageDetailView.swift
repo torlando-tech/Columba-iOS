@@ -241,9 +241,27 @@ struct MessageDetailView: View {
     // MARK: - Card Components
 
     private var statusCard: some View {
+        // For PROPAGATED messages, "sent" is the terminal state — the
+        // sender knows the propagation node accepted the upload, but
+        // the propagation node does NOT report back when the recipient
+        // syncs the message down. The python reference caps PROPAGATED
+        // at `state = SENT` in `LXMessage.__mark_propagated`
+        // (LXMF/LXMessage.py:568-578). Showing "awaiting delivery
+        // confirmation" for a propagated message is a false promise —
+        // there will never be such confirmation.
+        let isPropagated = message.deliveryMethod == "propagated"
+
         let (icon, color, title, subtitle): (String, Color, String, String) = {
             switch message.deliveryStatus {
             case .delivered:
+                // Should not occur for PROPAGATED in correctly-built
+                // pipelines (see LXMF-swift LXMRouter.handlePropagationAccepted),
+                // but guard the UI text anyway in case stale rows
+                // predate the fix or a different sender mismarks it.
+                if isPropagated {
+                    return ("checkmark.circle.fill", .green, "Sent to relay",
+                            "Uploaded to propagation node. Recipient will receive on next sync.")
+                }
                 return ("checkmark.circle.fill", .green, "Delivered",
                         "Message was successfully delivered to recipient")
             case .failed:
@@ -253,6 +271,10 @@ struct MessageDetailView: View {
                 return ("hourglass", .orange, "Sending",
                         "Message is being sent")
             case .sent:
+                if isPropagated {
+                    return ("paperplane.fill", .blue, "Sent to relay",
+                            "Uploaded to propagation node. Recipient will receive on next sync — propagation nodes don't report back when the recipient pulls the message.")
+                }
                 return ("paperplane.fill", .blue, "Sent",
                         "Message sent, awaiting delivery confirmation")
             case .read:

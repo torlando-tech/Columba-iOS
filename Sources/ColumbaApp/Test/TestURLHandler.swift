@@ -187,6 +187,13 @@ public enum TestURLHandler {
             let since = Double(query["since"] ?? "") ?? 120.0
             let cat = query["cat"]
             c.handleDumpLog(sinceSeconds: since, categoryFilter: cat)
+        case "dump_db":
+            // Dump conversation list + per-conversation message
+            // metadata into test_log.txt. Diagnoses UI-grouping bugs
+            // (e.g. "PROP messages appear in a separate conversation"
+            // — DB inspection reveals whether destination_hash is
+            // genuinely diverging or the UI is mis-rendering).
+            c.handleDumpDb()
         default:
             TestLog.emit("rx_url_unknown action=\(action)")
         }

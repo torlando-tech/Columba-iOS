@@ -753,6 +753,75 @@ public final class TestController {
         }
     }
 
+    /// Dump the full LXMF DB conversation list and per-conversation
+    /// message metadata into the test log. Used to diagnose user-
+    /// observed UI grouping bugs ("PROP messages appear in a separate
+    /// conversation from DIRECT/OPP", "no inbound PROP visible") where
+    /// the answer depends on what the DB actually has — the iOS UI
+    /// faithfully renders whatever the conversations + messages tables
+    /// contain, so DB-level inspection is the source of truth.
+    ///
+    /// Output shape (one line each):
+    ///   conv hash=<32hex> display=<name> last_ts=<ts> unread=<n>
+    ///   msg conv=<32hex> id=<32hex> dir=<in|out> method=<int> state=<int> ts=<ts> from=<32hex> to=<32hex>
+    ///
+    /// `method` and `state` are raw `LXDeliveryMethod` /
+    /// `LXMessageState` enum values — the harness or a human reader
+    /// translates via the LXMF source. Per-conversation message dump
+    /// is capped at 50 most-recent rows.
+    public func handleDumpDb() {
+        assertionFailure_releaseGuard()
+        guard let appServices = self.appServices as? AppServices,
+              let database = appServices.database else {
+            TestLog.emit("dump_db_err reason=no_db")
+            return
+        }
+        Task {
+            do {
+                let conversations = try await database.getConversations(limit: 1000, offset: 0)
+                TestLog.emit("dump_db_begin convs=\(conversations.count)")
+                for conv in conversations {
+                    let hashHex = conv.destinationHash.map { String(format: "%02x", $0) }.joined()
+                    let nameStr = (conv.displayName ?? "").isEmpty
+                        ? "<no_name>"
+                        : testHarnessEscape(conv.displayName ?? "")
+                    TestLog.emit(
+                        "conv hash=\(hashHex) "
+                        + "display=\(nameStr) "
+                        + "last_ts=\(conv.lastMessageTimestamp) "
+                        + "unread=\(conv.unreadCount)"
+                    )
+                    let records = try await database.getMessageRecords(
+                        forConversation: conv.destinationHash,
+                        limit: 50, offset: 0
+                    )
+                    for r in records {
+                        let convHex = r.conversationHash.map { String(format: "%02x", $0) }.joined()
+                        let idHex = (r.messageId ?? Data()).map { String(format: "%02x", $0) }.joined()
+                        let srcHex = r.sourceHash.map { String(format: "%02x", $0) }.joined()
+                        let dstHex = r.destinationHash.map { String(format: "%02x", $0) }.joined()
+                        let dir = r.incoming ? "in" : "out"
+                        TestLog.emit(
+                            "msg conv=\(convHex) "
+                            + "id=\(idHex) "
+                            + "dir=\(dir) "
+                            + "method=\(r.method) "
+                            + "state=\(r.state) "
+                            + "ts=\(r.timestamp) "
+                            + "from=\(srcHex) "
+                            + "to=\(dstHex)"
+                        )
+                    }
+                }
+                TestLog.emit("dump_db_done")
+            } catch {
+                TestLog.emit(
+                    "dump_db_err reason=\(testHarnessEscape(error.localizedDescription))"
+                )
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func methodName(_ m: LXDeliveryMethod) -> String {
