@@ -169,6 +169,16 @@ public enum TestURLHandler {
             c.handleSetPropNode(hex: query["hex"] ?? "")
         case "sync_prop":
             c.handleSyncProp()
+        case "dump_log":
+            // Dump iOS unified log entries for our subsystems into
+            // test_log.txt. `?since=<seconds>` (default 120s).
+            // `?cat=<comma-separated>` overrides the default category
+            // filter (Propagation,Sync,LXMRouter,Stamper,Identity,
+            // PropagationNodeManager). Pass `cat=*` to disable category
+            // filtering entirely.
+            let since = Double(query["since"] ?? "") ?? 120.0
+            let cat = query["cat"]
+            c.handleDumpLog(sinceSeconds: since, categoryFilter: cat)
         default:
             TestLog.emit("rx_url_unknown action=\(action)")
         }

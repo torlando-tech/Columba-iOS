@@ -25,6 +25,7 @@
 
 import Foundation
 import os.log
+import OSLog
 import LXMFSwift
 
 // MARK: - Logging
@@ -364,6 +365,70 @@ public final class TestController {
                 TestLog.emit(
                     "announce_err dest=\(toHex(hash)) " +
                     "reason=\(testHarnessEscape(error.localizedDescription))"
+                )
+            }
+        }
+    }
+
+    /// Dump the iOS unified log for the LXMF/propagation subsystems
+    /// into test_log.txt so the harness can see what's happening
+    /// inside the library on failure. iOS 17+ moved live syslog behind
+    /// the developer tunnel (libimobiledevice/idevicesyslog can't
+    /// reach it) so we pull from OSLogStore in-process and forward
+    /// each entry as a `lib_log` event line.
+    ///
+    /// Filtered to the subsystems we know LXMFSwift / ColumbaApp use:
+    ///   - com.columba.core (propLogger, syncLogger, routerLogger)
+    ///   - net.reticulum.lxmf (default routerLogger in LXMRouter.swift)
+    public func handleDumpLog(
+        sinceSeconds: Double = 120.0,
+        categoryFilter: String? = nil
+    ) {
+        assertionFailure_releaseGuard()
+        Task {
+            do {
+                let store = try OSLogStore(scope: .currentProcessIdentifier)
+                let cutoff = store.position(date: Date().addingTimeInterval(-sinceSeconds))
+                // Stream entries WITHOUT a predicate (NSPredicate against
+                // OSLogStore doesn't support category-level filtering on all
+                // OS versions; do it in-loop for portability) and filter by
+                // (subsystem, category) ourselves. Default: only the
+                // LXMFSwift propagation/sync/router categories that matter
+                // for the bug we're chasing.
+                let entries = try store.getEntries(at: cutoff)
+                let allowedSubsystems: Set<String> = [
+                    "com.columba.core",
+                    "net.reticulum.lxmf",
+                ]
+                let allowedCategoriesDefault: Set<String> = [
+                    "Propagation", "Sync", "LXMRouter", "Stamper", "Identity",
+                    "PropagationNodeManager",
+                ]
+                let allowedCategories: Set<String>? = categoryFilter
+                    .map { Set($0.split(separator: ",").map(String.init)) }
+                var count = 0
+                for entry in entries {
+                    guard let logEntry = entry as? OSLogEntryLog else { continue }
+                    let subsys = logEntry.subsystem
+                    let cat = logEntry.category
+                    if !allowedSubsystems.contains(subsys) { continue }
+                    if let allowed = allowedCategories,
+                       !allowed.contains(cat) { continue }
+                    if allowedCategories == nil,
+                       !allowedCategoriesDefault.contains(cat) { continue }
+                    let level = String(describing: logEntry.level)
+                    let msg = testHarnessEscape(logEntry.composedMessage)
+                    TestLog.emit(
+                        "lib_log subsys=\(subsys) cat=\(cat) " +
+                        "level=\(level) msg=\(msg)"
+                    )
+                    count += 1
+                    if count > 500 { break }  // higher cap now that we filter
+                }
+                TestLog.emit("lib_log_done count=\(count) since_sec=\(Int(sinceSeconds))")
+            } catch {
+                TestLog.emit(
+                    "lib_log_err reason=\(testHarnessEscape(error.localizedDescription))"
                 )
             }
         }
