@@ -27,6 +27,9 @@ import Foundation
 import os.log
 import OSLog
 import LXMFSwift
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - Logging
 
@@ -200,6 +203,19 @@ public final class TestController {
     /// transition never reaches the test surface.
     private var attachedDelegate: LXMRouterDelegate?
 
+    /// Periodic screenshot/lifecycle Task. Spawned by `bind()` on first
+    /// init; runs for the app's lifetime, snapping the key window every
+    /// `screenshotIntervalSec` seconds + emitting a `tick` event with the
+    /// current applicationState so we can correlate "URL handler stopped
+    /// firing" against "app backgrounded / inactive". Diagnoses the
+    /// 2026-05-10 iOS smoke harness wedge where the URL handler stops
+    /// answering after a few sequential runs.
+    private var diagnosticTickTask: Task<Void, Never>?
+    private let screenshotIntervalSec: UInt64 = 2
+    private var screenshotSeq: UInt64 = 0
+    private static let screenshotsDirName = "screenshots"
+    private static let maxScreenshots = 30
+
     private init() {}
 
     // MARK: - Init / bind
@@ -228,10 +244,140 @@ public final class TestController {
             // bind time (see `attachDelegate()`).
             initialized = true
             TestLog.emit("controller_ready")
+            startDiagnosticTicker()
+            registerLifecycleObservers()
         } else {
             TestLog.emit("controller_rebound")
         }
     }
+
+    // MARK: - Diagnostic ticker (screenshot + lifecycle)
+    //
+    // The harness wedge surfaces as "lxma-test:// URLs stop reaching the
+    // URL handler" — but URL handler dispatch requires the app to be
+    // foreground-active, so the natural hypothesis is iOS deactivating /
+    // backgrounding the app between runs. Pure log files can't disprove
+    // that (URL events stop because the cause stops dispatch). This
+    // ticker is driven by an internal Task, NOT URL dispatch — so it
+    // keeps emitting even when the URL handler is wedged. If the ticker
+    // events also stop, the app is suspended/killed (a stronger signal
+    // than wedged-URL-handler alone). If ticks keep coming but
+    // `applicationState != .active`, that's the smoking gun: app went
+    // to .inactive/.background.
+
+    private func startDiagnosticTicker() {
+        #if canImport(UIKit)
+        diagnosticTickTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self = self else { return }
+                await self.tickOnce()
+                try? await Task.sleep(
+                    nanoseconds: self.screenshotIntervalSec * 1_000_000_000
+                )
+            }
+        }
+        #endif
+    }
+
+    #if canImport(UIKit)
+    private func tickOnce() async {
+        screenshotSeq &+= 1
+        let seq = screenshotSeq
+
+        let state = UIApplication.shared.applicationState
+        let stateStr: String
+        switch state {
+        case .active:     stateStr = "active"
+        case .inactive:   stateStr = "inactive"
+        case .background: stateStr = "background"
+        @unknown default: stateStr = "unknown"
+        }
+
+        var path: String? = nil
+        // Only snap when active — UIWindowScene is foregrounded only
+        // when active, and a snapshot from a non-active scene is either
+        // empty or stale and would mislead diagnosis.
+        if state == .active {
+            path = captureKeyWindowSnapshot(seq: seq)
+            rotateScreenshots()
+        }
+
+        TestLog.emit(
+            "diag_tick seq=\(seq) state=\(stateStr) snapshot=\(path ?? "<skip>")"
+        )
+    }
+
+    /// Capture the current key window's contents as a PNG into
+    /// `Documents/screenshots/<seq>.png`. Returns the on-device path on
+    /// success.
+    private func captureKeyWindowSnapshot(seq: UInt64) -> String? {
+        let scenes = UIApplication.shared.connectedScenes
+        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene else {
+            return nil
+        }
+        guard let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first else {
+            return nil
+        }
+
+        let bounds = window.bounds
+        let renderer = UIGraphicsImageRenderer(bounds: bounds)
+        let image = renderer.image { _ in
+            window.drawHierarchy(in: bounds, afterScreenUpdates: false)
+        }
+        guard let png = image.pngData() else { return nil }
+
+        let dir = Self.screenshotsDir()
+        try? FileManager.default.createDirectory(
+            atPath: dir, withIntermediateDirectories: true, attributes: nil
+        )
+        let filename = String(format: "diag-%06llu.png", seq)
+        let path = (dir as NSString).appendingPathComponent(filename)
+        do {
+            try png.write(to: URL(fileURLWithPath: path), options: .atomic)
+            return path
+        } catch {
+            return nil
+        }
+    }
+
+    private func rotateScreenshots() {
+        let dir = Self.screenshotsDir()
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
+        let pngs = entries
+            .filter { $0.hasSuffix(".png") }
+            .sorted()
+        guard pngs.count > Self.maxScreenshots else { return }
+        for old in pngs.prefix(pngs.count - Self.maxScreenshots) {
+            let p = (dir as NSString).appendingPathComponent(old)
+            try? FileManager.default.removeItem(atPath: p)
+        }
+    }
+
+    private static func screenshotsDir() -> String {
+        let docs = NSSearchPathForDirectoriesInDomains(
+            .documentDirectory, .userDomainMask, true
+        ).first ?? NSTemporaryDirectory()
+        return (docs as NSString).appendingPathComponent(screenshotsDirName)
+    }
+
+    private func registerLifecycleObservers() {
+        let nc = NotificationCenter.default
+        let pairs: [(Notification.Name, String)] = [
+            (UIApplication.didBecomeActiveNotification,  "did_become_active"),
+            (UIApplication.willResignActiveNotification, "will_resign_active"),
+            (UIApplication.didEnterBackgroundNotification, "did_enter_background"),
+            (UIApplication.willEnterForegroundNotification, "will_enter_foreground"),
+            (UIApplication.willTerminateNotification, "will_terminate"),
+        ]
+        for (name, label) in pairs {
+            nc.addObserver(forName: name, object: nil, queue: .main) { _ in
+                TestLog.emit("lifecycle event=\(label)")
+            }
+        }
+    }
+    #else
+    private func registerLifecycleObservers() {}
+    #endif
 
     /// Attach the harness's relay delegate, preserving the original.
     /// Called by [TestURLHandler] right after `bind` to wire in
