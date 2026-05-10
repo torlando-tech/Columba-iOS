@@ -64,6 +64,17 @@ struct ColumbaApp: App {
             .tint(Theme.accentColor)
             .id(ThemeManager.shared.themeVersion)
             .onOpenURL { url in
+                #if DEBUG
+                // Debug-only test-harness sibling scheme — `lxma-test://<action>?<query>`.
+                // See Sources/ColumbaApp/Test/TestURLHandler.swift. Compiled out
+                // entirely in release builds, AND `lxma-test` is not registered
+                // in CFBundleURLSchemes — so iOS won't route to this handler in
+                // release even if the file accidentally shipped.
+                if url.scheme == "lxma-test" {
+                    _ = TestURLHandler.handle(url: url)
+                    return
+                }
+                #endif
                 guard url.scheme == "lxma" else { return }
                 pendingDeepLink = url.absoluteString
             }
@@ -519,6 +530,13 @@ struct RootView: View {
             await NotificationService.shared.requestPermission()
 
             self.isInitialized = true
+
+            #if DEBUG
+            // Wire the test-harness surface to the live AppServices.
+            // No-op in release: the entire TestURLHandler / TestController
+            // graph is `#if DEBUG`-gated.
+            TestURLHandler.bind(appServices: appServices)
+            #endif
 
             // DEBUG: Auto-trigger propagation sync on launch for testing
             if ProcessInfo.processInfo.arguments.contains("--auto-sync") {
