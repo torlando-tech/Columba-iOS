@@ -29,27 +29,80 @@ import LXMFSwift
 
 // MARK: - Logging
 
-/// Dedicated subsystem for the test harness. `idevicesyslog` filters by
-/// (process, subsystem, category) — pinning a unique subsystem here lets
-/// the python orchestrator grep cleanly without fighting noise from the
-/// rest of the app.
+/// Dedicated subsystem for the test harness. The original design called
+/// for `idevicesyslog` to filter by (process, subsystem, category) for
+/// real-time tailing, but iOS 17+ moved the syslog stream behind the new
+/// CoreDevice / RemoteXPC protocol that libimobiledevice can't speak,
+/// and `pymobiledevice3` requires a developer-tunnel daemon to bridge it.
+/// Rather than maintain that fragile pairing, the orchestrator now polls
+/// a structured file at `Documents/test_log.txt` (pulled via
+/// `xcrun devicectl device copy from --domain-type appDataContainer`).
+/// `os_log` writes are kept as-is for human / Console.app readers; the
+/// file is the contract the harness consumes.
 public enum TestLog {
     public static let subsystem = "network.columba.app.test"
     public static let category = "harness"
     public static let logger = Logger(subsystem: subsystem, category: category)
 
+    /// Per-launch monotonically-increasing line number, so a harness that
+    /// pulls the log file mid-run can detect "did any new lines arrive
+    /// since the last poll" without relying on file-size deltas (which
+    /// can race with append-writes mid-flight).
+    private static var sequence: UInt64 = 0
+    private static let sequenceLock = NSLock()
+
+    /// File-descriptor cache. Opened lazily, kept open for the app
+    /// lifetime so each emit() is a write+fsync, not an open+write+close.
+    private static var fileHandle: FileHandle?
+    private static let handleLock = NSLock()
+
+    /// Resolved path to the log file inside the app's sandbox Documents
+    /// dir. Computed once on first use.
+    public static let logFilePath: String = {
+        let docs = NSSearchPathForDirectoriesInDomains(
+            .documentDirectory, .userDomainMask, true
+        ).first ?? NSTemporaryDirectory()
+        return (docs as NSString).appendingPathComponent("test_log.txt")
+    }()
+
     /// All harness output goes through this single sink so the Python
     /// orchestrator's regex sees one consistent shape.
     ///
-    /// We deliberately use `os_log .info` with `%{public}@` and emit the
-    /// full pre-formatted line as a single argument. This:
-    ///   - Forces the line to appear verbatim in `idevicesyslog`
-    ///     (private redaction would replace it with `<private>` otherwise).
-    ///   - Keeps every event a single token-stream that the harness can
-    ///     match with a flat regex.
+    /// Emits to BOTH:
+    ///   - `os_log` for live Console.app / Xcode console viewing
+    ///   - `Documents/test_log.txt` (newline-terminated) for the
+    ///     orchestrator's `devicectl copy from`-based poller
+    ///
+    /// Each line is prefixed `seq=<n> ts=<iso8601> ` so the harness can
+    /// detect new lines after a poll and reason about ordering.
     public static func emit(_ line: String) {
         os_log("%{public}@", log: OSLog(subsystem: subsystem, category: category),
                type: .info, line)
+
+        sequenceLock.lock()
+        sequence &+= 1
+        let seq = sequence
+        sequenceLock.unlock()
+
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let prefixed = "seq=\(seq) ts=\(ts) \(line)\n"
+
+        handleLock.lock()
+        defer { handleLock.unlock() }
+        if fileHandle == nil {
+            let path = logFilePath
+            // Truncate on first write of each app launch so the harness
+            // doesn't have to reason about cross-launch line numbers.
+            // The file is bounded by the harness's own retry-cap anyway.
+            FileManager.default.createFile(atPath: path, contents: nil, attributes: nil)
+            fileHandle = FileHandle(forWritingAtPath: path)
+        }
+        if let fh = fileHandle, let data = prefixed.data(using: .utf8) {
+            try? fh.write(contentsOf: data)
+            // Don't fsync per write — it'd serialize all emit() calls and
+            // wreck the log under bursty events. The harness polls every
+            // ~250ms; OS page-cache flush easily keeps up.
+        }
     }
 }
 
@@ -481,12 +534,25 @@ public final class TestController {
     /// got here would silently no-op rather than crash — which is
     /// exactly why the file ALSO ships under `#if DEBUG` (this assertion
     /// is the inner of two layers).
+    /// Defense-in-depth runtime guard: if some build-config or compile-
+    /// conditions misconfiguration ever lets this code run in a non-DEBUG
+    /// build, crash hard at the first invocation rather than silently
+    /// expose the test surface. In normal DEBUG builds this is a no-op.
+    ///
+    /// (Was previously calling `assertionFailure(...)` unconditionally —
+    /// which is exactly the wrong direction. `assertionFailure` ALWAYS
+    /// crashes in DEBUG builds, so every test entry-point crashed the app
+    /// on the guard before reaching any actual logic. Mirrors the Android
+    /// side's `check(BuildConfig.DEBUG)` semantics: throw only when DEBUG
+    /// is FALSE.)
     private func assertionFailure_releaseGuard() {
-        assertionFailure(
+        #if !DEBUG
+        fatalError(
             "TestController must not run in release builds — " +
             "this is a debug-only test surface; non-debug invocation " +
             "indicates a build-config or compile-conditions misconfiguration"
         )
+        #endif
     }
 }
 

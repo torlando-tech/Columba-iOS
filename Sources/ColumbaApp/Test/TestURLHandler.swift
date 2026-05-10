@@ -183,11 +183,24 @@ public enum TestURLHandler {
 
     /// Same release-guard rationale as TestController's: the file is
     /// already `#if DEBUG`, this is the inner layer.
+    /// Defense-in-depth runtime guard: if some build-config or compile-
+    /// conditions misconfiguration ever lets this code run in a non-DEBUG
+    /// build, crash hard at the first invocation rather than silently
+    /// expose the test surface. In normal DEBUG builds this is a no-op.
+    ///
+    /// (Earlier this called `assertionFailure(...)` unconditionally, which
+    /// is exactly the wrong direction — `assertionFailure` ALWAYS crashes
+    /// in DEBUG builds, so every test invocation crashed the app on the
+    /// guard before reaching any actual test logic. Mirrors the Android
+    /// side's `check(BuildConfig.DEBUG)` semantics: throw only when DEBUG
+    /// is FALSE.)
     private static func assertionFailure_releaseGuard() {
-        assertionFailure(
+        #if !DEBUG
+        fatalError(
             "TestURLHandler must not run in release builds — " +
             "this is a debug-only test surface."
         )
+        #endif
     }
 }
 
