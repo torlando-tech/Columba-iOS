@@ -190,6 +190,16 @@ public final class TestController {
     /// Set true once [bind] has registered the receive observer.
     private var initialized = false
 
+    /// Strong reference to our installed delegate. LXMRouter holds the
+    /// delegate weakly (LXMRouter.swift `weak var delegate`), so without
+    /// this anchor the relay deallocates immediately after attachDelegate
+    /// returns, the router's reference goes nil, and didUpdateMessage
+    /// never fires for outbound state transitions. Symptom: smoke runs
+    /// where lxmd accepts the message (`Proof confirmed delivery`) but
+    /// the harness never sees `state=PROPAGATED` because the .sent
+    /// transition never reaches the test surface.
+    private var attachedDelegate: LXMRouterDelegate?
+
     private init() {}
 
     // MARK: - Init / bind
@@ -231,6 +241,10 @@ public final class TestController {
             wrapped: originalDelegate,
             controller: self
         )
+        // Pin the relay to TestController BEFORE handing it to the router.
+        // Router holds the delegate weakly; without this strong reference
+        // the relay deallocates as soon as this function returns.
+        attachedDelegate = relay
         await router.setDelegate(relay)
     }
 
@@ -399,10 +413,15 @@ public final class TestController {
                 let allowedSubsystems: Set<String> = [
                     "com.columba.core",
                     "net.reticulum.lxmf",
+                    "net.reticulum",       // Link, Transport, Packet routing
+                    "network.columba.Columba",  // app-side managers
                 ]
                 let allowedCategoriesDefault: Set<String> = [
                     "Propagation", "Sync", "LXMRouter", "Stamper", "Identity",
                     "PropagationNodeManager",
+                    "Link",                // ← Link state machine + processProof
+                    "Transport",           // packet dispatch / routing
+                    "Packet",
                 ]
                 let allowedCategories: Set<String>? = categoryFilter
                     .map { Set($0.split(separator: ",").map(String.init)) }
@@ -418,8 +437,15 @@ public final class TestController {
                        !allowedCategoriesDefault.contains(cat) { continue }
                     let level = String(describing: logEntry.level)
                     let msg = testHarnessEscape(logEntry.composedMessage)
+                    // Emit the entry's ACTUAL OS-recorded timestamp as
+                    // an extra `entry_ts=` field. The seq=N ts=... prefix
+                    // emitted by TestLog is the dump-time (when this loop
+                    // ran), not the log-time, so the harness needs the
+                    // entry timestamp to reason about ordering across
+                    // events that happened during the smoke run.
+                    let entryTs = ISO8601DateFormatter().string(from: logEntry.date)
                     TestLog.emit(
-                        "lib_log subsys=\(subsys) cat=\(cat) " +
+                        "lib_log entry_ts=\(entryTs) subsys=\(subsys) cat=\(cat) " +
                         "level=\(level) msg=\(msg)"
                     )
                     count += 1
@@ -545,8 +571,20 @@ public final class TestController {
             TestLog.emit("prop_node_err reason=bad_hex hex=\(hex)")
             return
         }
+        // Read the bridge on the MainActor (where this method already
+        // runs) before hopping into the detached Task. The Task body
+        // is non-MainActor and can't observe @MainActor static vars.
+        let select = TestPathBridge.selectPropNode
         Task {
-            await router.setOutboundPropagationNode(bytes)
+            // Prefer the manager so stamp cost gets wired alongside the
+            // outbound-node hash. Fall back to the router-level setter
+            // only when the bridge isn't populated (defensive — bind()
+            // installs it under DEBUG).
+            if let bytes = bytes, let select = select {
+                await select(bytes)
+            } else {
+                await router.setOutboundPropagationNode(bytes)
+            }
             TestLog.emit("prop_node_set hex=\(bytes == nil ? "(cleared)" : hex)")
         }
     }
@@ -711,6 +749,16 @@ public enum TestPathBridge {
     /// `() async throws -> Void` — force-announce the local LXMF
     /// destination. Maps to AppServices.sendAnnounce(...).
     @MainActor public static var announce: (() async throws -> Void)?
+
+    /// `(hash) async -> Void` — fully select a propagation node by
+    /// going through `PropagationNodeManager.selectNode`. That call
+    /// pushes BOTH the outbound-node hash AND the announce-derived
+    /// stamp cost into the router. Bypassing it via the bare
+    /// `router.setOutboundPropagationNode(hash)` leaves the cost at
+    /// 0, which makes `LXMRouter.sendPropagated` ship a random stamp
+    /// that lxmd then rejects with `ERROR_INVALID_STAMP` (the symptom
+    /// observed during the iOS PROPAGATED smoke run on 2026-05-10).
+    @MainActor public static var selectPropNode: ((Data) async -> Void)?
 }
 
 #endif  // DEBUG

@@ -81,6 +81,14 @@ public enum TestURLHandler {
             }
             try await svc.sendAnnounce(displayName: "Columba")
         }
+        TestPathBridge.selectPropNode = { [weak appServices] hash in
+            guard let svc = appServices, let mgr = svc.propagationManager else {
+                // Falls back to the router-level setter inside
+                // handleSetPropNode if this bridge isn't populated.
+                return
+            }
+            await mgr.selectNode(hash: hash)
+        }
 
         // Attach the relay delegate so received messages + delivery
         // state changes get observed for the harness. Forwards to the

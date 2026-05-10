@@ -1210,8 +1210,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/torlando-tech/LXMF-swift.git";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.3.4;
+				branch = "perf/stamper-parallel-primed-digest";
+				kind = branch;
 			};
 		};
 		PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
