@@ -15,7 +15,7 @@ tags:
     clearKeychain: true
 - waitForAnimationToEnd:
     timeout: 5000
-# Onboarding may show on a fresh install; skip if "Skip" / "Continue" is visible.
+# Onboarding may show on a fresh install; skip if "Skip" / "Get Started" is visible.
 - runFlow:
     when:
       visible: "Skip"
