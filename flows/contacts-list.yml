@@ -1,0 +1,38 @@
+appId: network.columba.Columba
+name: contacts-list
+tags:
+  - smoke
+  - screenshot
+---
+# Visit the Contacts tab and capture the list state. This is the most stable
+# UI surface that shows in every PR (no network needed beyond app boot — the
+# contacts list renders even with no cached announces).
+#
+# The screenshot lands at <cwd>/contacts-list.png; the orchestrator moves it
+# to ~/.claude-runner/screenshots/<pr>/<phase>/contacts-list.png.
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- waitForAnimationToEnd:
+    timeout: 5000
+# Onboarding may show on a fresh install; skip if "Skip" / "Get Started" is visible.
+- runFlow:
+    when:
+      visible: "Skip"
+    commands:
+      - tapOn: "Skip"
+      - waitForAnimationToEnd:
+          timeout: 3000
+- runFlow:
+    when:
+      visible: "Get Started"
+    commands:
+      - tapOn: "Get Started"
+      - waitForAnimationToEnd:
+          timeout: 3000
+- tapOn:
+    text: "Contacts"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: "contacts-list"

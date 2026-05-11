@@ -233,6 +233,30 @@ public final class AppServices {
     /// Interface state observer task (cancelled on deinit).
     private var stateObserverTask: Task<Void, Never>?
 
+    /// Registry of interface ids that were spawned as peer-children of an
+    /// AutoInterface / BLEInterface / MPCInterface parent, recorded from
+    /// `onInterfacePeerSpawned`. Used to attribute the subsequent
+    /// `onInterfaceConnected` event for the same id to the peer-spawned
+    /// trigger rather than the tcp-reconnect trigger — see
+    /// `AutoAnnouncePolicy.shouldFireOnInterfaceConnected(isPeerChild:)`.
+    ///
+    /// Synchronous lock-protected (rather than actor-isolated) so the
+    /// peer-spawned closure can commit a record before any `await`
+    /// suspension. If both record and lookup hopped to the main actor,
+    /// Swift's task scheduler would not guarantee record-before-lookup
+    /// ordering: both events fire from independent reticulum-swift Tasks,
+    /// and a connected-event Task could win the actor enqueue race even
+    /// though peer-spawn fired first in wall-clock time. The lock makes
+    /// the record a synchronous, atomic side-effect of the peer-spawned
+    /// callback's first line, before any await.
+    ///
+    /// Grows monotonically — entries are not removed on peer departure.
+    /// Peer-children are typically dozens at most on a Columba mesh, so
+    /// memory is a non-concern. If that ever becomes meaningful, add
+    /// removal in a `setOnInterfacePeerRemoved` callback when reticulum-swift
+    /// exposes one.
+    private let peerChildRegistry = PeerChildInterfaceRegistry()
+
     // MARK: - Identity Persistence Constants
 
     /// Keychain service identifier for storing identity.
@@ -469,7 +493,21 @@ public final class AppServices {
                 tcpInterfaces["tcp-server"] = newInterface
                 tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
                 try await newTransport.addInterface(newInterface)
+                // Record the applied endpoint only after the interface
+                // has been successfully attached. See the matching catch
+                // block below for why this ordering matters.
+                tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
             } catch {
+                // Initialization is "non-fatal" with respect to TCP — the
+                // rest of init proceeds without it, and the user can
+                // retry via reconnectTCPOnly. But that retry routes
+                // through connectTCPInterface, whose new idempotency
+                // guard would silently no-op if a stale tcpEndpoints
+                // entry survived this catch. Roll back any partial
+                // dictionary writes so a same-address retry isn't
+                // stuck.
+                tcpInterfaces.removeValue(forKey: "tcp-server")
+                tcpEndpoints.removeValue(forKey: "tcp-server")
                 logger.warning("TCP interface failed (non-fatal): \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -940,13 +978,26 @@ public final class AppServices {
                     return needsAnnounce
                 }
 
-                // Auto-announce on connect (outside the MainActor.run to avoid blocking UI)
+                // Auto-announce on connect (outside the MainActor.run to avoid blocking UI).
+                // This polled path is functionally similar to the event-driven
+                // `onInterfaceConnected` hook in `configureTransportCallbacks` —
+                // it fires once when any interface aggregates to connected. We
+                // gate both the announce *and* the resetTimer() call behind the
+                // same toggles: if the announce wasn't sent, restarting the
+                // periodic loop would push the next interval-announce a full
+                // interval into the future every reconnect, starving the
+                // periodic schedule on a flap-y network.
                 if shouldAnnounce {
                     try? await Task.sleep(for: .seconds(1))
                     _ = await MainActor.run {
                         Task {
-                            await self.autoAnnounce()
-                            self.autoAnnounceManager?.resetTimer()
+                            let policy = AutoAnnouncePolicy.current()
+                            if policy.shouldFireOnTcpReconnect {
+                                await self.autoAnnounce()
+                                self.autoAnnounceManager?.resetTimer()
+                            } else {
+                                DiagLog.log("[AUTO_ANNOUNCE] state-observer connect trigger gated off (master=\(policy.masterEnabled), tcp_reconnect=\(policy.onTcpReconnect))")
+                            }
                         }
                     }
                 }
@@ -1403,8 +1454,23 @@ public final class AppServices {
         )
         let newInterface = try TCPInterface(config: config)
         tcpInterfaces[entityId] = newInterface
+        do {
+            try await transport.addInterface(newInterface)
+        } catch {
+            // addInterface failed — roll back the dictionary write so a
+            // retry with the same endpoint isn't silently no-op'd by the
+            // idempotency guard at the top of this function. Without
+            // this cleanup, a transient addInterface failure would leave
+            // a stuck entry that permanently blocks self-healing
+            // reconnects for this entityId until the user edits its
+            // host or port.
+            tcpInterfaces.removeValue(forKey: entityId)
+            throw error
+        }
+        // Only record the applied endpoint after the interface has been
+        // successfully attached to the transport — see the catch block
+        // above for the reasoning.
         tcpEndpoints[entityId] = endpoint
-        try await transport.addInterface(newInterface)
 
         if let dest = deliveryDestination {
             await transport.registerDestination(dest)
@@ -1544,7 +1610,20 @@ public final class AppServices {
         tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
 
         // Add interface to transport (connects it)
-        try await newTransport.addInterface(newInterface)
+        do {
+            try await newTransport.addInterface(newInterface)
+        } catch {
+            // addInterface failed — roll back the dictionary write so a
+            // retry via reconnectTCPOnly with the same address isn't
+            // silently no-op'd by connectTCPInterface's idempotency
+            // guard. See connectTCPInterface's catch block for the full
+            // rationale.
+            tcpInterfaces.removeValue(forKey: "tcp-server")
+            throw error
+        }
+        // Only record the applied endpoint after the interface has been
+        // successfully attached to the transport.
+        tcpEndpoints["tcp-server"] = TCPEndpoint(host: host, port: port)
 
         // Set transport on router and re-register delivery destination
         if let router = router {
@@ -1679,9 +1758,71 @@ public final class AppServices {
     #endif
 
     /// Wire transport callbacks that need app-layer context.
+    ///
+    /// Auto-announce triggers are split across two reticulum-swift hooks
+    /// and gated independently behind user-facing settings:
+    ///
+    /// - `onInterfaceConnected` fires whenever any interface transitions to
+    ///   `.connected` (TCP / RNode reconnects, plus the connected transition
+    ///   of peer-children). Gated by `auto_announce_on_tcp_reconnect`.
+    /// - `onInterfacePeerSpawned` fires when AutoInterface / BLE / MPC
+    ///   accepts a new peer. Gated by `auto_announce_on_peer_spawned`.
+    ///
+    /// Both are also gated behind the master `auto_announce_enabled`. If
+    /// the user has disabled auto-announce entirely, neither path fires.
     private func configureTransportCallbacks(_ transport: ReticulumTransport) async {
-        await transport.setOnInterfaceAdded { [weak self] _ in
+        await transport.setOnInterfaceConnected { [weak self] id in
             guard let self else { return }
+            // Attribute peer-child connected transitions to the peer-spawn
+            // trigger, not tcp-reconnect: a peer joining causes both an
+            // `onInterfacePeerSpawned` and (a moment later) an
+            // `onInterfaceConnected` for the peer's child transport, but
+            // they describe the same user-visible event.
+            //
+            // The lookup is synchronous (lock-protected, not actor-hop),
+            // and the corresponding record on the peer-spawn side is also
+            // synchronous and runs before any await — see
+            // `peerChildRegistry`'s docstring for why this ordering is
+            // load-bearing for the attribution.
+            let isPeerChild = self.isPeerChildInterface(id)
+            let policy = AutoAnnouncePolicy.current()
+            guard policy.masterEnabled else {
+                DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — master toggle off, skipping")
+                return
+            }
+            guard policy.shouldFireOnInterfaceConnected(isPeerChild: isPeerChild) else {
+                let gate = isPeerChild ? "on-peer-spawned (peer-child reconnect)" : "on-tcp-reconnect"
+                DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — \(gate) off, skipping")
+                return
+            }
+            let gate = isPeerChild ? "on-peer-spawned (peer-child reconnect)" : "on-tcp-reconnect"
+            DiagLog.log("[AUTO_ANNOUNCE] onInterfaceConnected(\(id)) — firing via \(gate)")
+            await self.autoAnnounce()
+        }
+        await transport.setOnInterfacePeerSpawned { [weak self] id in
+            guard let self else { return }
+            // Record this id so that the subsequent `onInterfaceConnected`
+            // for the same id is gated by the peer-spawned trigger rather
+            // than tcp-reconnect.
+            //
+            // SYNCHRONOUS — runs before any await suspension in this
+            // closure. This guarantees that even if the peer's child
+            // transport reaches `.connected` immediately and fires its own
+            // Task before this one completes its policy/announce work, the
+            // connected closure's `isPeerChildInterface(id)` lookup will
+            // already see the recorded id. Without that synchronous
+            // guarantee, the two MainActor hops would race.
+            self.recordPeerChildInterface(id)
+            let policy = AutoAnnouncePolicy.current()
+            guard policy.masterEnabled else {
+                DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — master toggle off, skipping")
+                return
+            }
+            guard policy.shouldFireOnPeerSpawned else {
+                DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — on-peer-spawned off, skipping")
+                return
+            }
+            DiagLog.log("[AUTO_ANNOUNCE] onInterfacePeerSpawned(\(id)) — firing")
             await self.autoAnnounce()
         }
         // Wire diagnostic logging from transport to DiagLog
@@ -1699,9 +1840,32 @@ public final class AppServices {
     /// so peers can discover us for both messaging and voice calls.
     ///
     /// Debounced to at most once per 5 seconds — AutoInterface peers fire
-    /// onInterfaceAdded from both the peer callback and the state-change
-    /// delegate, so this prevents redundant announces.
+    /// the connected-trigger from both the peer callback and the
+    /// state-change delegate, so this prevents redundant announces.
+    ///
+    /// Mark an interface id as a peer-child of an AutoInterface / BLE /
+    /// MPC parent so its later `onInterfaceConnected` event is attributed
+    /// to the peer-spawned trigger. Safe to call from any thread; the
+    /// underlying registry uses a lock, not actor isolation.
+    nonisolated private func recordPeerChildInterface(_ id: String) {
+        peerChildRegistry.record(id)
+    }
+
+    /// True if this interface id was previously recorded as a peer-child
+    /// via `recordPeerChildInterface`. Safe to call from any thread.
+    nonisolated private func isPeerChildInterface(_ id: String) -> Bool {
+        peerChildRegistry.contains(id)
+    }
+
+    /// Defensive master-gate: even though every individual call site checks
+    /// the master `auto_announce_enabled` toggle, this method also bails if
+    /// the master is off, so a future caller that forgets to gate doesn't
+    /// silently emit announces against the user's preference.
     private func autoAnnounce() async {
+        guard AutoAnnouncePolicy.current().masterEnabled else {
+            DiagLog.log("[AUTO_ANNOUNCE] master toggle off — skipping at autoAnnounce() entry")
+            return
+        }
         let now = Date()
         guard now.timeIntervalSince(lastAutoAnnounce) > 5.0 else {
             DiagLog.log("[AUTO_ANNOUNCE] debounced (last announce \(String(format: "%.1f", now.timeIntervalSince(lastAutoAnnounce)))s ago)")

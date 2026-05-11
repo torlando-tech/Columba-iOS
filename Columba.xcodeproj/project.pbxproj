@@ -10,6 +10,7 @@
 		T001 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT01 /* AudioRingBufferTests.swift */; };
 		T002 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT02 /* AudioManagerConfigChangeTests.swift */; };
 		T004 /* CallManagerCallKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT04 /* CallManagerCallKitTests.swift */; };
+		T005 /* MapStyleURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT05 /* MapStyleURLTests.swift */; };
 		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* ColumbaApp.swift */; };
 		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
 		003 /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* ChatsViewModel.swift */; };
@@ -49,8 +50,12 @@
 		037 /* ProfileIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F037 /* ProfileIcon.swift */; };
 		038 /* IconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F038 /* IconPickerView.swift */; };
 		039 /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039 /* materialdesignicons.ttf */; };
+		FNT1 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FNT1F /* JetBrainsMono-Regular.ttf */; };
+		FNT2 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FNT2F /* JetBrainsMono-Bold.ttf */; };
 		040 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F040 /* NotificationService.swift */; };
 		041 /* AutoAnnounceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041 /* AutoAnnounceManager.swift */; };
+		041P /* AutoAnnouncePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041P /* AutoAnnouncePolicy.swift */; };
+		041R /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041R /* PeerChildInterfaceRegistry.swift */; };
 		042 /* LocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F042 /* LocalIdentity.swift */; };
 		043 /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043 /* IdentityManager.swift */; };
 		044 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044 /* IdentityManagerView.swift */; };
@@ -118,8 +123,13 @@
 		082B /* MicronRenderContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F083 /* MicronRenderContainer.swift */; };
 		083B /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		084B /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
-		085B /* BackgroundTransportPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F086 /* BackgroundTransportPage.swift */; };
+		085B /* BackgroundTransportPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F088 /* BackgroundTransportPage.swift */; };
+		086B /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F086 /* TCPClientWizardViewModel.swift */; };
+		087B /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F087 /* TCPClientWizard.swift */; };
+		T006 /* TCPClientWizardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT06 /* TCPClientWizardViewModelTests.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
+		TAA0 /* AutoAnnouncePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FTAA /* AutoAnnouncePolicyTests.swift */; };
+		TPCR /* PeerChildInterfaceRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FTPC /* PeerChildInterfaceRegistryTests.swift */; };
 		2F3D64B12F7227E100049252 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P004 /* ReticulumSwift */; };
 		ERETIC /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P005 /* ReticulumSwift */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
@@ -164,6 +174,9 @@
 		FT02 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
 		FT04 /* CallManagerCallKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallManagerCallKitTests.swift; sourceTree = "<group>"; };
 		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
+		FTAA /* AutoAnnouncePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnouncePolicyTests.swift; sourceTree = "<group>"; };
+		FTPC /* PeerChildInterfaceRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerChildInterfaceRegistryTests.swift; sourceTree = "<group>"; };
+		FT05 /* MapStyleURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapStyleURLTests.swift; sourceTree = "<group>"; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
@@ -205,8 +218,12 @@
 		F037 /* ProfileIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileIcon.swift; sourceTree = "<group>"; };
 		F038 /* IconPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconPickerView.swift; sourceTree = "<group>"; };
 		F039 /* materialdesignicons.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = materialdesignicons.ttf; sourceTree = "<group>"; };
+		FNT1F /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
+		FNT2F /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		F040 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		F041 /* AutoAnnounceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnounceManager.swift; sourceTree = "<group>"; };
+		F041P /* AutoAnnouncePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnouncePolicy.swift; sourceTree = "<group>"; };
+		F041R /* PeerChildInterfaceRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerChildInterfaceRegistry.swift; sourceTree = "<group>"; };
 		F042 /* LocalIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalIdentity.swift; sourceTree = "<group>"; };
 		F043 /* IdentityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManager.swift; sourceTree = "<group>"; };
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
@@ -273,7 +290,10 @@
 		F083 /* MicronRenderContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronRenderContainer.swift; sourceTree = "<group>"; };
 		F084 /* MonospaceLineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonospaceLineView.swift; sourceTree = "<group>"; };
 		F085 /* ZoomableScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomableScrollView.swift; sourceTree = "<group>"; };
-		F086 /* BackgroundTransportPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTransportPage.swift; sourceTree = "<group>"; };
+		F088 /* BackgroundTransportPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTransportPage.swift; sourceTree = "<group>"; };
+		F086 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
+		F087 /* TCPClientWizard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPClientWizard.swift; sourceTree = "<group>"; };
+		FT06 /* TCPClientWizardViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModelTests.swift; sourceTree = "<group>"; };
 		F07B /* Config/Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
 		F07C /* Config/LocalSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/LocalSigning.xcconfig.example; sourceTree = SOURCE_ROOT; };
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
@@ -421,7 +441,7 @@
 				F04F /* ConnectivityPage.swift */,
 				F050 /* PermissionsPage.swift */,
 				F051 /* CompletePage.swift */,
-				F086 /* BackgroundTransportPage.swift */,
+				F088 /* BackgroundTransportPage.swift */,
 				F079 /* OnboardingRestoreSheet.swift */,
 			);
 			path = Onboarding;
@@ -445,6 +465,8 @@
 				F022 /* Assets.xcassets */,
 				F023 /* Info.plist */,
 				F039 /* materialdesignicons.ttf */,
+				FNT1F /* JetBrainsMono-Regular.ttf */,
+				FNT2F /* JetBrainsMono-Bold.ttf */,
 				F075 /* ColumbaApp.entitlements */,
 			);
 			path = Resources;
@@ -480,6 +502,7 @@
 				F066 /* AppearanceCard.swift */,
 				F067 /* CustomThemeEditorView.swift */,
 				F071 /* BLEConnectionsView.swift */,
+				F087 /* TCPClientWizard.swift */,
 				GRNW /* RNodeWizard */,
 			);
 			path = Settings;
@@ -505,6 +528,8 @@
 				F033 /* PropagationNodeManager.swift */,
 				F040 /* NotificationService.swift */,
 				F041 /* AutoAnnounceManager.swift */,
+				F041P /* AutoAnnouncePolicy.swift */,
+				F041R /* PeerChildInterfaceRegistry.swift */,
 				F042 /* LocalIdentity.swift */,
 				F043 /* IdentityManager.swift */,
 				F04B /* LocationSharingManager.swift */,
@@ -564,6 +589,7 @@
 				F05A /* RNodeWizardViewModel.swift */,
 				F05F /* MigrationViewModel.swift */,
 				F080 /* NomadNetBrowserViewModel.swift */,
+				F086 /* TCPClientWizardViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -585,6 +611,10 @@
 				FT02 /* AudioManagerConfigChangeTests.swift */,
 				FT03 /* MicronParserTests.swift */,
 				FT04 /* CallManagerCallKitTests.swift */,
+				FTAA /* AutoAnnouncePolicyTests.swift */,
+				FTPC /* PeerChildInterfaceRegistryTests.swift */,
+				FT05 /* MapStyleURLTests.swift */,
+				FT06 /* TCPClientWizardViewModelTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -735,6 +765,8 @@
 			files = (
 				022 /* Assets.xcassets in Resources */,
 				039 /* materialdesignicons.ttf in Resources */,
+				FNT1 /* JetBrainsMono-Regular.ttf in Resources */,
+				FNT2 /* JetBrainsMono-Bold.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -762,6 +794,10 @@
 				T002 /* AudioManagerConfigChangeTests.swift in Sources */,
 				T003 /* MicronParserTests.swift in Sources */,
 				T004 /* CallManagerCallKitTests.swift in Sources */,
+				TAA0 /* AutoAnnouncePolicyTests.swift in Sources */,
+				TPCR /* PeerChildInterfaceRegistryTests.swift in Sources */,
+				T005 /* MapStyleURLTests.swift in Sources */,
+				T006 /* TCPClientWizardViewModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -819,6 +855,8 @@
 				038 /* IconPickerView.swift in Sources */,
 				040 /* NotificationService.swift in Sources */,
 				041 /* AutoAnnounceManager.swift in Sources */,
+				041P /* AutoAnnouncePolicy.swift in Sources */,
+				041R /* PeerChildInterfaceRegistry.swift in Sources */,
 				042 /* LocalIdentity.swift in Sources */,
 				043 /* IdentityManager.swift in Sources */,
 				044 /* IdentityManagerView.swift in Sources */,
@@ -883,6 +921,8 @@
 				082B /* MicronRenderContainer.swift in Sources */,
 				083B /* MonospaceLineView.swift in Sources */,
 				084B /* ZoomableScrollView.swift in Sources */,
+				086B /* TCPClientWizardViewModel.swift in Sources */,
+				087B /* TCPClientWizard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1229,7 +1269,7 @@
 			repositoryURL = "https://github.com/torlando-tech/LXMF-swift.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.3.4;
+				minimumVersion = 0.4.0;
 			};
 		};
 		PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
@@ -1253,7 +1293,7 @@
 			repositoryURL = "https://github.com/torlando-tech/reticulum-swift.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.2.3;
+				minimumVersion = 0.3.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
