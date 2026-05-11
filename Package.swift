@@ -22,7 +22,7 @@ let package = Package(
         // library changes" for the exact recipe.
         .package(url: "https://github.com/torlando-tech/LXMF-swift.git", from: "0.4.0"),
         .package(url: "https://github.com/torlando-tech/LXST-swift.git", from: "0.2.0"),
-        .package(url: "https://github.com/torlando-tech/reticulum-swift.git", from: "0.3.0"),
+        .package(url: "https://github.com/torlando-tech/reticulum-swift.git", from: "0.3.1"),
         .package(url: "https://github.com/maplibre/maplibre-gl-native-distribution", from: "6.9.0"),
     ],
     targets: [

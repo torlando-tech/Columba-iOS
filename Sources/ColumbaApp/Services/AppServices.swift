@@ -175,24 +175,6 @@ public final class AppServices {
     /// `EADDRINUSE`.
     private var pendingTunnelDisableTask: Task<Void, Never>?
 
-    /// Tracks whether `applyTunnelModeToInterfaces(active: true)` has
-    /// run. Required because `endTunnelMode()` on reticulum-swift's
-    /// TCPInterface is NOT idempotent — it unconditionally tears down
-    /// the working NWConnection and re-runs `setupTransport()` (see
-    /// TCPInterface.swift:257-269 in reticulum-swift 0.3.0). If we
-    /// fire the `active: false` path on the initial `.invalid` /
-    /// `.disconnected` state notification — which iOS emits on every
-    /// cold start before the VPN profile is loaded, even when the
-    /// user hasn't enabled Background Transport — we'd kill every
-    /// TCPInterface's connection seconds after Step 7 brings them
-    /// up, leaving sends stuck at `state=OUTBOUND` indefinitely
-    /// (reproduced as the all-4-scenarios FAIL on the smoke harness,
-    /// 2026-05-11).
-    ///
-    /// Only flip back to `active: false` if we previously flipped to
-    /// `active: true`, matching the "undo what we did" contract.
-    private var isTunnelModeActive: Bool = false
-
     /// Extension frame reader for processing queued frames from the extension.
     private var extensionFrameReader: ExtensionFrameReader?
     #endif
@@ -869,26 +851,17 @@ public final class AppServices {
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue, entityId: entityId)
                 }
             }
-            isTunnelModeActive = true
             DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s); Auto stays local (foreground-only)")
         } else {
-            // Only undo if we previously did it. `endTunnelMode()` on
-            // reticulum-swift's TCPInterface is NOT idempotent — see
-            // the doc on `isTunnelModeActive` for why this guard
-            // exists. Without it, the initial `.invalid` notification
-            // from VPN status on cold start (which fires regardless
-            // of whether the user has enabled Background Transport)
-            // would tear down every live TCP NWConnection seconds
-            // after Step 7 brought them up, blocking all outbound
-            // sends.
-            guard isTunnelModeActive else {
-                DiagLog.log("[TUNNEL] skipping disable — tunnel mode was never active (likely initial .invalid VPN state)")
-                return
-            }
+            // `endTunnelMode()` on reticulum-swift 0.3.1+ is idempotent
+            // (early-returns when `outboundHook == nil`), so calling it
+            // on never-tunneled interfaces is safe. Drop the prior
+            // `isTunnelModeActive` workaround now that the API guarantees
+            // the contract upstream. See reticulum-swift PR #17 / 0.3.1
+            // release notes.
             for (_, iface) in tcpInterfaces {
                 await iface.endTunnelMode()
             }
-            isTunnelModeActive = false
             DiagLog.log("[TUNNEL] disabled tunnel mode; TCP interfaces resuming local connections")
         }
     }

@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/torlando-tech/reticulum-swift.git",
       "state" : {
-        "revision" : "034d9c7570c7428ebe5daab1ee1b8d17fc1e9c87",
-        "version" : "0.3.0"
+        "revision" : "dc6b0056618e6056ed6911728d46df455529a2b9",
+        "version" : "0.3.1"
       }
     },
     {
