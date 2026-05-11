@@ -5,7 +5,13 @@
 //  Lock-free append-only queue backed by a shared file in the App Group container.
 //  The Network Extension appends frames; the main app reads and clears them.
 //
-//  Frame format: [4-byte length (big-endian)][1-byte interface tag][N-byte frame data]
+//  Frame format: [4-byte total length (big-endian)][1-byte interface tag]
+//                [1-byte entityId length][N-byte entityId UTF-8][M-byte frame data]
+//
+//  Total length covers everything after itself (tag + idLen + id + data), so a
+//  frame's data length is `totalLength - 1 - idLen`. EntityId may be empty
+//  (idLen = 0) for non-TCP traffic where there's only a single source.
+//
 //  Interface tags: 0x01 = TCP, 0x02 = Auto
 //
 
@@ -138,9 +144,13 @@ public enum FrameInterfaceTag: UInt8 {
     case auto = 0x02
 }
 
-/// A frame read from the shared queue, tagged with its source interface.
+/// A frame read from the shared queue, tagged with its source interface
+/// and (for TCP) the entity ID of the specific tunnel-side connection it
+/// came from. `entityId` may be empty for traffic types that have a
+/// single source (e.g., Auto, or legacy single-TCP builds).
 public struct QueuedFrame {
     public let interfaceTag: UInt8
+    public let entityId: String
     public let data: Data
 }
 
@@ -155,8 +165,8 @@ public final class SharedFrameQueue: @unchecked Sendable {
 
     // MARK: - Constants
 
-    /// Header size: 4 bytes length + 1 byte interface tag
-    private static let headerSize = 5
+    /// Header size: 4 bytes total length + 1 byte interface tag + 1 byte entityId length
+    private static let headerSize = 6
 
     // MARK: - Properties
 
@@ -198,16 +208,28 @@ public final class SharedFrameQueue: @unchecked Sendable {
     /// - Parameters:
     ///   - frame: Raw frame data
     ///   - interfaceTag: Which interface this frame arrived on
-    public func append(frame: Data, interfaceTag: UInt8) {
-        let length = UInt32(frame.count)
+    ///   - entityId: Identifier of the source connection (for TCP, the
+    ///     `InterfaceEntity.id` so the app can route inbound frames back
+    ///     to the correct `TCPInterface`). Empty string for traffic
+    ///     types with a single source.
+    public func append(frame: Data, interfaceTag: UInt8, entityId: String = "") {
+        // entityId is encoded as a length-prefixed UTF-8 byte run (max 255 bytes).
+        // Truncate rather than crash if a caller hands us a longer id —
+        // InterfaceEntity ids are UUID strings so this is defensive only.
+        let idBytes = Array(entityId.utf8.prefix(255))
+        let idLen = UInt8(idBytes.count)
+        let dataLen = UInt32(1 /* idLen byte */ + idBytes.count + frame.count)
+
         var header = Data(count: Self.headerSize)
-        // 4-byte big-endian length
-        header[0] = UInt8((length >> 24) & 0xFF)
-        header[1] = UInt8((length >> 16) & 0xFF)
-        header[2] = UInt8((length >> 8) & 0xFF)
-        header[3] = UInt8(length & 0xFF)
+        // 4-byte big-endian total length (everything after these 4 bytes)
+        header[0] = UInt8((dataLen >> 24) & 0xFF)
+        header[1] = UInt8((dataLen >> 16) & 0xFF)
+        header[2] = UInt8((dataLen >> 8) & 0xFF)
+        header[3] = UInt8(dataLen & 0xFF)
         // 1-byte interface tag
         header[4] = interfaceTag
+        // 1-byte entityId length
+        header[5] = idLen
 
         withFileLock {
             let fh: FileHandle
@@ -221,6 +243,9 @@ public final class SharedFrameQueue: @unchecked Sendable {
             }
             fh.seekToEndOfFile()
             fh.write(header)
+            if !idBytes.isEmpty {
+                fh.write(Data(idBytes))
+            }
             fh.write(frame)
             fh.closeFile()
         }
@@ -245,23 +270,37 @@ public final class SharedFrameQueue: @unchecked Sendable {
             // Parse frames
             var offset = 0
             while offset + Self.headerSize <= data.count {
-                let length = Int(
+                let totalLen = Int(
                     (UInt32(data[offset]) << 24) |
                     (UInt32(data[offset + 1]) << 16) |
                     (UInt32(data[offset + 2]) << 8) |
                     UInt32(data[offset + 3])
                 )
                 let tag = data[offset + 4]
+                let idLen = Int(data[offset + 5])
                 offset += Self.headerSize
 
-                guard offset + length <= data.count else {
-                    // Truncated frame — stop parsing
+                // totalLen covers the idLen byte (already consumed) + id bytes + frame data.
+                // Frame data length is therefore totalLen - 1 - idLen.
+                guard idLen <= totalLen - 1,
+                      offset + idLen + (totalLen - 1 - idLen) <= data.count else {
+                    // Truncated or malformed frame — stop parsing
                     break
                 }
 
-                let frameData = data[offset..<(offset + length)]
-                frames.append(QueuedFrame(interfaceTag: tag, data: Data(frameData)))
-                offset += length
+                let entityId: String
+                if idLen > 0 {
+                    let idBytes = data[offset..<(offset + idLen)]
+                    entityId = String(data: Data(idBytes), encoding: .utf8) ?? ""
+                } else {
+                    entityId = ""
+                }
+                offset += idLen
+
+                let frameLen = totalLen - 1 - idLen
+                let frameData = data[offset..<(offset + frameLen)]
+                frames.append(QueuedFrame(interfaceTag: tag, entityId: entityId, data: Data(frameData)))
+                offset += frameLen
             }
 
             // Truncate the file

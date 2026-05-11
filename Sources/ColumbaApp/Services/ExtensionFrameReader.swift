@@ -27,8 +27,12 @@ public final class ExtensionFrameReader: @unchecked Sendable {
     private let frameQueue: SharedFrameQueue
     private let logger = Logger(subsystem: "network.columba.Columba", category: "ExtensionFrameReader")
 
-    /// Callback to inject a TCP frame into transport
-    public var onTCPFrameReceived: ((Data) -> Void)?
+    /// Callback to inject a TCP frame into transport. The first
+    /// argument is the source `InterfaceEntity.id` so the receiver can
+    /// route the frame to the correct `TCPInterface` when multiple TCP
+    /// connections are tunneled simultaneously. Empty string for
+    /// legacy single-TCP frames or where the source is unknown.
+    public var onTCPFrameReceived: ((String, Data) -> Void)?
 
     /// Callback to inject an Auto frame into transport
     public var onAutoFrameReceived: ((Data) -> Void)?
@@ -87,7 +91,7 @@ public final class ExtensionFrameReader: @unchecked Sendable {
         for frame in frames {
             switch frame.interfaceTag {
             case FrameInterfaceTag.tcp.rawValue:
-                onTCPFrameReceived?(frame.data)
+                onTCPFrameReceived?(frame.entityId, frame.data)
             case FrameInterfaceTag.auto.rawValue:
                 onAutoFrameReceived?(frame.data)
             default:

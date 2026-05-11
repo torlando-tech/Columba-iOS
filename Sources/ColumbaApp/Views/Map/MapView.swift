@@ -39,7 +39,8 @@ struct MapView: View {
                 metersPerPixel: $metersPerPixel,
                 showsUserLocation: locationAuthorized,
                 peerLocations: locationSharingManager.map { Array($0.peerLocations.values) } ?? [],
-                httpEnabled: mapHttpEnabled
+                httpEnabled: mapHttpEnabled,
+                isDark: ThemeManager.shared.isDarkMode
             )
             .ignoresSafeArea()
 

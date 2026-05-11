@@ -171,12 +171,12 @@ struct NodeDetailsView: View {
                 .foregroundStyle(Theme.accentColor)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Waiting for an announce")
+                Text("Path needs refresh")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(Theme.textPrimary)
 
-                Text("This contact hasn't announced themselves to the network recently. Ask them to send an announce from their app, or wait for one to arrive automatically.")
+                Text("We haven't routed to this contact recently. Tap an action to issue a path request — any node on the network with a recent announce will respond.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -218,8 +218,7 @@ struct NodeDetailsView: View {
     }
 
     private func actionButton(icon: String, title: String, action: @escaping () -> Void) -> some View {
-        let isOnline = displayedContact.isOnline
-        return Button(action: action) {
+        Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                 Text(title)
@@ -233,8 +232,6 @@ struct NodeDetailsView: View {
                     .fill(Theme.accentGradient)
             }
         }
-        .disabled(!isOnline)
-        .opacity(isOnline ? 1.0 : 0.5)
     }
 
     // MARK: - Details Section
@@ -370,11 +367,6 @@ struct NodeDetailsView: View {
                 }
             }
         }
-        // Match the primary action button: an offline node can't be
-        // designated as a relay, so the button should look and act
-        // disabled while the badge says "Expired".
-        .disabled(!displayedContact.isOnline)
-        .opacity(displayedContact.isOnline ? 1.0 : 0.5)
     }
 
     // MARK: - Propagation Details

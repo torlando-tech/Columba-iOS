@@ -21,7 +21,7 @@ private let logger = Logger(subsystem: "network.columba.Columba", category: "Int
 /// with InterfaceRepository for persistence.
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
-public final class InterfaceManagementViewModel {
+public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
     // MARK: - Dependencies
 
@@ -67,6 +67,9 @@ public final class InterfaceManagementViewModel {
 
     /// Whether the RNode wizard is shown (uses fullScreenCover to survive BLE pairing dialog)
     public var showRNodeWizard: Bool = false
+
+    /// Whether the TCP client wizard is shown (community server picker → review/configure)
+    public var showTCPWizard: Bool = false
 
     /// Interface being edited (nil for new interface)
     public var editingInterface: InterfaceEntity?
@@ -215,6 +218,8 @@ public final class InterfaceManagementViewModel {
 
         if type == .rnode {
             showRNodeWizard = true
+        } else if type == .tcpClient {
+            showTCPWizard = true
         } else {
             showConfigSheet = true
         }
@@ -226,6 +231,8 @@ public final class InterfaceManagementViewModel {
         populateConfigForm(from: interface)
         if interface.type == .rnode {
             showRNodeWizard = true
+        } else if interface.type == .tcpClient {
+            showTCPWizard = true
         } else {
             showConfigSheet = true
         }
@@ -235,6 +242,7 @@ public final class InterfaceManagementViewModel {
     public func dismissConfigSheet() {
         showConfigSheet = false
         showRNodeWizard = false
+        showTCPWizard = false
         editingInterface = nil
         resetConfigForm()
     }
@@ -280,6 +288,49 @@ public final class InterfaceManagementViewModel {
         }
     }
 
+    /// Save a TCP client interface from the wizard flow.
+    ///
+    /// Bypasses the form-field validation path (the wizard does its own validation
+    /// in `canProceed`) and writes directly through the repository, then triggers
+    /// the standard apply-changes pipeline.
+    public func saveTCPInterface(
+        editing: InterfaceEntity?,
+        name: String,
+        enabled: Bool,
+        mode: InterfaceMode,
+        config: TCPClientConfig
+    ) {
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        let interfaceConfig: InterfaceTypeConfig = .tcpClient(config)
+
+        if let existing = editing {
+            var updated = existing
+            updated.name = trimmedName
+            updated.enabled = enabled
+            updated.mode = mode
+            updated.config = interfaceConfig
+            repository.updateInterface(updated)
+            showSuccess("Interface updated")
+        } else {
+            let newInterface = InterfaceEntity(
+                name: trimmedName,
+                type: .tcpClient,
+                enabled: enabled,
+                mode: mode,
+                config: interfaceConfig
+            )
+            repository.addInterface(newInterface)
+            showSuccess("Interface added")
+        }
+
+        hasPendingChanges = true
+        dismissConfigSheet()
+
+        Task { @MainActor in
+            await applyChanges()
+        }
+    }
+
     // MARK: - Apply Changes
 
     /// Apply pending interface changes to the running network.
@@ -298,9 +349,20 @@ public final class InterfaceManagementViewModel {
         let enabledTCPs = enabledInterfaces.filter { $0.type == .tcpClient }
         let enabledTCPIds = Set(enabledTCPs.map { $0.id })
 
-        // Connect/reconnect each enabled TCP interface
+        // Connect/reconnect each enabled TCP interface, skipping ones that
+        // are already running with the same host:port. Without the skip,
+        // toggling or editing any single interface caused this loop to
+        // tear down every other healthy TCP connection alongside the one
+        // the user actually changed — and reconnecting prompted the relay
+        // to redeliver its full announce table per interface, swamping
+        // the app for ~90s per change.
         for tcpIf in enabledTCPs {
             if case .tcpClient(let config) = tcpIf.config {
+                let desired = AppServices.TCPEndpoint(host: config.targetHost, port: config.targetPort)
+                if appServices.tcpInterfaces[tcpIf.id] != nil,
+                   appServices.tcpEndpoints[tcpIf.id] == desired {
+                    continue
+                }
                 logger.info("Applying TCP[\(tcpIf.id)]: \(config.targetHost):\(config.targetPort)")
                 interfaceStatus[tcpIf.id] = .connecting
                 do {

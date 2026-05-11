@@ -11,6 +11,14 @@ struct MicronDocumentView: View {
     var loadingPartials: Set<String> = []
     var onLinkTapped: ((MicronLink) -> Void)?
     var style: MicronRenderStyle = .monospaceScroll
+    /// Viewport width for the SCROLL mode. Each row gets at least this width so
+    /// `\`c`/`\`r` alignment centers/right-aligns content relative to the screen,
+    /// not the document's max line width. Mirrors Android's
+    /// `Modifier.widthIn(min = viewportLineWidth)` (NomadNetBrowserScreen.kt:474).
+    /// Without this, a single wide row (e.g. the chat-room's 550-char trailing-
+    /// whitespace line) sets the VStack width and centered shorter rows end up
+    /// scrolled offscreen-right.
+    var viewportWidth: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: isScrollMode ? 0 : 2) {
@@ -49,6 +57,7 @@ struct MicronDocumentView: View {
                     bold: true,
                     onLinkTapped: onLinkTapped
                 )
+                .frame(minWidth: viewportWidth, alignment: alignment.swiftUI)
             } else {
                 renderSpans(spans, onLinkTapped: onLinkTapped)
                     .font(headingFont(level: level))
@@ -69,6 +78,7 @@ struct MicronDocumentView: View {
                     onLinkTapped: onLinkTapped
                 )
                 .padding(.leading, CGFloat(indentLevel) * style.approxCharWidth)
+                .frame(minWidth: viewportWidth, alignment: alignment.swiftUI)
             } else {
                 renderSpans(spans, onLinkTapped: onLinkTapped)
                     .font(bodyFont)
@@ -89,6 +99,7 @@ struct MicronDocumentView: View {
                     bold: false,
                     onLinkTapped: nil
                 )
+                .frame(minWidth: viewportWidth, alignment: .leading)
             } else if let ch = character {
                 Text(String(repeating: ch, count: 40))
                     .font(.system(size: style.fontSize, design: .monospaced))
