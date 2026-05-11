@@ -136,6 +136,8 @@
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		E004 /* ExtensionAutoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE04 /* ExtensionAutoBridge.swift */; };
 		EAPPEX /* ColumbaNetworkExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EPROD /* ColumbaNetworkExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		088T /* TestController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F088T /* TestController.swift */; };
+		089T /* TestURLHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F089T /* TestURLHandler.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -301,6 +303,8 @@
 		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
 		FE04 /* ExtensionAutoBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionAutoBridge.swift; sourceTree = "<group>"; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F088T /* TestController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestController.swift; sourceTree = "<group>"; };
+		F089T /* TestURLHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestURLHandler.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -642,8 +646,18 @@
 				GVIEWS /* Views */,
 				GSVC /* Services */,
 				GRES /* Resources */,
+				GTEST /* Test */,
 			);
 			path = Sources/ColumbaApp;
+			sourceTree = "<group>";
+		};
+		GTEST /* Test */ = {
+			isa = PBXGroup;
+			children = (
+				F088T /* TestController.swift */,
+				F089T /* TestURLHandler.swift */,
+			);
+			path = Test;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -923,6 +937,8 @@
 				084B /* ZoomableScrollView.swift in Sources */,
 				086B /* TCPClientWizardViewModel.swift in Sources */,
 				087B /* TCPClientWizard.swift in Sources */,
+				088T /* TestController.swift in Sources */,
+				089T /* TestURLHandler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

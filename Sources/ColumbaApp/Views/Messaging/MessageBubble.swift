@@ -205,7 +205,25 @@ struct MessageBubble: View {
 
     @ViewBuilder
     private var deliveryStatusIcon: some View {
-        switch message.deliveryStatus {
+        // PROPAGATED messages cap at "sent" semantically — propagation
+        // nodes ack the upload, but never report the recipient's
+        // receipt. The python reference's `__mark_propagated`
+        // (LXMF/LXMessage.py:568-578) sets state=SENT, never DELIVERED.
+        // So a PROPAGATED message in `.delivered` is either (a) a
+        // stale DB row from before the LXMF-swift fix, or (b) a bug
+        // we should still render conservatively. Display a single
+        // checkmark either way — claiming "delivered" with a double
+        // checkmark on a propagated message is a false promise that
+        // misleads the user about what the recipient actually got.
+        let isPropagated = message.deliveryMethod == "propagated"
+        let effectiveStatus: DeliveryStatus = {
+            if isPropagated && (message.deliveryStatus == .delivered || message.deliveryStatus == .read) {
+                return .sent
+            }
+            return message.deliveryStatus
+        }()
+
+        switch effectiveStatus {
         case .sending:
             Image(systemName: "clock")
                 .font(.caption2)

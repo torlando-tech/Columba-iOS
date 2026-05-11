@@ -162,6 +162,20 @@ public final class PropagationNodeManager {
 
         logger.info("Discovered propagation node: \(node.resolvedDisplayName) (\(hex.prefix(16))) hops=\(node.hopCount)")
 
+        // If this node is the currently-selected one, re-apply its
+        // announce-derived stamp cost to the router. selectNode runs
+        // before any announce has been received in the smoke-test flow
+        // (set_prop_node fires immediately after add_tcp_client, which
+        // is before the path entry / announce arrives), so the initial
+        // selectNode call sees stampCost=0 and ships it to the router.
+        // Without this re-apply on later announces, sendPropagated
+        // ends up generating a random 32-byte stamp that lxmd rejects
+        // with ERROR_INVALID_STAMP.
+        if selectedNodeHash == node.hash {
+            await appServices?.router?.setPropagationStampCost(node.info.stampCost)
+            logger.info("Re-applied propagation stamp cost \(node.info.stampCost) for selected node from announce")
+        }
+
         // Auto-select if enabled
         if autoSelectEnabled {
             await autoSelectBestNode()
@@ -190,13 +204,33 @@ public final class PropagationNodeManager {
     /// Disables auto-select when called manually.
     public func selectNode(hash: Data) async {
         selectedNodeHash = hash
-        let node = knownNodes.first(where: { $0.hash == hash })
+        var node = knownNodes.first(where: { $0.hash == hash })
         selectedNodeName = node?.resolvedDisplayName
 
         // Compute delivery hash for this identity so we can match against saved contacts.
         // Relay announces use lxmf.propagation aspect; contacts use lxmf.delivery aspect.
-        if let entry = await appServices?.pathTable?.lookup(destinationHash: hash),
-           entry.publicKeys.count >= 64 {
+        var pathEntry = await appServices?.pathTable?.lookup(destinationHash: hash)
+
+        // Brief wait for the announce-derived path entry to arrive.
+        // Without this, set_prop_node calls fired immediately after
+        // adding an interface (the smoke-test flow) race the path
+        // request: the announce hasn't been processed yet when
+        // selectNode runs, so neither knownNodes nor pathTable has
+        // any data. Result: stampCost=0 → router ships random stamp
+        // → lxmd rejects with ERROR_INVALID_STAMP. Up to ~5 second
+        // wait — production UI flows usually have the announce well
+        // before user-triggered selection, so this is mostly a
+        // smoke-test hot path; the timeout is bounded so it can't
+        // stall a UI thread.
+        if pathEntry == nil && node == nil {
+            for _ in 0..<25 {
+                try? await Task.sleep(for: .milliseconds(200))
+                pathEntry = await appServices?.pathTable?.lookup(destinationHash: hash)
+                node = knownNodes.first(where: { $0.hash == hash })
+                if pathEntry != nil || node != nil { break }
+            }
+        }
+        if let entry = pathEntry, entry.publicKeys.count >= 64 {
             let identityHash = Hashing.truncatedHash(entry.publicKeys)
             let nameHash = Hashing.destinationNameHash(appName: "lxmf", aspects: ["delivery"])
             var combined = nameHash
@@ -206,12 +240,28 @@ public final class PropagationNodeManager {
             selectedNodeDeliveryHash = nil
         }
 
-        // Wire to router (awaited directly, not fire-and-forget)
-        let stampCost = node?.info.stampCost ?? 0
+        // Resolve stamp cost. Prefer knownNodes (set by processPathEntry
+        // when the announce was processed), but fall back to parsing the
+        // pathEntry's appData directly. The fallback exists for the
+        // race where selectNode is called immediately after the path
+        // arrives but before processPathEntry's async listener has
+        // populated knownNodes yet — without it the router stays at
+        // cost=0 and sendPropagated ships a random stamp that lxmd
+        // rejects with ERROR_INVALID_STAMP. Mirrors the same pathEntry
+        // -> PropagationNodeInfo.parse path that processPathEntry uses.
+        let stampCost: Int
+        if let cost = node?.info.stampCost {
+            stampCost = cost
+        } else if let appData = pathEntry?.appData,
+                  let info = PropagationNodeInfo.parse(from: appData) {
+            stampCost = info.stampCost
+        } else {
+            stampCost = 0
+        }
         await appServices?.router?.setOutboundPropagationNode(hash)
         await appServices?.router?.setPropagationStampCost(stampCost)
 
-        logger.info("Selected propagation node: \(self.selectedNodeName ?? "unknown")")
+        logger.info("Selected propagation node: \(self.selectedNodeName ?? "unknown") stampCost=\(stampCost)")
         await savePreferences()
     }
 

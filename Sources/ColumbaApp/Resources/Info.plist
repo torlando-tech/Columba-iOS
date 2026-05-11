@@ -16,6 +16,24 @@
 				<string>lxma</string>
 			</array>
 		</dict>
+		<!-- lxma-test is the debug-only test-harness scheme used by the
+		     phone smoke-test orchestrator (see
+		     Sources/ColumbaApp/Test/TestURLHandler.swift).
+		     The Swift dispatcher is `#if DEBUG`-gated so this scheme
+		     is a no-op in release builds — registering the scheme
+		     here is the simplest cross-config path on a project
+		     without per-config Info.plist variants. iOS will route
+		     `lxma-test://` URLs to a release Columba.app and the
+		     release `.onOpenURL` handler will fall through with
+		     no registered action.  -->
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>network.columba.Columba.lxma-test</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>lxma-test</string>
+			</array>
+		</dict>
 	</array>
 	<key>NSBluetoothWhenInUseUsageDescription</key>
 	<string>Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.</string>
