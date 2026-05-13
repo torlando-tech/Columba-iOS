@@ -94,19 +94,23 @@ public enum TestURLHandler {
         }
 
         #if ENABLE_NETWORK_EXTENSION
-        // Tunnel-control bridge: lets the smoke harness flip the
-        // Background-Transport state from a URL action so the
+        // Tunnel-control bridge: lets the smoke harness bring the
+        // Background-Transport tunnel up from a URL action so the
         // `suspended_notification` scenario can guarantee the extension
-        // is alive across the suspend window. The closure persists
-        // `tunnelEnabledKey` (matching what the Settings toggle does)
-        // and kicks `TunnelManager.start()`, then polls for status to
-        // reach `.connected` so the harness gets a synchronous answer.
+        // is alive across the suspend window.
+        //
+        // Deliberately does NOT persist `tunnelEnabledKey` — the
+        // Settings toggle path persists it so a cold relaunch auto-
+        // restarts the tunnel, but tests are ephemeral: persisting
+        // would poison every subsequent test run with auto-tunnel-on,
+        // and the in-flight transition would race the harness's
+        // bringup (path discovery) and break baseline scenarios.
+        // Tests that need the tunnel call this every run; the persisted
+        // flag stays off across runs.
         TestTunnelBridge.enableTunnel = { [weak appServices] in
             guard let svc = appServices, let tunnel = svc.tunnelManager else {
                 throw TestError.notReady
             }
-            UserDefaults(suiteName: appGroupIdentifier)?
-                .set(true, forKey: SharedDefaultsConstants.tunnelEnabledKey)
             if tunnel.isRunning {
                 return Self.tunnelStatusString(tunnel.status)
             }
