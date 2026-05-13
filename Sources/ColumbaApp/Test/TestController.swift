@@ -881,6 +881,81 @@ public final class TestController {
         return f.string(from: Date())
     }
 
+    /// Emit current iOS notification authorization status + Columba's
+    /// own `notifications_enabled` UserDefaults pref. Used by the
+    /// suspended_notification smoke scenario to detect "permission
+    /// not granted" up-front rather than diagnose from a 0/0
+    /// suspended/post_foreground count ambiguously.
+    ///
+    /// Emits a single line:
+    /// `notif_status auth=<status> alert=<int> badge=<int> sound=<int> notifications_enabled=<bool>`
+    /// where `auth` is one of: `notDetermined`, `denied`,
+    /// `authorized`, `provisional`, `ephemeral`, `unknown`.
+    public func handleGetNotifStatus() {
+        assertionFailure_releaseGuard()
+        #if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        Task {
+            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            let authStr: String
+            switch settings.authorizationStatus {
+            case .notDetermined: authStr = "notDetermined"
+            case .denied:        authStr = "denied"
+            case .authorized:    authStr = "authorized"
+            case .provisional:   authStr = "provisional"
+            case .ephemeral:     authStr = "ephemeral"
+            @unknown default:    authStr = "unknown"
+            }
+            let alert = settings.alertSetting == .enabled ? 1 : 0
+            let badge = settings.badgeSetting == .enabled ? 1 : 0
+            let sound = settings.soundSetting == .enabled ? 1 : 0
+            let notifEnabled = UserDefaults.standard.object(forKey: "notifications_enabled") as? Bool ?? false
+            TestLog.emit(
+                "notif_status auth=\(authStr) alert=\(alert) "
+                + "badge=\(badge) sound=\(sound) "
+                + "notifications_enabled=\(notifEnabled)"
+            )
+        }
+        #else
+        TestLog.emit("notif_status_unsupported platform=non_ios")
+        #endif
+    }
+
+    /// Request iOS notification permission (`UNUserNotificationCenter
+    /// .requestAuthorization`) AND set Columba's `notifications_enabled`
+    /// UserDefaults pref to `true`. Used by the `suspended_notification`
+    /// smoke scenario to bootstrap permission state on first run.
+    ///
+    /// On a phone that has NEVER seen the request prompt for Columba,
+    /// iOS will display the system "Allow notifications?" UI. The
+    /// orchestrator can't tap "Allow" automatically (no system-UI
+    /// interaction permitted from `xcrun devicectl`), so the first run
+    /// after a fresh install requires Tyler to tap Allow manually.
+    /// Subsequent runs reuse the persisted grant.
+    ///
+    /// Emits: `notif_request granted=<bool> error=<msg|nil>`.
+    public func handleRequestNotifPermission() {
+        assertionFailure_releaseGuard()
+        #if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        // Set Columba's own pref true up-front; UN auth is the gate
+        // we can't bypass from code, but the pref check at
+        // NotificationService.postMessageNotification line 166 also
+        // has to pass.
+        UserDefaults.standard.set(true, forKey: "notifications_enabled")
+        UserDefaults.standard.set(true, forKey: "notify_received_message")
+        Task {
+            do {
+                let granted = try await UNUserNotificationCenter.current()
+                    .requestAuthorization(options: [.alert, .badge, .sound])
+                TestLog.emit("notif_request granted=\(granted) error=nil")
+            } catch {
+                TestLog.emit("notif_request granted=false error=\(testHarnessEscape(error.localizedDescription))")
+            }
+        }
+        #else
+        TestLog.emit("notif_request_unsupported platform=non_ios")
+        #endif
+    }
+
     // MARK: - Helpers
 
     private func methodName(_ m: LXDeliveryMethod) -> String {

@@ -204,6 +204,21 @@ public enum TestURLHandler {
             // notification's `delivery_ts` to the foregrounding
             // moment).
             c.handleGetNotifications()
+        case "get_notif_status":
+            // Emit current iOS notification authorization status +
+            // Columba's `notifications_enabled` pref. The
+            // suspended_notification scenario checks this up-front so
+            // it can short-circuit with a clear `permission_missing`
+            // error rather than ambiguous "0/0 notifications" output.
+            c.handleGetNotifStatus()
+        case "request_notif_permission":
+            // Trigger UNUserNotificationCenter.requestAuthorization
+            // (iOS shows the system prompt on first run) AND set
+            // `notifications_enabled = true` in UserDefaults. The
+            // orchestrator can't tap "Allow" on the system prompt
+            // automatically, but a single manual tap on first run
+            // persists the grant for subsequent smoke runs.
+            c.handleRequestNotifPermission()
         default:
             TestLog.emit("rx_url_unknown action=\(action)")
         }
