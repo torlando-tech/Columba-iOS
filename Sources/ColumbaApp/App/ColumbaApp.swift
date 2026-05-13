@@ -525,8 +525,19 @@ struct RootView: View {
                 }
             }
 
-            // 8. Request notification permission and install foreground delegate
-            await NotificationService.shared.requestPermission()
+            // 8. Request notification permission and install foreground delegate.
+            //
+            // Fire-and-forget. When the user has never responded to
+            // the system prompt, `UNUserNotificationCenter
+            // .requestAuthorization` doesn't return until they tap
+            // Allow / Don't Allow — and awaiting that here held the
+            // rest of init hostage (no `TestURLHandler.bind`, no
+            // MainTabView, no usable app) until the prompt was
+            // dismissed. The harness can't tap the prompt, but more
+            // importantly a real user shouldn't have to either: the
+            // app should be usable while iOS draws the permission
+            // sheet on top.
+            Task { _ = await NotificationService.shared.requestPermission() }
 
             self.isInitialized = true
 
