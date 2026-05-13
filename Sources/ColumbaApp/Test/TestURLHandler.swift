@@ -270,6 +270,29 @@ public enum TestURLHandler {
             // scenarios to assert the tunnel is `connected` before
             // backgrounding the host app.
             c.handleGetTunnelStatus()
+        case "skip_onboarding":
+            // Bootstrap an anonymous identity + a TCP interface +
+            // flip `has_completed_onboarding` so a fresh-install
+            // device can be brought to the smoke-testable state
+            // without manual tap-through. Mirrors
+            // `OnboardingViewModel.skipOnboarding` byte-for-byte
+            // but doesn't require `OnboardingView` to be on screen
+            // (works from a URL while the OnboardingView is showing).
+            // The host app's `@State showOnboarding` is decided at
+            // `init` time, so the caller must force-terminate +
+            // relaunch the app after this returns ok before the
+            // state takes effect.
+            //
+            // Self-contained — does NOT route through `TestController`,
+            // since `TestController.bind` requires AppServices to be
+            // initialized and that hasn't happened yet on a fresh
+            // install. Uses `IdentityManager` and `InterfaceRepository`
+            // directly (both safe to instantiate standalone).
+            handleSkipOnboarding(
+                host: query["host"] ?? "10.0.0.145",
+                port: Int(query["port"] ?? "4242") ?? 4242,
+                name: query["name"] ?? "test_mac"
+            )
         default:
             TestLog.emit("rx_url_unknown action=\(action)")
         }
@@ -280,6 +303,80 @@ public enum TestURLHandler {
 
     enum TestError: Error {
         case notReady
+    }
+
+    /// Self-contained programmatic equivalent of
+    /// `OnboardingViewModel.skipOnboarding`. Creates an anonymous
+    /// identity, switches to it, adds a TCP interface, and flips
+    /// `has_completed_onboarding` + `settings_initialized`. Idempotent:
+    /// if onboarding is already done, just emits the active identity
+    /// hash and returns. Always callable — does NOT route through
+    /// `TestController` (which isn't bound until AppServices
+    /// initializes, which doesn't happen during the onboarding view).
+    fileprivate static func handleSkipOnboarding(host: String, port: Int, name: String) {
+        Task {
+            do {
+                let identityManager = IdentityManager()
+                // Idempotency check: if an active identity already
+                // exists, don't create a second one. Just confirm
+                // the onboarding flag and TCP interface are in
+                // shape and return.
+                if let active = await identityManager.getActiveIdentity() {
+                    Self.ensureOnboardingFlagsSet()
+                    Self.ensureTCPInterface(host: host, port: port, name: name)
+                    TestLog.emit(
+                        "skip_onboarding ok identity=\(active.identityHash) already_onboarded=true"
+                    )
+                    return
+                }
+                let local = try await identityManager.createIdentity(displayName: "Anonymous Peer")
+                _ = try await identityManager.switchToIdentity(local.identityHash)
+                Self.ensureTCPInterface(host: host, port: port, name: name)
+                Self.ensureOnboardingFlagsSet()
+                TestLog.emit(
+                    "skip_onboarding ok identity=\(local.identityHash) already_onboarded=false"
+                )
+            } catch {
+                TestLog.emit(
+                    "skip_onboarding err=\(error.localizedDescription.replacingOccurrences(of: " ", with: "\u{2423}"))"
+                )
+            }
+        }
+    }
+
+    /// Set `has_completed_onboarding` + `settings_initialized` +
+    /// `notifications_enabled`. The first two gate the host app's
+    /// `showOnboarding` decision at next launch; the third lines up
+    /// with `NotificationService.postMessageNotification`'s gating
+    /// check so the harness doesn't need a separate
+    /// `request_notif_permission` call before the first send.
+    fileprivate static func ensureOnboardingFlagsSet() {
+        let std = UserDefaults.standard
+        std.set(true, forKey: "has_completed_onboarding")
+        std.set(true, forKey: "settings_initialized")
+        std.set(true, forKey: "notifications_enabled")
+        std.set(true, forKey: "notify_received_message")
+    }
+
+    /// Replace any existing interface with the same `name` and add a
+    /// fresh TCP-client config pointing at `host:port`. Mirrors
+    /// `TestController.handleAddTcpClient` byte-for-byte so the
+    /// resulting `InterfaceEntity` is identical to what the harness
+    /// would build later.
+    fileprivate static func ensureTCPInterface(host: String, port: Int, name: String) {
+        let interfaceRepo = InterfaceRepository()
+        if let existing = interfaceRepo.interfaces.first(where: { $0.name == name }) {
+            interfaceRepo.deleteInterface(id: existing.id)
+        }
+        let cfg = TCPClientConfig(targetHost: host, targetPort: UInt16(port))
+        let entity = InterfaceEntity(
+            name: name,
+            type: .tcpClient,
+            enabled: true,
+            mode: .full,
+            config: .tcpClient(cfg)
+        )
+        interfaceRepo.addInterface(entity)
     }
 
     #if ENABLE_NETWORK_EXTENSION
