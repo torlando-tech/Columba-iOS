@@ -552,6 +552,13 @@ public final class AppServices {
         self.autoAnnounceManager = announceManager
         announceManager.start()
 
+        // Publish the registered destination hashes so the
+        // `PacketTunnelProvider` can filter inbound frames and post a
+        // notification when the host app is suspended. Both the
+        // delivery and (on iOS) telephony destinations have been
+        // registered with the transport by now.
+        await publishLocalDestinations()
+
         logger.info("Initialization complete")
     }
 
@@ -655,6 +662,10 @@ public final class AppServices {
         let regCallbacks = await newTransport.registeredLinkCallbackHashes()
         DiagLog.log("[INIT2] Registered destinations: \(regDests)")
         DiagLog.log("[INIT2] Registered link callbacks: \(regCallbacks)")
+        // Publish to App Group so the extension can filter inbound
+        // frames against our local destinations and schedule a
+        // notification when the host app is suspended.
+        await publishLocalDestinations(hexHashes: regDests)
         // Apply persisted transport mode setting
         if SharedDefaults.suite.bool(forKey: "transport_enabled") {
             await newTransport.setTransportEnabled(true, identity: identity)
@@ -1387,6 +1398,56 @@ public final class AppServices {
             self.autoAnnounceManager = announceManager
             announceManager.start()
         }
+
+        // Republish in case the base-stack rebuild introduced
+        // destinations that weren't in the App Group before (e.g. a
+        // late CallManager spin-up after the first initialize() path
+        // skipped it).
+        await publishLocalDestinations()
+    }
+
+    // MARK: - Local Destinations (App Group)
+
+    /// Republish the set of locally-registered destination hashes to
+    /// the App Group so the `PacketTunnelProvider` extension can
+    /// match inbound packets' `destination_hash` field against them
+    /// and schedule a user-visible `UNUserNotificationCenter`
+    /// notification under the host app's bundle identity when the
+    /// host app is suspended.
+    ///
+    /// Stored as `[String]` of hex-encoded 16-byte truncated hashes
+    /// — same shape `ReticulumTransport.registeredDestinationHashes()`
+    /// already returns, so callers don't need to re-encode.
+    ///
+    /// Idempotent and cheap; safe to call after any change to the
+    /// registered-destination set. Posts a Darwin notification so
+    /// the extension reloads without restarting the tunnel.
+    ///
+    /// Crypto and full LXMF decode stay in the host app — the
+    /// extension only checks the unencrypted destination-hash header
+    /// field, equivalent to looking at an envelope's "To:" line.
+    ///
+    /// - Parameter hexHashes: Pre-fetched hash list to publish. When
+    ///   nil, the helper queries the transport itself. Passing the
+    ///   value lets `initialize(identity:identityHash:)` reuse the
+    ///   `registeredDestinationHashes()` call it already makes for
+    ///   diagnostics.
+    private func publishLocalDestinations(hexHashes: [String]? = nil) async {
+        let hashes: [String]
+        if let hexHashes {
+            hashes = hexHashes
+        } else if let transport {
+            hashes = await transport.registeredDestinationHashes()
+        } else {
+            return
+        }
+        SharedDefaults.suite.set(hashes, forKey: SharedDefaultsConstants.localDestinationsKey)
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(SharedDefaultsConstants.localDestinationsChangedNotificationName as CFString),
+            nil, nil, true
+        )
+        DiagLog.log("[LOCAL_DESTS] Published \(hashes.count) hash(es) to App Group: \(hashes)")
     }
 
     // MARK: - BLE Connection Info

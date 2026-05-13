@@ -49,6 +49,25 @@ public enum SharedDefaultsConstants {
     /// re-toggle every relaunch. Written by the Settings toggle and
     /// by the onboarding step; read by `AppServices.initialize()`.
     public static let tunnelEnabledKey = "com.columba.tunnelEnabled"
+
+    /// Shared UserDefaults key carrying the set of locally-registered
+    /// LXMF/LXST destination hashes as `[String]` of hex-encoded
+    /// 16-byte truncated hashes. Written by the host app every time
+    /// the registered-destination set changes; read by the
+    /// `PacketTunnelProvider` extension on tunnel start and on the
+    /// matching Darwin reload notification below. The extension uses
+    /// the set to decide whether an inbound packet's destination
+    /// matches one of our local endpoints and therefore warrants
+    /// scheduling a user-visible notification while the host app
+    /// is suspended.
+    public static let localDestinationsKey = "com.columba.localDestinations"
+
+    /// Darwin notification posted by the host app whenever it writes a
+    /// fresh value to `localDestinationsKey`. The extension observes
+    /// this so it re-reads the set without restarting the tunnel —
+    /// mirrors the existing `configChangedNotificationName` pattern
+    /// used for interface-config edits.
+    public static let localDestinationsChangedNotificationName = "network.columba.localDestinationsChanged"
 }
 
 /// Append-only log file in the App Group container. Both the app and

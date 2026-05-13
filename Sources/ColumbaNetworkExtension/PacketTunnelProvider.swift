@@ -13,6 +13,7 @@
 import Foundation
 import Network
 import NetworkExtension
+import UserNotifications
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
@@ -24,7 +25,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// changes; triggers a reload so unrelated interfaces stay
     /// connected while a single relay is added/removed/edited.
     private static let configChangedNotification = SharedDefaultsConstants.configChangedNotificationName
+    /// Notification observed when the app updates the set of locally-
+    /// registered LXMF/LXST destination hashes; triggers a re-read of
+    /// `localDestinationsKey` so inbound-frame filtering picks up the
+    /// new set without restarting the tunnel.
+    private static let localDestinationsChangedNotification = SharedDefaultsConstants.localDestinationsChangedNotificationName
     private static let interfacesKey = SharedDefaultsConstants.interfacesKey
+    private static let localDestinationsKey = SharedDefaultsConstants.localDestinationsKey
 
     // MARK: - Properties
 
@@ -60,6 +67,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Currently-applied AutoInterface group id. nil when no Auto
     /// interface is configured. Mutated only on `configQueue`.
     private var currentAutoGroupId: String?
+
+    /// Locally-registered LXMF/LXST destination hashes, decoded from
+    /// the App Group `localDestinationsKey`. Inbound frames whose
+    /// destination_hash header matches one of these get an extension-
+    /// scheduled `UNUserNotificationCenter` notification so the user
+    /// sees that a message arrived even while the host app is
+    /// suspended. Mutated only on `configQueue` to avoid racing the
+    /// inbound TCP handler that reads it.
+    private var localDestinationHashes: Set<Data> = []
 
     /// Serial queue serializing all config-state mutations and the
     /// associated NWConnection lifecycle calls so a Darwin
@@ -129,6 +145,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // Apply current interface configs.
         applyConfigs()
+        // Load the locally-registered destination set so we can
+        // filter inbound frames before the first packet arrives.
+        reloadLocalDestinations()
 
         // Subscribe to live config changes so the user adding /
         // removing / editing an interface in the app updates the
@@ -145,6 +164,23 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 provider.applyConfigs()
             },
             Self.configChangedNotification as CFString,
+            nil,
+            .deliverImmediately
+        )
+
+        // Subscribe to local-destination changes so an identity
+        // switch (or first-launch destination registration) updates
+        // the filter without a tunnel restart. Mirrors the config-
+        // change observer above; teardown happens in `stopTunnel`.
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(observer).takeUnretainedValue()
+                provider.reloadLocalDestinations()
+            },
+            Self.localDestinationsChangedNotification as CFString,
             nil,
             .deliverImmediately
         )
@@ -268,13 +304,19 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             currentAutoGroupId = nil
         }
 
-        // Remove the config-changed observer registered in startTunnel.
+        // Remove both Darwin observers registered in startTunnel.
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let observer = Unmanaged.passUnretained(self).toOpaque()
         CFNotificationCenterRemoveObserver(
             center,
             observer,
             CFNotificationName(Self.configChangedNotification as CFString),
+            nil
+        )
+        CFNotificationCenterRemoveObserver(
+            center,
+            observer,
+            CFNotificationName(Self.localDestinationsChangedNotification as CFString),
             nil
         )
 
@@ -503,6 +545,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         tcpReceiveBuffers[entityId] = buffer
 
         for frame in frames {
+            // Peek the unencrypted destination_hash header field so we
+            // can post a user-visible notification if the packet is
+            // addressed to one of our local LXMF/LXST destinations.
+            // Without this the suspended host app never sees inbound
+            // mail until the user manually opens the app (Darwin
+            // notifications can't wake a suspended app — Apple DTS
+            // forum 769398). Crypto and full LXMF decode stay in the
+            // host app; the extension only checks the envelope.
+            maybeScheduleNotification(for: frame)
+
             frameQueue.append(
                 frame: frame,
                 interfaceTag: FrameInterfaceTag.tcp.rawValue,
@@ -513,6 +565,88 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         if !frames.isEmpty {
             postDarwinNotification()
         }
+    }
+
+    /// Inspect a fully-deframed Reticulum packet's unencrypted header
+    /// and, if it's addressed to one of our locally-registered
+    /// destination hashes, post a local `UNUserNotificationCenter`
+    /// notification under the host app's bundle identity so the user
+    /// sees that a message arrived even while the host app is
+    /// suspended. Always called from `configQueue` so `localDestinationHashes`
+    /// is read on the same serial context that mutates it.
+    ///
+    /// Packet layout per `~/repos/Reticulum/RNS/Packet.py`
+    /// `Packet.unpack()`:
+    ///   byte 0: flags (bit 6 = header_type, bits 0-1 = packet_type)
+    ///   byte 1: hops
+    ///   HEADER_1 (bit 6 == 0):
+    ///     bytes 2..18  = destination_hash (16 bytes truncated hash)
+    ///     byte 18      = context
+    ///   HEADER_2 (bit 6 == 1) — packets routed via a transport node:
+    ///     bytes 2..18  = transport_id
+    ///     bytes 18..34 = destination_hash (final recipient, NOT
+    ///                    the transport — verified against Packet.py)
+    ///     byte 34      = context
+    private func maybeScheduleNotification(for frame: Data) {
+        // Need at least flags + hops + 16-byte dest_hash + context.
+        guard frame.count >= 19 else { return }
+        let flags = frame[0]
+        let headerType = (flags & 0b01000000) >> 6
+        let packetType = flags & 0b00000011
+
+        let destHash: Data
+        let contextOffset: Int
+        if headerType == 0 {
+            // HEADER_1
+            destHash = frame.subdata(in: 2..<18)
+            contextOffset = 18
+        } else {
+            // HEADER_2 — final-destination hash is at offset 18..34.
+            guard frame.count >= 35 else { return }
+            destHash = frame.subdata(in: 18..<34)
+            contextOffset = 34
+        }
+
+        // Cheap envelope-only filter: only fire for packets addressed
+        // to one of our local LXMF/LXST destinations. Announces are
+        // addressed to the announcer's own destination, so they never
+        // match our set — no need to filter them explicitly.
+        guard localDestinationHashes.contains(destHash) else { return }
+
+        guard frame.count > contextOffset else { return }
+        let context = frame[contextOffset]
+
+        // packet_type filter (defense-in-depth):
+        //   - DATA(0x00) + context==NONE(0x00) — OPPORTUNISTIC LXMF
+        //     message arrives as a single DATA packet to the
+        //     recipient's delivery hash (see LXMF/LXMessage.py
+        //     __as_packet for OPPORTUNISTIC).
+        //   - LINKREQUEST(0x02) — DIRECT delivery starts with a link
+        //     request to the recipient's delivery hash (see
+        //     LXMF/LXMRouter.py:2660). After the link is established
+        //     the conversation uses the link's own hash, so this is
+        //     the only packet from the DIRECT flow that's addressed
+        //     to us.
+        // PROOF(0x03) and ANNOUNCE(0x01) are skipped: PROOFs only
+        // arrive in response to something we sent (no new-message
+        // signal), and ANNOUNCEs wouldn't match our hash anyway.
+        let shouldNotify: Bool
+        switch packetType {
+        case 0x00:
+            shouldNotify = (context == 0x00)
+        case 0x02:
+            shouldNotify = true
+        default:
+            shouldNotify = false
+        }
+        guard shouldNotify else { return }
+
+        let destHex = Self.hexString(destHash)
+        ExtensionDiagLog.log(
+            "[EXT/NOTIF] match dest=\(destHex.prefix(8)) header=\(headerType) " +
+            "ptype=\(packetType) ctx=\(context)"
+        )
+        ExtensionNotifications.postMessageArrived(destHashHex: destHex)
     }
 
     // MARK: - Diagnostic Listener helpers
@@ -643,6 +777,41 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         )
     }
 
+    // MARK: - Local Destinations (for inbound notification filter)
+
+    /// Re-read the locally-registered destination hashes the host
+    /// app publishes to the App Group and rebuild `localDestinationHashes`.
+    /// Serialized onto `configQueue` because the inbound TCP handler
+    /// reads the set from there too and we don't want a Darwin
+    /// callback arriving on a Mach-port thread mid-frame to race us.
+    private func reloadLocalDestinations() {
+        configQueue.async { [weak self] in
+            guard let self else { return }
+            let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
+            let hexes = defaults.stringArray(forKey: Self.localDestinationsKey) ?? []
+            let decoded: Set<Data> = Set(hexes.compactMap { Self.dataFromHex($0) })
+            self.localDestinationHashes = decoded
+            ExtensionDiagLog.log("[EXT/NOTIF] localDestinations reloaded count=\(decoded.count)")
+        }
+    }
+
+    /// Decode a hex-encoded byte string to `Data`. Returns nil on any
+    /// non-hex character or odd-length input — both impossible from
+    /// the host app's hex encoder, but defensive in case App Group
+    /// prefs ever get hand-edited or written by a stale build.
+    private static func dataFromHex(_ hex: String) -> Data? {
+        guard hex.count % 2 == 0 else { return nil }
+        var out = Data(capacity: hex.count / 2)
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+            out.append(byte)
+            index = next
+        }
+        return out
+    }
+
     // MARK: - Config Loading
 
     private struct InterfaceConfigs {
@@ -695,5 +864,48 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
 
         return result
+    }
+}
+
+/// Local notification poster usable from inside `NEPacketTunnelProvider`.
+/// Notifications inherit the host app's bundle identity (extensions are
+/// part of the container app's notification authorization domain — per
+/// Apple DTS engineer Quinn, eskimo). Authorization is requested by
+/// the host app on first launch and the grant transfers here, so the
+/// extension never needs `requestAuthorization` of its own.
+///
+/// Body is intentionally generic ("New message") because the extension
+/// has no crypto key — the ciphertext is opaque to it. When the user
+/// taps the notification iOS launches the host app, which then drains
+/// `SharedFrameQueue` and (optionally) replaces this generic notification
+/// with a per-conversation one carrying the decrypted sender + preview.
+enum ExtensionNotifications {
+    /// Schedule a one-shot notification announcing that a packet
+    /// addressed to one of our locally-registered destinations
+    /// arrived while the host app was (likely) suspended. Identifier
+    /// includes the destination hash and a timestamp so multiple
+    /// concurrent messages don't collapse into a single banner.
+    static func postMessageArrived(destHashHex: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Columba"
+        content.body = "New message"
+        content.sound = .default
+        content.userInfo = [
+            "source": "extension",
+            "destHashHex": destHashHex,
+        ]
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        let request = UNNotificationRequest(
+            identifier: "ext-\(destHashHex)-\(timestamp)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                ExtensionDiagLog.log("[EXT/NOTIF] UN add err: \(error.localizedDescription)")
+            } else {
+                ExtensionDiagLog.log("[EXT/NOTIF] UN add ok dest=\(destHashHex.prefix(8))")
+            }
+        }
     }
 }
