@@ -27,6 +27,7 @@ import Foundation
 import os.log
 import OSLog
 import LXMFSwift
+import UserNotifications
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -820,6 +821,64 @@ public final class TestController {
                 )
             }
         }
+    }
+
+    /// Query the iOS notification center for delivered notifications.
+    /// Emits one `notif` line per delivered notification, including its
+    /// `delivery_ts` (ISO8601 seconds), `thread`, `id`, and a
+    /// length-limited preview of the body. Used by the Phase 3
+    /// `suspended_notification` smoke scenario to prove whether a
+    /// system-level notification was posted while the app was
+    /// suspended (delivery_ts < foreground_ts → notification fired
+    /// during suspension; otherwise it only fired on resume or not
+    /// at all).
+    ///
+    /// `UNUserNotificationCenter.deliveredNotifications` is iOS-only;
+    /// this handler is a no-op on macOS-Catalyst builds (which don't
+    /// participate in the phone smoke pipeline anyway).
+    public func handleGetNotifications() {
+        assertionFailure_releaseGuard()
+        #if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        Task {
+            let notifs = await UNUserNotificationCenter.current().deliveredNotifications()
+            TestLog.emit("notif_begin count=\(notifs.count) query_ts=\(Self.iso8601Now())")
+            let iso = ISO8601DateFormatter()
+            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            for n in notifs {
+                let id = testHarnessEscape(n.request.identifier)
+                let thread = testHarnessEscape(n.request.content.threadIdentifier)
+                let title = testHarnessEscape(n.request.content.title)
+                let bodyRaw = n.request.content.body
+                // Cap preview at 80 chars so a malicious sender can't
+                // inflate the log line beyond `os_log` truncation.
+                let bodyPreview = bodyRaw.count > 80
+                    ? String(bodyRaw.prefix(80)) + "…"
+                    : bodyRaw
+                let body = testHarnessEscape(bodyPreview)
+                let ts = iso.string(from: n.date)
+                let sourceHash = (n.request.content.userInfo["sourceHash"] as? String) ?? ""
+                TestLog.emit(
+                    "notif id=\(id) thread=\(thread) title=\(title) "
+                    + "delivery_ts=\(ts) source_hash=\(sourceHash) "
+                    + "body=\(body)"
+                )
+            }
+            TestLog.emit("notif_end count=\(notifs.count)")
+        }
+        #else
+        TestLog.emit("notif_unsupported platform=non_ios")
+        #endif
+    }
+
+    /// ISO8601 timestamp of `Date()` with fractional seconds, used by
+    /// `handleGetNotifications` to stamp the query time so the smoke
+    /// orchestrator can compare `delivery_ts < query_ts` to determine
+    /// whether the notification was posted before or after the
+    /// foregrounding that triggered the query.
+    private static func iso8601Now() -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.string(from: Date())
     }
 
     // MARK: - Helpers

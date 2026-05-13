@@ -194,6 +194,16 @@ public enum TestURLHandler {
             // — DB inspection reveals whether destination_hash is
             // genuinely diverging or the UI is mis-rendering).
             c.handleDumpDb()
+        case "get_notifications":
+            // Query UNUserNotificationCenter.deliveredNotifications and
+            // emit one `notif` line per delivered notification, plus a
+            // `notif_begin` / `notif_end` pair carrying a `query_ts`
+            // timestamp. Used by the suspended_notification smoke
+            // scenario to test whether a notification was actually
+            // delivered while the app was suspended (compare each
+            // notification's `delivery_ts` to the foregrounding
+            // moment).
+            c.handleGetNotifications()
         default:
             TestLog.emit("rx_url_unknown action=\(action)")
         }
