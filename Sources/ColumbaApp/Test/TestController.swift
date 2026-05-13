@@ -933,6 +933,37 @@ public final class TestController {
     /// Subsequent runs reuse the persisted grant.
     ///
     /// Emits: `notif_request granted=<bool> error=<msg|nil>`.
+    /// Enable the Network Extension tunnel: persist the
+    /// `tunnelEnabledKey` so future cold-starts auto-start the
+    /// tunnel, kick `TunnelManager.start()`, and emit the eventual
+    /// `tunnel_state state=<state>` line. Used by the
+    /// `suspended_notification` smoke scenario to guarantee the
+    /// extension is alive across the suspend window — otherwise the
+    /// inbound TCP connection dies the moment the host app suspends
+    /// and Phase B's destination filter never sees a frame.
+    public func handleEnableTunnel() {
+        assertionFailure_releaseGuard()
+        Task {
+            do {
+                let state = try await TestTunnelBridge.enableTunnel?() ?? "no_bridge"
+                TestLog.emit("tunnel_enable state=\(state)")
+            } catch {
+                TestLog.emit("tunnel_enable error=\(testHarnessEscape(error.localizedDescription))")
+            }
+        }
+    }
+
+    /// Emit the current `TunnelManager.status` as a string. Lets the
+    /// harness assert the tunnel is `connected` before backgrounding
+    /// the app for a suspend test.
+    public func handleGetTunnelStatus() {
+        assertionFailure_releaseGuard()
+        Task {
+            let state = await TestTunnelBridge.getTunnelStatus?() ?? "no_bridge"
+            TestLog.emit("tunnel_status state=\(state)")
+        }
+    }
+
     public func handleRequestNotifPermission() {
         assertionFailure_releaseGuard()
         #if canImport(UIKit) && !targetEnvironment(macCatalyst)
@@ -1108,6 +1139,25 @@ public enum TestPathBridge {
     /// that lxmd then rejects with `ERROR_INVALID_STAMP` (the symptom
     /// observed during the iOS PROPAGATED smoke run on 2026-05-10).
     @MainActor public static var selectPropNode: ((Data) async -> Void)?
+}
+
+// MARK: - Bridge for Network Extension tunnel control
+
+/// Slim bridge so [TestController] can drive `TunnelManager` without
+/// importing it directly (TunnelManager only exists under
+/// `ENABLE_NETWORK_EXTENSION`, so the test surface stays buildable on
+/// configurations where the extension is compiled out). Populated by
+/// [TestURLHandler.bind] under the same compile-flag guard.
+public enum TestTunnelBridge {
+    /// Persist `tunnelEnabledKey`, kick `TunnelManager.start()`, and
+    /// wait up to 30s for `status` to reach `.connected`. Returns the
+    /// final status string for diagnostics. Throws if the bridge has
+    /// no `TunnelManager` to drive.
+    @MainActor public static var enableTunnel: (() async throws -> String)?
+
+    /// Return the current `TunnelManager.status` as a string. Used by
+    /// the harness to assert tunnel readiness before a suspend test.
+    @MainActor public static var getTunnelStatus: (() async -> String)?
 }
 
 #endif  // DEBUG

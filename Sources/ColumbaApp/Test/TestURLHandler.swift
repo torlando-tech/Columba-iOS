@@ -25,6 +25,9 @@
 import Foundation
 import os.log
 import LXMFSwift
+#if ENABLE_NETWORK_EXTENSION
+import NetworkExtension
+#endif
 
 /// Top-level dispatcher invoked from `ColumbaApp.swift`'s `.onOpenURL`.
 ///
@@ -89,6 +92,38 @@ public enum TestURLHandler {
             }
             await mgr.selectNode(hash: hash)
         }
+
+        #if ENABLE_NETWORK_EXTENSION
+        // Tunnel-control bridge: lets the smoke harness flip the
+        // Background-Transport state from a URL action so the
+        // `suspended_notification` scenario can guarantee the extension
+        // is alive across the suspend window. The closure persists
+        // `tunnelEnabledKey` (matching what the Settings toggle does)
+        // and kicks `TunnelManager.start()`, then polls for status to
+        // reach `.connected` so the harness gets a synchronous answer.
+        TestTunnelBridge.enableTunnel = { [weak appServices] in
+            guard let svc = appServices, let tunnel = svc.tunnelManager else {
+                throw TestError.notReady
+            }
+            UserDefaults(suiteName: appGroupIdentifier)?
+                .set(true, forKey: SharedDefaultsConstants.tunnelEnabledKey)
+            if tunnel.isRunning {
+                return Self.tunnelStatusString(tunnel.status)
+            }
+            try await tunnel.start()
+            let deadline = Date().addingTimeInterval(30)
+            while Date() < deadline, tunnel.status != .connected {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+            return Self.tunnelStatusString(tunnel.status)
+        }
+        TestTunnelBridge.getTunnelStatus = { [weak appServices] in
+            guard let svc = appServices, let tunnel = svc.tunnelManager else {
+                return "no_tunnel"
+            }
+            return Self.tunnelStatusString(tunnel.status)
+        }
+        #endif
 
         // Attach the relay delegate so received messages + delivery
         // state changes get observed for the harness. Forwards to the
@@ -219,6 +254,18 @@ public enum TestURLHandler {
             // automatically, but a single manual tap on first run
             // persists the grant for subsequent smoke runs.
             c.handleRequestNotifPermission()
+        case "enable_tunnel":
+            // Persist `tunnelEnabledKey` and kick `TunnelManager.start()`
+            // so the NE extension stays alive across host-app suspension.
+            // Required for the `suspended_notification` scenario: without
+            // the tunnel up, the inbound TCP socket dies on suspend and
+            // Phase B's destination filter never sees a frame.
+            c.handleEnableTunnel()
+        case "get_tunnel_status":
+            // Emit the current tunnel status. Used by the suspend
+            // scenarios to assert the tunnel is `connected` before
+            // backgrounding the host app.
+            c.handleGetTunnelStatus()
         default:
             TestLog.emit("rx_url_unknown action=\(action)")
         }
@@ -230,6 +277,22 @@ public enum TestURLHandler {
     enum TestError: Error {
         case notReady
     }
+
+    #if ENABLE_NETWORK_EXTENSION
+    /// Stringify `NEVPNStatus` for the harness log line. Mirrors the
+    /// Settings UI's choice of names so logs read like user intent.
+    fileprivate static func tunnelStatusString(_ status: NEVPNStatus) -> String {
+        switch status {
+        case .invalid:       return "invalid"
+        case .disconnected:  return "disconnected"
+        case .connecting:    return "connecting"
+        case .connected:     return "connected"
+        case .reasserting:   return "reasserting"
+        case .disconnecting: return "disconnecting"
+        @unknown default:    return "unknown"
+        }
+    }
+    #endif
 
     /// Same release-guard rationale as TestController's: the file is
     /// already `#if DEBUG`, this is the inner layer.
