@@ -234,10 +234,58 @@ public final class NotificationService: Sendable {
             trigger: nil // Deliver immediately
         )
 
+        // Dedupe against the Network Extension's placeholder banner.
+        //
+        // When the host app is background-running (not yet suspended),
+        // both notification paths are live for the same arriving
+        // packet: the extension posts a generic "New message" banner
+        // via `ExtensionNotifications.postMessageArrived` keyed on the
+        // recipient's destination hash, and the host app posts the
+        // rich per-conversation banner here keyed on the LXMF message
+        // hash. Without dedupe the user sees two banners for one
+        // message. Now that this rich notification is about to fire
+        // for the same destination, clear any pending/delivered
+        // extension placeholders for that destination — the rich
+        // notification is the authoritative one.
+        let destHashHex = message.destinationHash.map { String(format: "%02x", $0) }.joined()
+        await removeExtensionPlaceholders(forDestinationHashHex: destHashHex)
+
         do {
             try await UNUserNotificationCenter.current().add(request)
         } catch {
             // Silently fail — notification is non-critical
+        }
+    }
+
+    /// Remove any pending or delivered placeholder notifications posted
+    /// by `ExtensionNotifications.postMessageArrived` (in
+    /// `PacketTunnelProvider.swift`) that match the given destination
+    /// hash. Identifiers used by the extension:
+    ///   - `ext-<destHashHex>-<timestamp-ms>` for DATA (OPPORTUNISTIC)
+    ///   - `ext-linkreq-<destHashHex>`        for LINKREQUEST (DIRECT)
+    ///
+    /// `UNUserNotificationCenter` only supports exact-match removal, so
+    /// fetch the current pending + delivered lists and match by prefix.
+    private func removeExtensionPlaceholders(forDestinationHashHex destHashHex: String) async {
+        guard !destHashHex.isEmpty else { return }
+        let center = UNUserNotificationCenter.current()
+        let dataPrefix = "ext-\(destHashHex)-"
+        let linkReqId  = "ext-linkreq-\(destHashHex)"
+
+        let pending = await center.pendingNotificationRequests()
+        let pendingIds = pending
+            .map(\.identifier)
+            .filter { $0 == linkReqId || $0.hasPrefix(dataPrefix) }
+        if !pendingIds.isEmpty {
+            center.removePendingNotificationRequests(withIdentifiers: pendingIds)
+        }
+
+        let delivered = await center.deliveredNotifications()
+        let deliveredIds = delivered
+            .map(\.request.identifier)
+            .filter { $0 == linkReqId || $0.hasPrefix(dataPrefix) }
+        if !deliveredIds.isEmpty {
+            center.removeDeliveredNotifications(withIdentifiers: deliveredIds)
         }
     }
 
