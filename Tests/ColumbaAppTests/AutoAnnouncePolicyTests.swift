@@ -117,21 +117,25 @@ final class AutoAnnouncePolicyTests: XCTestCase {
 
     // MARK: - Empty defaults
 
-    /// On a fresh install the keys aren't in the suite at all. UserDefaults.bool(forKey:)
-    /// returns false for absent keys — so policy must report all-off when nothing has
-    /// been registered or set. (Production code uses `register(defaults:)` in
-    /// SettingsViewModel.loadLocalSettings to default these to true; that registration
-    /// is on UserDefaults.standard, not on a per-suite scratch defaults, so this test
-    /// validates the *raw* read behavior.)
-    func testEmptyDefaultsReportsAllOff() {
+    /// Production registers the four auto_announce_* defaults to
+    /// `true` at app launch (`ColumbaApp.init` → `SettingsViewModel
+    /// .registerLocalDefaults`). The registration domain is
+    /// process-wide — `UserDefaults(suiteName:)` instances inherit
+    /// it. The XCTest host loads the @main App, so by the time this
+    /// test runs the per-suite scratch defaults read all four
+    /// toggles as on. This regression test pins that wire so a
+    /// future refactor that drops the app-init registration call
+    /// fails loudly instead of silently regressing every fresh
+    /// install to no-auto-announce.
+    func testEmptyPerSuiteInheritsProcessWideRegistrationAsAllOn() {
         let p = AutoAnnouncePolicy.current(defaults: defaults)
-        XCTAssertFalse(p.masterEnabled)
-        XCTAssertFalse(p.onInterval)
-        XCTAssertFalse(p.onTcpReconnect)
-        XCTAssertFalse(p.onPeerSpawned)
-        XCTAssertFalse(p.shouldFireOnInterval)
-        XCTAssertFalse(p.shouldFireOnTcpReconnect)
-        XCTAssertFalse(p.shouldFireOnPeerSpawned)
+        XCTAssertTrue(p.masterEnabled, "process-wide registration domain leaks to per-suite UserDefaults; production needs this for on-reconnect announce")
+        XCTAssertTrue(p.onInterval)
+        XCTAssertTrue(p.onTcpReconnect)
+        XCTAssertTrue(p.onPeerSpawned)
+        XCTAssertTrue(p.shouldFireOnInterval)
+        XCTAssertTrue(p.shouldFireOnTcpReconnect)
+        XCTAssertTrue(p.shouldFireOnPeerSpawned)
     }
 
     // MARK: - Snapshot semantics
