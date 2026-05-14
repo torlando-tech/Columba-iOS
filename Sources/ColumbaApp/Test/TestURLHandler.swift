@@ -42,7 +42,15 @@ public enum TestURLHandler {
     /// when the test surface is enabled and AppServices is initialized).
     /// Wires the [TestController]'s closures to the real `AppServices`
     /// + router + interfaces + path table.
-    public static func bind(appServices: AppServices) {
+    ///
+    /// - Parameter incomingMessageHandler: production `LXMRouterDelegate`
+    ///   the relay forwards to. `attachDelegate` replaces the router's
+    ///   delegate, so `nil` here drops conversation-ensure + the
+    ///   chats-list UI refresh for every inbound message.
+    public static func bind(
+        appServices: AppServices,
+        incomingMessageHandler: LXMRouterDelegate?
+    ) {
         guard let router = appServices.router else {
             TestLog.emit("bind_err reason=router_nil")
             return
@@ -129,21 +137,13 @@ public enum TestURLHandler {
         }
         #endif
 
-        // Attach the relay delegate so received messages + delivery
-        // state changes get observed for the harness. Forwards to the
-        // existing IncomingMessageHandler.
+        // Relay delegate: lets the harness observe inbound messages +
+        // delivery-state changes, forwarding to `incomingMessageHandler`
+        // (see `bind` docs for why the forward is mandatory).
         Task { @MainActor in
-            // The router's currently-set delegate is reachable as
-            // `await router.delegate` if exposed, but LXMRouter's API
-            // doesn't expose it. We approximate by passing nil and
-            // accepting that during a test run the harness observer is
-            // the only delegate. The production IncomingMessageHandler
-            // remains wired through AppServices initialization, but the
-            // harness deliberately runs against a debug build that
-            // doesn't need its UI hooks.
             await TestController.shared.attachDelegate(
                 to: router,
-                originalDelegate: nil
+                originalDelegate: incomingMessageHandler
             )
         }
     }

@@ -555,9 +555,13 @@ struct RootView: View {
 
             #if DEBUG
             // Wire the test-harness surface to the live AppServices.
-            // No-op in release: the entire TestURLHandler / TestController
-            // graph is `#if DEBUG`-gated.
-            TestURLHandler.bind(appServices: appServices)
+            // No-op in release (TestURLHandler graph is `#if DEBUG`-gated).
+            // Pass `handler` so the test relay forwards to it rather than
+            // displacing it — see `TestURLHandler.bind` docs.
+            TestURLHandler.bind(
+                appServices: appServices,
+                incomingMessageHandler: handler
+            )
             #endif
 
             // DEBUG: Auto-trigger propagation sync on launch for testing
