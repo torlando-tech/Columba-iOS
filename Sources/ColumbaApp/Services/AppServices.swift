@@ -875,6 +875,23 @@ public final class AppServices {
         guard let tunnel = tunnelManager else { return }
 
         if active {
+            // Symmetric idempotency guard with the `active: false`
+            // branch below. iOS routinely reports the VPN-status
+            // sequence `.connecting → .connected → .reasserting →
+            // .connected` during routing setup, which fires our
+            // `onStatusChange` handler twice for `.connected`. Without
+            // this guard each interface's `beginTunnelMode` got called
+            // twice; the second call tears down the freshly-installed
+            // outbound hook + transport pair and re-installs them,
+            // racing any in-flight LXMessage send (the LXMRouter sees
+            // the interface flap state=connected→reconnecting→connected
+            // mid-link-establishment and the resulting `LINKREQUEST`
+            // gets dropped). With the guard the second `.connected`
+            // notification is a no-op.
+            guard !isTunnelModeActive else {
+                DiagLog.log("[TUNNEL] skipping enable — already active (likely .connected redundancy from iOS VPN-status churn)")
+                return
+            }
             for (entityId, iface) in tcpInterfaces {
                 await iface.beginTunnelMode { [weak tunnel, entityId] frame in
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue, entityId: entityId)
