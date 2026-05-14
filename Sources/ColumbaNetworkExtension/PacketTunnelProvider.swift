@@ -879,10 +879,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             for entry in array {
                 guard let entityId = entry["id"] as? String,
                       let host = entry["host"] as? String,
-                      let port = entry["port"] as? Int else {
+                      let portInt = entry["port"] as? Int,
+                      let port = UInt16(exactly: portInt) else {
                     continue
                 }
-                result.tcps[entityId] = (host: host, port: UInt16(port))
+                result.tcps[entityId] = (host: host, port: port)
                 NSLog("[EXT] Found tunnel TCP endpoint [\(entityId)]: \(host):\(port)")
             }
         }
@@ -916,8 +917,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 // tunnel key already populated `result.tcps`.
                 guard result.tcps.isEmpty else { continue }
                 if let host = config["targetHost"] as? String,
-                   let port = config["targetPort"] as? Int {
-                    result.tcps[entityId] = (host: host, port: UInt16(port))
+                   let portInt = config["targetPort"] as? Int,
+                   let port = UInt16(exactly: portInt) {
+                    result.tcps[entityId] = (host: host, port: port)
                     NSLog("[EXT] Found TCP config (legacy) [\(entityId)]: \(host):\(port)")
                 }
             case "autoInterface":
