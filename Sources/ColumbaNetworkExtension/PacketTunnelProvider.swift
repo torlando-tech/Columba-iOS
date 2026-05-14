@@ -674,7 +674,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             "[EXT/NOTIF] match dest=\(destHex.prefix(8)) header=\(headerType) " +
             "ptype=\(packetType) ctx=\(context)"
         )
-        ExtensionNotifications.postMessageArrived(destHashHex: destHex)
+        // Tell the notification poster whether this was a LINKREQUEST so
+        // it can coalesce retries into a single banner. LXMF retries
+        // DIRECT delivery up to MAX_DELIVERY_ATTEMPTS=5 times with
+        // DELIVERY_RETRY_WAIT=10s gaps (LXMF/LXMRouter.py:2654), each
+        // retry sending a fresh LINKREQUEST — without coalescing the
+        // user sees up to 5 banners for one undelivered message.
+        ExtensionNotifications.postMessageArrived(
+            destHashHex: destHex,
+            isLinkRequest: packetType == 0x02
+        )
     }
 
     // MARK: - Diagnostic Listener helpers
@@ -950,10 +959,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 enum ExtensionNotifications {
     /// Schedule a one-shot notification announcing that a packet
     /// addressed to one of our locally-registered destinations
-    /// arrived while the host app was (likely) suspended. Identifier
-    /// includes the destination hash and a timestamp so multiple
-    /// concurrent messages don't collapse into a single banner.
-    static func postMessageArrived(destHashHex: String) {
+    /// arrived while the host app was (likely) suspended.
+    ///
+    /// - Parameter destHashHex: 16-byte truncated destination hash, hex-encoded.
+    /// - Parameter isLinkRequest: True when the source packet was a
+    ///   `LINKREQUEST` (DIRECT-flow link establishment). LXMF retries
+    ///   DIRECT delivery up to `MAX_DELIVERY_ATTEMPTS=5` times with
+    ///   `DELIVERY_RETRY_WAIT=10s` gaps (LXMF/LXMRouter.py:2654), each
+    ///   retry sending a fresh LINKREQUEST packet. To prevent a single
+    ///   undelivered message from generating multiple lock-screen
+    ///   banners, LINKREQUEST notifications use a static
+    ///   `ext-linkreq-<destHash>` identifier so iOS replaces the prior
+    ///   pending banner instead of stacking. `DATA`-path
+    ///   (OPPORTUNISTIC) notifications keep a timestamp suffix because
+    ///   each carries an independently-delivered message.
+    static func postMessageArrived(destHashHex: String, isLinkRequest: Bool = false) {
         let content = UNMutableNotificationContent()
         content.title = "Columba"
         content.body = "New message"
@@ -962,9 +982,15 @@ enum ExtensionNotifications {
             "source": "extension",
             "destHashHex": destHashHex,
         ]
-        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        let identifier: String
+        if isLinkRequest {
+            identifier = "ext-linkreq-\(destHashHex)"
+        } else {
+            let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+            identifier = "ext-\(destHashHex)-\(timestamp)"
+        }
         let request = UNNotificationRequest(
-            identifier: "ext-\(destHashHex)-\(timestamp)",
+            identifier: identifier,
             content: content,
             trigger: nil
         )
