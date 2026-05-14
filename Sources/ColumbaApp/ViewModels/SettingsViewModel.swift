@@ -76,6 +76,28 @@ public struct IdentityInfo: Equatable {
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
 public final class SettingsViewModel {
+    // MARK: - Static (app-launch defaults)
+
+    /// Register the user-facing default values for keys this view
+    /// model owns. Called both from `ColumbaApp.init()` so the
+    /// AppServices on-reconnect announce + notification gating fire
+    /// correctly before the user ever opens Settings, and from
+    /// `loadLocalSettings()` so the view itself is also self-sufficient.
+    /// `register(defaults:)` only sets fallbacks for unset keys, so
+    /// repeated calls are harmless.
+    public static func registerLocalDefaults(into defaults: UserDefaults = .standard) {
+        defaults.register(defaults: [
+            "notifications_enabled": true,
+            "show_message_previews": true,
+            "play_sounds": true,
+            "vibrate": true,
+            "auto_announce_enabled": true,
+            "auto_announce_on_interval": true,
+            "auto_announce_on_tcp_reconnect": true,
+            "auto_announce_on_peer_spawned": true
+        ])
+    }
+
     // MARK: - Types
 
     /// Available map sources.
@@ -368,18 +390,12 @@ public final class SettingsViewModel {
     private func loadLocalSettings() {
         let defaults = UserDefaults.standard
 
-        // Register sane defaults so bool(forKey:) returns true for notifications
-        // even if the key was never explicitly written (e.g. pre-existing installs).
-        defaults.register(defaults: [
-            "notifications_enabled": true,
-            "show_message_previews": true,
-            "play_sounds": true,
-            "vibrate": true,
-            "auto_announce_enabled": true,
-            "auto_announce_on_interval": true,
-            "auto_announce_on_tcp_reconnect": true,
-            "auto_announce_on_peer_spawned": true
-        ])
+        // Defaults are registered at app launch (see `ColumbaApp.init()`)
+        // so AppServices's on-reconnect announce and the notification
+        // gating fire correctly even when the user never opens this
+        // view. Calling `register(defaults:)` again here is harmless —
+        // it only sets fallbacks for keys without explicit values.
+        Self.registerLocalDefaults(into: defaults)
 
         blockUnknownSenders = defaults.bool(forKey: "block_unknown_senders")
         isNotificationsEnabled = defaults.bool(forKey: "notifications_enabled")

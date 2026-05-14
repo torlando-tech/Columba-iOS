@@ -35,6 +35,18 @@ struct ColumbaApp: App {
     // MARK: - Init
 
     init() {
+        // Register user-facing UserDefaults fallbacks BEFORE
+        // AppServices spins up. `AutoAnnouncePolicy.current()` reads
+        // `auto_announce_enabled` and `auto_announce_on_tcp_reconnect`
+        // via `defaults.bool(forKey:)` which silently returns `false`
+        // when the key has never been written (and the user hasn't
+        // opened Settings yet to trigger SettingsViewModel.load).
+        // Without this, a fresh install never auto-announces on TCP
+        // reconnect, so rnsd's path table loses the phone's path on
+        // every socket cycle and bot→phone DIRECT/OPP delivery silently
+        // drops. Same logic applies for the notification gating keys.
+        SettingsViewModel.registerLocalDefaults()
+
         #if os(iOS)
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: "network.columba.Columba.sync",
