@@ -30,8 +30,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// `localDestinationsKey` so inbound-frame filtering picks up the
     /// new set without restarting the tunnel.
     private static let localDestinationsChangedNotification = SharedDefaultsConstants.localDestinationsChangedNotificationName
+    /// Darwin notification observed when the host app updates the
+    /// dual-interface tunnel TCP endpoint list. Mirrors the
+    /// `configChangedNotification` pattern.
+    private static let tunnelTCPEndpointsChangedNotification = SharedDefaultsConstants.tunnelTCPEndpointsChangedNotificationName
     private static let interfacesKey = SharedDefaultsConstants.interfacesKey
     private static let localDestinationsKey = SharedDefaultsConstants.localDestinationsKey
+    private static let tunnelTCPEndpointsKey = SharedDefaultsConstants.tunnelTCPEndpointsKey
 
     // MARK: - Properties
 
@@ -185,6 +190,23 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             .deliverImmediately
         )
 
+        // Subscribe to dual-interface tunnel TCP endpoint changes —
+        // the host app writes to `tunnelTCPEndpointsKey` when it
+        // registers / deregisters its `TunnelTCPInterface`. Same
+        // diff-based reconciliation as `configChangedNotification`.
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(observer).takeUnretainedValue()
+                provider.applyConfigs()
+            },
+            Self.tunnelTCPEndpointsChangedNotification as CFString,
+            nil,
+            .deliverImmediately
+        )
+
         // Set up dummy tunnel settings (required by NEPacketTunnelProvider)
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
         settings.ipv4Settings = NEIPv4Settings(addresses: ["169.254.1.1"], subnetMasks: ["255.255.255.255"])
@@ -304,7 +326,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             currentAutoGroupId = nil
         }
 
-        // Remove both Darwin observers registered in startTunnel.
+        // Remove all Darwin observers registered in startTunnel.
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let observer = Unmanaged.passUnretained(self).toOpaque()
         CFNotificationCenterRemoveObserver(
@@ -317,6 +339,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             center,
             observer,
             CFNotificationName(Self.localDestinationsChangedNotification as CFString),
+            nil
+        )
+        CFNotificationCenterRemoveObserver(
+            center,
+            observer,
+            CFNotificationName(Self.tunnelTCPEndpointsChangedNotification as CFString),
             nil
         )
 
@@ -823,16 +851,51 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     /// Load interface configs from shared UserDefaults.
-    /// Parses the same JSON format as InterfaceRepository.
+    ///
+    /// Reads TCP endpoints from two possible keys:
+    ///
+    /// 1. **`tunnelTCPEndpointsKey`** (preferred, dual-interface
+    ///    architecture). When the host app has the new
+    ///    `TunnelTCPInterface` registered, it writes JSON
+    ///    `[{id, host, port}]` here and the extension opens a
+    ///    connection per entry. This is the path that runs in
+    ///    production after the dual-interface refactor.
+    ///
+    /// 2. **`interfacesKey`** (legacy fallback). The pre-refactor
+    ///    architecture where every enabled foreground TCP entity
+    ///    was tunneled. Used only when `tunnelTCPEndpointsKey` is
+    ///    missing or empty, so older builds + builds where the
+    ///    user hasn't enabled Background Transport keep working.
+    ///
+    /// AutoInterface config still always comes from `interfacesKey`
+    /// — it's a user-configurable interface, not a tunnel artifact.
     private func loadInterfaceConfigs(from defaults: UserDefaults) -> InterfaceConfigs {
         var result = InterfaceConfigs()
 
-        guard let data = defaults.data(forKey: Self.interfacesKey) else {
-            NSLog("[EXT] No interface configs found")
-            return result
+        // Preferred: dual-interface tunnel endpoints.
+        if let data = defaults.data(forKey: Self.tunnelTCPEndpointsKey),
+           let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+           !array.isEmpty {
+            for entry in array {
+                guard let entityId = entry["id"] as? String,
+                      let host = entry["host"] as? String,
+                      let port = entry["port"] as? Int else {
+                    continue
+                }
+                result.tcps[entityId] = (host: host, port: UInt16(port))
+                NSLog("[EXT] Found tunnel TCP endpoint [\(entityId)]: \(host):\(port)")
+            }
         }
 
-        // Parse the JSON array — we only need type + config fields
+        // Always parse `interfacesKey` — needed for AutoInterface
+        // config, and for the legacy TCP-fallback path when
+        // `tunnelTCPEndpointsKey` was absent / empty above.
+        guard let data = defaults.data(forKey: Self.interfacesKey) else {
+            if result.tcps.isEmpty {
+                NSLog("[EXT] No interface configs found")
+            }
+            return result
+        }
         guard let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             NSLog("[EXT] Failed to parse interface configs")
             return result
@@ -849,10 +912,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
             switch type {
             case "tcpClient":
+                // Legacy fallback only — skip if the dual-interface
+                // tunnel key already populated `result.tcps`.
+                guard result.tcps.isEmpty else { continue }
                 if let host = config["targetHost"] as? String,
                    let port = config["targetPort"] as? Int {
                     result.tcps[entityId] = (host: host, port: UInt16(port))
-                    NSLog("[EXT] Found TCP config [\(entityId)]: \(host):\(port)")
+                    NSLog("[EXT] Found TCP config (legacy) [\(entityId)]: \(host):\(port)")
                 }
             case "autoInterface":
                 let groupId = config["groupId"] as? String ?? "reticulum"

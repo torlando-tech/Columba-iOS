@@ -176,22 +176,21 @@ public final class AppServices {
     private var pendingTunnelDisableTask: Task<Void, Never>?
 
     /// Tracks whether `applyTunnelModeToInterfaces(active: true)` has
-    /// run. Required because `endTunnelMode()` on reticulum-swift's
-    /// TCPInterface is NOT idempotent — it unconditionally tears down
-    /// the working NWConnection and re-runs `setupTransport()` (see
-    /// TCPInterface.swift:257-269 in reticulum-swift 0.3.0). If we
-    /// fire the `active: false` path on the initial `.invalid` /
-    /// `.disconnected` state notification — which iOS emits on every
-    /// cold start before the VPN profile is loaded, even when the
-    /// user hasn't enabled Background Transport — we'd kill every
-    /// TCPInterface's connection seconds after Step 7 brings them
-    /// up, leaving sends stuck at `state=OUTBOUND` indefinitely
-    /// (reproduced as the all-4-scenarios FAIL on the smoke harness,
-    /// 2026-05-11).
-    ///
-    /// Only flip back to `active: false` if we previously flipped to
-    /// `active: true`, matching the "undo what we did" contract.
+    /// run. Dead code post-dual-interface refactor (the new
+    /// architecture doesn't flip the foreground `TCPInterface`'s
+    /// routing anymore; it registers a separate `TunnelTCPInterface`
+    /// alongside). Kept around so `applyTunnelModeToInterfaces`'s
+    /// idempotency guards still compile cleanly while the function
+    /// itself is no-longer called.
     private var isTunnelModeActive: Bool = false
+
+    /// Dual-interface tunnel TCP path. Registered with the transport
+    /// only when `TunnelManager.status` is `.connected` (the NE is
+    /// alive). Routes outbound through `TunnelManager.sendFrame(...)`
+    /// and receives inbound via `ExtensionFrameReader` frames tagged
+    /// with `TUNNEL_TCP_INTERFACE_ID`. See `TunnelTCPInterface.swift`
+    /// for the architectural rationale.
+    private var tunnelTCPInterface: TunnelTCPInterface?
 
     /// Extension frame reader for processing queued frames from the extension.
     private var extensionFrameReader: ExtensionFrameReader?
@@ -688,32 +687,24 @@ public final class AppServices {
         reader.onTCPFrameReceived = { [weak self] entityId, data in
             guard let self else { return }
             Task {
-                // Prefer the per-frame entity ID supplied by the
-                // extension (so each TCP connection's inbound routes
-                // back to the correct `TCPInterface`). Fall back to
-                // the first TCP interface for legacy single-TCP frames
-                // and finally to a synthetic id so the transport never
-                // drops the frame. `tcpInterfaces` is `@MainActor`-
-                // isolated so we read both the lookup and the fallback
-                // id in one hop to avoid two round-trips.
-                let (tcpId, transport): (String, ReticulumTransport?) = await MainActor.run {
-                    // The dict keys are the `InterfaceEntity.id`
-                    // values used to register each `TCPInterface`,
-                    // which is exactly what the transport routes
-                    // against — so we can pick the fallback id from
-                    // the keys without touching the actor-isolated
-                    // `TCPInterface.id`.
-                    let firstId = self.tcpInterfaces.keys.first
-                    if !entityId.isEmpty, self.tcpInterfaces[entityId] != nil {
-                        return (entityId, self.transport)
-                    } else if let first = firstId {
-                        return (first, self.transport)
-                    } else {
-                        return ("ext-tcp", self.transport)
-                    }
+                // Dual-interface tunnel routing: frames tagged with
+                // `TUNNEL_TCP_INTERFACE_ID` belong to the
+                // `TunnelTCPInterface` and are fed to the transport
+                // against that id so the transport's path-table and
+                // delegate plumbing treat them as inbound on the
+                // tunnel path. Frames tagged with any other entity
+                // ID came from the extension's legacy per-foreground-
+                // entity tunnels and have no destination in the new
+                // architecture — the foreground `TCPInterface`s
+                // receive inbound via their OWN `NWConnection`s, so
+                // delivering these too would double-process every
+                // packet. We drop them.
+                let transportRef = await MainActor.run { self.transport }
+                guard let transport = transportRef else { return }
+                if entityId == TUNNEL_TCP_INTERFACE_ID {
+                    await transport.handleReceivedData(data: data, from: TUNNEL_TCP_INTERFACE_ID)
                 }
-                guard let transport else { return }
-                await transport.handleReceivedData(data: data, from: tcpId)
+                // Else: drop. See doc-comment above.
             }
         }
 
@@ -732,40 +723,44 @@ public final class AppServices {
         let tunnel = TunnelManager()
         self.tunnelManager = tunnel
 
-        // Wire tunnel state -> per-interface tunnel-mode coordination.
-        // When the VPN extension reports `.connected`, switch each
-        // TCPInterface / AutoInterface into tunnel mode so its
-        // outbound traffic flows through the extension's authoritative
-        // socket instead of through a duplicate local NWConnection.
-        // When the extension goes back to `.disconnected`, restore the
-        // local NWConnection-managed path. The closure is invoked on
-        // the main actor by TunnelManager.
+        // Wire tunnel state -> dual-interface tunnel coordination.
+        //
+        // In the dual-interface model (replaces the old tunnel-mode
+        // flip), the foreground `TCPInterface`s keep owning their
+        // own `NWConnection`s and a *separate* `TunnelTCPInterface`
+        // is registered with the transport when the extension is
+        // up. The foreground stays foreground; the tunnel is its
+        // own logical path through the extension. When the host
+        // app suspends, the foreground socket dies but the tunnel
+        // socket stays alive, so rnsd can still route to us.
+        //
+        // The closure is invoked on the main actor by TunnelManager.
         tunnel.onStatusChange = { [weak self] newStatus in
             guard let self else { return }
             Task { @MainActor in
                 switch newStatus {
                 case .connected:
-                    // Cancel any pending disable — we're back up
+                    // Cancel any pending deregister — we're back up
                     // before the debounce fired.
                     self.pendingTunnelDisableTask?.cancel()
                     self.pendingTunnelDisableTask = nil
-                    await self.applyTunnelModeToInterfaces(active: true)
+                    await self.registerTunnelInterface()
                 case .disconnected, .invalid:
-                    // Debounce disable: a debug reload (extension
-                    // calls `cancelTunnelWithError`) takes the
-                    // tunnel through .disconnected for a couple of
-                    // seconds while iOS spawns the new instance.
-                    // If we tear down tunnel mode immediately, the
-                    // app's AutoInterface re-binds the multicast /
-                    // data ports while the new extension is trying
-                    // to bind them — `EADDRINUSE`. Wait a few
-                    // seconds; if status comes back to .connected
-                    // the .connected branch above cancels us.
+                    // Debounce deregister: a debug reload (extension
+                    // calls `cancelTunnelWithError`) takes the tunnel
+                    // through `.disconnected` for a couple of seconds
+                    // while iOS spawns the new instance. If we tear
+                    // the tunnel interface down immediately, the
+                    // transport might lose a freshly-learned path
+                    // entry that's still valid via the soon-to-be-
+                    // restored extension. Wait a few seconds; if
+                    // status comes back to `.connected`, the branch
+                    // above cancels us.
                     self.pendingTunnelDisableTask?.cancel()
                     self.pendingTunnelDisableTask = Task { [weak self] in
                         try? await Task.sleep(for: .seconds(5))
                         guard !Task.isCancelled else { return }
-                        await self?.applyTunnelModeToInterfaces(active: false)
+                        await self?.deregisterTunnelInterface()
                     }
                 default:
                     break
@@ -870,6 +865,177 @@ public final class AppServices {
     /// because NWConnection to a global IP relay does transmit — is
     /// the background path. That's the win for the lock-screen bug
     /// (#54).
+    // MARK: - Dual-interface tunnel registration
+
+    /// Register a `TunnelTCPInterface` with the transport when the NE
+    /// tunnel reaches `.connected`. The tunnel interface mirrors the
+    /// host/port of the first enabled foreground TCP interface — i.e.
+    /// the same rnsd — but routes its outbound packets through
+    /// `TunnelManager.sendFrame(_:interfaceTag:entityId:)` to the
+    /// extension's `NWConnection`. Inbound from the extension is
+    /// fed in via `ExtensionFrameReader`'s callback when the
+    /// `entityId` matches `TUNNEL_TCP_INTERFACE_ID`.
+    ///
+    /// Idempotent: re-registration is a no-op while the interface
+    /// is already in place. The complementary deregister method
+    /// fires on `.disconnected` / `.invalid` (debounced 5s to ride
+    /// out debug reloads).
+    @MainActor
+    private func registerTunnelInterface() async {
+        guard tunnelTCPInterface == nil else {
+            DiagLog.log("[TUNNEL] registerTunnelInterface — already registered, skipping")
+            return
+        }
+        guard let tunnel = tunnelManager else { return }
+        guard let transport = transport else {
+            DiagLog.log("[TUNNEL] registerTunnelInterface — transport not initialized yet, skipping")
+            return
+        }
+
+        // Source host/port from the first enabled foreground TCP
+        // interface — the tunnel is "another path to the same rnsd",
+        // not a different relay. If the user has no foreground TCP
+        // interface, we have no rnsd to tunnel to and skip.
+        guard let endpoint = tcpEndpoints.values.first else {
+            DiagLog.log("[TUNNEL] registerTunnelInterface — no foreground TCP endpoint to mirror, skipping")
+            return
+        }
+
+        let config = TunnelTCPInterface.makeConfig(host: endpoint.host, port: endpoint.port)
+        let iface = TunnelTCPInterface(
+            config: config,
+            sendHook: { [weak tunnel] framed in
+                await tunnel?.sendFrame(
+                    framed,
+                    interfaceTag: FrameInterfaceTag.tcp.rawValue,
+                    entityId: TUNNEL_TCP_INTERFACE_ID
+                )
+            }
+        )
+        self.tunnelTCPInterface = iface
+
+        do {
+            try await transport.addInterface(iface)
+            try await iface.connect()
+        } catch {
+            DiagLog.log("[TUNNEL] registerTunnelInterface failed: \(error)")
+            self.tunnelTCPInterface = nil
+            return
+        }
+
+        // Publish the tunnel endpoint to App Group prefs + post a
+        // Darwin notif so the extension opens its own `NWConnection`
+        // to rnsd with `entityId = TUNNEL_TCP_INTERFACE_ID`. The
+        // extension's inbound from this connection is what
+        // `ExtensionFrameReader` drains and routes back to this
+        // interface.
+        publishTunnelTCPEndpoints([(id: TUNNEL_TCP_INTERFACE_ID,
+                                    host: endpoint.host,
+                                    port: endpoint.port)])
+
+        DiagLog.log("[TUNNEL] Registered TunnelTCPInterface at \(endpoint.host):\(endpoint.port)")
+
+        // Trigger an announce so rnsd learns a path-via-tunnel. The
+        // transport's `send(packet:)` broadcasts to every registered
+        // interface, so this announce goes via the foreground
+        // TCPInterface AND the just-registered TunnelTCPInterface.
+        // BUT rnsd's path table is single-path per destination
+        // (last-write-wins), and the two announces arrive in
+        // unpredictable order. To guarantee `path = tunnel` after
+        // this method returns, follow the broadcast with a tunnel-
+        // only re-announce. The TunnelTCPInterface's announce will
+        // then arrive at rnsd most recently and the path-table
+        // update will pin to the tunnel socket. When the host app
+        // suspends and the foreground socket dies, rnsd retains
+        // the tunnel path and keeps routing to us.
+        do {
+            try await sendAllAnnounces(displayName: "Columba")
+            // Tiny delay so rnsd has processed the broadcast pass
+            // before we re-announce via the tunnel only.
+            try? await Task.sleep(for: .milliseconds(100))
+            try await sendAnnounceViaTunnel(displayName: "Columba")
+        } catch {
+            DiagLog.log("[TUNNEL] post-register announce failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Build an announce packet and ship it ONLY via the
+    /// `TunnelTCPInterface` so rnsd's path table ends up pointing
+    /// at the tunnel socket. Mirrors the encryption + ratchet logic
+    /// of `sendAnnounce(displayName:)` but skips the broadcast
+    /// `transport.send(packet:)` path in favour of a direct
+    /// `interface.send(_:)` against the tunnel interface.
+    @MainActor
+    private func sendAnnounceViaTunnel(displayName: String) async throws {
+        guard let destination = deliveryDestination else {
+            throw AppServicesError.identityNotInitialized
+        }
+        guard let tunnelIface = tunnelTCPInterface else {
+            DiagLog.log("[TUNNEL] sendAnnounceViaTunnel — no tunnel interface registered")
+            return
+        }
+
+        destination.appData = displayName.data(using: .utf8)
+
+        // Build the same announce packet shape as `sendAnnounce`.
+        var ratchetPub: Data? = nil
+        if let mgr = destination.ratchetManager {
+            await mgr.rotateIfNeeded()
+            ratchetPub = await mgr.currentRatchetPublicBytes()
+        }
+        let announce = Announce(destination: destination, ratchet: ratchetPub)
+        let packet = try announce.buildPacket()
+
+        // The TunnelTCPInterface's `send` HDLC-frames and routes
+        // straight through the extension — no transport broadcast,
+        // no other interfaces touched.
+        try await tunnelIface.send(packet.encode())
+        DiagLog.log("[TUNNEL] Sent tunnel-only announce for dest \(destination.hexHash)")
+    }
+
+    /// Tear down the tunnel `NetworkInterface` registration when the
+    /// NE tunnel drops. The foreground `TCPInterface`s are
+    /// unaffected — they keep their app-process `NWConnection`s and
+    /// continue working in foreground.
+    @MainActor
+    private func deregisterTunnelInterface() async {
+        guard let iface = tunnelTCPInterface else {
+            DiagLog.log("[TUNNEL] deregisterTunnelInterface — not registered, skipping")
+            return
+        }
+        await iface.disconnect()
+        await transport?.removeInterface(id: TUNNEL_TCP_INTERFACE_ID)
+        self.tunnelTCPInterface = nil
+
+        // Clear the App Group endpoint so the extension stops trying
+        // to open the tunnel TCP socket on its next config reload.
+        publishTunnelTCPEndpoints([])
+
+        DiagLog.log("[TUNNEL] Deregistered TunnelTCPInterface")
+    }
+
+    /// Write the dual-interface tunnel TCP endpoint list to App
+    /// Group prefs + post a Darwin notif so the extension picks up
+    /// the new config without a tunnel restart. Mirrors the existing
+    /// `localDestinationsKey` + `configChangedNotificationName`
+    /// pattern.
+    private func publishTunnelTCPEndpoints(_ endpoints: [(id: String, host: String, port: UInt16)]) {
+        let jsonArray: [[String: Any]] = endpoints.map { entry in
+            ["id": entry.id, "host": entry.host, "port": Int(entry.port)]
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: jsonArray) {
+            SharedDefaults.suite.set(data, forKey: SharedDefaultsConstants.tunnelTCPEndpointsKey)
+        } else {
+            SharedDefaults.suite.removeObject(forKey: SharedDefaultsConstants.tunnelTCPEndpointsKey)
+        }
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(SharedDefaultsConstants.tunnelTCPEndpointsChangedNotificationName as CFString),
+            nil, nil, true
+        )
+        DiagLog.log("[TUNNEL] Published \(endpoints.count) tunnel TCP endpoint(s) to App Group")
+    }
+
     @MainActor
     private func applyTunnelModeToInterfaces(active: Bool) async {
         guard let tunnel = tunnelManager else { return }
@@ -1606,19 +1772,24 @@ public final class AppServices {
             await transport.setTransportEnabled(true, identity: identity)
         }
 
-        // If the tunnel is already running by the time this TCP
-        // interface is added (race during cold start: auto-restart
-        // can fire and the tunnel can reach `.connected` before the
-        // interface-loading Tasks have populated `tcpInterfaces`),
-        // put the new interface into tunnel mode now. Without this
-        // the interface stays on its local NWConnection — works in
-        // foreground, dies when the app is suspended.
+        // Post-dual-interface refactor: foreground `TCPInterface`s
+        // are NEVER flipped into tunnel mode. They keep their
+        // app-process `NWConnection`s for as long as the host app
+        // is alive. The separate `TunnelTCPInterface` (registered
+        // by `registerTunnelInterface()` on tunnel-status
+        // .connected) carries the background-survival path. See
+        // `TunnelTCPInterface.swift` for the architectural details.
+        //
+        // If we late-added this TCP entity AFTER the tunnel was
+        // already up (cold-start race), we also need to refresh
+        // the tunnel's view — the tunnel TCP mirrors the foreground
+        // entity's host/port, so a new foreground entity changes
+        // what the tunnel should target. The simplest approach is
+        // to re-run register; it's idempotent for the same endpoint
+        // and otherwise re-publishes with the new endpoint.
         #if ENABLE_NETWORK_EXTENSION
-        if let tunnel = tunnelManager, tunnel.isRunning {
-            await newInterface.beginTunnelMode { [weak tunnel, entityId] frame in
-                await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue, entityId: entityId)
-            }
-            DiagLog.log("[TUNNEL] late-added TCP interface \(entityId) put into tunnel mode")
+        if let tunnel = tunnelManager, tunnel.isRunning, tunnelTCPInterface == nil {
+            await registerTunnelInterface()
         }
         #endif
 

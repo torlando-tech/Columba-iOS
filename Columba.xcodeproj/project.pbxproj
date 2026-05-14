@@ -112,6 +112,7 @@
 		076B /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		077B /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F077 /* TunnelManager.swift */; };
 		078B /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
+		TUNB /* TunnelTCPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = FTUN /* TunnelTCPInterface.swift */; };
 		079B /* OnboardingRestoreSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F079 /* OnboardingRestoreSheet.swift */; };
 		07AB /* PlatformCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07A /* PlatformCompat.swift */; };
 		07CB /* MicronDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07D /* MicronDocument.swift */; };
@@ -281,6 +282,7 @@
 		F076 /* SharedFrameQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedFrameQueue.swift; sourceTree = "<group>"; };
 		F077 /* TunnelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelManager.swift; sourceTree = "<group>"; };
 		F078 /* ExtensionFrameReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionFrameReader.swift; sourceTree = "<group>"; };
+		FTUN /* TunnelTCPInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelTCPInterface.swift; sourceTree = "<group>"; };
 		F079 /* OnboardingRestoreSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRestoreSheet.swift; sourceTree = "<group>"; };
 		F07A /* PlatformCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformCompat.swift; sourceTree = "<group>"; };
 		F07D /* MicronDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronDocument.swift; sourceTree = "<group>"; };
@@ -547,6 +549,7 @@
 				F074 /* SharedDefaults.swift */,
 				F077 /* TunnelManager.swift */,
 				F078 /* ExtensionFrameReader.swift */,
+				FTUN /* TunnelTCPInterface.swift */,
 				F07F /* NomadNetBrowserService.swift */,
 			);
 			path = Services;
@@ -924,6 +927,7 @@
 				076B /* SharedFrameQueue.swift in Sources */,
 				077B /* TunnelManager.swift in Sources */,
 				078B /* ExtensionFrameReader.swift in Sources */,
+				TUNB /* TunnelTCPInterface.swift in Sources */,
 				079B /* OnboardingRestoreSheet.swift in Sources */,
 				07AB /* PlatformCompat.swift in Sources */,
 				07CB /* MicronDocument.swift in Sources */,

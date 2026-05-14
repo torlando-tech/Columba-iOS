@@ -68,6 +68,35 @@ public enum SharedDefaultsConstants {
     /// mirrors the existing `configChangedNotificationName` pattern
     /// used for interface-config edits.
     public static let localDestinationsChangedNotificationName = "network.columba.localDestinationsChanged"
+
+    /// Shared UserDefaults key carrying the TCP endpoints the
+    /// `PacketTunnelProvider` should connect to for the
+    /// **dual-interface tunnel architecture**. JSON-encoded
+    /// `[{id: String, host: String, port: Int}]`. Replaces the
+    /// extension's previous reliance on the foreground app's TCP
+    /// entries in `interfacesKey`:
+    ///
+    /// In the dual-interface model, the host app's foreground
+    /// `TCPInterface` owns its own `NWConnection` in-process and is
+    /// never tunneled. The extension's `NWConnection` is a *separate*
+    /// TCP path to rnsd, registered with the transport as a
+    /// `TunnelTCPInterface`. Both interfaces send announces, but the
+    /// tunnel's announce arrives at rnsd most recently (extra
+    /// extension hop adds a few ms of latency), so rnsd's path table
+    /// last-write-wins ends up pointing at the tunnel socket. When
+    /// the host app suspends, the foreground socket dies but the
+    /// tunnel socket stays alive, and rnsd keeps routing to it.
+    ///
+    /// When this key is absent or empty, the extension falls back to
+    /// the legacy behaviour of opening connections for every enabled
+    /// TCP entry in `interfacesKey` (preserves the pre-dual-interface
+    /// multi-TCP tunnel work).
+    public static let tunnelTCPEndpointsKey = "com.columba.tunnelTCPEndpoints"
+
+    /// Darwin notification posted by the host app whenever it writes a
+    /// fresh value to `tunnelTCPEndpointsKey`. The extension re-reads
+    /// the list and reapplies its TCP connections.
+    public static let tunnelTCPEndpointsChangedNotificationName = "network.columba.tunnelTCPEndpointsChanged"
 }
 
 /// Append-only log file in the App Group container. Both the app and
