@@ -1,51 +1,6 @@
 {
-  "originHash" : "ab8e26f753ec08ec6924cbf6fd931cf46454ee4b8b8fe509d5eb37eec3ff45e0",
+  "originHash" : "e70d3525c8e2819a8b34f22909815dab5c700c25a06c32388f3930f7b3627768",
   "pins" : [
-    {
-      "identity" : "bitbytedata",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tsolomko/BitByteData",
-      "state" : {
-        "revision" : "cdcdc5177ad536cfb11b95c620f926a81014b7fe",
-        "version" : "2.0.4"
-      }
-    },
-    {
-      "identity" : "cryptoswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/krzyzanowskim/CryptoSwift.git",
-      "state" : {
-        "revision" : "f2a627b84c1ff96f21ac2fcb623ab36142dd5512",
-        "version" : "1.10.0"
-      }
-    },
-    {
-      "identity" : "grdb.swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/groue/GRDB.swift.git",
-      "state" : {
-        "revision" : "2cf6c756e1e5ef6901ebae16576a7e4e4b834622",
-        "version" : "6.29.3"
-      }
-    },
-    {
-      "identity" : "lxmf-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/torlando-tech/LXMF-swift.git",
-      "state" : {
-        "revision" : "b31a14a8fe9ab9626ce9b333d5978098910b54ea",
-        "version" : "0.3.4"
-      }
-    },
-    {
-      "identity" : "lxst-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/torlando-tech/LXST-swift.git",
-      "state" : {
-        "revision" : "f84bd720ea602ed5a1983a0f058d90b6a4174c35",
-        "version" : "0.2.0"
-      }
-    },
     {
       "identity" : "maplibre-gl-native-distribution",
       "kind" : "remoteSourceControl",
@@ -53,24 +8,6 @@
       "state" : {
         "revision" : "40e1a0db6d055abf8a1b6e2f6127a8bb6e895cf8",
         "version" : "6.25.1"
-      }
-    },
-    {
-      "identity" : "reticulum-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/torlando-tech/reticulum-swift.git",
-      "state" : {
-        "revision" : "b8ae6491d5ca62db30b097382cdf8553edda9b92",
-        "version" : "0.2.3"
-      }
-    },
-    {
-      "identity" : "swcompression",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tsolomko/SWCompression.git",
-      "state" : {
-        "revision" : "390e0b0af8dd19a600005a242a89e570ff482e09",
-        "version" : "4.8.6"
       }
     }
   ],
