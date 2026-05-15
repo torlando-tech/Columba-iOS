@@ -11,7 +11,6 @@ import PhotosUI
 import UniformTypeIdentifiers
 import LXMFSwift
 #if os(iOS)
-import LXSTSwift
 #endif
 import os.log
 #if canImport(UIKit)
@@ -51,7 +50,6 @@ struct MessagingView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var attachedImage: UIImage?
     @State private var attachedFiles: [FileAttachment] = []
-    @State private var showCodecPicker = false
     @State private var showQualityPicker = false
     @State private var pendingRawImage: UIImage?
     @State private var selectedImagePreset: SettingsViewModel.ImageQualityPreset = .high
@@ -61,7 +59,6 @@ struct MessagingView: View {
     /// `onChange(of: messages.last?.id)` and only scroll when already
     /// near the bottom.
     @State private var didInitialScroll = false
-    @State private var showCallScreen = false
     @State private var detailMessage: Message?
     @State private var deleteConfirmMessage: Message?
     @State private var showLocationConfirm = false
@@ -345,27 +342,7 @@ struct MessagingView: View {
             .presentationDetents([.height(340)])
             .presentationDragIndicator(.visible)
         }
-        #if os(iOS)
-        .sheet(isPresented: $showCodecPicker) {
-            CodecSelectionSheet { profile in
-                showCallScreen = true
-                appServices.callManager?.initiateCall(
-                    destinationHash: conversation.destinationHash,
-                    profile: profile,
-                    peerDisplayName: conversation.displayName
-                )
-            }
-        }
-        .fullScreenCover(isPresented: $showCallScreen) {
-            if let cm = appServices.callManager {
-                VoiceCallScreen(
-                    callManager: cm,
-                    peerName: conversation.peerName,
-                    destinationHash: conversation.destinationHash
-                )
-            }
-        }
-        #endif
+        // Voice / CallKit overlay removed in Phase 0 of the Python RNS migration.
         .sheet(item: $detailMessage) { message in
             MessageDetailView(
                 message: message,
@@ -480,14 +457,7 @@ struct MessagingView: View {
     private var trailingToolbar: some View {
         HStack(spacing: 16) {
             #if os(iOS)
-            // Voice call button
-            if appServices.callManager != nil {
-                Button(action: { showCodecPicker = true }) {
-                    Image(systemName: "phone.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Theme.textPrimary)
-                }
-            }
+            // Voice call button removed in Phase 0 of the Python RNS migration.
 
             // Location sharing toggle
             Button(action: {

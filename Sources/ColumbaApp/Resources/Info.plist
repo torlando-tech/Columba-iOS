@@ -39,7 +39,6 @@
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 		<string>location</string>
-		<string>voip</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

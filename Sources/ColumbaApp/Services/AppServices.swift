@@ -12,7 +12,6 @@
 import Foundation
 import LXMFSwift
 #if os(iOS)
-import LXSTSwift
 #endif
 import ReticulumSwift
 import os.log
@@ -125,10 +124,8 @@ public final class AppServices {
     #if os(iOS)
     /// Location sharing manager for telemetry exchange with peers.
     public var locationSharingManager: LocationSharingManager?
-
-    /// Call manager for LXST voice call UI integration.
-    public var callManager: CallManager?
     #endif
+    // CallManager removed in Phase 0 of the Python RNS migration; returns in v2.
 
     #if ENABLE_NETWORK_EXTENSION
     /// Network Extension tunnel manager.
@@ -402,13 +399,7 @@ public final class AppServices {
         await newRouter.setRatchetManager(newDestination.ratchetManager)
 
         #if os(iOS)
-        // 7b. Initialize call manager BEFORE interfaces so that autoAnnounce()
-        //     (triggered by onInterfaceAdded) can send the telephony announce.
-        DiagLog.log("[INIT] Step 7b: creating CallManager")
-        let cm = CallManager()
-        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
-        self.callManager = cm
-        DiagLog.log("[INIT] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
+        // Step 7b (CallManager init) removed in Phase 0 of the Python RNS migration.
         #endif
 
         // 8. Parse server address and create TCP interface (non-fatal — app works offline)
@@ -511,20 +502,7 @@ public final class AppServices {
         await newRouter.setTransport(newTransport)
         await newRouter.setRatchetManager(newDestination.ratchetManager)
 
-        #if os(iOS)
-        // 7b. Initialize call manager BEFORE interfaces so that autoAnnounce()
-        //     (triggered by onInterfaceAdded) can send the telephony announce.
-        DiagLog.log("[INIT2] Step 7b: creating CallManager")
-        let cm = CallManager()
-        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
-        self.callManager = cm
-        DiagLog.log("[INIT2] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
-        // Verify telephony destination is registered with transport
-        if let telDest = cm.telephonyDestination {
-            let isRegistered = await newTransport.isDestinationRegistered(telDest.hash)
-            DiagLog.log("[INIT2] telephony dest registered in transport: \(isRegistered)")
-        }
-        #endif
+        // Step 7b (CallManager init) removed in Phase 0 of the Python RNS migration.
 
         // 8. Parse server address and create TCP interface
         if let (host, port) = parseHostPort(tcpServerAddress) {
@@ -1124,15 +1102,7 @@ public final class AppServices {
             propManager.startPeriodicSync()
         }
 
-        #if os(iOS)
-        // Init call manager if needed (must be before interfaces so autoAnnounce
-        // can send telephony announce when onInterfaceAdded fires)
-        if callManager == nil, let transport = transport, let pt = pathTable, let db = database {
-            let cm = CallManager()
-            await cm.initialize(identity: existingIdentity, transport: transport, pathTable: pt, database: db)
-            self.callManager = cm
-        }
-        #endif
+        // CallManager init removed in Phase 0 of the Python RNS migration.
 
         // Init auto-announce manager if needed
         if autoAnnounceManager == nil {
@@ -1445,52 +1415,10 @@ public final class AppServices {
             firstError = error
         }
 
-        #if os(iOS)
-        do {
-            try await sendTelephonyAnnounce(displayName: displayName)
-        } catch {
-            DiagLog.log("[ANNOUNCE] Telephony announce failed: \(error.localizedDescription)")
-            if firstError == nil { firstError = error }
-        }
-        #endif
+        // Telephony announce removed in Phase 0 of the Python RNS migration.
 
         if let firstError { throw firstError }
     }
-
-    #if os(iOS)
-    /// Send an announce for the LXST telephony destination.
-    ///
-    /// This broadcasts the device's telephony endpoint to the network, allowing
-    /// remote peers to discover our LXST destination hash and initiate voice calls.
-    /// The display name is included as application data.
-    ///
-    /// - Parameter displayName: Display name to broadcast
-    /// - Throws: AppServicesError if transport or call manager not initialized
-    private func sendTelephonyAnnounce(displayName: String) async throws {
-        guard let transport = transport else {
-            DiagLog.log("[TELEPHONY_ANNOUNCE] Skipped: transport not connected")
-            throw AppServicesError.transportNotConnected
-        }
-
-        guard let destination = callManager?.telephonyDestination else {
-            DiagLog.log("[TELEPHONY_ANNOUNCE] Skipped: CallManager not initialized (callManager=\(callManager == nil ? "nil" : "exists"))")
-            return
-        }
-
-        // Set the display name as app data on the telephony destination
-        destination.appData = displayName.data(using: .utf8)
-        DiagLog.log("[TELEPHONY_ANNOUNCE] Sending for dest \(destination.hexHash), fullName=\(destination.fullName)")
-
-        // Build and send the announce packet (no ratchet for telephony)
-        let announce = Announce(destination: destination)
-        let packet = try announce.buildPacket()
-        let packetHex = packet.encode().prefix(32).map { String(format: "%02x", $0) }.joined()
-        DiagLog.log("[TELEPHONY_ANNOUNCE] Packet first 32 bytes: \(packetHex)")
-        try await transport.send(packet: packet)
-
-        DiagLog.log("[TELEPHONY_ANNOUNCE] Sent for dest \(destination.hexHash)")
-    }
-    #endif
 
     /// Wire transport callbacks that need app-layer context.
     private func configureTransportCallbacks(_ transport: ReticulumTransport) async {

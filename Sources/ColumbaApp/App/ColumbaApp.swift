@@ -129,8 +129,6 @@ struct RootView: View {
     @State private var isInitialized = false
     @State private var identitySwitchTrigger = UUID()
     @State private var showOnboarding: Bool
-    @State private var showIncomingCall = false
-    @State private var showActiveCallFromIncoming = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
 
@@ -177,54 +175,8 @@ struct RootView: View {
                         identitySwitchTrigger = UUID()
                     }
                 )
-                #if os(iOS)
-                .fullScreenCover(isPresented: $showIncomingCall) {
-                    if let cm = appServices.callManager {
-                        IncomingCallScreen(callManager: cm, onAnswer: {
-                            showIncomingCall = false
-                            showActiveCallFromIncoming = true
-                        })
-                    }
-                }
-                .fullScreenCover(isPresented: $showActiveCallFromIncoming) {
-                    if let cm = appServices.callManager {
-                        VoiceCallScreen(
-                            callManager: cm,
-                            peerName: cm.peerName ?? cm.peerHash ?? "Unknown",
-                            destinationHash: Data()
-                        )
-                    }
-                }
-                .onChange(of: appServices.callManager?.callState) { _, newState in
-                    guard let cm = appServices.callManager,
-                          let newState,
-                          cm.isIncoming else { return }
-                    switch newState {
-                    case .ringing:
-                        // Only present the incoming-call sheet once we know who's
-                        // calling. peerHash is populated in CallManager's ringing
-                        // callback (after LINKIDENTIFY arrives) right before the
-                        // state transitions to .ringing — so by this point peer
-                        // info is set. We deliberately do NOT trigger on
-                        // .connecting because that state is reached at link
-                        // establishment (before LINKIDENTIFY), when peerName and
-                        // peerHash are both nil — which would render as
-                        // "Unknown" until the identify signal arrives.
-                        guard cm.peerHash != nil || cm.peerName != nil else {
-                            // Defensive: if this fires, CallKit's lock-screen UI
-                            // is ringing but the in-app sheet is suppressed —
-                            // a callback-ordering regression in CallManager.
-                            logger.error("[CALL] Reached .ringing with both peerHash and peerName nil; in-app sheet suppressed but CallKit UI may still be ringing — regression in CallManager identify ordering")
-                            return
-                        }
-                        if !showIncomingCall {
-                            showIncomingCall = true
-                        }
-                    default:
-                        break
-                    }
-                }
-                #endif
+                // Voice / CallKit removed in the Python RNS migration (Phase 0).
+                // Will return in v2 once canonical Python LXST is ported to iOS audio.
             } else {
                 loadingView
             }
