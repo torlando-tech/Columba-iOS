@@ -11,6 +11,9 @@ import LXMFSwift
 import UserNotifications
 import BackgroundTasks
 import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "ColumbaApp")
 
@@ -279,6 +282,43 @@ struct RootView: View {
             #if os(iOS)
             if newPhase == .background {
                 scheduleBackgroundSync()
+                #if ENABLE_NETWORK_EXTENSION
+                // Re-announce via the NE tunnel before iOS tears
+                // down the foreground TCPInterface socket. rnsd's
+                // path table is single-path / last-write-wins
+                // (`AppServices.swift:942`); without this re-pin
+                // the path drifts to the foreground socket while
+                // the app is foregrounded and goes dead the moment
+                // we suspend, leaving the NE-owned socket healthy
+                // but unrouted. The `beginBackgroundTask` wrap
+                // gives us the brief window iOS allows to complete
+                // network I/O across the foreground→background
+                // transition (announce is a single packet write,
+                // milliseconds in the happy path).
+                if appServices.tunnelManager?.isRunning == true {
+                    Task { @MainActor in
+                        let app = UIApplication.shared
+                        var bgTask: UIBackgroundTaskIdentifier = .invalid
+                        bgTask = app.beginBackgroundTask(withName: "tunnel-reannounce") {
+                            if bgTask != .invalid {
+                                app.endBackgroundTask(bgTask)
+                                bgTask = .invalid
+                            }
+                        }
+                        guard bgTask != .invalid else { return }
+                        do {
+                            try await appServices.announceViaTunnel()
+                            DiagLog.log("[TUNNEL] background-transition re-announce sent")
+                        } catch {
+                            DiagLog.log("[TUNNEL] background re-announce failed: \(error.localizedDescription)")
+                        }
+                        if bgTask != .invalid {
+                            app.endBackgroundTask(bgTask)
+                            bgTask = .invalid
+                        }
+                    }
+                }
+                #endif
             }
             appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
             #endif

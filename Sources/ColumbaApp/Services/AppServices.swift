@@ -974,6 +974,18 @@ public final class AppServices {
         }
     }
 
+    /// Public wrapper for `sendAnnounceViaTunnel`. Callable from
+    /// outside `AppServices` — most notably the `.background`
+    /// scenePhase handler in `ColumbaApp`, which fires a tunnel-only
+    /// re-announce just before iOS tears down the foreground
+    /// `TCPInterface` socket so rnsd's last-write-wins path table
+    /// lands on the still-alive NE-owned socket. Uses the same
+    /// `"Columba"` display name as `registerTunnelInterface`.
+    @MainActor
+    public func announceViaTunnel() async throws {
+        try await sendAnnounceViaTunnel(displayName: "Columba")
+    }
+
     /// Build an announce packet and ship it ONLY via the
     /// `TunnelTCPInterface` so rnsd's path table ends up pointing
     /// at the tunnel socket. Mirrors the encryption + ratchet logic
