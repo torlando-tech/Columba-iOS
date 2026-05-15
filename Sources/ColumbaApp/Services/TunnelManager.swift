@@ -142,6 +142,14 @@ public final class TunnelManager: @unchecked Sendable {
         mgr.localizedDescription = "Columba Background Transport"
         mgr.isEnabled = true
 
+        // On-demand always-connect: lets iOS keep the tunnel up
+        // across wake/sleep, network changes, and restart it after
+        // the system tears it down under memory pressure. Without
+        // this the extension stays up only until something kills
+        // it and never recovers on its own.
+        mgr.isOnDemandEnabled = true
+        mgr.onDemandRules = [NEOnDemandRuleConnect()]
+
         try await mgr.saveToPreferences()
         try await mgr.loadFromPreferences()
 
@@ -178,8 +186,25 @@ public final class TunnelManager: @unchecked Sendable {
         // being re-saved.
         isEnabled = true
 
+        // Re-assert profile flags — handles two cases:
+        //  1. Migration: profiles installed before on-demand was
+        //     added need the rules applied on the next start.
+        //  2. Re-enable after explicit disable(): that path clears
+        //     isEnabled AND isOnDemandEnabled; both must come back.
+        var needsSave = false
         if !manager.isEnabled {
             manager.isEnabled = true
+            needsSave = true
+        }
+        if !manager.isOnDemandEnabled {
+            manager.isOnDemandEnabled = true
+            needsSave = true
+        }
+        if manager.onDemandRules?.isEmpty ?? true {
+            manager.onDemandRules = [NEOnDemandRuleConnect()]
+            needsSave = true
+        }
+        if needsSave {
             try await manager.saveToPreferences()
         }
 
@@ -220,8 +245,19 @@ public final class TunnelManager: @unchecked Sendable {
         // stuck at `true` while the profile is partially mutated.
         isEnabled = false
         manager.connection.stopVPNTunnel()
+        var needsSave = false
         if manager.isEnabled {
             manager.isEnabled = false
+            needsSave = true
+        }
+        // Clear on-demand too — otherwise iOS auto-resumes the
+        // tunnel after `stopVPNTunnel()` per the always-connect
+        // rule and the toggle silently bounces back on.
+        if manager.isOnDemandEnabled {
+            manager.isOnDemandEnabled = false
+            needsSave = true
+        }
+        if needsSave {
             try await manager.saveToPreferences()
         }
         logger.info("Tunnel disabled")

@@ -175,6 +175,22 @@ public final class AppServices {
     /// `EADDRINUSE`.
     private var pendingTunnelDisableTask: Task<Void, Never>?
 
+    /// Auto-restart state. When the tunnel transitions to
+    /// `.disconnected` after having been `.connected`, the status
+    /// observer schedules a restart via
+    /// `scheduleTunnelRestartIfNeeded()` — iOS kills the extension
+    /// under memory pressure with no warning and there's otherwise
+    /// no path back up without the user manually re-toggling.
+    /// Backoff doubles each attempt, capped at
+    /// `tunnelRestartMaxBackoffSeconds`; reset to 1s on the next
+    /// `.connected`. `tunnelHasBeenConnectedOnce` gates restart
+    /// scheduling so the initial-boot `.disconnected` firing
+    /// (before auto-start runs) doesn't race the auto-start path.
+    private var tunnelRestartTask: Task<Void, Never>?
+    private var tunnelRestartBackoffSeconds: TimeInterval = 1.0
+    private static let tunnelRestartMaxBackoffSeconds: TimeInterval = 300.0
+    private var tunnelHasBeenConnectedOnce: Bool = false
+
     /// Tracks whether `applyTunnelModeToInterfaces(active: true)` has
     /// run. Dead code post-dual-interface refactor (the new
     /// architecture doesn't flip the foreground `TCPInterface`'s
@@ -744,6 +760,12 @@ public final class AppServices {
                     // before the debounce fired.
                     self.pendingTunnelDisableTask?.cancel()
                     self.pendingTunnelDisableTask = nil
+                    // Cancel any pending restart and reset backoff —
+                    // the tunnel is up.
+                    self.tunnelRestartTask?.cancel()
+                    self.tunnelRestartTask = nil
+                    self.tunnelRestartBackoffSeconds = 1.0
+                    self.tunnelHasBeenConnectedOnce = true
                     await self.registerTunnelInterface()
                 case .disconnected, .invalid:
                     // Debounce deregister: a debug reload (extension
@@ -762,6 +784,12 @@ public final class AppServices {
                         guard !Task.isCancelled else { return }
                         await self?.deregisterTunnelInterface()
                     }
+                    // Schedule a restart if we've been `.connected`
+                    // before and the user still wants the tunnel on.
+                    // iOS can kill the extension under memory
+                    // pressure with no recovery; on-demand rules
+                    // cover some cases but not all.
+                    self.scheduleTunnelRestartIfNeeded()
                 default:
                     break
                 }
@@ -787,35 +815,22 @@ public final class AppServices {
         // VPN profile in iOS Settings.)
 
         if tunnelShouldStart && !tunnel.isRunning {
-            // Run auto-start in a detached Task so the polling wait
-            // doesn't block the rest of `initialize()` — the user can
-            // start using the app while the VPN comes up. We still
-            // observe the outcome so a persistent failure can clear
-            // the pref instead of looping silently every launch.
+            // Kick off the tunnel from the saved pref. We deliberately
+            // do NOT poll + clear-on-timeout the way an earlier
+            // version did: a transient launch failure (slow network,
+            // a brief race during install/save) shouldn't permanently
+            // disable background transport. Recovery is now carried
+            // by (a) the on-demand always-connect rule iOS enforces
+            // on the profile and (b) the status observer's
+            // `scheduleTunnelRestartIfNeeded()` path. The pref is
+            // only cleared by explicit user toggle-off.
             Task { @MainActor [weak tunnel] in
                 guard let tunnel else { return }
                 do {
                     try await tunnel.start()
                     DiagLog.log("[TUNNEL] auto-start launched from saved pref")
                 } catch {
-                    DiagLog.log("[TUNNEL] auto-start threw synchronously; clearing pref: \(error)")
-                    defaults?.set(false, forKey: SharedDefaultsConstants.tunnelEnabledKey)
-                    return
-                }
-                // `startVPNTunnel()` is fire-and-forget — async
-                // failures (airplane mode, routing, extension crash)
-                // never throw. Mirror the Settings toggle's settle
-                // window: wait up to 30s for the connection to come
-                // up; if it doesn't, clear the pref so the next
-                // launch doesn't loop the same failure.
-                let deadline = Date().addingTimeInterval(30)
-                while !tunnel.isRunning && Date() < deadline {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                }
-                if !tunnel.isRunning {
-                    let reason = await tunnel.lastFailureReason() ?? "unknown"
-                    DiagLog.log("[TUNNEL] auto-start did not reach .connected; clearing pref: \(reason)")
-                    defaults?.set(false, forKey: SharedDefaultsConstants.tunnelEnabledKey)
+                    DiagLog.log("[TUNNEL] auto-start threw: \(error.localizedDescription) — restart loop will retry")
                 }
             }
         }
@@ -1012,6 +1027,51 @@ public final class AppServices {
         publishTunnelTCPEndpoints([])
 
         DiagLog.log("[TUNNEL] Deregistered TunnelTCPInterface")
+    }
+
+    /// Schedule a tunnel restart after a `.disconnected` transition.
+    ///
+    /// Gated on (a) having been `.connected` at least once this
+    /// session — so the initial-boot `.disconnected` firing doesn't
+    /// race the auto-start path — and (b) the user's
+    /// `tunnelEnabledKey` pref still being true (so an explicit
+    /// toggle-off doesn't get fought). Backoff doubles each attempt
+    /// and is capped at `tunnelRestartMaxBackoffSeconds`; it resets
+    /// when the tunnel next reaches `.connected`.
+    ///
+    /// On-demand always-connect (set in `TunnelManager.install()`)
+    /// covers many restart cases for free, but iOS doesn't always
+    /// re-fire on-demand promptly — this loop is the belt to that
+    /// suspenders.
+    @MainActor
+    private func scheduleTunnelRestartIfNeeded() {
+        guard tunnelHasBeenConnectedOnce else { return }
+        let defaults = UserDefaults(suiteName: appGroupIdentifier)
+        guard defaults?.bool(forKey: SharedDefaultsConstants.tunnelEnabledKey) == true else {
+            return
+        }
+        tunnelRestartTask?.cancel()
+        let delay = tunnelRestartBackoffSeconds
+        tunnelRestartBackoffSeconds = min(delay * 2, Self.tunnelRestartMaxBackoffSeconds)
+        tunnelRestartTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            // Re-check pref in case the user toggled off during the wait.
+            guard let mgr = self.tunnelManager,
+                  UserDefaults(suiteName: appGroupIdentifier)?
+                    .bool(forKey: SharedDefaultsConstants.tunnelEnabledKey) == true
+            else { return }
+            DiagLog.log("[TUNNEL] auto-restart after .disconnected (backoff \(delay)s)")
+            do {
+                try await mgr.start()
+            } catch {
+                DiagLog.log("[TUNNEL] auto-restart start() threw: \(error.localizedDescription)")
+                // start() never reached the system, so the status
+                // observer won't re-fire on its own — schedule another
+                // attempt explicitly.
+                self.scheduleTunnelRestartIfNeeded()
+            }
+        }
     }
 
     /// Write the dual-interface tunnel TCP endpoint list to App
