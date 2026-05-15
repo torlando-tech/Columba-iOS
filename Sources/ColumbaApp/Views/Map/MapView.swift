@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import LXMFSwift
 #if os(iOS)
 import CoreLocation
 #endif

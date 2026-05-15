@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  CompletePage.swift
 //  ColumbaApp
@@ -205,3 +206,4 @@ struct CompletePage: View {
         return context.createCGImage(scaled, from: scaled.extent)
     }
 }
+#endif

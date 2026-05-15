@@ -8,8 +8,6 @@
 
 import SwiftUI
 import Observation
-import LXMFSwift
-import ReticulumSwift
 import os.log
 
 /// ViewModel for the messaging screen.

@@ -7,8 +7,6 @@
 //
 
 import Foundation
-import LXMFSwift
-import ReticulumSwift
 import UserNotifications
 import os.log
 

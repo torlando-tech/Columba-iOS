@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  FrequencySlotStep.swift
 //  ColumbaApp
@@ -248,3 +249,4 @@ struct FrequencySlotStep: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
     }
 }
+#endif

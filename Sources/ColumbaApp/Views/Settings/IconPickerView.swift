@@ -7,7 +7,6 @@
 //
 
 import SwiftUI
-import LXMFSwift
 
 /// Icon picker sheet for choosing an MDI profile icon.
 ///

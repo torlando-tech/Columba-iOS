@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  RNodeConfigSheet.swift
 //  ColumbaApp
@@ -304,3 +305,4 @@ struct RNodeConfigSheet: View {
         }
     }
 }
+#endif

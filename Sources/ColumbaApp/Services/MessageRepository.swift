@@ -7,7 +7,6 @@
 //
 
 import Foundation
-import LXMFSwift
 
 /// Actor for thread-safe message database operations.
 ///

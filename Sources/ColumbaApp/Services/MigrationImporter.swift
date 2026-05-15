@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  MigrationImporter.swift
 //  ColumbaApp
@@ -7,8 +8,6 @@
 //
 
 import Foundation
-import ReticulumSwift
-import LXMFSwift
 import os.log
 
 /// Imports data from an encrypted .columba backup file.
@@ -362,3 +361,4 @@ actor MigrationImporter {
 }
 
 // Note: Data(hexString:) extension is defined in PropagationNodeManager.swift
+#endif

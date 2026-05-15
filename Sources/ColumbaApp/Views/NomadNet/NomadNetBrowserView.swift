@@ -1,5 +1,5 @@
+#if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
-import ReticulumSwift
 
 /// Main browser view for browsing NomadNet node pages.
 @available(iOS 17.0, macOS 14.0, *)
@@ -169,3 +169,4 @@ struct NomadNetBrowserView: View {
         }
     }
 }
+#endif

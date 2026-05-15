@@ -1,6 +1,6 @@
+#if COLUMBA_NOMADNET_ENABLED
 import Foundation
 import SwiftUI
-import ReticulumSwift
 
 /// Rendering mode for NomadNet pages.
 public enum NomadNetRenderingMode: String, Sendable, CaseIterable {
@@ -445,3 +445,4 @@ public final class NomadNetBrowserViewModel {
     }
 }
 
+#endif

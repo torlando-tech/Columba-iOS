@@ -10,10 +10,8 @@
 //
 
 import Foundation
-import LXMFSwift
 #if os(iOS)
 #endif
-import ReticulumSwift
 import os.log
 
 /// Simple file logger for diagnostics when idevicesyslog isn't available (WiFi-only device).

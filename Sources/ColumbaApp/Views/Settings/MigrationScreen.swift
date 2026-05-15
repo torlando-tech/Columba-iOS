@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  MigrationScreen.swift
 //  ColumbaApp
@@ -626,3 +627,4 @@ struct ColumbaBackupDocument: FileDocument {
         FileWrapper(regularFileWithContents: data)
     }
 }
+#endif

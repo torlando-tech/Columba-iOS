@@ -1,5 +1,5 @@
+#if COLUMBA_NOMADNET_ENABLED
 import Foundation
-import ReticulumSwift
 import os.log
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "NomadNetBrowser")
@@ -379,3 +379,4 @@ private extension Data {
         map { String(format: "%02x", $0) }.joined()
     }
 }
+#endif

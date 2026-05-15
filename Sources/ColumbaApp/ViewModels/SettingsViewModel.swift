@@ -8,7 +8,6 @@
 
 import Foundation
 import Observation
-import LXMFSwift
 #if canImport(UIKit)
 import UIKit
 #endif

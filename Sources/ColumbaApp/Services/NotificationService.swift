@@ -8,7 +8,6 @@
 
 import Foundation
 import UserNotifications
-import LXMFSwift
 
 /// Manages local push notifications for incoming messages.
 ///

@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  MigrationExporter.swift
 //  ColumbaApp
@@ -7,8 +8,6 @@
 //
 
 import Foundation
-import ReticulumSwift
-import LXMFSwift
 import os.log
 
 /// Exports all app data into an encrypted .columba backup file.
@@ -244,3 +243,4 @@ actor MigrationExporter {
         return tempURL
     }
 }
+#endif

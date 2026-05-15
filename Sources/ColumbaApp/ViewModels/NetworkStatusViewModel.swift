@@ -8,7 +8,6 @@
 
 import Foundation
 import SwiftUI
-import ReticulumSwift
 
 // MARK: - Interface Info
 

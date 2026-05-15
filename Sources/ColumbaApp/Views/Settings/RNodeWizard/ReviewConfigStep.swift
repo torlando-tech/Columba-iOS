@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  ReviewConfigStep.swift
 //  ColumbaApp
@@ -227,3 +228,4 @@ struct ReviewConfigStep: View {
         }
     }
 }
+#endif

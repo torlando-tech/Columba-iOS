@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  OnboardingRestoreSheet.swift
 //  ColumbaApp
@@ -267,3 +268,4 @@ struct OnboardingRestoreSheet: View {
         .padding(.horizontal, 16)
     }
 }
+#endif

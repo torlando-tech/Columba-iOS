@@ -7,7 +7,6 @@
 //
 
 import SwiftUI
-import LXMFSwift
 import os.log
 #if canImport(UIKit)
 import UIKit

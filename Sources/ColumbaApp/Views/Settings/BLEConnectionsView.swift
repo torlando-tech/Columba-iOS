@@ -7,7 +7,6 @@
 //
 
 import SwiftUI
-import ReticulumSwift
 
 // MARK: - BLE Connections View
 

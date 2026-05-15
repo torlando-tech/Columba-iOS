@@ -1,3 +1,4 @@
+#if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
 
 // MARK: - Document
@@ -159,3 +160,4 @@ extension MicronTextStyle {
         )
     }
 }
+#endif

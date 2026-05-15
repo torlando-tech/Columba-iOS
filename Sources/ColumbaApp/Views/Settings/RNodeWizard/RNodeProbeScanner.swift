@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  RNodeProbeScanner.swift
 //  ColumbaApp
@@ -12,7 +13,6 @@
 import Foundation
 import CoreBluetooth
 import os
-import ReticulumSwift
 
 /// Lightweight BLE scanner for the RNode configuration wizard.
 ///
@@ -522,4 +522,5 @@ extension RNodeProbeScanner: CBPeripheralDelegate {
     }
 }
 
+#endif
 #endif

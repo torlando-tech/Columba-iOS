@@ -1,3 +1,4 @@
+#if COLUMBA_BLE_ENABLED
 //
 //  BLEDevicePickerSheet.swift
 //  ColumbaApp
@@ -9,7 +10,6 @@
 #if canImport(CoreBluetooth)
 import SwiftUI
 import CoreBluetooth
-import ReticulumSwift
 
 // MARK: - Discovered Device
 
@@ -351,4 +351,5 @@ struct BLEDevicePickerSheet: View {
     }
 }
 
+#endif
 #endif

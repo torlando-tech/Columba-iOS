@@ -8,8 +8,6 @@
 
 import Foundation
 import Observation
-import LXMFSwift
-import ReticulumSwift
 import os.log
 
 // MARK: - Propagation Node Model

@@ -53,9 +53,25 @@ DELETED_PATHS = %w[
 
 deleted_basenames = DELETED_PATHS.map { |p| File.basename(p) }
 
+# General garbage-collect: nuke any file ref whose target no longer exists on
+# disk (covers files moved/renamed/deleted outside Phase 0). Skip the
+# xcframework + the `app` folder ref + anything outside the repo root.
+project_root = File.expand_path('..', __dir__)
+
 removed = []
 project.files.dup.each do |f|
-  next unless deleted_basenames.include?(File.basename(f.path.to_s))
+  basename = File.basename(f.path.to_s)
+  abs = f.real_path.to_s rescue ''
+  is_dead =
+    deleted_basenames.include?(basename) ||
+    (
+      !abs.empty? &&
+      abs.start_with?(project_root) &&
+      f.path != 'Frameworks/Python.xcframework' &&
+      f.path != 'app' &&
+      !File.exist?(abs)
+    )
+  next unless is_dead
   # Detach from all build phases first.
   [app_target, test_target].compact.each do |t|
     t.build_phases.each do |phase|
@@ -66,7 +82,7 @@ project.files.dup.each do |f|
   removed << f.path
   f.remove_from_project
 end
-puts "  Removed #{removed.size} dead file refs: #{removed.join(', ')}" unless removed.empty?
+puts "  Removed #{removed.size} dead file refs" unless removed.empty?
 
 # ──────────────────────────────────────────────────────────────────────────
 # (2) Drop SwiftPM remote refs for reticulum-swift / LXMF-swift / LXST-swift.
@@ -106,14 +122,25 @@ end
 # (3) Add new Sources/ColumbaApp/Python/ files to Sources build phase.
 # ──────────────────────────────────────────────────────────────────────────
 
-NEW_SWIFT = %w[
-  Sources/ColumbaApp/Python/PythonRuntime.swift
-  Sources/ColumbaApp/Python/PythonBridge.swift
-  Sources/ColumbaApp/Python/Models/PyAnnounce.swift
-  Sources/ColumbaApp/Python/Models/PyMessage.swift
-  Sources/ColumbaApp/Python/Models/PyConversation.swift
-  Sources/ColumbaApp/Python/Models/PyLocalIdentity.swift
-].freeze
+# Auto-discover all .swift sources under the new Sources/{PythonBridge,RNSAPI,RNSBackendPy}/
+# trees. These are SwiftPM library targets per Package.swift, but the Xcode
+# build of ColumbaApp.app pulls them in as plain sources of the ColumbaApp
+# target (because Xcode's app target isn't SwiftPM-based and adding them as
+# SPM products would require a much larger pbxproj surgery). The Package.swift
+# split is preserved for tooling (`swift build`, lint, code search) and for
+# when we eventually move ColumbaApp onto SwiftPM.
+project_root = File.expand_path('..', __dir__)
+NEW_SWIFT = (
+  Dir.glob("#{project_root}/Sources/PythonBridge/**/*.swift") +
+  Dir.glob("#{project_root}/Sources/RNSAPI/**/*.swift") +
+  Dir.glob("#{project_root}/Sources/RNSBackendPy/**/*.swift") +
+  %w[
+    Sources/ColumbaApp/Python/Models/PyAnnounce.swift
+    Sources/ColumbaApp/Python/Models/PyMessage.swift
+    Sources/ColumbaApp/Python/Models/PyConversation.swift
+    Sources/ColumbaApp/Python/Models/PyLocalIdentity.swift
+  ].map { |p| File.expand_path(p, project_root) }
+).uniq.map { |p| p.sub("#{project_root}/", '') }.sort.freeze
 
 # Place under a "Python" group inside the existing ColumbaApp group. The
 # hand-written pbxproj attaches the ColumbaApp group (SRCS) directly to
@@ -124,34 +151,72 @@ columba_group = project.main_group.children.find do |g|
 end
 abort "Could not locate Sources/ColumbaApp group in main_group" unless columba_group
 
-python_group = columba_group.children.find { |g| g.respond_to?(:name) && g.name == 'Python' }
-unless python_group
-  python_group = columba_group.new_group('Python')
-  python_group.set_source_tree('<group>')
+# Find or create top-level groups for the new SwiftPM-style targets so the
+# Xcode navigator shows them outside the ColumbaApp/ tree.
+def find_or_create_top_group(project, name)
+  existing = project.main_group.children.find do |g|
+    g.is_a?(Xcodeproj::Project::Object::PBXGroup) &&
+      (g.name == name || g.path == "Sources/#{name}")
+  end
+  return existing if existing
+  group = project.main_group.new_group(name, "Sources/#{name}")
+  group.set_source_tree('<group>')
+  group
 end
-models_group = python_group.children.find { |g| g.respond_to?(:name) && g.name == 'Models' }
-unless models_group
-  models_group = python_group.new_group('Models')
-  models_group.set_source_tree('<group>')
-end
+
+python_bridge_group = find_or_create_top_group(project, 'PythonBridge')
+rns_api_group       = find_or_create_top_group(project, 'RNSAPI')
+rns_backend_py_group = find_or_create_top_group(project, 'RNSBackendPy')
+
+# Old ColumbaApp/Python/Models — kept for now; PyAnnounce etc. will collapse
+# into RNSAPI/Models in a later commit.
+columba_python_group = columba_group.children.find { |g| g.respond_to?(:name) && g.name == 'Python' } ||
+                       columba_group.new_group('Python').tap { |g| g.set_source_tree('<group>') }
+columba_python_models_group = columba_python_group.children.find { |g| g.respond_to?(:name) && g.name == 'Models' } ||
+                              columba_python_group.new_group('Models').tap { |g| g.set_source_tree('<group>') }
 
 existing_paths = app_target.source_build_phase.files.map { |bf| bf.file_ref&.real_path&.to_s }
 
 NEW_SWIFT.each do |rel|
   full = File.expand_path(rel, File.dirname(PROJECT_PATH))
   next if existing_paths.include?(full)
-  group = rel.include?('/Models/') ? models_group : python_group
+  group =
+    if rel.start_with?('Sources/PythonBridge/')
+      python_bridge_group
+    elsif rel.start_with?('Sources/RNSAPI/')
+      # nest under Protocols/Models/Util subgroups for navigability
+      sub_name = rel.split('/')[2]   # "Protocols" | "Models" | "Util"
+      next_group = rns_api_group.children.find { |g| g.respond_to?(:name) && g.name == sub_name } ||
+                   rns_api_group.new_group(sub_name).tap { |g| g.set_source_tree('<group>') }
+      next_group
+    elsif rel.start_with?('Sources/RNSBackendPy/')
+      rns_backend_py_group
+    elsif rel.include?('/ColumbaApp/Python/Models/')
+      columba_python_models_group
+    elsif rel.include?('/ColumbaApp/Python/')
+      columba_python_group
+    else
+      columba_group
+    end
   ref = group.new_file(full)
   app_target.source_build_phase.add_file_reference(ref)
   puts "  Added source: #{rel}"
 end
 
-# Bridging header — file ref only, no build phase membership.
-bridging_path = 'Sources/ColumbaApp/Python/ColumbaPython-Bridging-Header.h'
+# Bridging header — file ref only, no build phase membership. Moved from
+# ColumbaApp/Python/ to PythonBridge/ — register at the new location.
+bridging_path = 'Sources/PythonBridge/ColumbaPython-Bridging-Header.h'
 bridging_full = File.expand_path(bridging_path, File.dirname(PROJECT_PATH))
-unless python_group.files.any? { |f| f.real_path.to_s == bridging_full }
-  python_group.new_file(bridging_full)
+unless python_bridge_group.files.any? { |f| f.real_path.to_s == bridging_full }
+  python_bridge_group.new_file(bridging_full)
   puts "  Added bridging header: #{bridging_path}"
+end
+
+# Update SWIFT_OBJC_BRIDGING_HEADER path to the new location.
+app_target.build_configurations.each do |config|
+  if config.build_settings['SWIFT_OBJC_BRIDGING_HEADER']&.include?('ColumbaApp/Python/')
+    config.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = bridging_path
+  end
 end
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -252,7 +317,7 @@ end
 # (7) Build settings: bridging header, EXCLUDED_ARCHS, ONLY_ACTIVE_ARCH.
 # ──────────────────────────────────────────────────────────────────────────
 
-bridging_relative = 'Sources/ColumbaApp/Python/ColumbaPython-Bridging-Header.h'
+bridging_relative = 'Sources/PythonBridge/ColumbaPython-Bridging-Header.h'
 app_target.build_configurations.each do |config|
   config.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = bridging_relative
   config.build_settings['CLANG_ENABLE_MODULES'] = 'YES'

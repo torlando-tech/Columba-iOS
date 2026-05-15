@@ -1,5 +1,4 @@
 import Foundation
-import RNSAPI
 
 /// Phase 1c skeleton: the root `RNSBackend` implementation that wraps the
 /// canonical Mark Qvist Python RNS + LXMF embedded via BeeWare's

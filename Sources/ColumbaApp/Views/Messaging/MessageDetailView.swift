@@ -7,7 +7,6 @@
 //
 
 import SwiftUI
-import ReticulumSwift
 
 /// Message detail screen showing delivery metadata in card-based layout.
 ///

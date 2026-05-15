@@ -7,7 +7,6 @@
 //
 
 import SwiftUI
-import LXMFSwift
 
 /// Main tab-based navigation container.
 ///

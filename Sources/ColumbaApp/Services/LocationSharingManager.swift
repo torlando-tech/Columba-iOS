@@ -1,3 +1,4 @@
+#if COLUMBA_LOCATION_ENABLED
 //
 //  LocationSharingManager.swift
 //  ColumbaApp
@@ -9,8 +10,6 @@
 
 import Foundation
 import CoreLocation
-import LXMFSwift
-import ReticulumSwift
 import os.log
 #if canImport(UIKit)
 import UIKit
@@ -586,3 +585,4 @@ extension LocationSharingManager: CLLocationManagerDelegate {
     }
 }
 
+#endif

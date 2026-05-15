@@ -7,8 +7,6 @@
 //
 
 import Foundation
-import ReticulumSwift
-import LXMFSwift
 import os.log
 
 /// Manages multiple local identities with per-identity Keychain storage and databases.

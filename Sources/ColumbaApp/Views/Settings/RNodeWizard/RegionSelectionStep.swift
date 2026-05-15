@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  RegionSelectionStep.swift
 //  ColumbaApp
@@ -243,3 +244,4 @@ struct RegionSelectionStep: View {
         }
     }
 }
+#endif

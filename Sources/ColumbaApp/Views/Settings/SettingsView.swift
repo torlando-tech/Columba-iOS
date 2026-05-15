@@ -7,7 +7,6 @@
 //
 
 import SwiftUI
-import LXMFSwift
 
 /// Main settings screen view.
 ///

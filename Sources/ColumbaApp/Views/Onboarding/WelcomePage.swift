@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  WelcomePage.swift
 //  ColumbaApp
@@ -112,3 +113,4 @@ struct WelcomePage: View {
         }
     }
 }
+#endif

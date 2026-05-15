@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  ConnectivityPage.swift
 //  ColumbaApp
@@ -358,3 +359,4 @@ private class LocalNetworkPermissionProbe {
         browser?.start(queue: .main)
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if COLUMBA_NOMADNET_ENABLED
 import Foundation
 
 /// Parses micron markup text into a structured MicronDocument.
@@ -537,3 +538,4 @@ public struct MicronParser {
         return .samePage(path: trimmed)
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  MigrationData.swift
 //  ColumbaApp
@@ -251,3 +252,4 @@ struct ImportResult {
     let interfacesImported: Int
     let settingsImported: Int
 }
+#endif

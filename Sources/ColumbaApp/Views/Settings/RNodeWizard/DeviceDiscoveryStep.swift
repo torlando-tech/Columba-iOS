@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  DeviceDiscoveryStep.swift
 //  ColumbaApp
@@ -9,7 +10,6 @@
 #if canImport(CoreBluetooth)
 import SwiftUI
 import CoreBluetooth
-import ReticulumSwift
 
 /// Step 1: Scan for and select an RNode BLE device.
 @available(iOS 17.0, macOS 14.0, *)
@@ -468,4 +468,5 @@ struct DeviceDiscoveryStep: View {
     }
 }
 
+#endif
 #endif

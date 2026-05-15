@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  IdentityPage.swift
 //  ColumbaApp
@@ -92,3 +93,4 @@ struct IdentityPage: View {
         .onTapGesture { isNameFocused = false }
     }
 }
+#endif

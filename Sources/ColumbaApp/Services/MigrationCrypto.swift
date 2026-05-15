@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  MigrationCrypto.swift
 //  ColumbaApp
@@ -212,3 +213,4 @@ enum MigrationCrypto {
         return derivedKey
     }
 }
+#endif

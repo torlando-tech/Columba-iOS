@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  ModemPresetStep.swift
 //  ColumbaApp
@@ -128,3 +129,4 @@ struct ModemPresetStep: View {
         .frame(width: 28, height: 24, alignment: .bottom)
     }
 }
+#endif

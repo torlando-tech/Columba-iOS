@@ -7,7 +7,6 @@
 //
 
 import SwiftUI
-import LXMFSwift
 import UserNotifications
 import BackgroundTasks
 import os

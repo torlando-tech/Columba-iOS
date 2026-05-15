@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  RNodeWizardView.swift
 //  ColumbaApp
@@ -158,3 +159,4 @@ struct RNodeWizardView: View {
         viewModel.saveInterface()
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  PermissionsPage.swift
 //  ColumbaApp
@@ -138,3 +139,4 @@ struct PermissionsPage: View {
         }
     }
 }
+#endif

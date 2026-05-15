@@ -9,7 +9,6 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
-import LXMFSwift
 #if os(iOS)
 #endif
 import os.log

@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  OnboardingView.swift
 //  ColumbaApp
@@ -144,3 +145,4 @@ struct OnboardingView: View {
         }
     }
 }
+#endif

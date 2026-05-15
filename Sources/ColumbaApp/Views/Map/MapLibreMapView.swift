@@ -9,7 +9,6 @@
 #if os(iOS)
 import SwiftUI
 import MapLibre
-import LXMFSwift
 
 @available(iOS 17.0, *)
 struct MapLibreMapView: UIViewRepresentable {

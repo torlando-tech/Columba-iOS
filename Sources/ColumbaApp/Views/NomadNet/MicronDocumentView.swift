@@ -1,3 +1,4 @@
+#if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
 
 /// Renders a parsed MicronDocument as SwiftUI views.
@@ -364,3 +365,4 @@ struct MicronSpansText: View {
         return piece
     }
 }
+#endif
