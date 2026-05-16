@@ -11,6 +11,7 @@
 
 import Foundation
 import RNSAPI
+import LXSTSwift
 import CryptoKit
 #if os(iOS)
 #endif
@@ -694,6 +695,60 @@ public final class AppServices {
                 DiagLog.log("[TEST-RESTART] invoking restartPythonBackend")
                 await self.restartPythonBackend()
                 DiagLog.log("[TEST-RESTART] done")
+            }
+        }
+
+        // lxma://test-answer — accept the currently-ringing call.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestAnswer"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                #if os(iOS)
+                guard let callManager = self.callManager else {
+                    DiagLog.log("[TEST-ANSWER] no callManager")
+                    return
+                }
+                DiagLog.log("[TEST-ANSWER] calling answerCall()")
+                callManager.answerCall()
+                #endif
+            }
+        }
+
+        // lxma://test-call?to=HEX[&profile=...] — exercise the full call
+        // pipeline: CallManager.initiateCall → Telephone.call →
+        // Compat.Link.sendBytes → PythonRNSBackend.linkSend.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestCall"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            let to = (note.userInfo?["to"] as? String) ?? ""
+            let profileRaw = (note.userInfo?["profile"] as? String) ?? ""
+            Task { @MainActor in
+                #if os(iOS)
+                guard let callManager = self.callManager else {
+                    DiagLog.log("[TEST-CALL] no callManager")
+                    return
+                }
+                guard let destHash = try? to.hexToData() else {
+                    DiagLog.log("[TEST-CALL] bad to= hex")
+                    return
+                }
+                // Pick profile: default to qualityMedium if not specified or
+                // unrecognized; parse rawValue if present.
+                var profile: TelephonyProfile = .qualityMedium
+                if !profileRaw.isEmpty, let parsed = TelephonyProfile.allCases.first(where: { "\($0)" == profileRaw }) {
+                    profile = parsed
+                }
+                DiagLog.log("[TEST-CALL] initiating to=\(destHash.toHex().prefix(8)) profile=\(profile)")
+                callManager.initiateCall(destinationHash: destHash, profile: profile, peerDisplayName: nil)
+                #else
+                DiagLog.log("[TEST-CALL] CallManager only available on iOS")
+                #endif
             }
         }
 
@@ -2126,7 +2181,17 @@ public final class AppServices {
             firstError = error
         }
 
-        // Telephony announce removed in Phase 0 of the Python RNS migration.
+        #if os(iOS)
+        if let backend = pythonBackend {
+            do {
+                let ok = try await backend.announceTelephony(displayName: displayName)
+                DiagLog.log("[ANNOUNCE] Telephony announce \(ok ? "sent" : "skipped")")
+            } catch {
+                DiagLog.log("[ANNOUNCE] Telephony announce failed: \(error.localizedDescription)")
+                if firstError == nil { firstError = error }
+            }
+        }
+        #endif
 
         if let firstError { throw firstError }
     }
@@ -2192,6 +2257,9 @@ public final class AppServices {
         link.sendBytesHook = { data in
             _ = try? await backendRef.linkSend(linkId: Int(linkIdRaw), data: data)
         }
+        link.identifyHook = {
+            try? await backendRef.linkIdentify(linkId: Int(linkIdRaw))
+        }
         activeLinksByLinkId[linkIdRaw] = link
         DiagLog.log("[TEL_BRIDGE] opened outbound link \(linkIdRaw) → \(destHex.prefix(8))")
         return link
@@ -2229,6 +2297,9 @@ public final class AppServices {
             let backendRef = backend
             link.sendBytesHook = { data in
                 _ = try? await backendRef.linkSend(linkId: Int(linkId), data: data)
+            }
+            link.identifyHook = {
+                try? await backendRef.linkIdentify(linkId: Int(linkId))
             }
         }
         activeLinksByLinkId[linkId] = link

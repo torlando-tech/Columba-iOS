@@ -330,10 +330,21 @@ public final class PythonBridge: @unchecked Sendable {
     /// Re-broadcast the LXMF delivery destination's announce with the
     /// given display name. Returns true on success.
     public func announce(displayName: String) async throws -> Bool {
+        try await callAnnounce(functionName: "announce", displayName: displayName)
+    }
+
+    /// Re-broadcast the LXST telephony destination's announce so peers can
+    /// discover us for voice calls. Returns true on success.
+    public func announceTelephony(displayName: String) async throws -> Bool {
+        try await callAnnounce(functionName: "announce_telephony", displayName: displayName)
+    }
+
+    /// Shared CPython call shape for the two announce variants.
+    private func callAnnounce(functionName: String, displayName: String) async throws -> Bool {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 guard let module = self.module else { return false }
-                guard let fn = PyObject_GetAttrString(module, "announce") else {
+                guard let fn = PyObject_GetAttrString(module, functionName) else {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }

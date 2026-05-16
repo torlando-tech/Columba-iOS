@@ -101,6 +101,14 @@ public final class PythonRNSBackend: @unchecked Sendable {
         try await bridge.announce(displayName: displayName)
     }
 
+    /// Push a fresh LXST telephony announce with the given display name —
+    /// peers learn our voice-call destination from this. Driven by the
+    /// same Settings/Auto-announce paths as `announce(...)`.
+    @discardableResult
+    public func announceTelephony(displayName: String) async throws -> Bool {
+        try await bridge.announceTelephony(displayName: displayName)
+    }
+
     // MARK: - RNS.Link operations (voice / future Link-based protocols)
     //
     // The Swift LXST state machine (lxst-swift Telephone actor) drives

@@ -529,6 +529,21 @@ public final class CallManager {
                 }
             }
             #endif
+            // Sim-to-sim smoke-test escape hatch: when the
+            // `COLUMBA_AUTO_ANSWER=1` env var is set, auto-answer the
+            // incoming call as soon as the caller is verified, so the
+            // commit-5 audio round-trip test can drive past RINGING
+            // without needing the simulator window to be foregrounded
+            // (sim2 is usually backgrounded behind sim1 during the test,
+            // and `simctl openurl` only delivers URLs to the frontmost
+            // simulator).
+            if ProcessInfo.processInfo.environment["COLUMBA_AUTO_ANSWER"] == "1" {
+                self.logger.error("[CALL] COLUMBA_AUTO_ANSWER=1 — auto-answering")
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .milliseconds(200))
+                    self?.answerCall()
+                }
+            }
         } else {
             // Outgoing call: report connecting state to CallKit
             #if os(iOS)

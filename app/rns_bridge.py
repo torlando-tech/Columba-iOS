@@ -627,6 +627,35 @@ def announce(display_name: str = "") -> dict[str, Any]:
         return {"ok": True, "reason": "ok"}
 
 
+def announce_telephony(display_name: str = "") -> dict[str, Any]:
+    """Re-broadcast the LXST telephony destination's announce so peers can
+    discover us for voice calls. Mirrors `announce()` but targets the
+    `_telephony_destination` instead of the LXMF delivery destination.
+
+    The app data is the raw UTF-8 display name (no msgpack wrapper) — the
+    AnnounceHandler on the Swift side decodes it as a plain string for the
+    Network tab. Matches what Sideband / canonical LXST do."""
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "reason": "not-started"}
+        destination = _telephony_destination
+        if destination is None:
+            return {"ok": False, "reason": "no-telephony-destination"}
+
+        try:
+            destination.set_default_app_data(
+                display_name.encode("utf-8", errors="replace")
+            )
+        except Exception as e:
+            return {"ok": False, "reason": f"appdata-error: {e}"}
+
+        try:
+            destination.announce()
+        except Exception as e:
+            return {"ok": False, "reason": f"announce-error: {e}"}
+        return {"ok": True, "reason": "ok"}
+
+
 def stop() -> None:
     with _lock:
         if not _state["started"]:

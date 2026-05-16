@@ -346,12 +346,25 @@ public final class Link: @unchecked Sendable {
     /// the Link is wired; nil until then.
     public var sendBytesHook: (@Sendable (Data) async throws -> Void)?
 
+    /// Hook installed by AppServices that forwards a LINKIDENTIFY request
+    /// to the Python RNS.Link via `PythonRNSBackend.linkIdentify(linkId:)`.
+    /// Telephone calls Link.identify(identity:) after receiving AVAILABLE
+    /// on an outbound call; that has to translate into the Python-side
+    /// `link.identify(identity)` call so the remote peer learns our
+    /// identity and can apply its caller-allowed filter.
+    public var identifyHook: (@Sendable () async throws -> Void)?
+
     /// Hooks installed by lxst-swift via `setCloseCallback` /
     /// `setIdentifyCallbacks` — invoked by AppServices when the corresponding
     /// Python events fire (link_state(closed) → closeCallback;
     /// link_identified → identifyCallbacks.remoteIdentified).
     public var closeCallback: (@Sendable (TeardownReason) async -> Void)?
-    public weak var identifyCallbacks: (any IdentifyCallbacks)?
+    /// Strong reference to the identify handler. lxst-swift's Telephone
+    /// creates a `TelephoneIdentifyHandler` inline and hands it off here
+    /// with no caller-held reference; if this was weak the handler would
+    /// deallocate before Python's link_identified event arrived and the
+    /// inbound-call flow would silently stall at AVAILABLE.
+    public var identifyCallbacks: (any IdentifyCallbacks)?
 
     /// Fired when the link finishes establishing. AppServices invokes this
     /// when Python emits link_state(state=established) for this linkId.
@@ -364,8 +377,17 @@ public final class Link: @unchecked Sendable {
 
     public init(identityHash: Data) { self.identityHash = identityHash }
 
-    public func identify(_ identity: Identity) {}
-    public func identify(identity: Identity) async throws {}
+    public func identify(_ identity: Identity) {
+        // Synchronous form — fire-and-forget through the async hook.
+        if let hook = identifyHook {
+            Task { try? await hook() }
+        }
+    }
+    public func identify(identity: Identity) async throws {
+        if let hook = identifyHook {
+            try await hook()
+        }
+    }
     public func close() { state = .closed }
     public func request(_ path: String) {}
     public func request(_ path: String, data: Any? = nil, responseTimeout: TimeInterval? = nil) async throws -> RequestReceipt {

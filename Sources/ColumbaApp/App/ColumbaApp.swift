@@ -91,6 +91,35 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-answer" {
+                    // lxma://test-answer — accept the currently-ringing
+                    // incoming call. Sim2 fires this in commit-5 smoke
+                    // tests to drive past RINGING → ESTABLISHED so audio
+                    // frames start flowing.
+                    DiagLog.log("[TEST-ANSWER] triggered")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestAnswer"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-call" {
+                    // lxma://test-call?to=HEX[&profile=quality-medium]
+                    // Places an outgoing LXST call through CallManager. The
+                    // peer must already be in the path table (sim-to-sim
+                    // smoke test: bring both sims up, wait for cross-announces,
+                    // then fire test-call from sim1 toward sim2's identity hash).
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+                    let profileRaw = components?.queryItems?.first(where: { $0.name == "profile" })?.value
+                    DiagLog.log("[TEST-CALL] to=\(to) profile=\(profileRaw ?? "default")")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestCall"),
+                        object: nil,
+                        userInfo: ["to": to, "profile": profileRaw ?? ""]
+                    )
+                    return
+                }
                 if url.host == "test-link-open" {
                     // lxma://test-link-open?to=HEX&aspect=lxst.telephony
                     let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
