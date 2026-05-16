@@ -522,6 +522,32 @@ struct RootView: View {
 
             // 4. Load interface configurations
             let interfaceRepo = InterfaceRepository()
+
+            // Smoke-test escape hatch: when `COLUMBA_TCP_HUB=host:port` is in
+            // the environment AND no interfaces are configured yet, inject a
+            // TCPClientInterface so a fresh-install build can join the
+            // shared hub without manual onboarding. Used by the sim↔iPhone
+            // audio-frame test where the iPhone has empty UserDefaults but
+            // needs to land on the same RNS network as the sim. The host
+            // address is environment-supplied (never committed in source).
+            if let hub = ProcessInfo.processInfo.environment["COLUMBA_TCP_HUB"],
+               !hub.isEmpty,
+               interfaceRepo.getEnabledInterfaces().isEmpty {
+                let parts = hub.split(separator: ":", maxSplits: 1).map(String.init)
+                if parts.count == 2, let port = UInt16(parts[1]) {
+                    DiagLog.log("[STARTUP] COLUMBA_TCP_HUB=\(parts[0]):\(port) — seeding TCP interface")
+                    interfaceRepo.addInterface(InterfaceEntity(
+                        name: "Hub",
+                        type: .tcpClient,
+                        config: .tcpClient(TCPClientConfig(targetHost: parts[0], targetPort: port))
+                    ))
+                    UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
+                    UserDefaults.standard.set(true, forKey: "settings_initialized")
+                } else {
+                    DiagLog.log("[STARTUP] COLUMBA_TCP_HUB malformed (\(hub)) — expected host:port")
+                }
+            }
+
             let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
             DiagLog.log("[STARTUP] Step 4: \(enabledInterfaces.count) enabled interfaces")
 

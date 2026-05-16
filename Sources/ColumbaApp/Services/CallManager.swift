@@ -651,11 +651,17 @@ public final class CallManager {
         }
 
         #if os(iOS)
-        if audioSessionActivatedByCallKit {
-            // Session already active (outgoing calls, or rare fast incoming activation).
-            // Start engine immediately — mic will work.
+        // Smoke-test escape hatch: when COLUMBA_AUTO_ANSWER=1 the test
+        // bypasses CallKit's CXAnswerCallAction flow (the env var path
+        // calls answerCall() directly without going through CallKit's
+        // provider). Without that, CallKit never fires
+        // `didActivateAudioSession` and the engine would defer forever.
+        // For the sim↔iPhone audio test, start the engine immediately
+        // and let AudioManager configure/activate AVAudioSession itself.
+        let bypassCallKit = ProcessInfo.processInfo.environment["COLUMBA_AUTO_ANSWER"] == "1"
+        if audioSessionActivatedByCallKit || bypassCallKit {
             manager.start(speakerEnabled: isSpeakerOn)
-            DiagLog.log("[AUDIO] startAudio() engine started immediately (session already active)")
+            DiagLog.log("[AUDIO] startAudio() engine started immediately (session active=\(audioSessionActivatedByCallKit) bypass=\(bypassCallKit))")
         } else {
             // Incoming call: CallKit hasn't activated the session yet.
             // Defer engine start to handleAudioSessionActivated().
