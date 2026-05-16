@@ -665,6 +665,32 @@ public final class AppServices {
             }
         }
 
+        // lxma://test-link-open?to=HEX&aspect=lxst.telephony — exercise the
+        // RNS.Link bridge by opening an outbound Link to a destination.
+        // Logs the link_id + waits for link_state events to surface via
+        // NotificationCenter. For commit-1 smoke testing.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestLinkOpen"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            let to = (note.userInfo?["to"] as? String) ?? ""
+            let aspect = (note.userInfo?["aspect"] as? String) ?? "lxst.telephony"
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-LINK] no backend")
+                    return
+                }
+                do {
+                    let res = try await backend.openLink(destHashHex: to, aspect: aspect)
+                    DiagLog.log("[TEST-LINK] open ok=\(res.ok) linkId=\(res.linkId) reason=\(res.reason)")
+                } catch {
+                    DiagLog.log("[TEST-LINK] open error=\(error)")
+                }
+            }
+        }
+
         // lxma://test-inbound?from=HEX&content=... — synthesize an inbound
         // event so the privacy filter (block_unknown_senders) can be
         // verified without needing a working peer.
@@ -1040,6 +1066,34 @@ public final class AppServices {
         case .state(let value, _):
             DiagLog.log("[PY] state \(value)")
             logger.info("Python state: \(value, privacy: .public)")
+        case .linkState(let linkId, let state, let reason, let inbound, _):
+            // Surface via NotificationCenter so lxst-swift (or any
+            // future Link consumer) can subscribe without coupling
+            // AppServices directly to it.
+            DiagLog.log("[PY] link \(linkId) state=\(state) inbound=\(inbound)\(reason.isEmpty ? "" : " reason=\(reason)")")
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonLinkState"),
+                object: nil,
+                userInfo: [
+                    "linkId": linkId,
+                    "state": state,
+                    "reason": reason,
+                    "inbound": inbound,
+                ]
+            )
+        case .linkPacket(let linkId, let data, _):
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonLinkPacket"),
+                object: nil,
+                userInfo: ["linkId": linkId, "data": data]
+            )
+        case .linkIdentified(let linkId, let identityHashHex, _):
+            DiagLog.log("[PY] link \(linkId) identified=\(identityHashHex.prefix(8))")
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonLinkIdentified"),
+                object: nil,
+                userInfo: ["linkId": linkId, "identityHashHex": identityHashHex]
+            )
         }
     }
 

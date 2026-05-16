@@ -101,6 +101,32 @@ public final class PythonRNSBackend: @unchecked Sendable {
         try await bridge.announce(displayName: displayName)
     }
 
+    // MARK: - RNS.Link operations (voice / future Link-based protocols)
+    //
+    // The Swift LXST state machine (lxst-swift Telephone actor) drives
+    // these. Python is just the underlying Link pipe — frames get
+    // marshalled over via openLink + linkSend + linkPacket events; the
+    // protocol state machine, codec, and audio engine stay Swift-side.
+
+    public func openLink(destHashHex: String, aspect: String = "lxst.telephony") async throws -> (ok: Bool, linkId: Int, reason: String) {
+        try await bridge.openLink(destHashHex: destHashHex, aspect: aspect)
+    }
+
+    @discardableResult
+    public func linkSend(linkId: Int, data: Data) async throws -> Bool {
+        try await bridge.linkSend(linkId: linkId, data: data)
+    }
+
+    @discardableResult
+    public func linkIdentify(linkId: Int) async throws -> Bool {
+        try await bridge.linkIdentify(linkId: linkId)
+    }
+
+    @discardableResult
+    public func linkTeardown(linkId: Int) async throws -> Bool {
+        try await bridge.linkTeardown(linkId: linkId)
+    }
+
     /// One-shot NomadNet page fetch — proxies bridge.fetchNomadNetPage.
     /// See PythonBridge.fetchNomadNetPage docs.
     public func fetchNomadNetPage(

@@ -45,6 +45,13 @@ public final class PythonBridge: @unchecked Sendable {
         case announce(destHash: String, displayName: String, aspect: String, publicKeysHex: String, t: Date)
         case inbound(sourceHash: String, content: String, title: String, t: Date)
         case state(String, t: Date)
+
+        // RNS.Link events — used by lxst-swift for voice calls. The
+        // Swift LXST state machine consumes these to drive its own
+        // call lifecycle; Python is just the underlying Link pipe.
+        case linkState(linkId: Int, state: String, reason: String, inbound: Bool, t: Date)
+        case linkPacket(linkId: Int, data: Data, t: Date)
+        case linkIdentified(linkId: Int, identityHashHex: String, t: Date)
     }
 
     private let queue = DispatchQueue(label: "network.columba.python", qos: .userInitiated)
@@ -546,10 +553,142 @@ public final class PythonBridge: @unchecked Sendable {
             case "state":
                 let v = pyStringFromDict(item, key: "value") ?? "?"
                 out.append(.state(v, t: t))
+            case "link_state":
+                let linkId = pyIntFromDict(item, key: "link_id") ?? 0
+                let state = pyStringFromDict(item, key: "state") ?? ""
+                let reason = pyStringFromDict(item, key: "reason") ?? ""
+                let inbound = pyBoolFromDict(item, key: "inbound") ?? false
+                out.append(.linkState(linkId: linkId, state: state, reason: reason, inbound: inbound, t: t))
+            case "link_packet":
+                let linkId = pyIntFromDict(item, key: "link_id") ?? 0
+                let hex = pyStringFromDict(item, key: "data_hex") ?? ""
+                let data = Data(hexEncoded: hex) ?? Data()
+                out.append(.linkPacket(linkId: linkId, data: data, t: t))
+            case "link_identified":
+                let linkId = pyIntFromDict(item, key: "link_id") ?? 0
+                let identity = pyStringFromDict(item, key: "identity_hash") ?? ""
+                out.append(.linkIdentified(linkId: linkId, identityHashHex: identity, t: t))
             default:
                 continue
             }
         }
         return out
+    }
+
+    private func pyIntFromDict(_ d: UnsafeMutablePointer<PyObject>, key: String) -> Int? {
+        guard let item = PyDict_GetItemString(d, key) else { return nil }
+        let v = PyLong_AsLongLong(item)
+        if v == -1 && PyErr_Occurred() != nil { PyErr_Clear(); return nil }
+        return Int(v)
+    }
+
+    // MARK: - RNS.Link ops (voice calls)
+
+    /// Open an outbound RNS.Link to a destination. Default aspect is
+    /// `lxst.telephony` (voice); pass another aspect string for other
+    /// Link-based protocols (e.g. NomadNet page browsing already uses
+    /// its own one-shot path, so this is currently voice-only).
+    ///
+    /// Returns the Python-side `link_id` on success. A subsequent
+    /// `.linkState(linkId:, state: "established")` event fires once
+    /// the link is up.
+    public func openLink(destHashHex: String, aspect: String = "lxst.telephony") async throws -> (ok: Bool, linkId: Int, reason: String) {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else {
+                    return (false, 0, "not-started")
+                }
+                guard let fn = PyObject_GetAttrString(module, "open_link") else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                let args = PyTuple_New(2)!
+                defer { Py_DecRef(args) }
+                PyTuple_SetItem(args, 0, PyUnicode_FromString(destHashHex)!)
+                PyTuple_SetItem(args, 1, PyUnicode_FromString(aspect)!)
+                guard let result = PyObject_CallObject(fn, args) else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(result) }
+                let ok = pyBoolFromDict(result, key: "ok") ?? false
+                let linkId = pyIntFromDict(result, key: "link_id") ?? 0
+                let reason = pyStringFromDict(result, key: "reason") ?? ""
+                return (ok, linkId, reason)
+            }
+        }
+    }
+
+    /// Send opaque bytes over an open Link. Returns true on success.
+    @discardableResult
+    public func linkSend(linkId: Int, data: Data) async throws -> Bool {
+        let hex = data.map { String(format: "%02x", $0) }.joined()
+        return try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else { return false }
+                guard let fn = PyObject_GetAttrString(module, "link_send") else { return false }
+                defer { Py_DecRef(fn) }
+                let args = PyTuple_New(2)!
+                defer { Py_DecRef(args) }
+                PyTuple_SetItem(args, 0, PyLong_FromLongLong(Int64(linkId)))
+                PyTuple_SetItem(args, 1, PyUnicode_FromString(hex)!)
+                guard let result = PyObject_CallObject(fn, args) else { return false }
+                defer { Py_DecRef(result) }
+                return pyBoolFromDict(result, key: "ok") ?? false
+            }
+        }
+    }
+
+    /// Identify our local identity on the Link to the remote.
+    @discardableResult
+    public func linkIdentify(linkId: Int) async throws -> Bool {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else { return false }
+                guard let fn = PyObject_GetAttrString(module, "link_identify") else { return false }
+                defer { Py_DecRef(fn) }
+                let args = PyTuple_New(1)!
+                defer { Py_DecRef(args) }
+                PyTuple_SetItem(args, 0, PyLong_FromLongLong(Int64(linkId)))
+                guard let result = PyObject_CallObject(fn, args) else { return false }
+                defer { Py_DecRef(result) }
+                return pyBoolFromDict(result, key: "ok") ?? false
+            }
+        }
+    }
+
+    /// Tear down a Link from our side.
+    @discardableResult
+    public func linkTeardown(linkId: Int) async throws -> Bool {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else { return false }
+                guard let fn = PyObject_GetAttrString(module, "link_teardown") else { return false }
+                defer { Py_DecRef(fn) }
+                let args = PyTuple_New(1)!
+                defer { Py_DecRef(args) }
+                PyTuple_SetItem(args, 0, PyLong_FromLongLong(Int64(linkId)))
+                guard let result = PyObject_CallObject(fn, args) else { return false }
+                defer { Py_DecRef(result) }
+                return pyBoolFromDict(result, key: "ok") ?? false
+            }
+        }
+    }
+}
+
+private extension Data {
+    /// Decode a hex-encoded string into raw bytes. Tolerates uppercase
+    /// + mixed case. Returns nil if length is odd or any character is
+    /// out of range.
+    init?(hexEncoded hex: String) {
+        guard hex.count % 2 == 0 else { return nil }
+        var out = Data(capacity: hex.count / 2)
+        var idx = hex.startIndex
+        while idx < hex.endIndex {
+            let next = hex.index(idx, offsetBy: 2)
+            guard let byte = UInt8(hex[idx..<next], radix: 16) else { return nil }
+            out.append(byte)
+            idx = next
+        }
+        self = out
     }
 }

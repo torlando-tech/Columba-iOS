@@ -90,6 +90,19 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-link-open" {
+                    // lxma://test-link-open?to=HEX&aspect=lxst.telephony
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+                    let aspect = components?.queryItems?.first(where: { $0.name == "aspect" })?.value ?? "lxst.telephony"
+                    DiagLog.log("[TEST-LINK] open to=\(to) aspect=\(aspect)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestLinkOpen"),
+                        object: nil,
+                        userInfo: ["to": to, "aspect": aspect]
+                    )
+                    return
+                }
                 if url.host == "test-inbound" {
                     // lxma://test-inbound?from=HEX&content=... — synthesizes
                     // a Python-style inbound event so we can exercise the

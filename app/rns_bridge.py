@@ -223,6 +223,34 @@ def start(
             handlers.append(h)
         _state["handler"] = handlers  # list now, was singleton — stop() handles both
 
+        # Register the lxst.telephony destination on our identity so
+        # incoming voice calls have somewhere to land. Inbound RNS.Link
+        # establishment on this destination emits a `link_state` event
+        # tagged with a fresh link_id; the Swift side (CallManager →
+        # lxst-swift Telephone) takes over from there.
+        global _telephony_destination
+        try:
+            _telephony_destination = RNS.Destination(
+                identity, RNS.Destination.IN, RNS.Destination.SINGLE,
+                "lxst", "telephony"
+            )
+
+            def _on_inbound_link(link: Any) -> None:
+                link_id = _alloc_link_id()
+                with _lock:
+                    _links[link_id] = link
+                _wire_link_callbacks(link, link_id)
+                # The "established" callback fires only on outbound
+                # links — inbound links arrive already established, so
+                # synthesize the event manually so the Swift side sees
+                # one matching state transition either way.
+                _put("link_state", link_id=link_id, state="established", inbound=True)
+
+            _telephony_destination.set_link_established_callback(_on_inbound_link)
+            _state["telephony_destination"] = _telephony_destination
+        except Exception as e:
+            _put("state", value=f"telephony-register-failed: {e}")
+
         # Announce ourselves so the network knows where we are. We re-announce
         # after a short delay because the TCP interface needs ~1-2s to come
         # online; the first announce can be dropped if the interface isn't
@@ -363,6 +391,204 @@ def _propagation_state_name(val: Any) -> str:
     return mapping.get(val, f"state_{val}")
 
 
+# ────────────────────────────────────────────────────────────────────
+# RNS.Link bridge — used by lxst-swift for voice calls.
+#
+# Audio frames stay on the Swift side end-to-end (capture / encode in
+# AVAudioEngine + libopus, decode / playback symmetrically). Python's
+# only job is to handle the underlying RNS.Link cryptography +
+# framing + routing — opaque byte payloads flow in both directions via
+# the event queue (link_packet) and `link_send`.
+#
+# Mirrors the lxst-kt Kotlin port that Columba Android uses on its
+# native (non-Chaquopy) voice path. Swift is the LXST protocol owner;
+# Python is just "Link as a pipe".
+# ────────────────────────────────────────────────────────────────────
+
+_links: dict[int, Any] = {}        # link_id -> RNS.Link
+_next_link_id_counter = 0
+_telephony_destination: Any = None  # RNS.Destination for lxst.telephony aspect
+
+
+def _alloc_link_id() -> int:
+    global _next_link_id_counter
+    _next_link_id_counter += 1
+    return _next_link_id_counter
+
+
+def _wire_link_callbacks(link: Any, link_id: int) -> None:
+    """Hook the standard set of Link callbacks (established / closed /
+    packet / remote_identified) so the Swift side receives matching
+    events on the drain queue."""
+    def _on_established(_l: Any) -> None:
+        _put("link_state", link_id=link_id, state="established")
+
+    def _on_closed(l: Any) -> None:
+        reason = ""
+        try:
+            tr = getattr(l, "teardown_reason", None)
+            reason = str(tr) if tr is not None else ""
+        except Exception:
+            pass
+        _put("link_state", link_id=link_id, state="closed", reason=reason)
+        with _lock:
+            _links.pop(link_id, None)
+
+    def _on_packet(data: bytes, _packet: Any) -> None:
+        try:
+            _put("link_packet", link_id=link_id, data_hex=data.hex() if data else "")
+        except Exception:
+            pass
+
+    def _on_remote_identified(_l: Any, identity: Any) -> None:
+        try:
+            _put(
+                "link_identified",
+                link_id=link_id,
+                identity_hash=identity.hash.hex() if identity is not None else "",
+            )
+        except Exception:
+            pass
+
+    link.set_link_established_callback(_on_established)
+    link.set_link_closed_callback(_on_closed)
+    link.set_packet_callback(_on_packet)
+    try:
+        # RNS uses one of these two names depending on version
+        link.set_remote_identified_callback(_on_remote_identified)
+    except AttributeError:
+        try:
+            link.set_remote_identification_callback(_on_remote_identified)
+        except AttributeError:
+            pass
+
+
+def open_link(dest_hash_hex: str, aspect: str = "lxst.telephony") -> dict[str, Any]:
+    """Initiate an outbound RNS.Link to a destination with the given
+    aspect (default `lxst.telephony` for voice). Returns a link_id
+    Swift can use to send/teardown/identify on the link.
+
+    Returns:
+      {ok: bool, link_id: int, reason: str}
+
+    Reasons:
+      ok           — link initiated; subsequent link_state event will
+                     fire `established` or `closed`
+      not-started  — Python RNS hasn't been started yet
+      bad-hash     — dest_hash_hex isn't a valid hex string
+      no-path      — Identity hasn't been recalled; a request_path was
+                     kicked off; caller should retry once we receive
+                     an announce for `dest_hash`
+    """
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "link_id": 0, "reason": "not-started"}
+    try:
+        dest_hash = bytes.fromhex(dest_hash_hex)
+    except ValueError:
+        return {"ok": False, "link_id": 0, "reason": "bad-hash"}
+
+    peer_identity = RNS.Identity.recall(dest_hash)
+    if peer_identity is None:
+        try:
+            RNS.Transport.request_path(dest_hash)
+        except Exception:
+            pass
+        return {"ok": False, "link_id": 0, "reason": "no-path"}
+
+    # Split the dotted aspect into app_name + remaining aspect tokens
+    # (RNS.Destination's variadic aspects parameter).
+    parts = aspect.split(".") if aspect else ["lxst", "telephony"]
+    app_name = parts[0]
+    aspects = parts[1:] if len(parts) > 1 else []
+
+    peer_dest = RNS.Destination(
+        peer_identity, RNS.Destination.OUT, RNS.Destination.SINGLE,
+        app_name, *aspects
+    )
+    try:
+        link = RNS.Link(peer_dest)
+    except Exception as e:
+        return {"ok": False, "link_id": 0, "reason": f"link-init-failed: {e}"}
+
+    link_id = _alloc_link_id()
+    _wire_link_callbacks(link, link_id)
+    with _lock:
+        _links[link_id] = link
+    _put("link_state", link_id=link_id, state="establishing")
+    return {"ok": True, "link_id": link_id, "reason": "ok"}
+
+
+def link_send(link_id: int, data_hex: str) -> dict[str, Any]:
+    """Send opaque bytes over an established Link. `data_hex` is the
+    hex-encoded payload (Swift hex-encodes the byte buffer before
+    calling). The bytes get wrapped in a single RNS.Packet.
+
+    Returns {ok, reason}. Reasons: ok / not-started / no-link /
+    not-established / bad-hex / send-failed."""
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "reason": "not-started"}
+        link = _links.get(int(link_id))
+        if link is None:
+            return {"ok": False, "reason": "no-link"}
+
+    if not getattr(link, "status", None) == RNS.Link.ACTIVE:
+        # Allow PENDING too if the caller knows what they're doing,
+        # but reject CLOSED / FAILED.
+        if getattr(link, "status", None) == RNS.Link.CLOSED:
+            return {"ok": False, "reason": "closed"}
+
+    try:
+        data = bytes.fromhex(data_hex)
+    except ValueError:
+        return {"ok": False, "reason": "bad-hex"}
+
+    try:
+        # RNS.Packet(link, data).send() is the canonical way to send
+        # opaque bytes over a Link — wraps them in a Link packet that
+        # the remote receives via the Link's packet callback.
+        packet = RNS.Packet(link, data)
+        packet.send()
+    except Exception as e:
+        return {"ok": False, "reason": f"send-failed: {e}"}
+    return {"ok": True, "reason": "ok"}
+
+
+def link_identify(link_id: int) -> dict[str, Any]:
+    """Reveal our identity on the given Link to the remote (so the
+    remote's `link_identified` event fires with our identity hash).
+    Mirrors `link.identify(local_identity)` from Python RNS."""
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "reason": "not-started"}
+        link = _links.get(int(link_id))
+        local_identity = _state["identity"]
+        if link is None:
+            return {"ok": False, "reason": "no-link"}
+        if local_identity is None:
+            return {"ok": False, "reason": "no-identity"}
+    try:
+        link.identify(local_identity)
+    except Exception as e:
+        return {"ok": False, "reason": f"identify-failed: {e}"}
+    return {"ok": True, "reason": "ok"}
+
+
+def link_teardown(link_id: int) -> dict[str, Any]:
+    """Tear down a Link from our side. The closed_callback will fire
+    on both peers (which emits a `link_state=closed` event)."""
+    with _lock:
+        link = _links.pop(int(link_id), None)
+    if link is None:
+        return {"ok": False, "reason": "no-link"}
+    try:
+        link.teardown()
+    except Exception:
+        pass
+    return {"ok": True, "reason": "ok"}
+
+
 def announce(display_name: str = "") -> dict[str, Any]:
     """Re-broadcast the LXMF delivery destination's announce with optional
     display name update. Called from the Settings UI's manual "Announce"
@@ -477,6 +703,18 @@ def stop() -> None:
         except Exception:
             pass
 
+        # Tear down any open RNS.Links and forget the telephony
+        # destination so a subsequent start() doesn't trip on stale
+        # callbacks pointing at a freed RNS.Transport.
+        global _telephony_destination
+        for lid, link in list(_links.items()):
+            try:
+                link.teardown()
+            except Exception:
+                pass
+        _links.clear()
+        _telephony_destination = None
+
         _state.update({
             "started": False,
             "reticulum": None,
@@ -484,6 +722,7 @@ def stop() -> None:
             "identity": None,
             "destination": None,
             "handler": None,
+            "telephony_destination": None,
         })
         _put("state", value="disconnected")
 
