@@ -306,6 +306,23 @@ public protocol AnnounceHandler: AnyObject {
     func receivedAnnounce(destinationHash: Data, identity: Identity, appData: Data?)
 }
 
+/// Reason a Link was torn down. Mirrors the reticulum-swift teardown reasons
+/// and the Python `RNS.Link.closed_callback` reason argument
+/// (0 = link timeout, 1 = initiator closed, 2 = destination closed, 3 = network failure).
+public enum TeardownReason: String, Equatable, Sendable {
+    case timeout
+    case initiatorClosed
+    case destinationClosed
+    case networkFailure
+}
+
+/// Protocol for Link identification callbacks — fires when the remote peer
+/// sends a `LINK_IDENTIFY` packet revealing their identity. Mirrors the
+/// reticulum-swift `IdentifyCallbacks` surface lxst-swift's Telephone uses.
+public protocol IdentifyCallbacks: AnyObject, Sendable {
+    func remoteIdentified(_ identity: Identity) async
+}
+
 public final class Link: @unchecked Sendable {
     public enum State: Equatable, Sendable {
         case pending, active, closed, stale, established
@@ -319,6 +336,28 @@ public final class Link: @unchecked Sendable {
     public var fieldNames: [String] = []
     public var endIndex: Int { 0 }
 
+    /// Bridge-allocated Link ID. Set by AppServices when wrapping a Python
+    /// link_state event into a Compat Link instance; zero on Links that
+    /// never crossed the bridge (e.g., the stub from `initiateLink`).
+    public var linkId: UInt64 = 0
+
+    /// Hook installed by AppServices that forwards bytes to the Python
+    /// RNS.Link via `PythonRNSBackend.linkSend(linkId:data:)`. Set once
+    /// the Link is wired; nil until then.
+    public var sendBytesHook: (@Sendable (Data) async throws -> Void)?
+
+    /// Hooks installed by lxst-swift via `setCloseCallback` /
+    /// `setIdentifyCallbacks` — invoked by AppServices when the corresponding
+    /// Python events fire (link_state(closed) → closeCallback;
+    /// link_identified → identifyCallbacks.remoteIdentified).
+    public var closeCallback: (@Sendable (TeardownReason) async -> Void)?
+    public weak var identifyCallbacks: (any IdentifyCallbacks)?
+
+    /// Packet callback for inbound data on the Link. Installed by lxst-swift
+    /// (LinkSource); fired by AppServices when a Python link_packet event
+    /// arrives for this linkId. Carries the decrypted bytes from the remote.
+    public var packetCallback: (@Sendable (Data, Packet) async -> Void)?
+
     public init(identityHash: Data) { self.identityHash = identityHash }
 
     public func identify(_ identity: Identity) {}
@@ -329,6 +368,45 @@ public final class Link: @unchecked Sendable {
         RequestReceipt(linkIdentityHash: identityHash, path: path)
     }
     public var stateUpdates: AsyncStream<State> { AsyncStream { _ in } }
+
+    /// Pass-through for Compat-layer Links — the Python `RNS.Link`
+    /// transparently encrypts every Packet payload when the Packet is built,
+    /// so callers like lxst-swift's Packetizer that historically called
+    /// `link.encrypt(_:)` before handing bytes to the transport just get the
+    /// data back unchanged on iOS.
+    public func encrypt(_ data: Data) async throws -> Data { data }
+
+    /// Pass-through to mirror `encrypt(_:)` for symmetry. The Python side
+    /// also decrypts inbound link Packet payloads transparently before the
+    /// `link_packet` event is emitted, so the bytes lxst-swift receives are
+    /// already plaintext.
+    public func decrypt(_ data: Data) async throws -> Data { data }
+
+    /// Send bytes over the link. Forwards to `sendBytesHook` when wired;
+    /// silently drops on unwired Links (e.g., the stub from `initiateLink`).
+    public func sendBytes(_ data: Data) async throws {
+        if let hook = sendBytesHook { try await hook(data) }
+    }
+
+    /// Install the close-reason callback (lxst-swift Telephone uses this).
+    /// Accepts nil so the caller can clear the callback before closing the
+    /// link to suppress a spurious "remote closed" delivery during local
+    /// hangup.
+    public func setCloseCallback(_ callback: (@Sendable (TeardownReason) async -> Void)?) async {
+        self.closeCallback = callback
+    }
+
+    /// Install the identify-callbacks bridge. Accepts nil to clear.
+    public func setIdentifyCallbacks(_ callbacks: (any IdentifyCallbacks)?) async {
+        self.identifyCallbacks = callbacks
+    }
+
+    /// Install the packet callback. lxst-swift's LinkSource calls this after
+    /// constructing itself; AppServices forwards Python link_packet events
+    /// here.
+    public func setPacketCallback(_ callback: @escaping @Sendable (Data, Packet) async -> Void) async {
+        self.packetCallback = callback
+    }
 }
 
 public struct RequestReceipt: Equatable, Sendable {
@@ -355,7 +433,8 @@ public enum MessagePackValue: Hashable, Sendable {
     indirect case map([MessagePackValue: MessagePackValue])
 }
 
-public func unpackMsgPack(_ data: Data) -> [MessagePackValue: MessagePackValue]? { nil }
+// `packMsgPack` / `unpackMsgPack` live in RNSAPI/Util/MsgPack.swift — real
+// implementation supporting the wire-format subset LXST uses.
 
 // MARK: - IconAppearance
 
@@ -519,6 +598,195 @@ public final class LXMRouter: @unchecked Sendable {
     }
     public func syncFromPropagationNode() async throws {}
     public func shutdown() async {}
+}
+
+/// PropagationTransferState — the LXMF propagation-node sync state observed
+/// by PropagationNodeManager after each sync attempt. Canonical home now
+/// lives in RNSAPI so LXSTSwift (and any future SwiftPM consumer) can also
+/// see it; the ColumbaApp duplicate was removed.
+public struct PropagationTransferState: Equatable, Sendable {
+    public enum State: Equatable, Sendable {
+        case idle, linking, linked, linkFailed, transferring, transferFailed, noPath, complete
+    }
+    public var state: State
+    public var receivedMessages: Int
+    public var errorDescription: String?
+    public var lastSync: Date?
+    public var progress: Double
+
+    public init(state: State = .idle, receivedMessages: Int = 0,
+                errorDescription: String? = nil, lastSync: Date? = nil, progress: Double = 0) {
+        self.state = state
+        self.receivedMessages = receivedMessages
+        self.errorDescription = errorDescription
+        self.lastSync = lastSync
+        self.progress = progress
+    }
+
+    public var isSyncing: Bool {
+        switch state {
+        case .linking, .linked, .transferring: return true
+        default: return false
+        }
+    }
+}
+
+/// InterfaceMode — controls Reticulum announce propagation per interface.
+/// Identical rawValues to the upstream Python config so JSON encoding
+/// round-trips. The duplicate in ColumbaApp/Services/InterfaceRepository.swift
+/// was removed in favor of this canonical RNSAPI home.
+public enum InterfaceMode: String, Codable, Sendable, Equatable, CaseIterable {
+    case full = "full"
+    case gateway = "gateway"
+    case accessPoint = "access_point"
+    case roaming = "roaming"
+    case boundary = "boundary"
+
+    public var displayName: String {
+        switch self {
+        case .full: return "Full"
+        case .gateway: return "Gateway"
+        case .accessPoint: return "Access Point"
+        case .roaming: return "Roaming"
+        case .boundary: return "Boundary"
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .full: return "All features enabled"
+        case .gateway: return "Path discovery for others"
+        case .accessPoint: return "Quiet unless active"
+        case .roaming: return "Mobile relative to others"
+        case .boundary: return "Links dissimilar segments"
+        }
+    }
+}
+
+/// RNodeConfig — full BLE-device-name + radio-parameter set. The duplicate
+/// in ColumbaApp/Services/InterfaceRepository.swift was removed.
+public struct RNodeConfig: Codable, Equatable, Sendable {
+    public var deviceName: String
+    public var frequency: UInt32
+    public var bandwidth: UInt32
+    public var txPower: UInt8
+    public var spreadingFactor: UInt8
+    public var codingRate: UInt8
+    public var stAlock: Float?
+    public var ltAlock: Float?
+
+    public func toRadioConfig() -> RadioConfig {
+        RadioConfig(
+            frequency: frequency,
+            bandwidth: bandwidth,
+            txPower: txPower,
+            spreadingFactor: spreadingFactor,
+            codingRate: codingRate,
+            stAlock: stAlock,
+            ltAlock: ltAlock
+        )
+    }
+
+    public static var defaultUS915: RNodeConfig {
+        RNodeConfig(
+            deviceName: "",
+            frequency: 915_000_000,
+            bandwidth: 125_000,
+            txPower: 17,
+            spreadingFactor: 7,
+            codingRate: 5,
+            stAlock: nil,
+            ltAlock: nil
+        )
+    }
+
+    public init(
+        deviceName: String = "",
+        frequency: UInt32 = 0,
+        bandwidth: UInt32 = 0,
+        txPower: UInt8 = 0,
+        spreadingFactor: UInt8 = 0,
+        codingRate: UInt8 = 0,
+        stAlock: Float? = nil,
+        ltAlock: Float? = nil
+    ) {
+        self.deviceName = deviceName
+        self.frequency = frequency
+        self.bandwidth = bandwidth
+        self.txPower = txPower
+        self.spreadingFactor = spreadingFactor
+        self.codingRate = codingRate
+        self.stAlock = stAlock
+        self.ltAlock = ltAlock
+    }
+}
+
+/// PeerLocation — shared location data received from a peer (or shared by
+/// the local user). Canonical home is now RNSAPI; the duplicate in
+/// ColumbaApp/Views/PlatformCompat.swift was removed.
+public struct PeerLocation: Identifiable, Equatable, Sendable {
+    public let id: Data
+    public var displayName: String?
+    public var latitude: Double
+    public var longitude: Double
+    public var altitude: Double
+    public var speed: Double
+    public var bearing: Double
+    public var accuracy: Double
+    public var lastUpdate: Date
+    public var iconAppearance: IconAppearance?
+
+    public init(
+        id: Data,
+        displayName: String? = nil,
+        latitude: Double,
+        longitude: Double,
+        altitude: Double = 0,
+        speed: Double = 0,
+        bearing: Double = 0,
+        accuracy: Double = 0,
+        lastUpdate: Date = Date(),
+        iconAppearance: IconAppearance? = nil
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.latitude = latitude
+        self.longitude = longitude
+        self.altitude = altitude
+        self.speed = speed
+        self.bearing = bearing
+        self.accuracy = accuracy
+        self.lastUpdate = lastUpdate
+        self.iconAppearance = iconAppearance
+    }
+
+    public var isStale: Bool { Date().timeIntervalSince(lastUpdate) > 300 }
+    public var shortHash: String { id.prefix(4).map { String(format: "%02x", $0) }.joined() }
+}
+
+/// SharingDuration — duration choices for location-sharing sessions. The
+/// duplicate in ColumbaApp/Views/PlatformCompat.swift was removed.
+public enum SharingDuration: String, CaseIterable, Identifiable, Sendable {
+    case fifteenMinutes = "15 min"
+    case oneHour = "1 hour"
+    case fourHours = "4 hours"
+    case untilMidnight = "Until midnight"
+    case indefinite = "Until I stop"
+
+    public var id: String { rawValue }
+
+    public func calculateEndDate(from start: Date = Date()) -> Date? {
+        switch self {
+        case .fifteenMinutes: return start.addingTimeInterval(15 * 60)
+        case .oneHour:        return start.addingTimeInterval(60 * 60)
+        case .fourHours:      return start.addingTimeInterval(4 * 60 * 60)
+        case .untilMidnight:
+            var cal = Calendar.current
+            cal.timeZone = .current
+            return cal.nextDate(after: start, matching: DateComponents(hour: 0, minute: 0, second: 0), matchingPolicy: .nextTime)
+        case .indefinite: return nil
+        }
+    }
 }
 
 public protocol LXMRouterDelegate: AnyObject {
@@ -895,6 +1163,14 @@ public final class ReticulumTransport: @unchecked Sendable {
 
     public func requestPath(_ destinationHash: Data) async {}
     public func requestPath(for destinationHash: Data) async {}
+
+    /// Wait up to `timeout` seconds for a path to `destinationHash`. Stub
+    /// returns `true` immediately so lxst-swift's outbound-call code path can
+    /// flow through to the real `openLink` bridge call, where the Python
+    /// RNS.Transport handles real path discovery + timeout.
+    public func awaitPath(for destinationHash: Data, timeout: TimeInterval) async -> Bool {
+        true
+    }
 
     public func validateIFAC(raw: Data, interfaceId: String) -> Data? { nil }
     public func applyIFAC(raw: Data, interfaceId: String) -> Data { raw }

@@ -94,7 +94,11 @@ drop_pkg_urls = [
   'https://github.com/torlando-tech/LXST-swift.git'
 ]
 
-drop_product_names = %w[ReticulumSwift LXMFSwift LXSTSwift]
+# NOTE: LXSTSwift is no longer in this drop list — it's now a LOCAL
+# SwiftPM target inside this repo (declared in Package.swift,
+# dependencies path-based), and gets re-added below via the local-
+# package reference path.
+drop_product_names = %w[ReticulumSwift LXMFSwift]
 
 # Remove products from target (frameworks build phase + package_product_dependencies).
 app_target.package_product_dependencies.dup.each do |dep|
@@ -116,6 +120,38 @@ project.root_object.package_references.dup.each do |pkg|
     pkg.remove_from_project
     puts "  Removed SPM package: #{pkg.repositoryURL}"
   end
+end
+
+# Add a local Swift Package reference to the repo root, exposing the
+# LXSTSwift target (and its C dependencies COpus + CCodec2). Xcode
+# treats the root Package.swift as a sibling package and compiles its
+# products into the app target. This dodges the per-file pbxproj
+# surgery that would otherwise be needed for ~380 C source files
+# under Sources/{COpus, CCodec2}/.
+local_pkg_class = Xcodeproj::Project::Object.const_get('XCLocalSwiftPackageReference') rescue nil
+if local_pkg_class
+  # Some xcodeproj-gem versions don't ship XCLocalSwiftPackageReference;
+  # detect and warn so we can fall back to manual surgery if needed.
+  existing_local = project.root_object.package_references.find do |p|
+    p.is_a?(local_pkg_class) && (p.respond_to?(:relative_path) ? p.relative_path : nil) == '.'
+  end
+  unless existing_local
+    local_pkg = project.new(local_pkg_class)
+    local_pkg.relative_path = '.'
+    project.root_object.package_references << local_pkg
+    puts "  Added local SPM package reference: ."
+  end
+  unless app_target.package_product_dependencies.any? { |d| d.product_name == 'LXSTSwift' }
+    product = project.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
+    product.product_name = 'LXSTSwift'
+    app_target.package_product_dependencies << product
+    bf = project.new(Xcodeproj::Project::Object::PBXBuildFile)
+    bf.product_ref = product
+    app_target.frameworks_build_phase.files << bf
+    puts "  Linked product: LXSTSwift (local)"
+  end
+else
+  puts "  WARNING: xcodeproj gem doesn't support XCLocalSwiftPackageReference; skip local-pkg wiring"
 end
 
 # ──────────────────────────────────────────────────────────────────────────

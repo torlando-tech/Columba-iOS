@@ -107,6 +107,7 @@
 		246752B2CB011783D43BBA9C /* RNSError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4709B79779A2456FCE862B8F /* RNSError.swift */; };
 		32C22F5635DE5CFA18250153 /* Compat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F43E7C0C3581C92F3EE5EAB1 /* Compat.swift */; };
 		4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */; };
+		5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A49337EFC55C10979AEB702B /* LXSTSwift */; };
 		557D530BBEDAEBE9A6A0BE41 /* PyConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D8CBCF7E546028A043E1C7 /* PyConversation.swift */; };
 		59CE6F635354725F7D445625 /* PyLocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */; };
 		5F1FF2954475331208BAAD47 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */; };
@@ -114,6 +115,7 @@
 		668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */; };
 		67079BBC2E8309A43DF576E5 /* app in Resources */ = {isa = PBXBuildFile; fileRef = D001472BC7DFD3CD7BF27F0C /* app */; };
 		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
+		6EB25FD19E3DED8311D9BB1D /* MsgPack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70931C92382D9256D8FCED39 /* MsgPack.swift */; };
 		779118E89F4D38BF960DB3D0 /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
 		809F525585341A5B06FE1328 /* Identity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39C8A6DB49AAE2151BF6A5CB /* Identity.swift */; };
 		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
@@ -161,6 +163,7 @@
 		3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyAnnounce.swift; path = Python/Models/PyAnnounce.swift; sourceTree = "<group>"; };
 		4709B79779A2456FCE862B8F /* RNSError.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RNSError.swift; path = Protocols/RNSError.swift; sourceTree = "<group>"; };
 		51D8CBCF7E546028A043E1C7 /* PyConversation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyConversation.swift; path = Python/Models/PyConversation.swift; sourceTree = "<group>"; };
+		70931C92382D9256D8FCED39 /* MsgPack.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MsgPack.swift; path = Util/MsgPack.swift; sourceTree = "<group>"; };
 		710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
 		8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNSBackend.swift; sourceTree = "<group>"; };
 		8CBD293157E715F490613984 /* PyMessage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyMessage.swift; path = Python/Models/PyMessage.swift; sourceTree = "<group>"; };
@@ -295,6 +298,7 @@
 			files = (
 				049 /* MapLibre in Frameworks */,
 				8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */,
+				5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -313,6 +317,7 @@
 			children = (
 				B438088C25BAD3D86A2C1E2A /* Aspects.swift */,
 				20EBB19ACBDE3B196B5A8EFC /* HexExt.swift */,
+				70931C92382D9256D8FCED39 /* MsgPack.swift */,
 			);
 			name = Util;
 			sourceTree = "<group>";
@@ -735,6 +740,7 @@
 			name = ColumbaApp;
 			packageProductDependencies = (
 				P002 /* MapLibre */,
+				A49337EFC55C10979AEB702B /* LXSTSwift */,
 			);
 			productName = ColumbaApp;
 			productReference = PROD /* ColumbaApp.app */;
@@ -790,6 +796,7 @@
 			mainGroup = ROOT;
 			packageReferences = (
 				PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
+				ACEF9566B3811B841D6E5672 /* XCLocalSwiftPackageReference "." */,
 			);
 			productRefGroup = PRODS /* Products */;
 			projectDirPath = "";
@@ -963,6 +970,7 @@
 				B5362DEE23C09D9D1646ED2E /* HexExt.swift in Sources */,
 				668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */,
 				69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */,
+				6EB25FD19E3DED8311D9BB1D /* MsgPack.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1324,6 +1332,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		ACEF9566B3811B841D6E5672 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -1336,6 +1351,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		A49337EFC55C10979AEB702B /* LXSTSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LXSTSwift;
+		};
 		P002 /* MapLibre */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
