@@ -665,6 +665,31 @@ public final class AppServices {
             }
         }
 
+        // lxma://test-inbound?from=HEX&content=... — synthesize an inbound
+        // event so the privacy filter (block_unknown_senders) can be
+        // verified without needing a working peer.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestInbound"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            let fromHex = (note.userInfo?["from"] as? String) ?? ""
+            let content = (note.userInfo?["content"] as? String) ?? "synthetic"
+            guard let from = Data(hexString: fromHex) else {
+                DiagLog.log("[TEST-INBOUND] bad hex")
+                return
+            }
+            Task { @MainActor in
+                await self.persistInboundFromPython(
+                    sourceHash: from,
+                    content: content,
+                    title: "",
+                    timestamp: Date()
+                )
+            }
+        }
+
         // lxma://test-identity-switch — exercise the multi-identity swap
         // path: create a fresh identity in IdentityManager and call
         // AppServices.switchIdentity. Logs the destination hash before
@@ -867,6 +892,12 @@ public final class AppServices {
     /// notify the chats UI. Mirrors the work IncomingMessageHandler does
     /// on receipt but is invoked directly because Python is what surfaced
     /// the message — there's no Swift LXMRouter callback to hook.
+    ///
+    /// Honors the `block_unknown_senders` privacy toggle (Settings →
+    /// Privacy): when enabled, drops the inbound message unless the
+    /// sender is a known + favorited contact. This must live here
+    /// because we bypass IncomingMessageHandler — Python's delivery
+    /// callback feeds straight into this method.
     private func persistInboundFromPython(sourceHash: Data, content: String, title: String, timestamp: Date) async {
         guard let database = self.database else {
             DiagLog.log("[PY] persistInbound: no database")
@@ -874,6 +905,27 @@ public final class AppServices {
         }
         let repo = MessageRepository(database: database)
         let sourceHashHex = sourceHash.map { String(format: "%02x", $0) }.joined()
+
+        // Privacy: block_unknown_senders drops messages from anyone the
+        // user hasn't explicitly favorited (matches the existing
+        // IncomingMessageHandler check — favorite is the "this is a
+        // real contact, not a random announce hop" signal).
+        if UserDefaults.standard.bool(forKey: "block_unknown_senders") {
+            let isKnownContact: Bool
+            do {
+                let conversation = try await database.getConversation(hash: sourceHash)
+                isKnownContact = conversation != nil && conversation!.isFavorite != 0
+            } catch {
+                // Fail open: surface the message if the DB check itself
+                // fails (better than silently dropping mail).
+                isKnownContact = true
+            }
+            if !isKnownContact {
+                DiagLog.log("[PY] persistInbound BLOCKED source=\(sourceHashHex.prefix(8)) (block_unknown_senders enabled)")
+                return
+            }
+        }
+
         let displayName = "Peer \(sourceHashHex.prefix(8))"
 
         do {

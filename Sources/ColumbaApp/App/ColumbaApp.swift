@@ -90,6 +90,22 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-inbound" {
+                    // lxma://test-inbound?from=HEX&content=... — synthesizes
+                    // a Python-style inbound event so we can exercise the
+                    // privacy filter (block_unknown_senders) without
+                    // requiring an actual peer.
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let from = components?.queryItems?.first(where: { $0.name == "from" })?.value ?? ""
+                    let content = components?.queryItems?.first(where: { $0.name == "content" })?.value ?? "synthetic"
+                    DiagLog.log("[TEST-INBOUND] from=\(from) content=\"\(content)\"")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestInbound"),
+                        object: nil,
+                        userInfo: ["from": from, "content": content]
+                    )
+                    return
+                }
                 if url.host == "test-identity-switch" {
                     // lxma://test-identity-switch — creates a fresh identity
                     // and switches to it via the full AppServices.switchIdentity
