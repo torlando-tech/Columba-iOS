@@ -169,23 +169,21 @@ public final class InterfaceManagementViewModel {
         isLoading = false
     }
 
-    /// Toggle interface enabled state and immediately apply.
+    /// Toggle interface enabled state. Marks dirty; user must tap
+    /// "Apply & Restart" in the toolbar to push the change through to
+    /// Reticulum (which has no hot-reload — see `applyChanges()`).
     public func toggleInterface(_ interface: InterfaceEntity, enabled: Bool) {
         repository.toggleInterface(id: interface.id, enabled: enabled)
         hasPendingChanges = true
-        Task { @MainActor in
-            await applyChanges()
-        }
+        showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled") — tap Apply to restart")
     }
 
-    /// Delete an interface and stop it if running.
+    /// Delete an interface. Marks dirty; the running Reticulum stack keeps
+    /// the old interface alive until "Apply & Restart" is tapped.
     public func deleteInterface(_ interface: InterfaceEntity) {
         repository.deleteInterface(id: interface.id)
         hasPendingChanges = true
-        showSuccess("Interface deleted")
-        Task { @MainActor in
-            await applyChanges()
-        }
+        showSuccess("Interface deleted — tap Apply to restart")
     }
 
     /// Confirm and delete the pending interface.
@@ -255,7 +253,7 @@ public final class InterfaceManagementViewModel {
             updated.config = config
 
             repository.updateInterface(updated)
-            showSuccess("Interface updated")
+            showSuccess("Interface updated — tap Apply to restart")
         } else {
             // Create new
             let newInterface = InterfaceEntity(
@@ -267,142 +265,42 @@ public final class InterfaceManagementViewModel {
             )
 
             repository.addInterface(newInterface)
-            showSuccess("Interface added")
+            showSuccess("Interface added — tap Apply to restart")
         }
 
         hasPendingChanges = true
         dismissConfigSheet()
-
-        // Auto-apply so the interface starts/stops immediately
-        Task { @MainActor in
-            await applyChanges()
-        }
+        // Don't auto-apply — user taps "Apply & Restart" explicitly so
+        // they're not surprised by a Reticulum restart while editing.
     }
 
     // MARK: - Apply Changes
 
-    /// Apply pending interface changes to the running network.
+    /// Apply pending interface changes by restarting the Reticulum stack.
     ///
-    /// Only starts/stops the interfaces that actually changed, leaving
-    /// other running interfaces untouched.
+    /// RNS doesn't support hot-reloading interface config — the only way
+    /// to make Python pick up a new `[interfaces]` section is a full
+    /// `RNS.Reticulum(...)` re-init. AppServices.restartPythonBackend()
+    /// stops the running instance, rewrites the config file from the
+    /// repository's enabled list, and starts a fresh instance. Causes
+    /// a ~1-2s outage (TCP socket drops, then reconnects + re-announces).
+    ///
+    /// Columba Android's python flavor publishes the same constraint via
+    /// `BackendCapabilities.InterfaceCaps.hotReloadInterfaces = false`,
+    /// and surfaces this same "Apply & Restart" affordance.
     @MainActor
     public func applyChanges() async {
         guard hasPendingChanges else { return }
 
         isApplyingChanges = true
-
-        let enabledInterfaces = repository.getEnabledInterfaces()
-
-        // --- TCP (supports multiple simultaneous connections) ---
-        let enabledTCPs = enabledInterfaces.filter { $0.type == .tcpClient }
-        let enabledTCPIds = Set(enabledTCPs.map { $0.id })
-
-        // Connect/reconnect each enabled TCP interface
-        for tcpIf in enabledTCPs {
-            if case .tcpClient(let config) = tcpIf.config {
-                logger.info("Applying TCP[\(tcpIf.id)]: \(config.targetHost):\(config.targetPort)")
-                interfaceStatus[tcpIf.id] = .connecting
-                do {
-                    try await appServices.connectTCPInterface(entityId: tcpIf.id, host: config.targetHost, port: config.targetPort)
-                    showSuccess("Connecting to \(config.targetHost):\(config.targetPort)...")
-                } catch {
-                    logger.error("TCP failed [\(tcpIf.id)]: \(error)")
-                    interfaceStatus[tcpIf.id] = .error
-                    showError("TCP failed: \(error.localizedDescription)")
-                }
-            }
+        defer {
+            hasPendingChanges = false
+            isApplyingChanges = false
         }
 
-        // Stop TCP interfaces that are no longer in the enabled set
-        let currentTCPIds = Set(appServices.tcpInterfaces.keys)
-        for oldId in currentTCPIds where !enabledTCPIds.contains(oldId) {
-            logger.info("Stopping TCP[\(oldId)]")
-            await appServices.stopTCPInterface(entityId: oldId)
-        }
-
-        // --- AutoInterface ---
-        let autoEntity = enabledInterfaces.first(where: { $0.type == .autoInterface })
-        if let autoIf = autoEntity,
-           case .autoInterface(let config) = autoIf.config {
-            if appServices.autoInterface == nil {
-                let groupId = config.groupId ?? "reticulum"
-                logger.info("Starting AutoInterface: \(groupId)")
-                interfaceStatus[autoIf.id] = .connecting
-                do {
-                    try await appServices.startAutoInterface(groupId: groupId)
-                    interfaceStatus[autoIf.id] = .connected
-                } catch {
-                    logger.error("AutoInterface failed: \(error)")
-                    interfaceStatus[autoIf.id] = .error
-                }
-            }
-        } else if autoEntity == nil {
-            await appServices.stopAutoInterface()
-        }
-
-        // --- BLE ---
-        #if canImport(CoreBluetooth)
-        let bleEntity = enabledInterfaces.first(where: { $0.type == .ble })
-        if let bleEntity = bleEntity {
-            if appServices.bleInterface == nil {
-                logger.info("Starting BLE")
-                interfaceStatus[bleEntity.id] = .connecting
-                do {
-                    try await appServices.startBLEInterface()
-                    interfaceStatus[bleEntity.id] = .connected
-                } catch {
-                    logger.error("BLE failed: \(error)")
-                    interfaceStatus[bleEntity.id] = .error
-                    showError("BLE failed: \(error.localizedDescription)")
-                }
-            }
-        } else if bleEntity == nil {
-            await appServices.stopBLEInterface()
-        }
-        #endif
-
-        // --- RNode ---
-        let rnodeEntity = enabledInterfaces.first(where: { $0.type == .rnode })
-        if let rnodeIf = rnodeEntity,
-           case .rnode(let rnodeConfig) = rnodeIf.config {
-            if appServices.rnodeInterface == nil {
-                logger.info("Starting RNode: \(rnodeConfig.deviceName)")
-                interfaceStatus[rnodeIf.id] = .connecting
-                do {
-                    try await appServices.startRNodeInterface(config: rnodeConfig, name: rnodeIf.name)
-                } catch {
-                    logger.error("RNode failed: \(error)")
-                    interfaceStatus[rnodeIf.id] = .error
-                    showError("RNode failed: \(error.localizedDescription)")
-                }
-            }
-        } else if rnodeEntity == nil {
-            await appServices.stopRNodeInterface()
-        }
-
-        // --- Multipeer Connectivity ---
-        #if canImport(MultipeerConnectivity)
-        let mpcEntity = enabledInterfaces.first(where: { $0.type == .multipeer })
-        if let mpcIf = mpcEntity {
-            if appServices.mpcInterface == nil {
-                logger.info("Starting Multipeer")
-                interfaceStatus[mpcIf.id] = .connecting
-                do {
-                    try await appServices.startMPCInterface()
-                    interfaceStatus[mpcIf.id] = .connected
-                } catch {
-                    logger.error("Multipeer failed: \(error)")
-                    interfaceStatus[mpcIf.id] = .error
-                    showError("Multipeer failed: \(error.localizedDescription)")
-                }
-            }
-        } else if mpcEntity == nil {
-            await appServices.stopMPCInterface()
-        }
-        #endif
-
-        hasPendingChanges = false
-        isApplyingChanges = false
+        logger.info("Applying interface changes: restarting Reticulum")
+        await appServices.restartPythonBackend()
+        showSuccess("Interfaces applied — Reticulum restarted")
     }
 
     // MARK: - Status Observation

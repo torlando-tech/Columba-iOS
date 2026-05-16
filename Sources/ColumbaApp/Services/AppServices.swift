@@ -136,6 +136,15 @@ public final class AppServices {
     /// messages) into Columba's existing UI plumbing.
     private var pythonEventTask: Task<Void, Never>?
 
+    /// Identity used to start the Python backend. Cached so the
+    /// "Apply & Restart" flow can re-boot Python after the user edits
+    /// interfaces, without making AppServices re-derive it.
+    private var pythonStartIdentity: Identity?
+
+    /// Display name passed to the Python backend on start. Cached for
+    /// the restart path (same reason as pythonStartIdentity).
+    private var pythonStartDisplayName: String = ""
+
     /// Hashes we've already auto-replied to during the smoke test.
     /// Prevents a feedback loop where each sim's auto-reply triggers
     /// the other's auto-reply forever.
@@ -500,6 +509,11 @@ public final class AppServices {
             DiagLog.log("[PY] already started")
             return
         }
+        // Cache the start args so restartPythonBackend() can re-invoke
+        // this method after the user applies interface changes.
+        self.pythonStartIdentity = identity
+        self.pythonStartDisplayName = displayName
+
         let backend = PythonRNSBackend()
         self.pythonBackend = backend
 
@@ -627,6 +641,21 @@ public final class AppServices {
                 }
             }
         }
+
+        // Listen for test-restart deep link (lxma://test-restart) so
+        // smoke tests can exercise the Apply & Restart path without UI.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestRestart"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                DiagLog.log("[TEST-RESTART] invoking restartPythonBackend")
+                await self.restartPythonBackend()
+                DiagLog.log("[TEST-RESTART] done")
+            }
+        }
     }
 
     /// Look up the matching Python interface for each user `InterfaceEntity`
@@ -656,6 +685,50 @@ public final class AppServices {
                 iface.online = status.online
             }
         }
+    }
+
+    /// Stop the running Python RNS stack, regenerate the RNS config file
+    /// from `InterfaceRepository.getEnabledInterfaces()`, and start a fresh
+    /// instance. Called from the InterfaceManagementScreen's "Apply &
+    /// Restart" button after the user adds, edits, toggles, or removes an
+    /// interface. RNS has no hot-reload — the only way to pick up a new
+    /// `[interfaces]` section is a full Reticulum re-init.
+    ///
+    /// Causes a ~1-2s connectivity outage. Caller should reflect the
+    /// transition in the UI (the Apply button already shows a
+    /// ProgressView while `isApplyingChanges` is set).
+    public func restartPythonBackend() async {
+        guard let identity = pythonStartIdentity, let router = self.router else {
+            DiagLog.log("[PY] restart skipped — backend was never started")
+            return
+        }
+        DiagLog.log("[PY] restartPythonBackend: stopping current instance")
+
+        pythonEventTask?.cancel()
+        pythonEventTask = nil
+        pythonStatusPollTask?.cancel()
+        pythonStatusPollTask = nil
+
+        if let backend = pythonBackend {
+            await backend.stop()
+        }
+        pythonBackend = nil
+
+        // Drop the Compat TCPInterface stubs so the seed pass below
+        // recomputes the set from the latest enabled-interfaces list.
+        // (Disabled rows leave their stub behind in stale state otherwise.)
+        tcpInterfaces.removeAll()
+
+        let displayName = pythonStartDisplayName
+        let fresh = InterfaceRepository().getEnabledInterfaces()
+        DiagLog.log("[PY] restartPythonBackend: starting with \(fresh.count) interfaces")
+        await startPythonBackend(
+            identity: identity,
+            identityHashHex: identity.hexHash,
+            router: router,
+            interfaces: fresh,
+            displayName: displayName
+        )
     }
 
     /// Recompute the config-section name PythonConfigWriter would have

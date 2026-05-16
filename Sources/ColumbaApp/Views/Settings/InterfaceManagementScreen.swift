@@ -83,21 +83,27 @@ struct InterfaceManagementScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if viewModel.hasPendingChanges {
+                if viewModel.hasPendingChanges || viewModel.isApplyingChanges {
                     Button {
                         Task {
                             await viewModel.applyChanges()
                         }
                     } label: {
                         if viewModel.isApplyingChanges {
-                            ProgressView()
-                                .tint(.white)
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .tint(Theme.accentColor)
+                                Text("Restarting…")
+                                    .foregroundStyle(Theme.accentColor)
+                            }
                         } else {
-                            Text("Apply")
+                            Text("Apply & Restart")
                                 .fontWeight(.semibold)
+                                .foregroundStyle(Theme.accentColor)
                         }
                     }
                     .disabled(viewModel.isApplyingChanges)
+                    .accessibilityHint("Restarts Reticulum to apply pending interface changes")
                 }
             }
         }

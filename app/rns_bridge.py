@@ -246,6 +246,38 @@ def stop() -> None:
             RNS.Reticulum._Reticulum__interface_detach_ran = False
         except Exception:
             pass
+
+        # RNS.Transport.destinations is a class-level list of every Destination
+        # ever registered with this Python process. exit_handler() doesn't drain
+        # it, so a subsequent register_delivery_identity() in a fresh LXMRouter
+        # raises "Attempt to register an already registered destination." Clear
+        # the list (and the cohort of Transport class-level state we wrote to
+        # during this run) so the next start sees a clean slate.
+        try:
+            RNS.Transport.destinations = []
+        except Exception:
+            pass
+        try:
+            RNS.Transport.interfaces = []
+        except Exception:
+            pass
+        try:
+            RNS.Transport.path_table = {}
+        except Exception:
+            pass
+        try:
+            RNS.Transport.destination_table = {}
+        except Exception:
+            pass
+        try:
+            RNS.Transport.announce_handlers = []
+        except Exception:
+            pass
+        try:
+            RNS.Transport.identities = {}
+        except Exception:
+            pass
+
         # Restore log level (exit_handler sets RNS.loglevel = LOG_NONE) so the
         # next init's RNS.log() calls are visible again.
         try:

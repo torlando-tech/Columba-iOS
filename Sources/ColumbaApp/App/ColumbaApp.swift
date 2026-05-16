@@ -77,6 +77,14 @@ struct ColumbaApp: App {
                 // Test trigger: lxma://test-send?to=HEX&content=...
                 // bypasses the UI and directly invokes PythonRNSBackend.sendOpportunistic
                 // so external scripts can exercise the Python round-trip during the smoke test.
+                if url.host == "test-restart" {
+                    DiagLog.log("[TEST-RESTART] requested via URL")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestRestart"),
+                        object: nil
+                    )
+                    return
+                }
                 if url.host == "test-send" {
                     let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
                     let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
