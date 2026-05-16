@@ -125,7 +125,14 @@ public final class AppServices {
     /// Location sharing manager for telemetry exchange with peers.
     public var locationSharingManager: LocationSharingManager?
     #endif
-    // CallManager removed in Phase 0 of the Python RNS migration; returns in v2.
+    #if os(iOS)
+    /// Voice call manager — handles the LXST telephony destination
+    /// registration, outgoing-call signaling, and inbound-link routing.
+    /// Restored in commit 3 of the lxst-wiring batch, now talking through
+    /// the Compat-layer Link bridge that AppServices wires here in
+    /// configureTransportCallbacks.
+    public private(set) var callManager: CallManager?
+    #endif
 
     /// Python-backed Reticulum + LXMF stack. Created lazily on first
     /// `initialize(...)` and torn down on `shutdown()`. The Compat-layer
@@ -160,6 +167,24 @@ public final class AppServices {
     /// Last interface snapshot key we logged, so the poll only logs
     /// changes (not every 2s tick).
     private var lastInterfaceSnapshotKey: String = ""
+
+    // MARK: - Telephony link bridge state
+    //
+    // Maps the Python RNS.Link IDs (bridge-allocated UInt64) to the Compat
+    // Link objects that lxst-swift's Telephone state machine + CallManager
+    // expect to talk to. Populated when Python emits a
+    // link_state(state=established) event, drained when it emits a
+    // link_state(state=closed) event.
+
+    /// Active Compat Links keyed by Python's bridge linkId.
+    private var activeLinksByLinkId: [UInt64: Link] = [:]
+
+    /// Inbound-link callbacks registered by CallManager via
+    /// transport.registerDestinationLinkCallback(for: telephonyDestHash).
+    /// AppServices invokes these when an inbound link establishes on a
+    /// matching destination. AppServices is @MainActor — all reads/writes
+    /// happen on the main actor, no extra lock needed.
+    private var destinationLinkCallbacks: [Data: @Sendable (Link) async -> Void] = [:]
 
     #if ENABLE_NETWORK_EXTENSION
     /// Network Extension tunnel manager.
@@ -433,7 +458,13 @@ public final class AppServices {
         await newRouter.setRatchetManager(newDestination.ratchetManager)
 
         #if os(iOS)
-        // Step 7b (CallManager init) removed in Phase 0 of the Python RNS migration.
+        // 7b. Initialize call manager BEFORE interfaces so that autoAnnounce()
+        //     (triggered by onInterfaceAdded) can send the telephony announce.
+        DiagLog.log("[INIT] Step 7b: creating CallManager")
+        let cm = CallManager()
+        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        self.callManager = cm
+        DiagLog.log("[INIT] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
         #endif
 
         // 8. Parse server address and create TCP interface (non-fatal — app works offline)
@@ -1068,10 +1099,9 @@ public final class AppServices {
             DiagLog.log("[PY] state \(value)")
             logger.info("Python state: \(value, privacy: .public)")
         case .linkState(let linkId, let state, let reason, let inbound, _):
-            // Surface via NotificationCenter so lxst-swift (or any
-            // future Link consumer) can subscribe without coupling
-            // AppServices directly to it.
             DiagLog.log("[PY] link \(linkId) state=\(state) inbound=\(inbound)\(reason.isEmpty ? "" : " reason=\(reason)")")
+            // Surface via NotificationCenter for any subscribers (debug
+            // panels, smoke tests) that aren't on the Compat-Link path.
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonLinkState"),
                 object: nil,
@@ -1082,12 +1112,28 @@ public final class AppServices {
                     "inbound": inbound,
                 ]
             )
+            // Dispatch to the Compat Link object. lxst-swift's Telephone
+            // state machine + CallManager talk to Compat Links exclusively.
+            let id = UInt64(linkId)
+            switch state {
+            case "established":
+                if inbound {
+                    Task { await self.dispatchInboundLink(linkId: id) }
+                } else {
+                    Task { await self.dispatchOutboundLinkEstablished(linkId: id) }
+                }
+            case "closed":
+                Task { await self.dispatchLinkClosed(linkId: id, reason: reason) }
+            default:
+                break  // "establishing" et al — purely informational
+            }
         case .linkPacket(let linkId, let data, _):
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonLinkPacket"),
                 object: nil,
                 userInfo: ["linkId": linkId, "data": data]
             )
+            Task { await self.dispatchLinkPacket(linkId: UInt64(linkId), data: data) }
         case .linkIdentified(let linkId, let identityHashHex, _):
             DiagLog.log("[PY] link \(linkId) identified=\(identityHashHex.prefix(8))")
             NotificationCenter.default.post(
@@ -1095,6 +1141,7 @@ public final class AppServices {
                 object: nil,
                 userInfo: ["linkId": linkId, "identityHashHex": identityHashHex]
             )
+            Task { await self.dispatchLinkIdentified(linkId: UInt64(linkId), identityHashHex: identityHashHex) }
         }
     }
 
@@ -1153,7 +1200,13 @@ public final class AppServices {
         await newRouter.setTransport(newTransport)
         await newRouter.setRatchetManager(newDestination.ratchetManager)
 
-        // Step 7b (CallManager init) removed in Phase 0 of the Python RNS migration.
+        #if os(iOS)
+        DiagLog.log("[INIT2] Step 7b: creating CallManager")
+        let cm = CallManager()
+        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        self.callManager = cm
+        DiagLog.log("[INIT2] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
+        #endif
 
         // 8. Parse server address and create TCP interface
         if let (host, port) = parseHostPort(tcpServerAddress) {
@@ -1762,7 +1815,13 @@ public final class AppServices {
             propManager.startPeriodicSync()
         }
 
-        // CallManager init removed in Phase 0 of the Python RNS migration.
+        #if os(iOS)
+        if callManager == nil, let identity = self.identity, let transport = self.transport, let pt = pathTable, let db = database {
+            let cm = CallManager()
+            await cm.initialize(identity: identity, transport: transport, pathTable: pt, database: db)
+            self.callManager = cm
+        }
+        #endif
 
         // Init auto-announce manager if needed
         if autoAnnounceManager == nil {
@@ -2082,6 +2141,142 @@ public final class AppServices {
         await transport.setOnDiagnostic { msg in
             DiagLog.log(msg)
         }
+
+        // ──── Telephony link bridge hooks ────
+        //
+        // Wires the Compat-layer transport calls that CallManager + the
+        // lxst-swift Telephone make against PythonRNSBackend. Python owns
+        // the actual RNS.Link cryptography + path discovery; Swift owns the
+        // call state machine + audio. The hooks are @Sendable so they hop
+        // back to the main actor before touching AppServices state.
+
+        transport.registerDestinationLinkCallbackHook = { [weak self] destHash, callback in
+            Task { @MainActor [weak self] in
+                self?.registerDestinationLinkCallbackOnMain(destHash: destHash, callback: callback)
+            }
+        }
+
+        transport.initiateLinkHook = { [weak self] destination, _ in
+            guard let self else { throw AppServicesError.transportNotConnected }
+            return try await self.openOutboundLink(to: destination)
+        }
+    }
+
+    /// Hop-to-main-actor wrapper for the registerDestinationLinkCallback hook.
+    private func registerDestinationLinkCallbackOnMain(
+        destHash: Data,
+        callback: @escaping @Sendable (Link) async -> Void
+    ) {
+        destinationLinkCallbacks[destHash] = callback
+        DiagLog.log("[TEL_BRIDGE] registered dest-link callback for \(destHash.prefix(4).map { String(format: "%02x", $0) }.joined())")
+    }
+
+    /// Open an outbound Compat Link by asking PythonRNSBackend to open the
+    /// underlying RNS.Link, then wrap it with a Swift-side Link that
+    /// forwards bytes through the bridge. AppServices-isolated so the
+    /// initiateLinkHook stays @Sendable-safe.
+    private func openOutboundLink(to destination: Destination) async throws -> Link {
+        guard let backend = self.pythonBackend else {
+            throw AppServicesError.transportNotConnected
+        }
+        let destHex = destination.hash.toHex()
+        let aspect = ([destination.appName] + destination.aspects).joined(separator: ".")
+        let result = try await backend.openLink(destHashHex: destHex, aspect: aspect)
+        guard result.ok else {
+            throw AppServicesError.transportNotConnected
+        }
+        let linkIdRaw = UInt64(result.linkId)
+        let link = Link(identityHash: destination.identity?.hash ?? Data())
+        link.linkId = linkIdRaw
+        let backendRef = backend
+        link.sendBytesHook = { data in
+            _ = try? await backendRef.linkSend(linkId: Int(linkIdRaw), data: data)
+        }
+        activeLinksByLinkId[linkIdRaw] = link
+        DiagLog.log("[TEL_BRIDGE] opened outbound link \(linkIdRaw) → \(destHex.prefix(8))")
+        return link
+    }
+
+    /// Map a Python link_state(closed, reason=...) string to the
+    /// TeardownReason enum lxst-swift's Telephone understands.
+    private func teardownReason(from raw: String) -> TeardownReason {
+        switch raw {
+        case "destination_closed", "remote_closed": return .destinationClosed
+        case "initiator_closed", "local_closed":    return .initiatorClosed
+        case "timeout":                              return .timeout
+        default:                                     return .networkFailure
+        }
+    }
+
+    /// Construct (or refresh) a Compat Link for an inbound Python link.
+    ///
+    /// Python's `_on_inbound_link` only fires for the `lxst.telephony`
+    /// destination today, so this maps that event onto every registered
+    /// destination-link callback. When the rns_bridge starts carrying
+    /// other inbound aspects, the Python event will need to carry a
+    /// destination-hash field and the dispatch should switch to a single
+    /// targeted callback lookup.
+    private func dispatchInboundLink(linkId: UInt64) async {
+        if let existing = activeLinksByLinkId[linkId] {
+            existing.state = .established
+            await existing.establishedCallback?(existing)
+            return
+        }
+        let link = Link(identityHash: Data())
+        link.linkId = linkId
+        link.state = .established
+        if let backend = self.pythonBackend {
+            let backendRef = backend
+            link.sendBytesHook = { data in
+                _ = try? await backendRef.linkSend(linkId: Int(linkId), data: data)
+            }
+        }
+        activeLinksByLinkId[linkId] = link
+        let callbacks = Array(destinationLinkCallbacks.values)
+
+        for callback in callbacks {
+            await callback(link)
+        }
+        await link.establishedCallback?(link)
+    }
+
+    /// Fire the establishedCallback when Python confirms an outbound link
+    /// finished its LRRTT handshake.
+    private func dispatchOutboundLinkEstablished(linkId: UInt64) async {
+        guard let link = activeLinksByLinkId[linkId] else { return }
+        link.state = .established
+        await link.establishedCallback?(link)
+    }
+
+    /// Drop a Compat Link record when Python tells us the link tore down.
+    private func dispatchLinkClosed(linkId: UInt64, reason: String) async {
+        let link = activeLinksByLinkId.removeValue(forKey: linkId)
+        guard let link else { return }
+        link.state = .closed
+        await link.closeCallback?(teardownReason(from: reason))
+    }
+
+    /// Forward an inbound Python link_packet → Compat Link.packetCallback.
+    private func dispatchLinkPacket(linkId: UInt64, data: Data) async {
+        guard let link = activeLinksByLinkId[linkId] else { return }
+        await link.packetCallback?(data, Packet(payload: data))
+    }
+
+    /// Forward Python link_identified → Compat Link.identifyCallbacks.
+    private func dispatchLinkIdentified(linkId: UInt64, identityHashHex: String) async {
+        guard let link = activeLinksByLinkId[linkId] else { return }
+        // Build a stub Identity carrying just the remote hash so the
+        // Telephone's caller-allowed check can compare bytes. The remote's
+        // full public keys land in the path table separately when an
+        // announce comes through; the Telephone state machine doesn't
+        // need them for the allow-list check.
+        guard let remoteHash = try? identityHashHex.hexToData() else { return }
+        let remoteIdentity = Identity(
+            hash: remoteHash,
+            publicKeys: Data(),
+            privateKeyBytes: nil
+        )
+        await link.identifyCallbacks?.remoteIdentified(remoteIdentity)
     }
 
     /// Timestamp of the last successful auto-announce (debounce duplicate triggers).

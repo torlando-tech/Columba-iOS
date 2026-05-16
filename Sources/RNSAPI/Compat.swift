@@ -1136,18 +1136,43 @@ public final class ReticulumTransport: @unchecked Sendable {
     public func getInterfaceName(for interfaceId: String) async -> String? { nil }
     public func getInterfaceSnapshots() async -> [InterfaceSnapshot] { [] }
 
+    // ──────── Backend bridge hooks ────────
+    //
+    // AppServices installs these closures at startup. They translate the
+    // Compat-layer transport API that callers like CallManager and the
+    // lxst-swift Telephone speak into the Python-backed RNS world. Each is
+    // optional: until installed, the methods below are no-ops (matches the
+    // pre-bridge Phase 1b behavior) so the build can stay green while
+    // wiring proceeds.
+
+    public var registerDestinationHook: (@Sendable (Destination) async -> Void)?
+    public var unregisterDestinationHook: (@Sendable (Data) -> Void)?
+    public var registerDestinationLinkCallbackHook:
+        (@Sendable (Data, @escaping @Sendable (Link) async -> Void) -> Void)?
+    public var initiateLinkHook:
+        (@Sendable (Destination, Identity) async throws -> Link)?
+
     public func isDestinationRegistered(_ hash: Data) async -> Bool { false }
     public func registeredDestinationHashes() -> [String] { [] }
     public func registeredLinkCallbackHashes() -> [String] { [] }
-    public func registerDestination(_ destination: Destination) async {}
-    public func registerDestinationLinkCallback(for destHash: Data, callback: @escaping @Sendable (Link) async -> Void) {}
-    public func unregisterDestination(hash: Data) {}
+    public func registerDestination(_ destination: Destination) async {
+        await registerDestinationHook?(destination)
+    }
+    public func registerDestinationLinkCallback(for destHash: Data, callback: @escaping @Sendable (Link) async -> Void) {
+        registerDestinationLinkCallbackHook?(destHash, callback)
+    }
+    public func unregisterDestination(hash: Data) {
+        unregisterDestinationHook?(hash)
+    }
     public func isLocalDestination(_ hash: Data) -> Bool { false }
     public var destinationCount: Int { 0 }
     public func nextHopInterfaceHwMtu(for destinationHash: Data) async -> Int? { nil }
 
     public func initiateLink(to destination: Destination, identity: Identity) async throws -> Link {
-        Link(identityHash: destination.identity?.hash ?? Data())
+        if let hook = initiateLinkHook {
+            return try await hook(destination, identity)
+        }
+        return Link(identityHash: destination.identity?.hash ?? Data())
     }
     public func registerLink(_ link: Link) async {}
     public func unregisterLink(linkId: Data) {}
