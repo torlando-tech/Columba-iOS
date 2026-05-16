@@ -34,6 +34,16 @@ struct ColumbaApp: App {
     // MARK: - Init
 
     init() {
+        // Boot embedded CPython once, before anything else can touch it.
+        // PythonBridge / PythonRNSBackend depend on this; without it
+        // PyGILState_Ensure deadlocks.
+        switch PythonRuntime.shared.start() {
+        case .success(let version):
+            logger.info("Python runtime started: \(version, privacy: .public)")
+        case .failure(let err):
+            logger.error("Python runtime failed: \(err.localizedDescription, privacy: .public)")
+        }
+
         #if os(iOS)
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: "network.columba.Columba.sync",
@@ -64,6 +74,22 @@ struct ColumbaApp: App {
             .id(ThemeManager.shared.themeVersion)
             .onOpenURL { url in
                 guard url.scheme == "lxma" else { return }
+                // Test trigger: lxma://test-send?to=HEX&content=...
+                // bypasses the UI and directly invokes PythonRNSBackend.sendOpportunistic
+                // so external scripts can exercise the Python round-trip during the smoke test.
+                if url.host == "test-send" {
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+                    let content = components?.queryItems?.first(where: { $0.name == "content" })?.value ?? ""
+                    logger.info("test-send to=\(to, privacy: .public) content=\(content, privacy: .public)")
+                    DiagLog.log("[TEST-SEND] to=\(to) content=\(content)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestSend"),
+                        object: nil,
+                        userInfo: ["to": to, "content": content]
+                    )
+                    return
+                }
                 pendingDeepLink = url.absoluteString
             }
         }
@@ -145,6 +171,7 @@ struct RootView: View {
     var body: some View {
         Group {
             if showOnboarding {
+                #if COLUMBA_ONBOARDING_ENABLED
                 OnboardingView(
                     identityManager: identityManager,
                     settingsRepository: settingsRepository,
@@ -153,6 +180,10 @@ struct RootView: View {
                         identitySwitchTrigger = UUID()
                     }
                 )
+                #else
+                // Onboarding flow disabled in this build — bypass straight to main UI.
+                Color.clear.onAppear { showOnboarding = false }
+                #endif
             } else if let error = initError {
                 errorView(error)
             } else if isInitialized,
@@ -192,7 +223,8 @@ struct RootView: View {
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
+            let phaseValue = newPhase
+            if phaseValue == .active {
                 NotificationService.shared.clearBadge()
                 // Sync from propagation node when app becomes active,
                 // debounced to avoid rapid re-syncs on quick app switches
@@ -350,10 +382,22 @@ struct RootView: View {
             DiagLog.log("[STARTUP] Step 1: migration check")
             await identityManager.migrateFromSingleIdentityIfNeeded(settingsRepository: settingsRepository)
 
-            // 2. Get active identity (created during onboarding)
+            // 2. Get active identity (created during onboarding, or auto-create
+            // one when onboarding is compile-guarded off — needed so the
+            // Python-RNS smoke test can run without UI taps).
             DiagLog.log("[STARTUP] Step 2: get active identity")
-            guard let active = await identityManager.getActiveIdentity() else {
+            let active: LocalIdentity
+            if let existing = await identityManager.getActiveIdentity() {
+                active = existing
+            } else {
+                #if COLUMBA_ONBOARDING_ENABLED
                 throw AppServicesError.identityNotInitialized
+                #else
+                DiagLog.log("[STARTUP] Step 2: no identity — auto-creating for smoke test")
+                let created = try await identityManager.createIdentity(displayName: "ColumbaSim")
+                let switched = try await identityManager.switchToIdentity(created.identityHash)
+                active = switched.0
+                #endif
             }
 
             // 3. Load identity keys from Keychain
@@ -366,7 +410,11 @@ struct RootView: View {
             let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
             DiagLog.log("[STARTUP] Step 4: \(enabledInterfaces.count) enabled interfaces")
 
-            // 5. Initialize AppServices with identity (TCP connected separately below)
+            // 5. Initialize AppServices with identity. The Python RNS stack
+            //    builds its config file from InterfaceRepository's enabled
+            //    interfaces (PythonConfigWriter); when the list is empty the
+            //    app comes up offline and the user adds an interface via
+            //    Settings → Manage Interfaces.
             DiagLog.log("[STARTUP] Step 5: initialize AppServices")
             try await appServices.initialize(
                 identity: identity,
@@ -385,8 +433,8 @@ struct RootView: View {
             self.messageRepository = repo
 
             #if os(iOS)
-            // Initialize location sharing manager
-            let locManager = LocationSharingManager(appServices: appServices)
+            // Initialize location sharing manager (stub when COLUMBA_LOCATION_ENABLED off)
+            let locManager = LocationSharingManager()
             appServices.locationSharingManager = locManager
             let handler = IncomingMessageHandler(messageRepository: repo, database: db, locationSharingManager: locManager)
             #else

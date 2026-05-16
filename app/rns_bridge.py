@@ -122,39 +122,19 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
     _put("inbound", source_hash=src, content=content, title=title)
 
 
-def _write_config(config_path: str, tcp_host: str, tcp_port: int) -> None:
-    """Write a minimal RNS config file. No transport, single TCPClientInterface."""
-    config = f"""[reticulum]
-  enable_transport = no
-  share_instance = no
-  shared_instance_port = 37428
-  instance_control_port = 37429
-  panic_on_interface_error = no
-
-[logging]
-  loglevel = 4
-
-[interfaces]
-  [[Hub]]
-    type = TCPClientInterface
-    enabled = yes
-    interface_enabled = yes
-    target_host = {tcp_host}
-    target_port = {int(tcp_port)}
-"""
-    with open(config_path, "w") as f:
-        f.write(config)
-
-
 def start(
     config_dir: str,
     identity_path: str,
-    tcp_host: str,
-    tcp_port: int,
     display_name: str,
     identity_bytes: bytes | None = None,
 ) -> dict[str, str]:
     """Initialize Reticulum + LXMRouter. Idempotent — returns local_info if already up.
+
+    The RNS config file at `<config_dir>/config` must already exist — Swift
+    writes it from the user's `InterfaceEntity` records before calling
+    `start()`. See `PythonConfigWriter.swift`. If the config file is missing,
+    Reticulum will fall back to its default behavior (create a default
+    config and try to auto-discover interfaces).
 
     Identity precedence (highest first):
       1. `identity_bytes` — raw 64-byte private key blob (preferred path for iOS;
@@ -169,7 +149,6 @@ def start(
             return _local_info()
 
         os.makedirs(config_dir, exist_ok=True)
-        _write_config(os.path.join(config_dir, "config"), tcp_host, int(tcp_port))
         _state["config_dir"] = config_dir
 
         # Both RNS.Reticulum.__init__ and LXMF.LXMRouter.__init__ call signal.signal()
@@ -215,8 +194,21 @@ def start(
         RNS.Transport.register_announce_handler(handler)
         _state["handler"] = handler
 
-        # Announce ourselves so the network knows where we are.
+        # Announce ourselves so the network knows where we are. We re-announce
+        # after a short delay because the TCP interface needs ~1-2s to come
+        # online; the first announce can be dropped if the interface isn't
+        # connected yet.
         delivery_destination.announce()
+
+        def _delayed_reannounce() -> None:
+            for delay in (2, 5, 15, 30):
+                time.sleep(delay)
+                try:
+                    delivery_destination.announce()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_delayed_reannounce, daemon=True).start()
 
         _state["started"] = True
         _put("state", value="connected")

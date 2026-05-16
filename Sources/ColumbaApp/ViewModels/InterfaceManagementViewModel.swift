@@ -438,7 +438,8 @@ public final class InterfaceManagementViewModel {
                         case .connected: status = .connected
                         case .connecting: status = .connecting
                         case .reconnecting: status = .reconnecting
-                        case .disconnected: status = .disconnected
+                        case .disconnected, .notConnected: status = .disconnected
+                        case .connectionFailed, .sendFailed, .invalidConfig: status = .error
                         }
                         tcpUpdates.append((entity.id, status, err))
                     } else {
@@ -537,8 +538,10 @@ public final class InterfaceManagementViewModel {
                                 self.interfaceStatus[rnodeEntity.id] = .connecting
                             case .reconnecting:
                                 self.interfaceStatus[rnodeEntity.id] = .reconnecting
-                            case .disconnected:
+                            case .disconnected, .notConnected:
                                 self.interfaceStatus[rnodeEntity.id] = .disconnected
+                            case .connectionFailed, .sendFailed, .invalidConfig:
+                                self.interfaceStatus[rnodeEntity.id] = .error
                             }
                         } else {
                             self.interfaceStatus[rnodeEntity.id] = .disconnected

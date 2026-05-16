@@ -139,6 +139,7 @@ NEW_SWIFT = (
     Sources/ColumbaApp/Python/Models/PyMessage.swift
     Sources/ColumbaApp/Python/Models/PyConversation.swift
     Sources/ColumbaApp/Python/Models/PyLocalIdentity.swift
+    Sources/ColumbaApp/Services/PythonConfigWriter.swift
   ].map { |p| File.expand_path(p, project_root) }
 ).uniq.map { |p| p.sub("#{project_root}/", '') }.sort.freeze
 
@@ -195,6 +196,10 @@ NEW_SWIFT.each do |rel|
       columba_python_models_group
     elsif rel.include?('/ColumbaApp/Python/')
       columba_python_group
+    elsif rel.start_with?('Sources/ColumbaApp/Services/')
+      services_group = columba_group.children.find { |g| g.respond_to?(:name) && (g.name == 'Services' || g.path == 'Services') } ||
+                       columba_group.new_group('Services').tap { |g| g.set_source_tree('<group>') }
+      services_group
     else
       columba_group
     end

@@ -129,10 +129,14 @@ struct SettingsView: View {
                     )
                 }
                 .navigationDestination(isPresented: $showDataMigration) {
+                    #if COLUMBA_MIGRATION_ENABLED
                     MigrationScreen(
                         identityManager: identityManager,
                         settingsRepository: settingsRepository
                     )
+                    #else
+                    Text("Data migration unavailable in this build")
+                    #endif
                 }
             } else {
                 ProgressView()
@@ -145,7 +149,7 @@ struct SettingsView: View {
         // previously, the viewModel was created inline in .navigationDestination, so
         // each re-render produced a fresh InterfaceManagementViewModel with
         // showRNodeWizard=false, which immediately dismissed the fullScreenCover.
-        #if os(iOS)
+        #if os(iOS) && COLUMBA_RNODE_ENABLED
         .fullScreenCover(isPresented: Binding(
             get: { interfaceViewModel?.showRNodeWizard ?? false },
             set: { interfaceViewModel?.showRNodeWizard = $0 }
@@ -799,7 +803,7 @@ struct SettingsView: View {
                 set: { newValue in
                     #if os(iOS)
                     if !newValue {
-                        appServices.locationSharingManager?.stopAllSharing()
+                        Task { await appServices.locationSharingManager?.stopAllSharing() }
                     }
                     #endif
                     vm.isLocationSharingEnabled = newValue

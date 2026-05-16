@@ -112,6 +112,7 @@
 		6176037A389D1F97BB47992B /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */; };
 		67079BBC2E8309A43DF576E5 /* app in Resources */ = {isa = PBXBuildFile; fileRef = D001472BC7DFD3CD7BF27F0C /* app */; };
+		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
 		779118E89F4D38BF960DB3D0 /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
 		809F525585341A5B06FE1328 /* Identity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39C8A6DB49AAE2151BF6A5CB /* Identity.swift */; };
 		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
@@ -165,6 +166,7 @@
 		B438088C25BAD3D86A2C1E2A /* Aspects.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Aspects.swift; path = Util/Aspects.swift; sourceTree = "<group>"; };
 		D001472BC7DFD3CD7BF27F0C /* app */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = app; sourceTree = "<group>"; };
 		D0C9FCBE3476E65B4D02F17B /* BackendCapabilities.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BackendCapabilities.swift; path = Protocols/BackendCapabilities.swift; sourceTree = "<group>"; };
+		EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonConfigWriter.swift; sourceTree = "<group>"; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
 		F002 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -590,6 +592,7 @@
 				F077 /* TunnelManager.swift */,
 				F078 /* ExtensionFrameReader.swift */,
 				F07F /* NomadNetBrowserService.swift */,
+				EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -951,6 +954,7 @@
 				92C1741DEAFD503476E0B093 /* Aspects.swift in Sources */,
 				B5362DEE23C09D9D1646ED2E /* HexExt.swift in Sources */,
 				668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */,
+				69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1010,7 +1014,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -1126,7 +1130,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;

@@ -71,7 +71,7 @@ struct MapView: View {
                     let isSharing = locationSharingManager?.isSharingWithAnyone ?? false
                     Button {
                         if isSharing {
-                            locationSharingManager?.stopAllSharing()
+                            Task { await locationSharingManager?.stopAllSharing() }
                         } else {
                             Task { await loadContacts() }
                             showShareSheet = true

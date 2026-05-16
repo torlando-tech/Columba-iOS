@@ -7,20 +7,24 @@ import Foundation
 ///
 /// Events from RNS / LXMF callbacks land on a thread-safe Python queue.Queue;
 /// Swift drains it via a Combine `Timer.publish` at ~5 Hz.
-final class PythonBridge: @unchecked Sendable {
+public final class PythonBridge: @unchecked Sendable {
     // Connection / send results bubble up as plain enums; the SwiftUI layer
     // turns them into user-facing strings.
-    struct LocalInfo: Equatable {
-        let identityHash: String
-        let destinationHash: String
+    public struct LocalInfo: Equatable, Sendable {
+        public let identityHash: String
+        public let destinationHash: String
+        public init(identityHash: String, destinationHash: String) {
+            self.identityHash = identityHash
+            self.destinationHash = destinationHash
+        }
     }
 
-    enum BridgeError: LocalizedError {
+    public enum BridgeError: LocalizedError {
         case notStarted
         case pythonException(String)
         case marshallingFailure(String)
 
-        var errorDescription: String? {
+        public var errorDescription: String? {
             switch self {
             case .notStarted: return "Python bridge not started"
             case .pythonException(let m): return "Python error: \(m)"
@@ -29,7 +33,7 @@ final class PythonBridge: @unchecked Sendable {
         }
     }
 
-    enum SendOutcome: Equatable {
+    public enum SendOutcome: Equatable, Sendable {
         case queued
         case requestingPath
         case badHash
@@ -37,7 +41,7 @@ final class PythonBridge: @unchecked Sendable {
         case other(String)
     }
 
-    enum Event: Equatable {
+    public enum Event: Equatable, Sendable {
         case announce(destHash: String, displayName: String, t: Date)
         case inbound(sourceHash: String, content: String, title: String, t: Date)
         case state(String, t: Date)
@@ -46,7 +50,7 @@ final class PythonBridge: @unchecked Sendable {
     private let queue = DispatchQueue(label: "network.columba.python", qos: .userInitiated)
     private var module: UnsafeMutablePointer<PyObject>?
 
-    init() {}
+    public init() {}
 
     // MARK: - Public API
 
@@ -56,11 +60,9 @@ final class PythonBridge: @unchecked Sendable {
     /// 64-byte identity blob from Keychain and hands it over here; Python loads it
     /// via `RNS.Identity.from_bytes()`, never touching the filesystem for keys.
     /// Pass `nil` to fall back to `identityPath` (file-on-disk; mainly for CLI / PoC).
-    func start(
+    public func start(
         configDir: String,
         identityPath: String,
-        tcpHost: String,
-        tcpPort: Int,
         displayName: String,
         identityBytes: Data? = nil
     ) async throws -> LocalInfo {
@@ -73,37 +75,31 @@ final class PythonBridge: @unchecked Sendable {
                 }
                 defer { Py_DecRef(fn) }
 
-                // Positional args 0..4, then identity_bytes (None or bytes) at slot 5.
-                let args = PyTuple_New(6)
+                // Positional args 0..2, then identity_bytes (None or bytes) at slot 3.
+                // Swift wrote the RNS config file at <configDir>/config before this
+                // call (see PythonConfigWriter); rns_bridge.py just reads it.
+                let args = PyTuple_New(4)
                 guard args != nil else { throw BridgeError.marshallingFailure("PyTuple_New") }
                 defer { Py_DecRef(args) }
 
-                let strings = [configDir, identityPath, tcpHost]
+                let strings = [configDir, identityPath, displayName]
                 for (idx, value) in strings.enumerated() {
                     guard let u = PyUnicode_FromString(value) else {
                         throw BridgeError.marshallingFailure("PyUnicode_FromString[\(idx)]")
                     }
                     PyTuple_SetItem(args, idx, u) // steals ref
                 }
-                guard let portObj = PyLong_FromLongLong(Int64(tcpPort)) else {
-                    throw BridgeError.marshallingFailure("PyLong_FromLongLong")
-                }
-                PyTuple_SetItem(args, 3, portObj)
-                guard let nameObj = PyUnicode_FromString(displayName) else {
-                    throw BridgeError.marshallingFailure("PyUnicode_FromString(name)")
-                }
-                PyTuple_SetItem(args, 4, nameObj)
 
-                // identity_bytes at slot 5: either Py_None or a bytes object.
+                // identity_bytes at slot 3: either Py_None or a bytes object.
                 if let data = identityBytes, !data.isEmpty {
                     let bytesObj: UnsafeMutablePointer<PyObject>? = data.withUnsafeBytes { raw in
                         guard let base = raw.baseAddress else { return nil }
                         return PyBytes_FromStringAndSize(base.assumingMemoryBound(to: CChar.self), raw.count)
                     }
                     guard let bytesObj else { throw BridgeError.marshallingFailure("PyBytes_FromStringAndSize") }
-                    PyTuple_SetItem(args, 5, bytesObj) // steals ref
+                    PyTuple_SetItem(args, 3, bytesObj) // steals ref
                 } else {
-                    PyTuple_SetItem(args, 5, ColumbaPy_None()) // steals ref
+                    PyTuple_SetItem(args, 3, ColumbaPy_None()) // steals ref
                 }
 
                 guard let result = PyObject_CallObject(fn, args) else {
@@ -115,7 +111,7 @@ final class PythonBridge: @unchecked Sendable {
         }
     }
 
-    func stop() async throws {
+    public func stop() async throws {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 guard let module = self.module else { return }
@@ -130,7 +126,7 @@ final class PythonBridge: @unchecked Sendable {
         }
     }
 
-    func resetIdentity(identityPath: String) async throws {
+    public func resetIdentity(identityPath: String) async throws {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 try ensureModuleLoaded()
@@ -152,7 +148,7 @@ final class PythonBridge: @unchecked Sendable {
         }
     }
 
-    func sendOpportunistic(destHashHex: String, content: String) async throws -> SendOutcome {
+    public func sendOpportunistic(destHashHex: String, content: String) async throws -> SendOutcome {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 guard let module = self.module else { return .notStarted }
@@ -182,7 +178,7 @@ final class PythonBridge: @unchecked Sendable {
     }
 
     /// Read RNS Transport diagnostic info — interfaces, online state, table sizes.
-    func status() async -> [String: String] {
+    public func status() async -> [String: String] {
         await withCheckedContinuation { cont in
             queue.async {
                 let out = PythonRuntime.shared.withGIL { () -> [String: String] in
@@ -209,7 +205,7 @@ final class PythonBridge: @unchecked Sendable {
 
     /// Drain pending events from the Python-side queue.Queue. Returns empty list
     /// if the bridge isn't started yet.
-    func drainEvents() async -> [Event] {
+    public func drainEvents() async -> [Event] {
         await withCheckedContinuation { cont in
             queue.async {
                 let events = PythonRuntime.shared.withGIL { () -> [Event] in

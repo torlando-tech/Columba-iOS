@@ -178,7 +178,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.badgeType = .peer
         self.hopCount = 0
         self.signalStrength = 4
-        self.timestamp = Date(timeIntervalSince1970: record.lastMessageTimestamp)
+        self.timestamp = record.lastMessageTimestamp
         self.isOnline = true
         self.isFavorite = record.isFavorite != 0
         self.isPinned = record.isPinned != 0

@@ -156,8 +156,8 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
             // Look up sender display name from path table (announce data) and update conversation
             if let pathTable = self.pathTable {
                 if let entry = await pathTable.lookup(destinationHash: sourceHash),
-                   let name = entry.displayName, !name.isEmpty {
-                    try? await self.messageRepository.ensureConversation(sourceHash, displayName: name)
+                   !entry.displayName.isEmpty {
+                    try? await self.messageRepository.ensureConversation(sourceHash, displayName: entry.displayName)
                 }
             }
 
@@ -177,7 +177,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 if let metaStr, metaStr.contains("\"cease\"") {
                     isCeaseMessage = true
                     #if os(iOS)
-                    self.locationSharingManager?.handleIncomingCease(from: message.sourceHash)
+                    await self.locationSharingManager?.handleIncomingCease(from: message.sourceHash)
                     #endif
                     self.logger.debug("Cease signal from \(sourceHashHex)")
                 }

@@ -2,158 +2,251 @@ import Foundation
 import CryptoKit
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RNSAPI v1 compatibility layer
+// RNSAPI v1 compatibility layer — types that mirror the public API surface
+// of the deleted AI-Swift libraries (reticulum-swift / LXMF-swift / LXSTSwift)
+// so the existing Columba iOS UI compiles unchanged on top of the new
+// Python-backed protocol layer.
 //
-// One big file holding stub types and minimal value types the Columba iOS UI
-// still references after the strip of `reticulum-swift` / `LXMFSwift` /
-// `LXSTSwift`. These types preserve the AI-Swift API shapes used at ~700
-// call sites across `Sources/ColumbaApp/` so we don't have to rewrite every
-// caller in a single PR.
+// Real behavior wired in:
+//   * Identity (separate file): Keychain + CryptoKit key derivation
+//   * Destination.hash(...) helpers (SHA-256 truncation, matches RNS wire)
 //
-// Most types here are "compile but no-op" stubs. The ones that actually do
-// work in v1 (Identity Keychain ops in Identity.swift; TCP path through
-// `RNSBackendPy`) sit in their own files. Anything marked `(stub)` returns a
-// safe default and logs a runtime warning so UI buttons that hit it produce
-// a visible diagnostic rather than a silent miss.
+// Stubbed (compile-only, body returns nil/empty/false or no-ops):
+//   * Most interface lifecycle methods (connect/disconnect/send/etc.)
+//   * RatchetManager
+//   * Callback registration (callback manager not wired)
+//   * Crypto methods (sign/verify/encrypt/decrypt — Python does the work)
+//   * Database persistence (Python sqlite3 store is the truth)
 //
-// Long-term these all collapse into the protocol-method surface mirrored
-// from Columba Android's `rns-api` (`backend.core.X`, `backend.lxmf.X`, etc.).
-// For now we get to compile; refactor toward the pure shape later.
+// Each stub is small enough that a runtime call no-ops rather than crashes.
+// Buttons that hit stubbed paths will appear to do nothing — by design for
+// v1; the bridge wiring for each lands in RNSBackendPy as feature areas
+// come back online (BLE, AutoInterface, etc.).
 // ─────────────────────────────────────────────────────────────────────────────
+
+// MARK: - Hash helpers
+
+enum Hashing {
+    /// 10-byte truncated SHA-256 of the dotted destination name.
+    static func destinationNameHash(appName: String, aspects: [String]) -> Data {
+        var name = appName
+        for aspect in aspects { name += "." + aspect }
+        return Data(SHA256.hash(data: name.data(using: .utf8) ?? Data())).prefix(10)
+    }
+
+    /// 16-byte truncated SHA-256 (canonical RNS truncation).
+    static func truncatedHash(_ data: Data) -> Data {
+        Data(SHA256.hash(data: data)).prefix(16)
+    }
+
+    /// 16-byte identity hash from concatenated 32+32 public keys.
+    static func identityHash(encryptionPublicKey: Data, signingPublicKey: Data) -> Data {
+        Data(SHA256.hash(data: encryptionPublicKey + signingPublicKey)).prefix(16)
+    }
+}
+
+// MARK: - Enums
+
+public enum DestType: UInt8, Sendable {
+    case single = 0x00
+    case group  = 0x01
+    case plain  = 0x02
+    case link   = 0x03
+}
+
+public enum DestinationType: String, Equatable, Sendable {
+    case single, plain, link, group
+}
+
+public enum DestinationDirection: Sendable {
+    case `in`
+    case out
+}
+
+// Note: Columba defines its own `InterfaceType` in
+// Sources/ColumbaApp/Services/InterfaceRepository.swift with UI-layer cases
+// (tcpClient, tcpServer, multipeer, ...). The protocol-layer
+// `InterfaceConfig.type` below uses a separate enum (`WireInterfaceType`)
+// keyed to the wire-side names AppServices already passes (`.tcp`, `.ble`,
+// `.autoInterface`, `.rnode`, `.multipeerConnectivity`).
+public enum WireInterfaceType: String, Sendable, Equatable {
+    case tcp
+    case udp
+    case i2p
+    case autoInterface
+    case rnode
+    case ble
+    case multipeerConnectivity
+}
+
+public enum InterfaceState: Sendable, Equatable {
+    case disconnected
+    case connecting
+    case connected
+    case reconnecting(attempt: Int = 0)
+    case connectionFailed(underlying: String)
+    case sendFailed(underlying: String)
+    case notConnected
+    case invalidConfig(reason: String)
+}
+
+public enum LXDeliveryMethod: String, Equatable, Sendable {
+    case opportunistic, direct, propagated, paper, unknown
+}
+
+public enum LXMessageState: String, Equatable, Sendable, Codable {
+    case draft, outbound, sending, sent, delivered, failed, received
+}
+
+public enum LXMessageRepresentation: String, Equatable, Sendable {
+    case unknown, opportunistic, direct, propagated
+}
+
+public enum LXUnverifiedReason: String, Equatable, Sendable {
+    case signatureMismatch, missingIdentity, malformed
+}
+
+public enum LXMFError: Error, LocalizedError, Sendable {
+    case routerNotInitialized
+    case destinationNotFound
+    case sendFailed(String)
+    case deliveryTimeout
+    case other(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .routerNotInitialized: return "LXMRouter not initialized"
+        case .destinationNotFound: return "Destination not found"
+        case .sendFailed(let s): return "Send failed: \(s)"
+        case .deliveryTimeout: return "Delivery timeout"
+        case .other(let s): return s
+        }
+    }
+}
 
 // MARK: - Destination
 
-/// Reticulum destination. v1: value type with the static `.hash(...)` helper
-/// the existing code uses; instance methods are stubs.
-public struct Destination: Equatable, @unchecked Sendable {
-    public let hash: Data
-    public let identityHash: Data
+/// Reticulum destination. Mirrors the AI-Swift `Destination` class so the
+/// existing Columba UI compiles unchanged. Hash computation uses real SHA-256
+/// truncation (matches RNS wire format). Callbacks / ratchets / streams are
+/// stub no-ops — those wire through `RNSBackendPy` in later commits.
+public final class Destination: @unchecked Sendable {
+    public let identity: Identity?
+    public let appName: String
+    public let aspects: [String]
+    public let destinationType: DestType
+    public var direction: DestinationDirection
     public var appData: Data?
     public var ratchetManager: RatchetManager?
+    public private(set) var ratchetsEnabled: Bool = false
+    public private(set) var ratchetsEnforced: Bool = false
 
-    public init(hash: Data, identityHash: Data, appData: Data? = nil) {
-        self.hash = hash
-        self.identityHash = identityHash
-        self.appData = appData
-        self.ratchetManager = nil
+    public var hash: Data {
+        switch destinationType {
+        case .single, .link:
+            guard let identity else { return Destination.plainHash(appName: appName, aspects: aspects) }
+            return Destination.hash(identity: identity, appName: appName, aspects: aspects)
+        case .plain, .group:
+            return Destination.plainHash(appName: appName, aspects: aspects)
+        }
     }
 
-    public static func == (lhs: Destination, rhs: Destination) -> Bool {
-        lhs.hash == rhs.hash &&
-        lhs.identityHash == rhs.identityHash &&
-        lhs.appData == rhs.appData
-        // ratchetManager intentionally excluded from equality (reference identity)
-    }
-
-    /// Compute a destination hash from an identity + app name + aspect path.
-    /// Canonical RNS formula:
-    ///   name_hash = SHA256(app_name + "." + aspects)[:10]
-    ///   dest_hash = SHA256(name_hash + identity.hash)[:16]
-    public static func hash(identity: Identity, appName: String, aspects: [String]) -> Data {
-        var name = appName
-        for aspect in aspects { name += "." + aspect }
-        let nameHash = Data(SHA256.hash(data: name.data(using: .utf8) ?? Data())).prefix(10)
-        return Data(SHA256.hash(data: nameHash + identity.hash)).prefix(16)
-    }
-
+    public var publicKeys: Data? { identity?.publicKeys }
+    public var nameHash: Data { Hashing.destinationNameHash(appName: appName, aspects: aspects) }
+    public var fullName: String { aspects.isEmpty ? appName : appName + "." + aspects.joined(separator: ".") }
+    public var announceNameHash: Data { nameHash }
     public var hexHash: String { hash.toHex() }
 
-    public func enableRatchets(storagePath: String) {
-        // stub — ratchet support is deferred; the python side handles per-link ratchets
+    public init(
+        identity: Identity,
+        appName: String,
+        aspects: [String] = [],
+        type: DestType = .single,
+        direction: DestinationDirection = .in
+    ) {
+        self.identity = identity
+        self.appName = appName
+        self.aspects = aspects
+        self.destinationType = type
+        self.direction = direction
+    }
+
+    public init(
+        plainAppName appName: String,
+        aspects: [String] = [],
+        direction: DestinationDirection = .in
+    ) {
+        self.identity = nil
+        self.appName = appName
+        self.aspects = aspects
+        self.destinationType = .plain
+        self.direction = direction
+    }
+
+    public func setCallbackManager(_ manager: Any) {}
+
+    public func registerCallback(_ callback: @escaping (Data, Packet) -> Void) throws {}
+
+    public func createPacketStream() -> AsyncStream<(Data, Packet)>? { nil }
+
+    public func enableRatchets(storagePath: String) async throws {
+        ratchetsEnabled = true
+        ratchetManager = RatchetManager()
+    }
+
+    public func enforceRatchets() { ratchetsEnforced = ratchetsEnabled }
+
+    public static func hash(identity: Identity, appName: String, aspects: [String] = []) -> Data {
+        var combined = Hashing.destinationNameHash(appName: appName, aspects: aspects)
+        combined.append(identity.hash)
+        return Hashing.truncatedHash(combined)
+    }
+
+    public static func plainHash(appName: String, aspects: [String] = []) -> Data {
+        Hashing.truncatedHash(Hashing.destinationNameHash(appName: appName, aspects: aspects))
+    }
+
+    public static func hash(
+        encryptionPublicKey: Data,
+        signingPublicKey: Data,
+        appName: String,
+        aspects: [String] = []
+    ) -> Data {
+        let idHash = Hashing.identityHash(encryptionPublicKey: encryptionPublicKey, signingPublicKey: signingPublicKey)
+        var combined = Hashing.destinationNameHash(appName: appName, aspects: aspects)
+        combined.append(idHash)
+        return Hashing.truncatedHash(combined)
     }
 }
 
-/// Ratchet manager handle — opaque stub today; Python owns the actual ratchet
-/// state machine and persistence path.
+extension Destination: CustomStringConvertible {
+    public var description: String { "Destination<\(fullName):\(hexHash.prefix(8))...>" }
+}
+
+public enum DestinationError: Error, Sendable {
+    case identityRequired
+    case plainCannotAnnounce
+    case invalidAppName
+    case callbackManagerNotSet
+}
+
 public final class RatchetManager: @unchecked Sendable {
     public init() {}
+    public init(storagePath: String, identity: Identity) {}
+    public func loadOrCreate() async throws {}
+    public func rotateIfNeeded() async {}
+    /// Called both as a property and as a method in different sites — provide both.
+    public func currentRatchetPublicBytes() async -> Data? { nil }
 }
 
-// MARK: - Link
-
-/// Reticulum Link — encrypted channel between two destinations. v1 stub;
-/// link callbacks are surfaced via the Python event bridge in Phase 2.
-public final class Link: @unchecked Sendable {
-    public enum State: Equatable, Sendable {
-        case pending, active, closed, stale, established
-
-        public var isEstablished: Bool { self == .active || self == .established }
-    }
-
-    public let identityHash: Data
-    public var state: State = .pending
-    public var label: String = ""
-    public var url: String?
-    public var fieldNames: [String] = []
-
-    public init(identityHash: Data) {
-        self.identityHash = identityHash
-    }
-
-    public func identify(_ identity: Identity) {}
-    public func identify(identity: Identity) async throws {}
-    public func close() { state = .closed }
-    public func request(_ path: String) {}
-    public func request(_ path: String, data: Any? = nil, responseTimeout: TimeInterval? = nil) async throws -> RequestReceipt {
-        RequestReceipt(linkIdentityHash: identityHash, path: path)
-    }
-    public var stateUpdates: AsyncStream<State> {
-        AsyncStream { _ in /* stub */ }
-    }
-    public var endIndex: Int { 0 }
-}
-
-/// Response handle for an outgoing link request. v1 stub.
-public struct RequestReceipt: Equatable, Sendable {
-    public let linkIdentityHash: Data
-    public let path: String
-
-    public init(linkIdentityHash: Data, path: String) {
-        self.linkIdentityHash = linkIdentityHash
-        self.path = path
-    }
-
-    public func awaitResponse(timeout: TimeInterval) async throws -> Data? { nil }
-}
-
-/// Stand-in for MessagePack's value-tagged enum. v1: bridge translates to/from
-/// real msgpack on the Python side; Swift code that builds field dicts uses
-/// this façade so the call sites compile.
-public enum MessagePackValue: Hashable, Sendable {
-    case `nil`
-    case bool(Bool)
-    case int(Int64)
-    case uint(UInt64)
-    case float(Float)
-    case double(Double)
-    case string(String)
-    case binary(Data)
-    indirect case array([MessagePackValue])
-    indirect case map([MessagePackValue: MessagePackValue])
-
-    public init(_ value: String) { self = .string(value) }
-    public init(_ value: Int) { self = .int(Int64(value)) }
-    public init(_ value: Data) { self = .binary(value) }
-}
-
-/// Stand-in for the msgpack unpack helper. v1 stub returns nil; the python
-/// bridge handles real serialization.
-public func unpackMsgPack(_ data: Data) -> [MessagePackValue: MessagePackValue]? { nil }
-
-// MARK: - Packet
+// MARK: - Packet / Announce / Link
 
 public struct Packet: Equatable, Sendable {
     public let payload: Data
-    public init(payload: Data) { self.payload = payload }
+    public init(payload: Data = Data()) { self.payload = payload }
     public func encode() -> Data { payload }
 }
 
-// MARK: - Announce
-
-/// Network announce surfaced to the UI. Distinct from `AnnounceEvent` (the
-/// raw protocol message) — this is the "row" the contacts/announces list
-/// shows. v1: populated by `RNSBackendPy.PythonEventBridge` from
-/// `rns_bridge.drain_events()`.
 public struct Announce: Identifiable, Equatable, Sendable {
     public let destinationHash: Data
     public var displayName: String
@@ -193,350 +286,521 @@ public struct Announce: Identifiable, Equatable, Sendable {
         self.icon = icon
     }
 
-    public func buildPacket() throws -> Packet { Packet(payload: Data()) }
-}
+    public init(destination: Destination, ratchet: Data? = nil) {
+        self.destinationHash = destination.hash
+        self.displayName = ""
+        self.firstSeen = Date()
+        self.lastSeen = Date()
+        self.hopCount = 0
+        self.signalStrength = nil
+        self.isRelay = false
+        self.badgeType = .lxmfDelivery
+        self.icon = nil
+    }
 
-// MARK: - AnnounceHandler protocol
+    public func buildPacket() throws -> Packet { Packet() }
+}
 
 public protocol AnnounceHandler: AnyObject {
     var aspectFilter: String? { get }
     func receivedAnnounce(destinationHash: Data, identity: Identity, appData: Data?)
 }
 
-// MARK: - DestinationType
+public final class Link: @unchecked Sendable {
+    public enum State: Equatable, Sendable {
+        case pending, active, closed, stale, established
+        public var isEstablished: Bool { self == .active || self == .established }
+    }
 
-public enum DestinationType: String, Equatable, Sendable {
-    case single, plain, link, group
+    public let identityHash: Data
+    public var state: State = .pending
+    public var label: String = ""
+    public var url: String?
+    public var fieldNames: [String] = []
+    public var endIndex: Int { 0 }
+
+    public init(identityHash: Data) { self.identityHash = identityHash }
+
+    public func identify(_ identity: Identity) {}
+    public func identify(identity: Identity) async throws {}
+    public func close() { state = .closed }
+    public func request(_ path: String) {}
+    public func request(_ path: String, data: Any? = nil, responseTimeout: TimeInterval? = nil) async throws -> RequestReceipt {
+        RequestReceipt(linkIdentityHash: identityHash, path: path)
+    }
+    public var stateUpdates: AsyncStream<State> { AsyncStream { _ in } }
 }
 
-// Note: `InterfaceMode` and `RNodeConfig` live in
-// Sources/ColumbaApp/Services/InterfaceRepository.swift — Columba defined them
-// for its own UI/storage layer and we use those directly rather than
-// redeclaring here.
+public struct RequestReceipt: Equatable, Sendable {
+    public let linkIdentityHash: Data
+    public let path: String
+    public init(linkIdentityHash: Data, path: String) {
+        self.linkIdentityHash = linkIdentityHash
+        self.path = path
+    }
+    public var statusUpdates: AsyncStream<String> { AsyncStream { _ in } }
+    public func awaitResponse(timeout: TimeInterval) async throws -> Data? { nil }
+}
+
+public enum MessagePackValue: Hashable, Sendable {
+    case `nil`
+    case bool(Bool)
+    case int(Int64)
+    case uint(UInt64)
+    case float(Float)
+    case double(Double)
+    case string(String)
+    case binary(Data)
+    indirect case array([MessagePackValue])
+    indirect case map([MessagePackValue: MessagePackValue])
+}
+
+public func unpackMsgPack(_ data: Data) -> [MessagePackValue: MessagePackValue]? { nil }
 
 // MARK: - IconAppearance
 
-/// Peer icon configuration carried in LXMF Field 4.
 public struct IconAppearance: Codable, Equatable, Sendable {
-    public static let fieldKey = 4
+    public static let fieldKey: UInt8 = 0x04
 
     public let iconName: String
     public let fgColor: String
     public let bgColor: String
 
-    /// Aliases for code that uses the longer names.
     public var foregroundColor: String { fgColor }
     public var backgroundColor: String { bgColor }
 
     public init(iconName: String, fgColor: String, bgColor: String) {
-        self.iconName = iconName
-        self.fgColor = fgColor
-        self.bgColor = bgColor
+        self.iconName = iconName; self.fgColor = fgColor; self.bgColor = bgColor
     }
 
-    /// Compatibility init for call sites that use the long names.
     public init(iconName: String, foregroundColor: String, backgroundColor: String) {
-        self.iconName = iconName
-        self.fgColor = foregroundColor
-        self.bgColor = backgroundColor
+        self.iconName = iconName; self.fgColor = foregroundColor; self.bgColor = backgroundColor
     }
 
-    /// Decode from an LXMF field value (the raw msgpack payload at field 4).
-    /// v1 stub: returns nil; full impl lands when icon sharing comes back.
-    public static func fromLXMFFieldValue(_ value: Any) -> IconAppearance? {
-        nil
-    }
-
-    /// Serialize for LXMF field 4. v1 stub returns empty Data.
+    public static func fromLXMFFieldValue(_ value: Any) -> IconAppearance? { nil }
     public func toLXMFFieldValue() -> Data { Data() }
-}
-
-// MARK: - LXMFError
-
-public enum LXMFError: Error, LocalizedError, Sendable {
-    case routerNotInitialized
-    case destinationNotFound
-    case sendFailed(String)
-    case deliveryTimeout
-    case other(String)
-
-    public var errorDescription: String? {
-        switch self {
-        case .routerNotInitialized: return "LXMRouter not initialized"
-        case .destinationNotFound: return "Destination not found"
-        case .sendFailed(let s): return "Send failed: \(s)"
-        case .deliveryTimeout: return "Delivery timeout"
-        case .other(let s): return s
-        }
-    }
-}
-
-// MARK: - LocationSharingManager + Telemetry stubs
-
-/// v1 stub — full location sharing returns in v1.1.
-public final class LocationSharingManager: @unchecked Sendable {
-    public init() {}
-    public func isSharing(with destinationHash: Data) -> Bool { false }
-    public func startSharing(with destinationHash: Data) async {}
-    public func stopSharing(with destinationHash: Data) {}
-    public func sharedTelemetry(for destinationHash: Data) -> TelemetryPacket? { nil }
-    public func handleIncomingCease(from sourceHash: Data) async {}
-}
-
-public struct TelemetryPacket: Equatable, Sendable {
-    public let timestamp: Date
-    public let payload: Data
-    public init(timestamp: Date = Date(), payload: Data = Data()) {
-        self.timestamp = timestamp
-        self.payload = payload
-    }
-}
-
-public struct LocationTelemetry: Equatable, Sendable {
-    public let latitude: Double
-    public let longitude: Double
-    public let altitude: Double?
-    public let timestamp: Date
-    public init(latitude: Double, longitude: Double, altitude: Double? = nil, timestamp: Date = Date()) {
-        self.latitude = latitude
-        self.longitude = longitude
-        self.altitude = altitude
-        self.timestamp = timestamp
-    }
-}
-
-public struct RadioConfig: Equatable, Sendable {
-    public let frequency: UInt32
-    public let bandwidth: UInt32
-    public let spreadingFactor: UInt8
-    public let codingRate: UInt8
-    public let txPower: UInt8
-    public let stAlock: Float?
-    public let ltAlock: Float?
-    public init(
-        frequency: UInt32 = 0,
-        bandwidth: UInt32 = 0,
-        spreadingFactor: UInt8 = 0,
-        codingRate: UInt8 = 0,
-        txPower: UInt8 = 0,
-        stAlock: Float? = nil,
-        ltAlock: Float? = nil
-    ) {
-        self.frequency = frequency
-        self.bandwidth = bandwidth
-        self.spreadingFactor = spreadingFactor
-        self.codingRate = codingRate
-        self.txPower = txPower
-        self.stAlock = stAlock
-        self.ltAlock = ltAlock
-    }
 }
 
 // MARK: - LXMessage
 
-/// An LXMF message — both outbound (Columba builds it, hands to LXMRouter)
-/// and inbound (delivery callback hands it back). v1 carries the fields the
-/// existing UI reads; serialisation lives on the Python side.
 public final class LXMessage: @unchecked Sendable {
-    // Field constants — kept identical to the AI Swift API for call-site compat.
-    public static let FIELD_APP_DATA: Int = 0x10
-    public static let FIELD_IMAGE: Int = 0x05
-    public static let FIELD_FILE_ATTACHMENTS: Int = 0x06
-    public static let FIELD_TELEMETRY: Int = 0x07
-    public static let FIELD_COLUMBA_META: Int = 0x70
+    // Field constants — match AI Swift surface (UInt8).
+    public static let FIELD_ICON_APPEARANCE: UInt8 = 0x04
+    public static let FIELD_FILE_ATTACHMENTS: UInt8 = 0x05
+    public static let FIELD_IMAGE:            UInt8 = 0x06
+    public static let FIELD_AUDIO:            UInt8 = 0x07
+    public static let FIELD_TELEMETRY:        UInt8 = 0x08
+    public static let FIELD_APP_DATA:         UInt8 = 0x10
+    public static let FIELD_COLUMBA_META:     UInt8 = 0x70
 
-    public var destinationHash: Data
+    public let destinationHash: Data
     public var sourceHash: Data
     public var sourceIdentity: Identity?
-    /// Raw content bytes — typically UTF-8 text. Helpers below convert to/from String.
-    public var content: Data
+    public var signature: Data
+    public var timestamp: Double
     public var title: Data
-    public var timestamp: Date
-    public var fields: [Int: Any]?
-    public var state: LXMessageState
+    public var content: Data
+    public var fields: [UInt8: Any]?
+    public var stamp: Data?
     public var hash: Data
+    public var state: LXMessageState
+    public var method: LXDeliveryMethod
+    public var representation: LXMessageRepresentation
     public var incoming: Bool
+    public var packed: Data?
+    public var signatureValidated: Bool
+    public var unverifiedReason: LXUnverifiedReason?
+    public var deliveryAttempts: Int = 0
+    public var nextDeliveryAttempt: Date?
+    public var progress: Double = 0.0
     public var fallbackMethod: LXDeliveryMethod?
+    public var rssi: Double?
+    public var snr: Double?
+    public var q: Double?
+    public var receivingInterface: String?
     public var desiredMethod: LXDeliveryMethod
 
     public init(
         destinationHash: Data,
         sourceIdentity: Identity?,
-        content: String,
-        title: String = "",
-        fields: [Int: Any]? = nil,
-        method: LXDeliveryMethod = .opportunistic
+        content: Data,
+        title: Data = Data(),
+        fields: [UInt8: Any]? = nil,
+        desiredMethod: LXDeliveryMethod = .opportunistic
     ) {
         self.destinationHash = destinationHash
         self.sourceIdentity = sourceIdentity
         self.sourceHash = sourceIdentity?.hash ?? Data()
-        self.content = content.data(using: .utf8) ?? Data()
-        self.title = title.data(using: .utf8) ?? Data()
-        self.timestamp = Date()
+        self.signature = Data()
+        self.timestamp = Date().timeIntervalSince1970
+        self.title = title
+        self.content = content
         self.fields = fields
-        self.state = .draft
+        self.stamp = nil
         self.hash = Data()
+        self.state = .draft
+        self.method = .unknown
+        self.representation = .unknown
         self.incoming = false
+        self.packed = nil
+        self.signatureValidated = false
+        self.unverifiedReason = nil
         self.fallbackMethod = nil
-        self.desiredMethod = method
+        self.desiredMethod = desiredMethod
     }
 
-    public var contentAsString: String {
-        String(data: content, encoding: .utf8) ?? ""
-    }
-
-    public var titleAsString: String {
-        String(data: title, encoding: .utf8) ?? ""
+    /// Compatibility init mirroring AI-Swift's most common ctor with named `method:`.
+    public convenience init(
+        destinationHash: Data,
+        sourceIdentity: Identity?,
+        content: Data,
+        title: Data = Data(),
+        fields: [UInt8: Any]? = nil,
+        method: LXDeliveryMethod
+    ) {
+        self.init(
+            destinationHash: destinationHash,
+            sourceIdentity: sourceIdentity,
+            content: content,
+            title: title,
+            fields: fields,
+            desiredMethod: method
+        )
     }
 
     public func pack() throws -> Data { Data() }
-    public static func unpackFromBytes(_ data: Data) throws -> LXMessage {
-        // v1 stub: caller-provided bytes assumed empty; real unpack happens in Python.
-        LXMessage(
-            destinationHash: Data(),
-            sourceIdentity: nil,
-            content: "",
-            method: .opportunistic
-        )
+
+    public static func unpackFromBytes(_ data: Data, sourceIdentity: Identity? = nil) throws -> LXMessage {
+        LXMessage(destinationHash: Data(), sourceIdentity: sourceIdentity, content: Data())
     }
+
+    public var contentAsString: String { String(data: content, encoding: .utf8) ?? "" }
+    public var titleAsString: String { String(data: title, encoding: .utf8) ?? "" }
 }
 
-public enum LXDeliveryMethod: String, Equatable, Sendable {
-    case opportunistic, direct, propagated, paper, unknown
-}
+// MARK: - LXMRouter
 
-public enum LXMessageState: String, Equatable, Sendable {
-    case draft, outbound, sending, sent, delivered, failed, received
-}
-
-// MARK: - LXMRouter / Delegate
-
-/// LXMF router — was an actor in the AI Swift surface. v1 we keep it as
-/// a class with the methods the UI calls; bodies forward to `RNSBackendPy`.
-/// `lxmfBackend` is set by `AppServices` after the bridge boots.
 public final class LXMRouter: @unchecked Sendable {
     public weak var delegate: LXMRouterDelegate?
 
-    /// Set by AppServices once RNSBackendPy is ready; nil before then.
+    /// Set by AppServices once RNSBackendPy is ready.
     public var sendHook: ((LXMessage) async throws -> Void)?
 
     public init() {}
+    public init(identity: Identity, databasePath: String) async throws {}
+
+    public var outboundPropagationNode: Data?
+    public var propagationStampCost: Int = 0
 
     public func setDelegate(_ delegate: LXMRouterDelegate) { self.delegate = delegate }
-    public func setTransport(_ transport: ReticulumTransport) { /* stub */ }
+    public func setTransport(_ transport: ReticulumTransport) {}
+    public func setRatchetManager(_ manager: RatchetManager?) {}
+    public func setPropagationStampCost(_ cost: Int) async { self.propagationStampCost = cost }
     public func registerDeliveryDestination(_ destination: Destination) {}
 
     @discardableResult
     public func handleOutbound(_ message: LXMessage) async throws -> Bool {
-        if let hook = sendHook {
-            try await hook(message)
-            return true
-        }
+        if let hook = sendHook { try await hook(message); return true }
+        return false
+    }
+
+    /// Inout variant used by ViewModels that need the router to populate
+    /// `hash` / `state` / `timestamp` on the message after pack.
+    @discardableResult
+    public func handleOutbound(_ message: inout LXMessage) async throws -> Bool {
+        if let hook = sendHook { try await hook(message); return true }
         return false
     }
 
     public func restart() async {}
-    public func syncState() async {}
-    public func syncFromPropagationNode() async {}
+    /// Latest sync state — observed by PropagationNodeManager after a sync.
+    public var syncState: PropagationTransferState {
+        get async { PropagationTransferState() }
+    }
+    public func syncFromPropagationNode() async throws {}
+    public func shutdown() async {}
 }
 
 public protocol LXMRouterDelegate: AnyObject {
     func router(_ router: LXMRouter, didReceiveMessage message: LXMessage)
 }
 
-// MARK: - LXMFDatabase (stub)
+// MARK: - LXMFDatabase (stubs mirror the AI Swift surface exactly)
 
-/// Persistent message + conversation store. v1 stub — real persistence
-/// lives in the Python sqlite3 store (`app/columba_store.py`). Methods
-/// here return mock values to keep the UI compiling; `MessageRepository`
-/// is the actual data layer the UI reads from.
+/// Minimum-viable in-memory persistence for LXMF messages and conversations.
+/// Real SQLite-backed implementation lives in Phase 2; this is enough for the
+/// smoke test (and the Python backend's first-light end-to-end run) — chats
+/// list and message thread render from these in-memory maps.
 public final class LXMFDatabase: @unchecked Sendable {
+    private let lock = NSLock()
+    private var conversations: [Data: ConversationRecord] = [:]
+    private var messagesByConversation: [Data: [MessageRecord]] = [:]
+    private var messagesById: [Data: MessageRecord] = [:]
+    private var peerIcons: [Data: IconAppearance] = [:]
+
     public init(path: String) {}
 
-    // Mirror the AI Swift LXMFDatabase API surface exactly — same argument
-    // labels, same throws (not async), same return types.
+    private func keyFor(_ message: LXMessage) -> Data {
+        // Inbound: source is the peer. Outbound: destination is the peer.
+        message.incoming ? message.sourceHash : message.destinationHash
+    }
 
-    // Messages
-    public func saveMessage(_ message: LXMessage) throws {}
+    public func saveMessage(_ message: LXMessage) throws {
+        lock.lock(); defer { lock.unlock() }
+        let convHash = keyFor(message)
+
+        // Ensure conversation row exists.
+        if conversations[convHash] == nil {
+            conversations[convHash] = ConversationRecord(
+                hash: convHash,
+                displayName: "",
+                lastMessageAt: Date(timeIntervalSince1970: message.timestamp),
+                lastMessage: String(data: message.content, encoding: .utf8),
+                unreadCount: message.incoming ? 1 : 0
+            )
+        } else {
+            var conv = conversations[convHash]!
+            conv.lastMessageAt = Date(timeIntervalSince1970: message.timestamp)
+            conv.lastMessage = String(data: message.content, encoding: .utf8)
+            if message.incoming { conv.unreadCount += 1 }
+            conversations[convHash] = conv
+        }
+
+        let record = MessageRecord(
+            id: message.hash,
+            conversationHash: convHash,
+            content: message.content,
+            timestamp: message.timestamp,
+            direction: message.incoming ? .inbound : .outbound,
+            state: message.state.rawValue,
+            messageId: message.hash,
+            sourceHash: message.sourceHash,
+            method: message.method.rawValue
+        )
+        messagesById[message.hash] = record
+        messagesByConversation[convHash, default: []].append(record)
+    }
+
     public func getMessage(id: Data) throws -> LXMessage? { nil }
-    public func hasMessage(id: Data) throws -> Bool { false }
+    public func hasMessage(id: Data) throws -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return messagesById[id] != nil
+    }
     public func getMessages(forConversation hash: Data, limit: Int = 50, offset: Int = 0) throws -> [LXMessage] { [] }
-    public func updateMessageState(id: Data, state: LXMessageState) throws {}
-    public func deleteMessage(id messageId: Data) throws {}
-    public func getMessageRecord(id: Data) throws -> MessageRecord? { nil }
-    public func getMessageRecords(forConversation hash: Data, limit: Int = 200, offset: Int = 0) throws -> [MessageRecord] { [] }
+    public func updateMessageState(id: Data, state: LXMessageState) throws {
+        lock.lock(); defer { lock.unlock() }
+        if var rec = messagesById[id] {
+            rec.state = state.rawValue
+            messagesById[id] = rec
+            if let idx = messagesByConversation[rec.conversationHash]?.firstIndex(where: { $0.id == id }) {
+                messagesByConversation[rec.conversationHash]?[idx] = rec
+            }
+        }
+    }
+    public func deleteMessage(id messageId: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        if let rec = messagesById.removeValue(forKey: messageId) {
+            messagesByConversation[rec.conversationHash]?.removeAll { $0.id == messageId }
+        }
+    }
+    public func getMessageRecord(id: Data) throws -> MessageRecord? {
+        lock.lock(); defer { lock.unlock() }
+        return messagesById[id]
+    }
+    public func getMessageRecords(forConversation hash: Data, limit: Int = 200, offset: Int = 0) throws -> [MessageRecord] {
+        lock.lock(); defer { lock.unlock() }
+        let all = messagesByConversation[hash] ?? []
+        let sorted = all.sorted { $0.timestamp < $1.timestamp }
+        let end = min(offset + limit, sorted.count)
+        guard offset < end else { return [] }
+        return Array(sorted[offset..<end])
+    }
 
-    // Conversations
-    public func getConversations(limit: Int = 100, offset: Int = 0) throws -> [ConversationRecord] { [] }
-    public func getConversation(hash: Data) throws -> ConversationRecord? { nil }
-    public func ensureConversation(hash: Data, displayName: String?) throws {}
-    public func updateDisplayName(hash: Data, displayName: String?) throws {}
-    public func setFavorite(hash: Data, isFavorite: Bool) throws {}
-    public func setPinned(hash: Data, isPinned: Bool) throws {}
-    public func setUnreadCount(hash: Data, count: Int) throws {}
-    public func markConversationRead(hash: Data) throws {}
-    public func deleteConversation(hash: Data) throws {}
-    public func updateConversation(for message: LXMessage) throws {}
+    public func getConversations(limit: Int = 100, offset: Int = 0) throws -> [ConversationRecord] {
+        lock.lock(); defer { lock.unlock() }
+        let all = Array(conversations.values).sorted { $0.lastMessageTimestamp > $1.lastMessageTimestamp }
+        let end = min(offset + limit, all.count)
+        guard offset < end else { return [] }
+        return Array(all[offset..<end])
+    }
+    public func getConversation(hash: Data) throws -> ConversationRecord? {
+        lock.lock(); defer { lock.unlock() }
+        return conversations[hash]
+    }
+    public func ensureConversation(hash: Data, displayName: String?) throws {
+        lock.lock(); defer { lock.unlock() }
+        if var conv = conversations[hash] {
+            if let displayName, !displayName.isEmpty { conv.displayName = displayName }
+            conversations[hash] = conv
+        } else {
+            conversations[hash] = ConversationRecord(
+                hash: hash,
+                displayName: displayName ?? "",
+                lastMessageAt: nil,
+                lastMessage: nil,
+                unreadCount: 0
+            )
+        }
+    }
+    public func updateDisplayName(hash: Data, displayName: String?) throws {
+        lock.lock(); defer { lock.unlock() }
+        if var conv = conversations[hash] {
+            conv.displayName = displayName ?? ""
+            conversations[hash] = conv
+        }
+    }
+    public func setFavorite(hash: Data, isFavorite: Bool) throws {
+        lock.lock(); defer { lock.unlock() }
+        if var conv = conversations[hash] {
+            conv.isFavorite = isFavorite ? 1 : 0
+            conversations[hash] = conv
+        }
+    }
+    public func setPinned(hash: Data, isPinned: Bool) throws {
+        lock.lock(); defer { lock.unlock() }
+        if var conv = conversations[hash] {
+            conv.isPinned = isPinned ? 1 : 0
+            conversations[hash] = conv
+        }
+    }
+    public func setUnreadCount(hash: Data, count: Int) throws {
+        lock.lock(); defer { lock.unlock() }
+        if var conv = conversations[hash] {
+            conv.unreadCount = count
+            conversations[hash] = conv
+        }
+    }
+    public func markConversationRead(hash: Data) throws { try setUnreadCount(hash: hash, count: 0) }
+    public func deleteConversation(hash: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        conversations.removeValue(forKey: hash)
+        messagesByConversation.removeValue(forKey: hash)
+        messagesById = messagesById.filter { $0.value.conversationHash != hash }
+    }
+    public func updateConversation(for message: LXMessage) throws {
+        // saveMessage already updates the conversation row; this is a no-op for now.
+    }
 
-    // Peer icons
-    public func updatePeerIcon(_ hash: Data, iconName: String, fgColor: String, bgColor: String) throws {}
-    public func getPeerIcon(_ hash: Data) throws -> IconAppearance? { nil }
+    public func updatePeerIcon(_ hash: Data, iconName: String, fgColor: String, bgColor: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        peerIcons[hash] = IconAppearance(iconName: iconName, fgColor: fgColor, bgColor: bgColor)
+    }
+    public func getPeerIcon(_ hash: Data) throws -> IconAppearance? {
+        lock.lock(); defer { lock.unlock() }
+        return peerIcons[hash]
+    }
 
-    // Outbound queue (v1 stubs — empty)
     public func loadPendingOutbound() throws -> [LXMessage] { [] }
     public func loadFailedOutbound() throws -> [LXMessage] { [] }
 
-    // Reactions + replies
-    public func updateReplyToId(messageId: Data, replyToId: String) throws {}
-    public func updateReactions(messageId: Data, reactionsJson: String) throws {}
-    public func getReactionsJson(messageId: Data) throws -> String? { nil }
+    public func updateReplyToId(messageId: Data, replyToId: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        if var rec = messagesById[messageId] {
+            rec.replyToId = replyToId
+            messagesById[messageId] = rec
+        }
+    }
+    public func updateReactions(messageId: Data, reactionsJson: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        if var rec = messagesById[messageId] {
+            rec.reactionsJson = reactionsJson
+            messagesById[messageId] = rec
+        }
+    }
+    public func getReactionsJson(messageId: Data) throws -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return messagesById[messageId]?.reactionsJson
+    }
 }
 
-public struct ConversationRecord: Identifiable, Equatable, Sendable {
-    public let id: Data
+public struct ConversationRecord: Identifiable, Equatable, Sendable, Codable {
+    public let hash: Data
     public var displayName: String
     public var isFavorite: Int
     public var isPinned: Int
     public var lastMessageAt: Date?
     public var lastMessage: String?
     public var unreadCount: Int
+    public var iconName: String?
+    public var iconFgColor: String?
+    public var iconBgColor: String?
+
+    /// Alias for `hash` used by older call sites that mirror Android's
+    /// `Conversation.destinationHash`.
+    public var destinationHash: Data { hash }
+
+    /// Alias for `lastMessageAt`. Defaults to `.distantPast` if no message
+    /// has been seen yet, so call sites can sort without unwrapping.
+    public var lastMessageTimestamp: Date { lastMessageAt ?? .distantPast }
+
+    /// Alias for `lastMessage`. Defaults to empty string for previews.
+    public var lastMessagePreview: String { lastMessage ?? "" }
+
+    public var id: Data { hash }
 
     public init(
-        id: Data,
+        hash: Data,
         displayName: String = "",
         isFavorite: Int = 0,
         isPinned: Int = 0,
         lastMessageAt: Date? = nil,
         lastMessage: String? = nil,
-        unreadCount: Int = 0
+        unreadCount: Int = 0,
+        iconName: String? = nil,
+        iconFgColor: String? = nil,
+        iconBgColor: String? = nil
     ) {
-        self.id = id
+        self.hash = hash
         self.displayName = displayName
         self.isFavorite = isFavorite
         self.isPinned = isPinned
         self.lastMessageAt = lastMessageAt
         self.lastMessage = lastMessage
         self.unreadCount = unreadCount
+        self.iconName = iconName
+        self.iconFgColor = iconFgColor
+        self.iconBgColor = iconBgColor
     }
 }
 
-public struct MessageRecord: Identifiable, Equatable, Sendable {
+public struct MessageRecord: Identifiable, Equatable, Sendable, Codable {
     public let id: Data
     public let conversationHash: Data
-    public var content: String
-    public var timestamp: Date
+    public var content: Data
+    public var timestamp: Double
     public var direction: Direction
-    public var state: LXMessageState
+    /// Stored as raw string so it can be persisted directly to SQLite; matches
+    /// AI-Swift's `LXMessageState.rawValue` semantics on the call sites.
+    public var state: String
+    public var messageId: Data
+    public var sourceHash: Data
+    /// Stored as raw string matching `LXDeliveryMethod.rawValue`.
+    public var method: String
+    public var rssi: Double?
+    public var snr: Double?
+    public var receivingInterface: String?
+    public var replyToId: String?
+    public var reactionsJson: String?
+    public var packedLxmf: Data
 
-    public enum Direction: String, Equatable, Sendable { case inbound, outbound }
+    public enum Direction: String, Equatable, Sendable, Codable { case inbound, outbound }
 
     public init(
         id: Data,
         conversationHash: Data,
-        content: String,
-        timestamp: Date,
+        content: Data,
+        timestamp: Double,
         direction: Direction,
-        state: LXMessageState
+        state: String,
+        messageId: Data = Data(),
+        sourceHash: Data = Data(),
+        method: String = "",
+        rssi: Double? = nil,
+        snr: Double? = nil,
+        receivingInterface: String? = nil,
+        replyToId: String? = nil,
+        reactionsJson: String? = nil,
+        packedLxmf: Data = Data()
     ) {
         self.id = id
         self.conversationHash = conversationHash
@@ -544,84 +808,186 @@ public struct MessageRecord: Identifiable, Equatable, Sendable {
         self.timestamp = timestamp
         self.direction = direction
         self.state = state
+        self.messageId = messageId
+        self.sourceHash = sourceHash
+        self.method = method
+        self.rssi = rssi
+        self.snr = snr
+        self.receivingInterface = receivingInterface
+        self.replyToId = replyToId
+        self.reactionsJson = reactionsJson
+        self.packedLxmf = packedLxmf
     }
 }
 
-// MARK: - ReticulumTransport (stub)
+// MARK: - Transport
 
-/// Routing surface — was an actor in the AI Swift API. v1 stub; the
-/// Python backend (`RNSBackendPy.PythonRNSCore`) owns the real transport
-/// state. Most methods log + no-op so UI hooks (e.g., interface management)
-/// compile cleanly.
 public final class ReticulumTransport: @unchecked Sendable {
+    public var hwMtu: Int { 500 }
+    public var radioRssi: Double? { nil }
+    public var radioSnr: Double? { nil }
+    public var radioQuality: Double? { nil }
+    public var transportEnabled: Bool = false
+    public var transportIdentityHash: Data?
+    public var onDiagnostic: (@Sendable (String) -> Void)?
+
     public init() {}
+    public init(identity: Identity? = nil, storagePath: String? = nil) {}
+    public init(pathTable: PathTable) {}
+
+    public func registerPathRequestHandler() async {}
+
+    public func setOnInterfacePeerSpawned(_ callback: (@Sendable (String) async -> Void)?) {}
+    public func setOnInterfaceConnected(_ callback: (@Sendable (String) async -> Void)?) {}
+    public func setOnInterfaceAdded(_ callback: (@Sendable (String) async -> Void)?) {}
+    public func setOnDiagnostic(_ callback: @escaping @Sendable (String) -> Void) {
+        onDiagnostic = callback
+    }
 
     public func addInterface(_ interface: any NetworkInterface) async throws {}
-    public func removeInterface(_ id: String) async throws {}
+    public func removeInterface(id: String) async {}
+    public func addAutoInterface(_ autoInterface: AutoInterface) async throws {}
+    public func addBLEInterface(_ bleInterface: BLEInterface) async throws {}
+    public func addMPCInterface(_ mpcInterface: MPCInterface) async throws {}
+    public func getInterface(id: String) -> (any NetworkInterface)? { nil }
+    public var interfaceCount: Int { 0 }
+    public var interfaceIds: [String] { [] }
     public func listInterfaceIds() async -> [String] { [] }
-    public func getInterfaceName(_ id: String) async -> String? { nil }
+    public func getInterfaceName(for interfaceId: String) async -> String? { nil }
     public func getInterfaceSnapshots() async -> [InterfaceSnapshot] { [] }
-    public func registerDestination(_ destination: Destination) async {}
+
     public func isDestinationRegistered(_ hash: Data) async -> Bool { false }
-    public func send(packet: Packet) async throws {}
-    public func handleReceivedData(data: Data, from interfaceId: String) async {}
-    public func requestPath(_ destinationHash: Data) async {}
-    public func setTransportEnabled(_ enabled: Bool) async {}
-    public func setOnInterfaceAdded(_ handler: @escaping @Sendable (String) async -> Void) async {}
-    public func setOnDiagnostic(_ handler: @escaping @Sendable (String) -> Void) async {}
-    public func registerDestinationLinkCallback(for destinationHash: Data, _ callback: @escaping (Link) async -> Void) async {}
-    public func registerAnnounceHandler(_ handler: AnnounceHandler) async {}
-    public func initiateLink(to destinationHash: Data) async throws -> Link {
-        Link(identityHash: destinationHash)
+    public func registeredDestinationHashes() -> [String] { [] }
+    public func registeredLinkCallbackHashes() -> [String] { [] }
+    public func registerDestination(_ destination: Destination) async {}
+    public func registerDestinationLinkCallback(for destHash: Data, callback: @escaping @Sendable (Link) async -> Void) {}
+    public func unregisterDestination(hash: Data) {}
+    public func isLocalDestination(_ hash: Data) -> Bool { false }
+    public var destinationCount: Int { 0 }
+    public func nextHopInterfaceHwMtu(for destinationHash: Data) async -> Int? { nil }
+
+    public func initiateLink(to destination: Destination, identity: Identity) async throws -> Link {
+        Link(identityHash: destination.identity?.hash ?? Data())
     }
-    public func connect() async {}
-    public func addAutoInterface(_ interface: AutoInterface) async throws {}
-    public func onPeripheralDiscovered(_ handler: @escaping @Sendable (Any) -> Void) async {}
+    public func registerLink(_ link: Link) async {}
+    public func unregisterLink(linkId: Data) {}
+    public func getLink(linkId: Data) -> Link? { nil }
+    public var activeLinkCount: Int { 0 }
+    public var pendingLinkCount: Int { 0 }
+
+    public func waitForPacketProof(packetHash: Data, timeout: TimeInterval = 15) async -> Bool { false }
+    public func registerProofCallback(truncatedHash: Data, callback: @Sendable @escaping () async -> Void) {}
+    public func removeProofCallback(truncatedHash: Data) {}
+
+    public func send(packet: Packet) async throws {}
+    public func send(packet: Packet, via interfaceId: String) async throws {}
+    public func sendLinkData(packet: Packet) async throws {}
+    public func sendToInterface(_ data: Data, interfaceId: String) async throws {}
+
+    public func handleReceivedData(data: Data, from interfaceId: String) async {}
+    public func receive(packet: Packet, from interfaceId: String) async {}
+    public func startRetransmissionLoop() {}
+    public func stopRetransmissionLoop() {}
+
+    public func setTransportEnabled(_ enabled: Bool, identity: Identity? = nil) {
+        self.transportEnabled = enabled
+    }
+
+    public func requestPath(_ destinationHash: Data) async {}
+    public func requestPath(for destinationHash: Data) async {}
+
+    public func validateIFAC(raw: Data, interfaceId: String) -> Data? { nil }
+    public func applyIFAC(raw: Data, interfaceId: String) -> Data { raw }
+    public func registerAnnounceHandler(_ handler: AnnounceHandler) async {}
 }
 
-public struct InterfaceSnapshot: Equatable, Sendable {
+public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
     public let online: Bool
     public let typeLabel: String
+    public let type: WireInterfaceType
+    public let state: InterfaceState
+    public let isAutoInterfacePeer: Bool
+    public let isBLEPeerInterface: Bool
+    public let peerAddress: String?
+    public let lastErrorDescription: String?
 
-    public init(id: String, name: String, online: Bool, typeLabel: String) {
+    public init(
+        id: String,
+        name: String,
+        online: Bool,
+        typeLabel: String,
+        type: WireInterfaceType = .tcp,
+        state: InterfaceState = .disconnected,
+        isAutoInterfacePeer: Bool = false,
+        isBLEPeerInterface: Bool = false,
+        peerAddress: String? = nil,
+        lastErrorDescription: String? = nil
+    ) {
         self.id = id
         self.name = name
         self.online = online
         self.typeLabel = typeLabel
+        self.type = type
+        self.state = state
+        self.isAutoInterfacePeer = isAutoInterfacePeer
+        self.isBLEPeerInterface = isBLEPeerInterface
+        self.peerAddress = peerAddress
+        self.lastErrorDescription = lastErrorDescription
     }
 }
 
-// MARK: - PathTable (stub)
+// MARK: - PathTable
 
 public final class PathTable: @unchecked Sendable {
     public init() {}
+    public init(databasePath: String) throws {}
     public func lookup(destinationHash: Data) async -> PathEntry? { nil }
     public func size() async -> Int { 0 }
     public func allEntries() async -> [PathEntry] { [] }
     public func remove(_ destinationHash: Data) async {}
+    public func removeAll() async {}
+
+    /// Stream of path-table updates. Stub: empty stream until Phase 2.
+    public var pathUpdates: AsyncStream<PathEntry> {
+        AsyncStream { continuation in continuation.finish() }
+    }
 }
 
 public struct PathEntry: Identifiable, Equatable, Sendable {
     public let destinationHash: Data
-    public var displayName: String?
-    public var nextHop: Data?
+    public var displayName: String
+    public var nextHop: Data
     public var hopCount: Int
     public var lastSeen: Date
-    public var publicKeys: Data?
-    public var interfaceId: String?
+    public var publicKeys: Data
+    public var interfaceId: String
+    public var appData: Data?
+    public var expires: Date
+    public var timestamp: Date
+    public var detectedAspect: String?
+    public var isLXMFPropagationNode: Bool
+    public var isLXSTTelephony: Bool
+    public var isKnownDestination: Bool
 
     public var id: Data { destinationHash }
 
     public init(
         destinationHash: Data,
-        displayName: String? = nil,
-        nextHop: Data? = nil,
+        displayName: String = "",
+        nextHop: Data = Data(),
         hopCount: Int = 0,
         lastSeen: Date = Date(),
-        publicKeys: Data? = nil,
-        interfaceId: String? = nil
+        publicKeys: Data = Data(),
+        interfaceId: String = "",
+        appData: Data? = nil,
+        expires: Date = Date.distantPast,
+        timestamp: Date = Date.distantPast,
+        detectedAspect: String? = nil,
+        isLXMFPropagationNode: Bool = false,
+        isLXSTTelephony: Bool = false,
+        isKnownDestination: Bool = false
     ) {
         self.destinationHash = destinationHash
         self.displayName = displayName
@@ -630,10 +996,17 @@ public struct PathEntry: Identifiable, Equatable, Sendable {
         self.lastSeen = lastSeen
         self.publicKeys = publicKeys
         self.interfaceId = interfaceId
+        self.appData = appData
+        self.expires = expires
+        self.timestamp = timestamp
+        self.detectedAspect = detectedAspect
+        self.isLXMFPropagationNode = isLXMFPropagationNode
+        self.isLXSTTelephony = isLXSTTelephony
+        self.isKnownDestination = isKnownDestination
     }
 }
 
-// MARK: - Network Interfaces
+// MARK: - Interfaces
 
 public protocol NetworkInterface: AnyObject, Sendable {
     var id: String { get }
@@ -641,36 +1014,9 @@ public protocol NetworkInterface: AnyObject, Sendable {
     var online: Bool { get }
 }
 
-public struct InterfaceConfig: Equatable, Sendable {
-    public let id: String
-    public let name: String
-    public let type: InterfaceKind
-    public let enabled: Bool
-    public let mode: InterfaceMode
-    public let host: String?
-    public let port: UInt16?
-
-    public init(
-        id: String,
-        name: String,
-        type: InterfaceKind,
-        enabled: Bool,
-        mode: InterfaceMode = .full,
-        host: String? = nil,
-        port: UInt16? = nil
-    ) {
-        self.id = id
-        self.name = name
-        self.type = type
-        self.enabled = enabled
-        self.mode = mode
-        self.host = host
-        self.port = port
-    }
-}
-
-public enum InterfaceKind: String, Equatable, Sendable {
-    case tcp, auto, ble, rnode, mpc
+public protocol InterfaceDelegate: AnyObject, Sendable {
+    func interface(_ interface: any NetworkInterface, didChangeState state: InterfaceState) async
+    func interface(_ interface: any NetworkInterface, didReceiveData data: Data) async
 }
 
 public final class TCPInterface: NetworkInterface, @unchecked Sendable {
@@ -678,34 +1024,69 @@ public final class TCPInterface: NetworkInterface, @unchecked Sendable {
     public let name: String
     public var online: Bool = false
     public var state: InterfaceState = .disconnected
+    public var lastErrorDescription: String?
+    public var hwMtu: Int { 262144 }
+    public var delegate: InterfaceDelegate?
+
     public init(config: InterfaceConfig) throws {
         self.id = config.id
         self.name = config.name
     }
-}
 
-public enum InterfaceState: String, Equatable, Sendable {
-    case disconnected, connecting, connected, error
+    public func setDelegate(_ delegate: InterfaceDelegate) async { self.delegate = delegate }
+    public func connect() async throws {}
+    public func disconnect() async {}
+    public func send(_ data: Data) async throws {}
+    public func beginTunnelMode(send hook: @escaping @Sendable (Data) async -> Void) async {}
+    public func endTunnelMode() async {}
 }
 
 public final class AutoInterface: NetworkInterface, @unchecked Sendable {
     public let id: String
     public let name: String
     public var online: Bool = false
+    public var state: InterfaceState = .disconnected
+    public var peerCount: Int = 0
+
     public init(config: InterfaceConfig) {
         self.id = config.id
         self.name = config.name
     }
+
+    public func connect() async throws {}
+    public func disconnect() async {}
+}
+
+/// Stub BLE driver — full implementation lands when BLE comes back online.
+public final class CoreBluetoothBLEDriver: @unchecked Sendable {
+    public let identityHash: Data
+    public init(identityHash: Data) { self.identityHash = identityHash }
 }
 
 public final class BLEInterface: NetworkInterface, @unchecked Sendable {
     public let id: String
     public let name: String
     public var online: Bool = false
+    public var state: InterfaceState = .disconnected
+    public var peerCount: Int = 0
+
     public init(config: InterfaceConfig) {
         self.id = config.id
         self.name = config.name
     }
+
+    public init(driver: Any, config: InterfaceConfig) {
+        self.id = config.id
+        self.name = config.name
+    }
+
+    public init(config: InterfaceConfig, driver: CoreBluetoothBLEDriver, transportIdentity: Data) {
+        self.id = config.id
+        self.name = config.name
+    }
+
+    public func connect() async throws {}
+    public func disconnect() async {}
     public func getConnectionInfos() async -> [BLEConnectionInfo] { [] }
     public func disconnectPeer(identityHex: String) async {}
 }
@@ -714,19 +1095,90 @@ public final class RNodeInterface: NetworkInterface, @unchecked Sendable {
     public let id: String
     public let name: String
     public var online: Bool = false
+    public var state: InterfaceState = .disconnected
+
     public init(config: RNodeConfig, name: String) {
         self.id = "rnode-\(name)"
         self.name = name
     }
+
+    /// Compatibility init that mirrors the AppServices call site —
+    /// constructs from a generic InterfaceConfig + uses host/port as
+    /// the BLE device name.
+    public init(config: InterfaceConfig) throws {
+        self.id = config.id
+        self.name = config.name
+    }
+
+    public func connect() async throws {}
+    public func disconnect() async {}
+    public func configureRadio(_ config: RadioConfig) async throws {}
 }
 
 public final class MPCInterface: NetworkInterface, @unchecked Sendable {
     public let id: String
     public let name: String
     public var online: Bool = false
+    public var state: InterfaceState = .disconnected
+    public var peerCount: Int = 0
+
     public init(serviceType: String) {
         self.id = "mpc-\(serviceType)"
         self.name = serviceType
+    }
+
+    public init(config: InterfaceConfig, displayName: String) {
+        self.id = config.id
+        self.name = displayName
+    }
+
+    public func connect() async throws {}
+    public func disconnect() async {}
+}
+
+public struct InterfaceConfig: Sendable, Equatable {
+    public let id: String
+    public let name: String
+    public let type: WireInterfaceType
+    public let enabled: Bool
+    public let mode: InterfaceMode
+    public let host: String
+    public let port: UInt16
+    public let ifac: Data?
+    public let announceRateTarget: TimeInterval?
+    public let announceRateGrace: Int
+    public let announceRatePenalty: TimeInterval?
+    public let networkName: String?
+    public let passphrase: String?
+
+    public init(
+        id: String,
+        name: String,
+        type: WireInterfaceType,
+        enabled: Bool,
+        mode: InterfaceMode = .full,
+        host: String = "",
+        port: UInt16 = 0,
+        ifac: Data? = nil,
+        announceRateTarget: TimeInterval? = nil,
+        announceRateGrace: Int = 0,
+        announceRatePenalty: TimeInterval? = nil,
+        networkName: String? = nil,
+        passphrase: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.enabled = enabled
+        self.mode = mode
+        self.host = host
+        self.port = port
+        self.ifac = ifac
+        self.announceRateTarget = announceRateTarget
+        self.announceRateGrace = announceRateGrace
+        self.announceRatePenalty = announceRatePenalty
+        self.networkName = networkName
+        self.passphrase = passphrase
     }
 }
 
@@ -787,32 +1239,122 @@ public struct BLEConnectionInfo: Identifiable, Equatable, Sendable {
     }
 }
 
-public enum BLEConnectionType: String, Equatable, Sendable {
-    case central, peripheral
-}
-
 public enum SignalQuality: String, Equatable, Sendable {
     case excellent, good, fair, poor, unknown
 }
 
-// `RNodeConfig` lives in Sources/ColumbaApp/Services/InterfaceRepository.swift.
+// MARK: - Location / Telemetry stubs (v1; full impl in v1.1)
 
-// MARK: - Propagation node info
+public final class LocationSharingManager: @unchecked Sendable {
+    public var peerLocations: [Data: PeerLocation] = [:]
+    public var activePeers: Set<Data> = []
+    public var isSharingWithAnyone: Bool { false }
+    public init() {}
+    public func isSharing(with destinationHash: Data) -> Bool { false }
+    public func startSharing(with destinationHash: Data) async {}
+    public func startSharing(with destinationHash: Data, duration: SharingDuration) {}
+    public func stopSharing(with destinationHash: Data) {}
+    public func sharedTelemetry(for destinationHash: Data) -> TelemetryPacket? { nil }
+    public func handleIncomingCease(from sourceHash: Data) async {}
+    public func handleIncomingTelemetry(
+        from peerHash: Data,
+        packet: TelemetryPacket,
+        displayName: String?,
+        iconAppearance: IconAppearance? = nil
+    ) {}
+    public func stopAllSharing() async {}
+    public func setBackgroundState(_ isBackground: Bool) {}
+}
 
-public struct PropagationNodeInfo: Identifiable, Equatable, Sendable {
+public struct TelemetryPacket: Equatable, Sendable {
+    public let timestamp: Date
+    public let payload: Data
+    public init(timestamp: Date = Date(), payload: Data = Data()) {
+        self.timestamp = timestamp
+        self.payload = payload
+    }
+
+    public static func decode(from data: Data) -> TelemetryPacket? {
+        TelemetryPacket(timestamp: Date(), payload: data)
+    }
+}
+
+public struct LocationTelemetry: Equatable, Sendable {
+    public let latitude: Double
+    public let longitude: Double
+    public let altitude: Double?
+    public let timestamp: Date
+    public init(latitude: Double, longitude: Double, altitude: Double? = nil, timestamp: Date = Date()) {
+        self.latitude = latitude
+        self.longitude = longitude
+        self.altitude = altitude
+        self.timestamp = timestamp
+    }
+}
+
+public struct RadioConfig: Equatable, Sendable {
+    public let frequency: UInt32
+    public let bandwidth: UInt32
+    public let spreadingFactor: UInt8
+    public let codingRate: UInt8
+    public let txPower: UInt8
+    public let stAlock: Float?
+    public let ltAlock: Float?
+    public init(
+        frequency: UInt32 = 0,
+        bandwidth: UInt32 = 0,
+        txPower: UInt8 = 0,
+        spreadingFactor: UInt8 = 0,
+        codingRate: UInt8 = 0,
+        stAlock: Float? = nil,
+        ltAlock: Float? = nil
+    ) {
+        self.frequency = frequency
+        self.bandwidth = bandwidth
+        self.spreadingFactor = spreadingFactor
+        self.codingRate = codingRate
+        self.txPower = txPower
+        self.stAlock = stAlock
+        self.ltAlock = ltAlock
+    }
+}
+
+// MARK: - Propagation
+
+public struct PropagationNodeInfo: Identifiable, Equatable, Sendable, Codable {
     public let destinationHash: Data
     public var displayName: String?
     public var lastSeen: Date
     public var hopCount: Int
+    public var perTransferLimit: Int
+    public var perSyncLimit: Int
+    public var stampCost: Int
+    public var enabled: Bool
 
     public var id: Data { destinationHash }
 
-    public init(destinationHash: Data, displayName: String? = nil, lastSeen: Date = Date(), hopCount: Int = 0) {
+    public init(
+        destinationHash: Data = Data(),
+        displayName: String? = nil,
+        lastSeen: Date = Date(),
+        hopCount: Int = 0,
+        perTransferLimit: Int = 0,
+        perSyncLimit: Int = 0,
+        stampCost: Int = 0,
+        enabled: Bool = true
+    ) {
         self.destinationHash = destinationHash
         self.displayName = displayName
         self.lastSeen = lastSeen
         self.hopCount = hopCount
+        self.perTransferLimit = perTransferLimit
+        self.perSyncLimit = perSyncLimit
+        self.stampCost = stampCost
+        self.enabled = enabled
     }
+
+    public static func parse(_ data: Data) -> PropagationNodeInfo? { nil }
+    public static func parse(from data: Data) -> PropagationNodeInfo? { nil }
 }
 
 public enum PropagationState: String, Equatable, Sendable {

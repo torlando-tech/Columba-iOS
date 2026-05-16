@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import CryptoKit
 #if os(iOS)
 #endif
 import os.log
@@ -124,6 +125,21 @@ public final class AppServices {
     public var locationSharingManager: LocationSharingManager?
     #endif
     // CallManager removed in Phase 0 of the Python RNS migration; returns in v2.
+
+    /// Python-backed Reticulum + LXMF stack. Created lazily on first
+    /// `initialize(...)` and torn down on `shutdown()`. The Compat-layer
+    /// `LXMRouter` and `ReticulumTransport` stubs delegate real work
+    /// (announce listening, opportunistic LXMF send/receive) through this.
+    public private(set) var pythonBackend: PythonRNSBackend?
+
+    /// Background task that drains Python events (announces, inbound
+    /// messages) into Columba's existing UI plumbing.
+    private var pythonEventTask: Task<Void, Never>?
+
+    /// Hashes we've already auto-replied to during the smoke test.
+    /// Prevents a feedback loop where each sim's auto-reply triggers
+    /// the other's auto-reply forever.
+    private var smokeTestAutoSentTo: Set<String> = []
 
     #if ENABLE_NETWORK_EXTENSION
     /// Network Extension tunnel manager.
@@ -442,7 +458,235 @@ public final class AppServices {
         self.autoAnnounceManager = announceManager
         announceManager.start()
 
+        // 12. Start Python RNS backend. The Compat-layer LXMRouter / Transport
+        //     are stubs; the real network I/O happens through PythonBridge.
+        await startPythonBackend(
+            identity: newIdentity,
+            identityHashHex: newIdentity.hexHash,
+            router: newRouter,
+            interfaces: InterfaceRepository().getEnabledInterfaces(),
+            displayName: ""
+        )
+
         logger.info("Initialization complete")
+    }
+
+    // MARK: - Python backend
+
+    /// Boot the embedded Python RNS stack and hook `LXMRouter.sendHook` so
+    /// outbound LXMF sends go through Python. Spawns a Task that drains
+    /// Python events and feeds them into Columba's path table / inbound
+    /// message handler. Idempotent — does nothing if already started.
+    ///
+    /// The RNS config file is written from `interfaces` (the user's enabled
+    /// `InterfaceEntity` records from `InterfaceRepository`). No host/port
+    /// is hardcoded — if `interfaces` is empty the app starts offline and
+    /// the user adds an interface in Settings → Manage Interfaces.
+    private func startPythonBackend(
+        identity: Identity,
+        identityHashHex: String,
+        router: LXMRouter,
+        interfaces: [InterfaceEntity],
+        displayName: String
+    ) async {
+        DiagLog.log("[PY] startPythonBackend entered with \(interfaces.count) interfaces")
+        if pythonBackend != nil {
+            DiagLog.log("[PY] already started")
+            return
+        }
+        let backend = PythonRNSBackend()
+        self.pythonBackend = backend
+
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
+        let configDir = pyDir.path
+        let identityFile = pyDir.appendingPathComponent("identity.bin").path
+        DiagLog.log("[PY] configDir=\(configDir)")
+
+        // Generate the RNS config from user-saved interface entities. The
+        // file lands at `<configDir>/config` where Python's
+        // `RNS.Reticulum(config_dir)` will pick it up.
+        let configText = PythonConfigWriter.write(interfaces: interfaces)
+        let configFile = pyDir.appendingPathComponent("config")
+        do {
+            try configText.write(to: configFile, atomically: true, encoding: .utf8)
+            DiagLog.log("[PY] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
+        } catch {
+            DiagLog.log("[PY] config write FAILED: \(error)")
+        }
+
+        let identityBytes = try? identity.exportPrivateKeys()
+        DiagLog.log("[PY] identityBytes=\(identityBytes?.count ?? -1)")
+
+        do {
+            DiagLog.log("[PY] calling backend.start()")
+            let info = try await backend.start(
+                .init(
+                    configDir: configDir,
+                    identityPath: identityFile,
+                    displayName: displayName,
+                    identityBytes: identityBytes
+                )
+            )
+            DiagLog.log("[PY] started identity=\(info.identityHash) destination=\(info.destinationHash)")
+            logger.info("Python backend started — identity=\(info.identityHash, privacy: .public) destination=\(info.destinationHash, privacy: .public)")
+        } catch {
+            DiagLog.log("[PY] start FAILED: \(error)")
+            logger.error("Python backend start failed: \(error.localizedDescription, privacy: .public)")
+            self.pythonBackend = nil
+            return
+        }
+
+        // Route outbound LXMF through Python.
+        router.sendHook = { [weak backend] message in
+            guard let backend else { return }
+            let destHex = message.destinationHash.map { String(format: "%02x", $0) }.joined()
+            let text = String(data: message.content, encoding: .utf8) ?? ""
+            _ = try await backend.sendOpportunistic(destHashHex: destHex, content: text)
+        }
+
+        // Drain Python events into Columba's UI plumbing.
+        pythonEventTask?.cancel()
+        let weakSelf = self
+        pythonEventTask = Task { [backend] in
+            for await event in backend.events {
+                await weakSelf.handlePythonEvent(event)
+            }
+        }
+
+        // One-shot status probe a few seconds after connect, so we can
+        // verify the TCP interface is online from RNS's perspective.
+        Task { [backend] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            let status = await backend.statusSnapshot()
+            DiagLog.log("[PY] status \(status)")
+        }
+
+        // Listen for test-send deep links (lxma://test-send?to=HEX&content=...).
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestSend"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            guard let to = note.userInfo?["to"] as? String,
+                  let content = note.userInfo?["content"] as? String else { return }
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-SEND] no backend")
+                    return
+                }
+                do {
+                    let outcome = try await backend.sendOpportunistic(destHashHex: to, content: content)
+                    DiagLog.log("[TEST-SEND] outcome=\(outcome)")
+                } catch {
+                    DiagLog.log("[TEST-SEND] error=\(error)")
+                }
+            }
+        }
+    }
+
+    /// Save a Python-delivered inbound LXMF message to the repository and
+    /// notify the chats UI. Mirrors the work IncomingMessageHandler does
+    /// on receipt but is invoked directly because Python is what surfaced
+    /// the message — there's no Swift LXMRouter callback to hook.
+    private func persistInboundFromPython(sourceHash: Data, content: String, title: String, timestamp: Date) async {
+        guard let database = self.database else {
+            DiagLog.log("[PY] persistInbound: no database")
+            return
+        }
+        let repo = MessageRepository(database: database)
+        let sourceHashHex = sourceHash.map { String(format: "%02x", $0) }.joined()
+        let displayName = "Peer \(sourceHashHex.prefix(8))"
+
+        do {
+            try await repo.ensureConversation(sourceHash, displayName: displayName)
+
+            // Build a synthetic LXMessage so saveMessage can persist it.
+            // Hash is the SHA-256 of (sourceHashHex || content || timestamp)
+            // truncated to 32 bytes — enough to dedupe; the Python side
+            // doesn't expose the canonical message hash through the event.
+            let hashInput = (sourceHashHex + content + "\(timestamp.timeIntervalSince1970)").data(using: .utf8) ?? Data()
+            let messageHash = Data(SHA256.hash(data: hashInput))
+
+            let message = LXMessage(
+                destinationHash: sourceHash,
+                sourceIdentity: nil,
+                content: content.data(using: .utf8) ?? Data(),
+                title: title.data(using: .utf8) ?? Data(),
+                fields: nil,
+                desiredMethod: .opportunistic
+            )
+            message.sourceHash = sourceHash
+            message.hash = messageHash
+            message.incoming = true
+            message.timestamp = timestamp.timeIntervalSince1970
+            message.state = .received
+
+            try await repo.saveMessage(message)
+            DiagLog.log("[PY] persistInbound saved msg=\(messageHash.prefix(4).map { String(format: "%02x", $0) }.joined())")
+
+            // Fire the same notification IncomingMessageHandler would post
+            // so ChatsViewModel / MessagingViewModel refresh.
+            NotificationCenter.default.post(
+                name: IncomingMessageHandler.messageReceivedNotification,
+                object: nil,
+                userInfo: ["sourceHash": sourceHash]
+            )
+        } catch {
+            DiagLog.log("[PY] persistInbound failed: \(error)")
+        }
+    }
+
+    private func handlePythonEvent(_ event: PythonBridge.Event) async {
+        switch event {
+        case .announce(let destHash, let displayName, let t):
+            DiagLog.log("[PY] announce dest=\(destHash) name=\"\(displayName)\"")
+            guard let data = Data(hexString: destHash) else { return }
+            // Smoke-test auto-send: first time we see a peer's announce,
+            // fire a hello message back through the Python stack. This
+            // is the closed-loop test that proves the full end-to-end
+            // path works without needing a UI tap.
+            if smokeTestAutoSentTo.insert(destHash).inserted {
+                let backend = pythonBackend
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    guard let backend else { return }
+                    let outcome = (try? await backend.sendOpportunistic(
+                        destHashHex: destHash,
+                        content: "[smoke] hello from \(self.localIdentityHashHex.prefix(8))"
+                    )) ?? .other("threw")
+                    DiagLog.log("[PY] smoke-send to=\(destHash) outcome=\(outcome)")
+                }
+            }
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonAnnounce"),
+                object: nil,
+                userInfo: [
+                    "destinationHash": data,
+                    "displayName": displayName,
+                    "timestamp": t,
+                ]
+            )
+        case .inbound(let sourceHash, let content, let title, let t):
+            DiagLog.log("[PY] inbound source=\(sourceHash) content=\"\(content)\"")
+            guard let data = Data(hexString: sourceHash) else { return }
+            await persistInboundFromPython(sourceHash: data, content: content, title: title, timestamp: t)
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonInbound"),
+                object: nil,
+                userInfo: [
+                    "sourceHash": data,
+                    "content": content,
+                    "title": title,
+                    "timestamp": t,
+                ]
+            )
+        case .state(let value, _):
+            DiagLog.log("[PY] state \(value)")
+            logger.info("Python state: \(value, privacy: .public)")
+        }
     }
 
     /// Initialize all LXMF components with an externally-provided identity.
@@ -599,6 +843,15 @@ public final class AppServices {
         }
         await tunnel.load()
         #endif
+
+        // Start Python RNS backend on the multi-identity path too.
+        await startPythonBackend(
+            identity: identity,
+            identityHashHex: identityHash,
+            router: newRouter,
+            interfaces: InterfaceRepository().getEnabledInterfaces(),
+            displayName: ""
+        )
 
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
@@ -1142,10 +1395,13 @@ public final class AppServices {
         stateObserverTask?.cancel()
         stateObserverTask = nil
 
-        #if os(iOS)
-        // Stop call manager
-        await callManager?.shutdown()
-        #endif
+        // Stop Python event drain and tear down the Python RNS stack
+        pythonEventTask?.cancel()
+        pythonEventTask = nil
+        if let backend = pythonBackend {
+            await backend.stop()
+            pythonBackend = nil
+        }
 
         // Stop auto-announce manager
         autoAnnounceManager?.stop()

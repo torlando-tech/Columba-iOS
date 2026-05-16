@@ -143,6 +143,7 @@ public struct ContactsView: View {
                             messageRepository: messageRepository
                         )
                     case .browseSite(let contact):
+                        #if COLUMBA_NOMADNET_ENABLED
                         if let transport = appServices.transport,
                            let pathTable = appServices.pathTable,
                            let identity = appServices.identity {
@@ -160,6 +161,14 @@ public struct ContactsView: View {
                                 description: Text("The NomadNet browser requires an active transport.")
                             )
                         }
+                        #else
+                        let _ = contact
+                        ContentUnavailableView(
+                            "NomadNet Browser Disabled",
+                            systemImage: "globe.badge.chevron.backward",
+                            description: Text("Enable COLUMBA_NOMADNET_ENABLED to use this feature.")
+                        )
+                        #endif
                     }
                 }
                 .onAppear {
