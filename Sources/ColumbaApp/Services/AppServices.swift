@@ -156,6 +156,10 @@ public final class AppServices {
     /// connected/disconnected badges. Cancelled in `shutdown()`.
     private var pythonStatusPollTask: Task<Void, Never>?
 
+    /// Last interface snapshot key we logged, so the poll only logs
+    /// changes (not every 2s tick).
+    private var lastInterfaceSnapshotKey: String = ""
+
     #if ENABLE_NETWORK_EXTENSION
     /// Network Extension tunnel manager.
     public private(set) var tunnelManager: TunnelManager?
@@ -665,6 +669,14 @@ public final class AppServices {
         snapshot: PythonBridge.StatusSnapshot,
         entityById: [String: InterfaceEntity]
     ) async {
+        // Log every interface Python reports so we can see AutoInterface /
+        // RNode / etc. that don't have Compat stubs yet. One-shot per
+        // section_name change.
+        let snapshotKey = snapshot.interfaces.map { "\($0.sectionName):\($0.online ? 1 : 0)" }.joined(separator: ",")
+        if snapshotKey != lastInterfaceSnapshotKey {
+            DiagLog.log("[PY] interfaces=\(snapshotKey)")
+            lastInterfaceSnapshotKey = snapshotKey
+        }
         // The config section name PythonConfigWriter wrote is the matching
         // key — it's stable across the bridge and unique per entity.
         var byEntity: [String: PythonBridge.StatusSnapshot.InterfaceStatus] = [:]

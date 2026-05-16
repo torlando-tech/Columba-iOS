@@ -10,5 +10,18 @@
 	<array>
 		<string>packet-tunnel-provider</string>
 	</array>
+	<!-- Multicast entitlement is required for AutoInterface (IPv6 link-local
+	     multicast discovery) and Bonjour browsing on iOS 14+. Without it the
+	     OS silently drops outbound multicast UDP — Python's RNS.AutoInterface
+	     will appear to start but never see peers.
+
+	     Granted on a per-app basis by Apple via:
+	         https://developer.apple.com/contact/request/networking-multicast
+	     until that's approved, the entitlement is honored on Simulator only
+	     and ignored on real devices (provisioning profile will refuse to
+	     embed it). Sideband and other RNS-on-iOS apps have it; Columba
+	     should request the same. -->
+	<key>com.apple.developer.networking.multicast</key>
+	<true/>
 </dict>
 </plist>
