@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Step 3: Select a modem preset for speed/range tradeoff.
 @available(iOS 17.0, macOS 14.0, *)

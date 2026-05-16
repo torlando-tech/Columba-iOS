@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Generates identicon pattern data from a hash.
 ///

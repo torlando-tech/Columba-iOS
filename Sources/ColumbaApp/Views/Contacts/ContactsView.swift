@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 // MARK: - Navigation Target
 

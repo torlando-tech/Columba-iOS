@@ -1,4 +1,5 @@
 import Foundation
+import RNSAPI
 
 /// A conversation-list row backed by the Python-owned SQLite store.
 ///

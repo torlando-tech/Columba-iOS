@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Step 2: Select a frequency region or community preset.
 @available(iOS 17.0, macOS 14.0, *)

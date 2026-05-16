@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 #if !os(iOS)
 import AppKit
 #endif

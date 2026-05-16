@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import RNSAPI
 import CoreLocation
 import os.log
 #if canImport(UIKit)

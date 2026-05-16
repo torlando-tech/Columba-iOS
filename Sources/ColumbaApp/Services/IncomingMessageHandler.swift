@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 import UserNotifications
 import os.log
 

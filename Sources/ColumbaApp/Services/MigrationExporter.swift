@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import RNSAPI
 import os.log
 
 /// Exports all app data into an encrypted .columba backup file.

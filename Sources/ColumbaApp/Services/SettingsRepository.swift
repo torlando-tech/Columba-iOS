@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 
 /// Actor for thread-safe settings access.
 ///

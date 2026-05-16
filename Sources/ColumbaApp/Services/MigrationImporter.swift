@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import RNSAPI
 import os.log
 
 /// Imports data from an encrypted .columba backup file.

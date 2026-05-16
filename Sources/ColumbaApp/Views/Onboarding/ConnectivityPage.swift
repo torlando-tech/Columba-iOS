@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import CoreBluetooth
 import Network
 

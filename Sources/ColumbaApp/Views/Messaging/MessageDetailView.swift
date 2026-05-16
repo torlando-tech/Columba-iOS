@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Message detail screen showing delivery metadata in card-based layout.
 ///

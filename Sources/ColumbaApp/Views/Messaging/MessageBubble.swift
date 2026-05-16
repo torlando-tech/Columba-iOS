@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import os.log
 #if canImport(UIKit)
 import UIKit

@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Main screen for managing network interfaces.
 ///

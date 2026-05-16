@@ -1,5 +1,6 @@
 #if COLUMBA_NOMADNET_ENABLED
 import Foundation
+import RNSAPI
 import SwiftUI
 
 /// Rendering mode for NomadNet pages.

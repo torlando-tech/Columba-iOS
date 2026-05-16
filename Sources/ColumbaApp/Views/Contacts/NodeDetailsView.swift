@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Node details screen showing identity info and a primary action.
 ///

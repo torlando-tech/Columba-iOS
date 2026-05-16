@@ -36,16 +36,11 @@ test_target = project.targets.find { |t| t.name == 'ColumbaAppTests' }
 # (1) Remove file refs to voice files deleted in Phase 0.
 # ──────────────────────────────────────────────────────────────────────────
 
+# Phase 0 deleted the voice stack while ripping out the AI Swift libs;
+# commit 3 of the lxst-wiring batch restored these files from git history
+# (rewired onto RNSAPI + LXSTSwift). Tests-side voice files stay out — the
+# test fixtures referenced AI types that aren't part of the new world.
 DELETED_PATHS = %w[
-  Sources/ColumbaApp/Services/CallManager.swift
-  Sources/ColumbaApp/Services/CallKitManager.swift
-  Sources/ColumbaApp/Services/AudioManager.swift
-  Sources/ColumbaApp/Models/CodecProfileInfo.swift
-  Sources/ColumbaApp/Views/Call/CallControlButton.swift
-  Sources/ColumbaApp/Views/Call/CodecSelectionSheet.swift
-  Sources/ColumbaApp/Views/Call/IncomingCallScreen.swift
-  Sources/ColumbaApp/Views/Call/PttButton.swift
-  Sources/ColumbaApp/Views/Call/VoiceCallScreen.swift
   Tests/ColumbaAppTests/CallManagerCallKitTests.swift
   Tests/ColumbaAppTests/AudioManagerConfigChangeTests.swift
   Tests/ColumbaAppTests/AudioRingBufferTests.swift
@@ -150,9 +145,42 @@ if local_pkg_class
     app_target.frameworks_build_phase.files << bf
     puts "  Linked product: LXSTSwift (local)"
   end
+  # RNSAPI: same story as LXSTSwift — compiled exactly once by SwiftPM and
+  # exposed to ColumbaApp as a product dependency. Without this, the
+  # `Sources/RNSAPI/**/*.swift` files that USED to be inlined into the
+  # ColumbaApp build phase would have to stay there, and every shared
+  # type would exist in both modules. See the NEW_SWIFT note.
+  unless app_target.package_product_dependencies.any? { |d| d.product_name == 'RNSAPI' }
+    product = project.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
+    product.product_name = 'RNSAPI'
+    app_target.package_product_dependencies << product
+    bf = project.new(Xcodeproj::Project::Object::PBXBuildFile)
+    bf.product_ref = product
+    app_target.frameworks_build_phase.files << bf
+    puts "  Linked product: RNSAPI (local)"
+  end
 else
   puts "  WARNING: xcodeproj gem doesn't support XCLocalSwiftPackageReference; skip local-pkg wiring"
 end
+
+# Strip any leftover Sources/RNSAPI/*.swift file refs that an earlier run
+# of this script had added to ColumbaApp's compile phase. They have to come
+# out now that RNSAPI is a SwiftPM product dependency — otherwise every
+# shared type exists in two modules and call sites fail with "cannot
+# convert value of type 'ColumbaApp.Identity' to 'RNSAPI.Identity'".
+stale_rnsapi_count = 0
+app_target.source_build_phase.files.dup.each do |bf|
+  path = bf.file_ref&.real_path&.to_s
+  next unless path && path.include?('/Sources/RNSAPI/')
+  bf.remove_from_project
+  stale_rnsapi_count += 1
+end
+project.files.dup.each do |f|
+  abs = f.real_path.to_s rescue ''
+  next unless abs.include?('/Sources/RNSAPI/')
+  f.remove_from_project
+end
+puts "  Stripped #{stale_rnsapi_count} RNSAPI inline source ref(s) from ColumbaApp" if stale_rnsapi_count > 0
 
 # ──────────────────────────────────────────────────────────────────────────
 # (3) Add new Sources/ColumbaApp/Python/ files to Sources build phase.
@@ -166,16 +194,28 @@ end
 # split is preserved for tooling (`swift build`, lint, code search) and for
 # when we eventually move ColumbaApp onto SwiftPM.
 project_root = File.expand_path('..', __dir__)
+# NOTE: Sources/RNSAPI/ is NOT in this list. RNSAPI is compiled exactly once
+# by SwiftPM via the XCLocalSwiftPackageReference below; ColumbaApp imports
+# it as a SwiftPM product dependency. If we also added the .swift files to
+# the ColumbaApp build phase, every type in RNSAPI would exist in two
+# modules ('RNSAPI' from the framework + 'ColumbaApp' from inline compile)
+# and call sites like `Telephone(identity: someIdentity)` would fail with
+# "cannot convert value of type 'ColumbaApp.Identity' to expected argument
+# type 'RNSAPI.Identity'".
 NEW_SWIFT = (
   Dir.glob("#{project_root}/Sources/PythonBridge/**/*.swift") +
-  Dir.glob("#{project_root}/Sources/RNSAPI/**/*.swift") +
   Dir.glob("#{project_root}/Sources/RNSBackendPy/**/*.swift") +
+  Dir.glob("#{project_root}/Sources/ColumbaApp/Views/Call/*.swift") +
   %w[
     Sources/ColumbaApp/Python/Models/PyAnnounce.swift
     Sources/ColumbaApp/Python/Models/PyMessage.swift
     Sources/ColumbaApp/Python/Models/PyConversation.swift
     Sources/ColumbaApp/Python/Models/PyLocalIdentity.swift
     Sources/ColumbaApp/Services/PythonConfigWriter.swift
+    Sources/ColumbaApp/Services/CallManager.swift
+    Sources/ColumbaApp/Services/CallKitManager.swift
+    Sources/ColumbaApp/Services/AudioManager.swift
+    Sources/ColumbaApp/Models/CodecProfileInfo.swift
   ].map { |p| File.expand_path(p, project_root) }
 ).uniq.map { |p| p.sub("#{project_root}/", '') }.sort.freeze
 
@@ -236,6 +276,16 @@ NEW_SWIFT.each do |rel|
       services_group = columba_group.children.find { |g| g.respond_to?(:name) && (g.name == 'Services' || g.path == 'Services') } ||
                        columba_group.new_group('Services').tap { |g| g.set_source_tree('<group>') }
       services_group
+    elsif rel.start_with?('Sources/ColumbaApp/Views/Call/')
+      views_group = columba_group.children.find { |g| g.respond_to?(:name) && (g.name == 'Views' || g.path == 'Views') } ||
+                    columba_group.new_group('Views').tap { |g| g.set_source_tree('<group>') }
+      call_group = views_group.children.find { |g| g.respond_to?(:name) && (g.name == 'Call' || g.path == 'Call') } ||
+                   views_group.new_group('Call').tap { |g| g.set_source_tree('<group>') }
+      call_group
+    elsif rel.start_with?('Sources/ColumbaApp/Models/')
+      models_group = columba_group.children.find { |g| g.respond_to?(:name) && (g.name == 'Models' || g.path == 'Models') } ||
+                     columba_group.new_group('Models').tap { |g| g.set_source_tree('<group>') }
+      models_group
     else
       columba_group
     end

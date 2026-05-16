@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// A circular identicon view generated from a hash.
 ///

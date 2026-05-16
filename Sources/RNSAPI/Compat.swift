@@ -26,21 +26,21 @@ import CryptoKit
 
 // MARK: - Hash helpers
 
-enum Hashing {
+public enum Hashing {
     /// 10-byte truncated SHA-256 of the dotted destination name.
-    static func destinationNameHash(appName: String, aspects: [String]) -> Data {
+    public static func destinationNameHash(appName: String, aspects: [String]) -> Data {
         var name = appName
         for aspect in aspects { name += "." + aspect }
         return Data(SHA256.hash(data: name.data(using: .utf8) ?? Data())).prefix(10)
     }
 
     /// 16-byte truncated SHA-256 (canonical RNS truncation).
-    static func truncatedHash(_ data: Data) -> Data {
+    public static func truncatedHash(_ data: Data) -> Data {
         Data(SHA256.hash(data: data)).prefix(16)
     }
 
     /// 16-byte identity hash from concatenated 32+32 public keys.
-    static func identityHash(encryptionPublicKey: Data, signingPublicKey: Data) -> Data {
+    public static func identityHash(encryptionPublicKey: Data, signingPublicKey: Data) -> Data {
         Data(SHA256.hash(data: encryptionPublicKey + signingPublicKey)).prefix(16)
     }
 }
@@ -353,6 +353,10 @@ public final class Link: @unchecked Sendable {
     public var closeCallback: (@Sendable (TeardownReason) async -> Void)?
     public weak var identifyCallbacks: (any IdentifyCallbacks)?
 
+    /// Fired when the link finishes establishing. AppServices invokes this
+    /// when Python emits link_state(state=established) for this linkId.
+    public var establishedCallback: (@Sendable (Link) async -> Void)?
+
     /// Packet callback for inbound data on the Link. Installed by lxst-swift
     /// (LinkSource); fired by AppServices when a Python link_packet event
     /// arrives for this linkId. Carries the decrypted bytes from the remote.
@@ -406,6 +410,14 @@ public final class Link: @unchecked Sendable {
     /// here.
     public func setPacketCallback(_ callback: @escaping @Sendable (Data, Packet) async -> Void) async {
         self.packetCallback = callback
+    }
+
+    /// Install the established callback — fires once the Python side reports
+    /// link_state(state=established) for this linkId. CallManager uses this
+    /// to defer "send AVAILABLE" until after the LRRTT handshake completes
+    /// (sending earlier would race the encryption-key setup).
+    public func setLinkEstablishedCallback(_ callback: @escaping @Sendable (Link) async -> Void) async {
+        self.establishedCallback = callback
     }
 }
 

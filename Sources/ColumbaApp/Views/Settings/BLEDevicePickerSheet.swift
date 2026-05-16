@@ -9,6 +9,7 @@
 
 #if canImport(CoreBluetooth)
 import SwiftUI
+import RNSAPI
 import CoreBluetooth
 
 // MARK: - Discovered Device

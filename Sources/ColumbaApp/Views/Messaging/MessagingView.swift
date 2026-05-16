@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import PhotosUI
 import UniformTypeIdentifiers
 #if os(iOS)

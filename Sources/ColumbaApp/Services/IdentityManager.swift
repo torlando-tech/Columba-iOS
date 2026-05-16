@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 import os.log
 
 /// Manages multiple local identities with per-identity Keychain storage and databases.

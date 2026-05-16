@@ -1,5 +1,6 @@
 #if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
+import RNSAPI
 
 /// Main browser view for browsing NomadNet node pages.
 @available(iOS 17.0, macOS 14.0, *)

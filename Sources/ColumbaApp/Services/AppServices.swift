@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import RNSAPI
 import CryptoKit
 #if os(iOS)
 #endif

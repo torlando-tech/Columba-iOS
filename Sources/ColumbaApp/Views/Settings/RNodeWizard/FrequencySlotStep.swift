@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Step 4: Select a frequency slot within the chosen region.
 @available(iOS 17.0, macOS 14.0, *)

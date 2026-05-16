@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 import UserNotifications
 
 /// Manages local push notifications for incoming messages.

@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import RNSAPI
 import CryptoKit
 import CommonCrypto
 

@@ -1,4 +1,5 @@
 import Foundation
+import RNSAPI
 
 /// An `lxmf.delivery` announce surfaced from Python RNS to Swift.
 ///

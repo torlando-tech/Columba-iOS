@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Configuration sheet for RNode LoRa interfaces.
 ///

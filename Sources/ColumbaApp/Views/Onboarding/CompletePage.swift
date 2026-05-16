@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import CoreImage.CIFilterBuiltins
 
 @available(iOS 17.0, macOS 14.0, *)

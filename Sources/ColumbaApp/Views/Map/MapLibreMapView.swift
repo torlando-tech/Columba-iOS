@@ -8,6 +8,7 @@
 
 #if os(iOS)
 import SwiftUI
+import RNSAPI
 import MapLibre
 
 @available(iOS 17.0, *)

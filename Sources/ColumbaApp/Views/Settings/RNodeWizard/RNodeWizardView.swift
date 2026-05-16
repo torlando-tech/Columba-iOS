@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// 5-step RNode configuration wizard.
 ///

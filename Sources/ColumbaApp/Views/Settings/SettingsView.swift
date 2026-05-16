@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Main settings screen view.
 ///

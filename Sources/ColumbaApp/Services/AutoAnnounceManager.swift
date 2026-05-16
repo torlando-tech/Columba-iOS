@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 import os.log
 
 /// Manages automatic periodic announces based on user settings.

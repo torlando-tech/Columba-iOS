@@ -8,6 +8,7 @@
 
 #if os(iOS)
 import Foundation
+import RNSAPI
 import MapLibre
 import CoreLocation
 import os.log

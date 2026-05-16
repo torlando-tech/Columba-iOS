@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import RNSAPI
 
 /// Serializes Columba's interface entities to an RNS config file.
 ///

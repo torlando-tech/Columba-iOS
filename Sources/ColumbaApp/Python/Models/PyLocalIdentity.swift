@@ -1,4 +1,5 @@
 import Foundation
+import RNSAPI
 
 /// The local RNS identity, as the Python bridge sees it after a successful
 /// `PythonBridge.start(...)`. Hashes are hex strings (16-byte truncated form,

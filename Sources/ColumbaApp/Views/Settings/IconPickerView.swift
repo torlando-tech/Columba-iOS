@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Icon picker sheet for choosing an MDI profile icon.
 ///

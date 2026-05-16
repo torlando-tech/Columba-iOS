@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import RNSAPI
 import SwiftUI
 import os.log
 

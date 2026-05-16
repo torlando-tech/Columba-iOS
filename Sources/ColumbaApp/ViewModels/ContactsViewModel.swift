@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 import Observation
 
 // MARK: - Contact Type

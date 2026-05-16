@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 import os.log
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "InterfaceRepository")

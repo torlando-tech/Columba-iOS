@@ -11,6 +11,7 @@
 
 #if canImport(CoreBluetooth)
 import Foundation
+import RNSAPI
 import CoreBluetooth
 import os
 

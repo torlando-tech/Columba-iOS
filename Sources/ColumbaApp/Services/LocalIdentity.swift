@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 
 /// Represents a locally stored identity with metadata.
 ///

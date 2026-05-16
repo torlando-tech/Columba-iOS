@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 import Observation
 #if canImport(UIKit)
 import UIKit

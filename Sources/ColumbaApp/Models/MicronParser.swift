@@ -1,5 +1,6 @@
 #if COLUMBA_NOMADNET_ENABLED
 import Foundation
+import RNSAPI
 
 /// Parses micron markup text into a structured MicronDocument.
 public struct MicronParser {

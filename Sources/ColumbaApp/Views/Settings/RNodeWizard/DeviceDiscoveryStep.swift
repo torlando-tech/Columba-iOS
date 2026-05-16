@@ -9,6 +9,7 @@
 
 #if canImport(CoreBluetooth)
 import SwiftUI
+import RNSAPI
 import CoreBluetooth
 
 /// Step 1: Scan for and select an RNode BLE device.

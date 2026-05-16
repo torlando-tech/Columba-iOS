@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import RNSAPI
 
 /// Top-level migration bundle matching Android's MigrationBundle format.
 ///
