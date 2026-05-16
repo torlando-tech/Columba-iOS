@@ -66,11 +66,18 @@ def _put(kind: str, **payload: Any) -> None:
     _events.put(payload)
 
 
-class _LXMFAnnounceHandler:
-    """Aspect-filtered to lxmf.delivery; everything else Reticulum routes elsewhere."""
+class _AspectAnnounceHandler:
+    """Per-aspect announce handler. RNS lets you register multiple of these,
+    each scoped to one `aspect_filter` — we register one for each of the four
+    aspects the Columba UI surfaces (LXMF delivery, LXMF propagation,
+    NomadNet node, LXST telephony) so the Network tab can show all of them
+    side-by-side with the right badge / filter chip."""
 
-    aspect_filter = "lxmf.delivery"
     receive_path_responses = True
+
+    def __init__(self, aspect: str):
+        self.aspect_filter = aspect
+        self._aspect = aspect
 
     def received_announce(
         self,
@@ -79,11 +86,30 @@ class _LXMFAnnounceHandler:
         app_data: bytes | None,
     ) -> None:
         display_name = _decode_announce_app_data(app_data)
+        public_keys_hex = ""
+        try:
+            pub = getattr(announced_identity, "get_public_key", None)
+            if callable(pub):
+                public_keys_hex = pub().hex()
+        except Exception:
+            pass
         _put(
             "announce",
             dest_hash=destination_hash.hex(),
             display_name=display_name,
+            aspect=self._aspect,
+            public_keys=public_keys_hex,
         )
+
+
+# Aspects the Columba UI surfaces. Order matters: when the same destination
+# announces under multiple aspects we'll emit one event per aspect.
+_TRACKED_ASPECTS = (
+    "lxmf.delivery",
+    "lxmf.propagation",
+    "nomadnetwork.node",
+    "lxst.telephony",
+)
 
 
 def _decode_announce_app_data(app_data: bytes | None) -> str:
@@ -190,9 +216,12 @@ def start(
             raise RuntimeError("register_delivery_identity returned None")
         _state["destination"] = delivery_destination
 
-        handler = _LXMFAnnounceHandler()
-        RNS.Transport.register_announce_handler(handler)
-        _state["handler"] = handler
+        handlers = []
+        for aspect in _TRACKED_ASPECTS:
+            h = _AspectAnnounceHandler(aspect)
+            RNS.Transport.register_announce_handler(h)
+            handlers.append(h)
+        _state["handler"] = handlers  # list now, was singleton — stop() handles both
 
         # Announce ourselves so the network knows where we are. We re-announce
         # after a short delay because the TCP interface needs ~1-2s to come
@@ -220,8 +249,14 @@ def stop() -> None:
         if not _state["started"]:
             return
         try:
-            if _state["handler"] is not None:
-                RNS.Transport.deregister_announce_handler(_state["handler"])
+            existing = _state["handler"]
+            if existing is not None:
+                handlers_to_drop = existing if isinstance(existing, list) else [existing]
+                for h in handlers_to_drop:
+                    try:
+                        RNS.Transport.deregister_announce_handler(h)
+                    except Exception:
+                        pass
         except Exception:
             pass
         try:

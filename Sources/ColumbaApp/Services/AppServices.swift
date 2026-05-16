@@ -838,14 +838,39 @@ public final class AppServices {
 
     private func handlePythonEvent(_ event: PythonBridge.Event) async {
         switch event {
-        case .announce(let destHash, let displayName, let t):
-            DiagLog.log("[PY] announce dest=\(destHash) name=\"\(displayName)\"")
+        case .announce(let destHash, let displayName, let aspect, let publicKeysHex, let t):
+            DiagLog.log("[PY] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\"")
             guard let data = Data(hexString: destHash) else { return }
-            // Smoke-test auto-send: first time we see a peer's announce,
-            // fire a hello message back through the Python stack. This
-            // is the closed-loop test that proves the full end-to-end
-            // path works without needing a UI tap.
-            if smokeTestAutoSentTo.insert(destHash).inserted {
+
+            // Insert the announce into the Compat PathTable so the Contacts
+            // tab's networkAnnounces list picks it up via the pathUpdates
+            // AsyncStream subscription in ContactsViewModel.
+            if let pathTable = self.pathTable {
+                let publicKeys = Data(hexString: publicKeysHex) ?? Data()
+                let entry = PathEntry(
+                    destinationHash: data,
+                    displayName: displayName,
+                    nextHop: data,
+                    hopCount: 0,
+                    lastSeen: t,
+                    publicKeys: publicKeys,
+                    interfaceId: "python-rns",
+                    appData: nil,
+                    expires: t.addingTimeInterval(7 * 86400),
+                    timestamp: t,
+                    detectedAspect: aspect,
+                    isLXMFPropagationNode: aspect == "lxmf.propagation",
+                    isLXSTTelephony: aspect == "lxst.telephony",
+                    isKnownDestination: true
+                )
+                await pathTable.insert(entry)
+            }
+
+            // Smoke-test auto-send: first time we see a peer's LXMF
+            // delivery announce, fire a hello message back through the
+            // Python stack. Skipped for non-lxmf.delivery aspects so we
+            // don't try to LXMF a nomadnet node.
+            if aspect == "lxmf.delivery", smokeTestAutoSentTo.insert(destHash).inserted {
                 let backend = pythonBackend
                 Task {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -863,6 +888,7 @@ public final class AppServices {
                 userInfo: [
                     "destinationHash": data,
                     "displayName": displayName,
+                    "aspect": aspect,
                     "timestamp": t,
                 ]
             )

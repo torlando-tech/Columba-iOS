@@ -940,18 +940,74 @@ public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
 
 // MARK: - PathTable
 
+/// In-memory path table. Python's RNS.Transport.path_table is the source of
+/// truth for the network state; AppServices.handlePythonEvent mirrors each
+/// `announce` event into this Compat-layer table via `insert(_:)`. The
+/// ContactsViewModel subscribes to `pathUpdates` (one AsyncStream per
+/// subscriber) to render the Network tab.
 public final class PathTable: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [Data: PathEntry] = [:]
+    private var continuations: [UUID: AsyncStream<PathEntry>.Continuation] = [:]
+
     public init() {}
     public init(databasePath: String) throws {}
-    public func lookup(destinationHash: Data) async -> PathEntry? { nil }
-    public func size() async -> Int { 0 }
-    public func allEntries() async -> [PathEntry] { [] }
-    public func remove(_ destinationHash: Data) async {}
-    public func removeAll() async {}
 
-    /// Stream of path-table updates. Stub: empty stream until Phase 2.
+    public func lookup(destinationHash: Data) async -> PathEntry? {
+        lock.lock(); defer { lock.unlock() }
+        return entries[destinationHash]
+    }
+    public func size() async -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return entries.count
+    }
+    public func allEntries() async -> [PathEntry] {
+        lock.lock(); defer { lock.unlock() }
+        return Array(entries.values)
+    }
+    public func remove(_ destinationHash: Data) async {
+        lock.lock(); defer { lock.unlock() }
+        entries.removeValue(forKey: destinationHash)
+    }
+    public func removeAll() async {
+        lock.lock(); defer { lock.unlock() }
+        entries.removeAll()
+    }
+
+    /// Insert or update a path entry. Keyed by `destinationHash`; replacing
+    /// an existing entry yields the new copy to all live `pathUpdates`
+    /// subscribers so the UI re-renders.
+    public func insert(_ entry: PathEntry) async {
+        lock.lock()
+        entries[entry.destinationHash] = entry
+        let continuationsCopy = continuations.values
+        lock.unlock()
+        for continuation in continuationsCopy {
+            continuation.yield(entry)
+        }
+    }
+
+    /// Stream of path-table updates. Each subscriber gets its own continuation;
+    /// new inserts (and updates of existing entries) are broadcast to every
+    /// active subscriber. Cancellation of the consumer task tears down the
+    /// continuation.
     public var pathUpdates: AsyncStream<PathEntry> {
-        AsyncStream { continuation in continuation.finish() }
+        AsyncStream { continuation in
+            let id = UUID()
+            lock.lock()
+            continuations[id] = continuation
+            // Replay current entries so a late subscriber doesn't miss
+            // announces that arrived before it started listening.
+            let snapshot = Array(entries.values)
+            lock.unlock()
+            for entry in snapshot { continuation.yield(entry) }
+            continuation.onTermination = { [weak self] _ in
+                guard let self else { return }
+                self.lock.lock()
+                self.continuations.removeValue(forKey: id)
+                self.lock.unlock()
+            }
+        }
     }
 }
 
