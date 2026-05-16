@@ -658,7 +658,19 @@ public final class CallManager {
         // `didActivateAudioSession` and the engine would defer forever.
         // For the sim↔iPhone audio test, start the engine immediately
         // and let AudioManager configure/activate AVAudioSession itself.
+        //
+        // Simulator carve-out: the iOS Simulator's AVAudioEngine input
+        // node has no real hardware behind it (sample rate reports 0Hz)
+        // so `installTap` throws an uncaught Obj-C exception and the
+        // whole app crashes. The sim never needs to capture mic for the
+        // smoke test (it's always the callee receiving frames), so we
+        // keep the deferred path there — playback works regardless of
+        // whether the engine actually started.
+        #if targetEnvironment(simulator)
+        let bypassCallKit = false
+        #else
         let bypassCallKit = ProcessInfo.processInfo.environment["COLUMBA_AUTO_ANSWER"] == "1"
+        #endif
         if audioSessionActivatedByCallKit || bypassCallKit {
             manager.start(speakerEnabled: isSpeakerOn)
             DiagLog.log("[AUDIO] startAudio() engine started immediately (session active=\(audioSessionActivatedByCallKit) bypass=\(bypassCallKit))")

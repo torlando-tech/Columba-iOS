@@ -669,6 +669,40 @@ struct RootView: View {
                 }
             }
 
+            #if os(iOS)
+            // Smoke-test escape hatch: `COLUMBA_AUTO_CALL_TO=<hex>` places an
+            // outgoing LXST call once the target destination shows up in the
+            // path table. Used in sim↔iPhone reverse-direction audio testing
+            // where the iPhone needs to be the caller and we can't push URL
+            // events to a real device (`simctl openurl` is simulator-only,
+            // `devicectl` has no URL-open subcommand). Polls the path table
+            // for up to 60s.
+            if let targetHex = ProcessInfo.processInfo.environment["COLUMBA_AUTO_CALL_TO"],
+               !targetHex.isEmpty,
+               let targetHash = try? targetHex.hexToData() {
+                let services = appServices
+                Task { @MainActor in
+                    DiagLog.log("[AUTO_CALL] waiting for \(targetHex.prefix(8)) in path table")
+                    var attempts = 0
+                    while attempts < 30 {
+                        if let pt = services.pathTable,
+                           await pt.lookup(destinationHash: targetHash) != nil {
+                            DiagLog.log("[AUTO_CALL] target found after \(attempts * 2)s — placing call")
+                            services.callManager?.initiateCall(
+                                destinationHash: targetHash,
+                                profile: .qualityMedium,
+                                peerDisplayName: nil
+                            )
+                            return
+                        }
+                        try? await Task.sleep(for: .seconds(2))
+                        attempts += 1
+                    }
+                    DiagLog.log("[AUTO_CALL] timed out waiting for \(targetHex.prefix(8))")
+                }
+            }
+            #endif
+
         } catch {
             DiagLog.log("[STARTUP] _initializeServicesOnce FAILED: \(error)")
             throw error

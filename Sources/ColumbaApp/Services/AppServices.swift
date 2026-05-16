@@ -859,8 +859,9 @@ public final class AppServices {
             }
         }
 
-        // lxma://test-announce?name=... — calls sendAnnounce with the
-        // given display name and logs the outcome.
+        // lxma://test-announce?name=... — calls sendAllAnnounces with the
+        // given display name (both the LXMF delivery + LXST telephony
+        // destinations), logs the outcome.
         NotificationCenter.default.addObserver(
             forName: Notification.Name("ColumbaTestAnnounce"),
             object: nil,
@@ -870,10 +871,10 @@ public final class AppServices {
             let name = (note.userInfo?["name"] as? String) ?? ""
             Task { @MainActor in
                 do {
-                    try await self.sendAnnounce(displayName: name)
-                    DiagLog.log("[TEST-ANNOUNCE] sendAnnounce returned OK")
+                    try await self.sendAllAnnounces(displayName: name)
+                    DiagLog.log("[TEST-ANNOUNCE] sendAllAnnounces returned OK")
                 } catch {
-                    DiagLog.log("[TEST-ANNOUNCE] sendAnnounce failed: \(error)")
+                    DiagLog.log("[TEST-ANNOUNCE] sendAllAnnounces failed: \(error)")
                 }
             }
         }
@@ -2265,14 +2266,19 @@ public final class AppServices {
         return link
     }
 
-    /// Map a Python link_state(closed, reason=...) string to the
-    /// TeardownReason enum lxst-swift's Telephone understands.
+    /// Map a Python link_state(closed, reason=...) value to the
+    /// TeardownReason enum lxst-swift's Telephone understands. Python emits
+    /// `RNS.Link.teardown_reason` directly — that's an int (0/1/2) so the
+    /// bridge stringifies it before crossing. Earlier code only matched the
+    /// English names, so normal hangups were silently logged as
+    /// `.networkFailure`. Mirrors `RNS.Link.TIMEOUT` (0), `INITIATOR_CLOSED`
+    /// (1), `DESTINATION_CLOSED` (2) in Reticulum/Link.py.
     private func teardownReason(from raw: String) -> TeardownReason {
         switch raw {
-        case "destination_closed", "remote_closed": return .destinationClosed
-        case "initiator_closed", "local_closed":    return .initiatorClosed
-        case "timeout":                              return .timeout
-        default:                                     return .networkFailure
+        case "0", "timeout":                            return .timeout
+        case "1", "initiator_closed", "local_closed":   return .initiatorClosed
+        case "2", "destination_closed", "remote_closed": return .destinationClosed
+        default:                                         return .networkFailure
         }
     }
 
