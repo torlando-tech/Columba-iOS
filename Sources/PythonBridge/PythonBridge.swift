@@ -237,6 +237,113 @@ public final class PythonBridge: @unchecked Sendable {
         }
     }
 
+    /// Outcome of an LXMF propagation-node sync. Mirrors what
+    /// `rns_bridge.propagation_sync` returns.
+    public struct PropagationSyncResult: Sendable, Equatable {
+        public enum State: String, Sendable {
+            case idle
+            case pathRequested = "path_requested"
+            case linkEstablishing = "link_establishing"
+            case linkEstablished = "link_established"
+            case requestSent = "request_sent"
+            case receiving
+            case responseReceived = "response_received"
+            case complete
+            case noPath = "no_path"
+            case transferFailed = "transfer_failed"
+            case noRouter = "no-router"
+            case notStarted = "not-started"
+            case noNode = "no-node"
+            case unknown
+        }
+        public let ok: Bool
+        public let state: State
+        public let receivedMessages: Int
+        public let reason: String
+    }
+
+    /// Set / clear the outbound LXMF propagation node. Pass empty string
+    /// to clear. `stampCost` is the per-message stamp cost the node
+    /// advertises (in its announce app_data); 0 if unknown.
+    @discardableResult
+    public func setPropagationNode(destHashHex: String, stampCost: Int = 0) async throws -> Bool {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else { return false }
+                guard let fn = PyObject_GetAttrString(module, "set_propagation_node") else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                let args = PyTuple_New(2)!
+                defer { Py_DecRef(args) }
+                PyTuple_SetItem(args, 0, PyUnicode_FromString(destHashHex)!)
+                PyTuple_SetItem(args, 1, PyLong_FromLongLong(Int64(stampCost))!)
+                guard let result = PyObject_CallObject(fn, args) else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(result) }
+                return pyBoolFromDict(result, key: "ok") ?? false
+            }
+        }
+    }
+
+    /// Block until LXMF propagation-node sync completes or times out.
+    public func propagationSync(timeout: TimeInterval = 60.0) async throws -> PropagationSyncResult {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else {
+                    return PropagationSyncResult(ok: false, state: .notStarted, receivedMessages: 0, reason: "not-started")
+                }
+                guard let fn = PyObject_GetAttrString(module, "propagation_sync") else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                guard let arg = PyFloat_FromDouble(timeout) else {
+                    throw BridgeError.marshallingFailure("timeout")
+                }
+                guard let result = PyObject_CallOneArg(fn, arg) else {
+                    Py_DecRef(arg)
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                Py_DecRef(arg)
+                defer { Py_DecRef(result) }
+                let ok = pyBoolFromDict(result, key: "ok") ?? false
+                let stateStr = pyStringFromDict(result, key: "state") ?? ""
+                let reason = pyStringFromDict(result, key: "reason") ?? ""
+                let count: Int = {
+                    guard let v = PyDict_GetItemString(result, "received_messages") else { return 0 }
+                    return Int(PyLong_AsLongLong(v))
+                }()
+                let state = PropagationSyncResult.State(rawValue: stateStr) ?? .unknown
+                return PropagationSyncResult(ok: ok, state: state, receivedMessages: count, reason: reason)
+            }
+        }
+    }
+
+    /// Re-broadcast the LXMF delivery destination's announce with the
+    /// given display name. Returns true on success.
+    public func announce(displayName: String) async throws -> Bool {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else { return false }
+                guard let fn = PyObject_GetAttrString(module, "announce") else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                guard let arg = PyUnicode_FromString(displayName) else {
+                    throw BridgeError.marshallingFailure("displayName")
+                }
+                guard let result = PyObject_CallOneArg(fn, arg) else {
+                    Py_DecRef(arg)
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                Py_DecRef(arg)
+                defer { Py_DecRef(result) }
+                return pyBoolFromDict(result, key: "ok") ?? false
+            }
+        }
+    }
+
     public func sendOpportunistic(destHashHex: String, content: String) async throws -> SendOutcome {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in

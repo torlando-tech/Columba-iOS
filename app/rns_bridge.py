@@ -244,6 +244,163 @@ def start(
         return _local_info()
 
 
+def set_propagation_node(dest_hash_hex: str, stamp_cost: int = 0) -> dict[str, Any]:
+    """Configure which LXMF propagation node this client uses for store-and-
+    forward retrieval. `dest_hash_hex` must be the destination hash of an
+    `lxmf.propagation` announce we've already received (or empty string to
+    clear the selection)."""
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "reason": "not-started"}
+        router = _state["router"]
+        if router is None:
+            return {"ok": False, "reason": "no-router"}
+        try:
+            if dest_hash_hex:
+                dest_hash = bytes.fromhex(dest_hash_hex)
+                router.set_outbound_propagation_node(dest_hash)
+                if hasattr(router, "set_propagation_node_stamp_cost"):
+                    router.set_propagation_node_stamp_cost(int(stamp_cost))
+            else:
+                # Clear selection — pass None / 0 to drop both the node
+                # and the stamp cost.
+                router.set_outbound_propagation_node(None)
+                if hasattr(router, "set_propagation_node_stamp_cost"):
+                    router.set_propagation_node_stamp_cost(0)
+        except Exception as e:
+            return {"ok": False, "reason": f"set-failed: {e}"}
+        return {"ok": True, "reason": "ok"}
+
+
+def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
+    """Block until the current LXMF propagation-node sync finishes (or
+    times out). Returns `{ok, state, received_messages, reason}`.
+
+    `state` mirrors LXMRouter.PR_* (e.g. `complete`, `no_path`,
+    `transfer_failed`, `path_requested`, `link_established`,
+    `receiving`). `received_messages` is the count of new inbound
+    LXMessages that landed on the local delivery destination during
+    this sync.
+
+    Requires set_propagation_node() to have been called with a valid
+    `lxmf.propagation` destination first."""
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "state": "not-started", "received_messages": 0, "reason": "not-started"}
+        router = _state["router"]
+        identity = _state["identity"]
+        if router is None or identity is None:
+            return {"ok": False, "state": "no-router", "received_messages": 0, "reason": "no-router"}
+        outbound = getattr(router, "outbound_propagation_node", None)
+        if outbound is None:
+            return {"ok": False, "state": "no-node", "received_messages": 0, "reason": "no-node-selected"}
+
+        try:
+            router.request_messages_from_propagation_node(identity)
+        except Exception as e:
+            return {"ok": False, "state": "transfer-failed", "received_messages": 0, "reason": f"start-failed: {e}"}
+
+    # Poll the router state outside the lock so the router can update
+    # propagation_transfer_state from its own thread.
+    deadline = time.monotonic() + timeout
+    last_seen_state: Any = None
+    while time.monotonic() < deadline:
+        try:
+            state_val = getattr(router, "propagation_transfer_state", None)
+            last_seen_state = state_val
+            terminal = {
+                getattr(LXMF.LXMRouter, "PR_COMPLETE", 5),
+                getattr(LXMF.LXMRouter, "PR_NO_PATH", 6),
+                getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", 7),
+                getattr(LXMF.LXMRouter, "PR_LINK_ESTABLISHED", 99),  # placeholder if absent
+            }
+            # Only PR_COMPLETE / PR_NO_PATH / PR_TRANSFER_FAILED are
+            # truly terminal — link-established is intermediate.
+            real_terminal = {
+                getattr(LXMF.LXMRouter, "PR_COMPLETE", 5),
+                getattr(LXMF.LXMRouter, "PR_NO_PATH", 6),
+                getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", 7),
+            }
+            if state_val in real_terminal:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    received = 0
+    try:
+        received = int(getattr(router, "propagation_transfer_last_result", 0) or 0)
+    except Exception:
+        pass
+
+    state_name = _propagation_state_name(last_seen_state)
+    ok = state_name == "complete"
+    return {
+        "ok": ok,
+        "state": state_name,
+        "received_messages": received,
+        "reason": "ok" if ok else state_name,
+    }
+
+
+def _propagation_state_name(val: Any) -> str:
+    if val is None:
+        return "idle"
+    # LXMF.LXMRouter PR_* constants → lowercase names. Use getattr so the
+    # mapping stays correct even if the upstream enum gets reordered.
+    mapping = {
+        getattr(LXMF.LXMRouter, "PR_IDLE", -1): "idle",
+        getattr(LXMF.LXMRouter, "PR_PATH_REQUESTED", -2): "path_requested",
+        getattr(LXMF.LXMRouter, "PR_LINK_ESTABLISHING", -3): "link_establishing",
+        getattr(LXMF.LXMRouter, "PR_LINK_ESTABLISHED", -4): "link_established",
+        getattr(LXMF.LXMRouter, "PR_REQUEST_SENT", -5): "request_sent",
+        getattr(LXMF.LXMRouter, "PR_RECEIVING", -6): "receiving",
+        getattr(LXMF.LXMRouter, "PR_RESPONSE_RECEIVED", -7): "response_received",
+        getattr(LXMF.LXMRouter, "PR_COMPLETE", -8): "complete",
+        getattr(LXMF.LXMRouter, "PR_NO_PATH", -9): "no_path",
+        getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", -10): "transfer_failed",
+    }
+    return mapping.get(val, f"state_{val}")
+
+
+def announce(display_name: str = "") -> dict[str, Any]:
+    """Re-broadcast the LXMF delivery destination's announce with optional
+    display name update. Called from the Settings UI's manual "Announce"
+    button and from the AutoAnnounceManager timer.
+
+    Updates `delivery_destination.app_data` to the new display name
+    (msgpack-packed [name_bytes, stamp_cost] per LXMF's announce format
+    — matches LXMRouter.get_announce_app_data) so peers see the latest
+    name. Then calls `.announce()` which queues the announce packet for
+    every online interface.
+
+    Returns `{ok: bool, reason: str}`. `not-started` when Python hasn't
+    booted yet, `no-destination` when register_delivery_identity failed
+    earlier in start(), `ok` on success."""
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "reason": "not-started"}
+        destination = _state["destination"]
+        if destination is None:
+            return {"ok": False, "reason": "no-destination"}
+
+        # LXMF expects app_data as msgpack-packed [name: bytes, stamp_cost: int].
+        # display_name="" still announces — peers will fall back to the
+        # short-hex shortHash for their UI.
+        try:
+            from RNS.vendor import umsgpack
+            name_bytes = display_name.encode("utf-8", errors="replace")
+            destination.set_default_app_data(umsgpack.packb([name_bytes, 0]))
+        except Exception as e:
+            return {"ok": False, "reason": f"appdata-error: {e}"}
+
+        try:
+            destination.announce()
+        except Exception as e:
+            return {"ok": False, "reason": f"announce-error: {e}"}
+        return {"ok": True, "reason": "ok"}
+
+
 def stop() -> None:
     with _lock:
         if not _state["started"]:

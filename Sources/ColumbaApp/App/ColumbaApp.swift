@@ -90,6 +90,30 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-prop-sync" {
+                    // lxma://test-prop-sync?node=HEX
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let node = components?.queryItems?.first(where: { $0.name == "node" })?.value ?? ""
+                    DiagLog.log("[TEST-PROP-SYNC] node=\(node)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestPropSync"),
+                        object: nil,
+                        userInfo: ["node": node]
+                    )
+                    return
+                }
+                if url.host == "test-announce" {
+                    // lxma://test-announce?name=...
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let name = components?.queryItems?.first(where: { $0.name == "name" })?.value ?? ""
+                    DiagLog.log("[TEST-ANNOUNCE] name=\"\(name)\"")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestAnnounce"),
+                        object: nil,
+                        userInfo: ["name": name]
+                    )
+                    return
+                }
                 if url.host == "test-restart" {
                     DiagLog.log("[TEST-RESTART] requested via URL")
                     NotificationCenter.default.post(

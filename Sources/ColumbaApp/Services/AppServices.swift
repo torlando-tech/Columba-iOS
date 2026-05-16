@@ -530,8 +530,12 @@ public final class AppServices {
 
         // Generate the RNS config from user-saved interface entities. The
         // file lands at `<configDir>/config` where Python's
-        // `RNS.Reticulum(config_dir)` will pick it up.
-        let configText = PythonConfigWriter.write(interfaces: interfaces)
+        // `RNS.Reticulum(config_dir)` will pick it up. Transport mode is
+        // read from the App Group UserDefaults (toggled in
+        // Settings → Advanced → Transport Mode); changing it requires
+        // tapping Apply & Restart on the same screen.
+        let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
+        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled)
         let configFile = pyDir.appendingPathComponent("config")
         do {
             try configText.write(to: configFile, atomically: true, encoding: .utf8)
@@ -658,6 +662,50 @@ public final class AppServices {
                 DiagLog.log("[TEST-RESTART] invoking restartPythonBackend")
                 await self.restartPythonBackend()
                 DiagLog.log("[TEST-RESTART] done")
+            }
+        }
+
+        // lxma://test-prop-sync?node=HEX — set propagation node, kick a sync,
+        // log the outcome.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestPropSync"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            let node = (note.userInfo?["node"] as? String) ?? ""
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-PROP-SYNC] no backend")
+                    return
+                }
+                do {
+                    _ = try await backend.setPropagationNode(destHashHex: node, stampCost: 0)
+                    DiagLog.log("[TEST-PROP-SYNC] set node, starting sync")
+                    let r = try await backend.propagationSync(timeout: 30.0)
+                    DiagLog.log("[TEST-PROP-SYNC] result ok=\(r.ok) state=\(r.state.rawValue) received=\(r.receivedMessages) reason=\(r.reason)")
+                } catch {
+                    DiagLog.log("[TEST-PROP-SYNC] error=\(error)")
+                }
+            }
+        }
+
+        // lxma://test-announce?name=... — calls sendAnnounce with the
+        // given display name and logs the outcome.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestAnnounce"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            let name = (note.userInfo?["name"] as? String) ?? ""
+            Task { @MainActor in
+                do {
+                    try await self.sendAnnounce(displayName: name)
+                    DiagLog.log("[TEST-ANNOUNCE] sendAnnounce returned OK")
+                } catch {
+                    DiagLog.log("[TEST-ANNOUNCE] sendAnnounce failed: \(error)")
+                }
             }
         }
 
@@ -1844,34 +1892,21 @@ public final class AppServices {
     /// - Parameter displayName: Display name to broadcast (e.g., "User's Mac")
     /// - Throws: AppServicesError if transport or destination not initialized
     public func sendAnnounce(displayName: String) async throws {
-        logger.info("Sending announce with display name: \(displayName)")
+        logger.info("Sending announce with display name: \(displayName, privacy: .public)")
 
-        guard let transport = transport else {
+        // Python owns the network layer now — route the announce through
+        // rns_bridge.announce(display_name), which updates the LXMF
+        // delivery destination's app_data and calls .announce() under
+        // the embedded CPython. The pre-Python-RNS path (Compat
+        // Announce.buildPacket → transport.send) was a no-op stub.
+        guard let backend = pythonBackend else {
             throw AppServicesError.transportNotConnected
         }
-
-        guard let destination = deliveryDestination else {
-            throw AppServicesError.identityNotInitialized
+        let ok = try await backend.announce(displayName: displayName)
+        if !ok {
+            throw AppServicesError.transportNotConnected
         }
-
-        // Set the display name as app data on the destination
-        destination.appData = displayName.data(using: .utf8)
-
-        // Rotate ratchet if interval elapsed, and include in announce
-        var ratchetPub: Data? = nil
-        if let mgr = destination.ratchetManager {
-            await mgr.rotateIfNeeded()
-            ratchetPub = await mgr.currentRatchetPublicBytes()
-        }
-
-        // Create and build the announce packet
-        let announce = Announce(destination: destination, ratchet: ratchetPub)
-        let packet = try announce.buildPacket()
-
-        // Send the announce via transport
-        try await transport.send(packet: packet)
-
-        logger.info("Announce sent successfully for destination: \(destination.hexHash)")
+        DiagLog.log("[ANNOUNCE] sent via Python (name=\"\(displayName)\")")
     }
 
     /// Send both the LXMF delivery announce and the LXST telephony announce.

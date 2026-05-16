@@ -54,6 +54,16 @@ struct SettingsView: View {
                         // Network
                         networkCard(vm)
 
+                        // Background Transport — the Network Extension VPN
+                        // tunnel that keeps RNS alive when the app is
+                        // backgrounded. Hidden under the Python RNS stack
+                        // because the previous implementation routed
+                        // reticulum-swift's TCP socket through
+                        // PacketTunnelProvider; Python's RNS owns its
+                        // sockets and needs a different architecture
+                        // (likely a Network Extension that pumps the
+                        // Python event loop, or a background-task wake
+                        // approach). Phase 2 work.
                         #if ENABLE_NETWORK_EXTENSION
                         backgroundTransportCard()
                         #endif
@@ -339,12 +349,12 @@ struct SettingsView: View {
             toggle: Binding(get: { vm.isTransportEnabled }, set: { newValue in
                 vm.isTransportEnabled = newValue
                 vm.saveSettings()
+                // RNS reads `enable_transport` at Reticulum.__init__ time,
+                // so we restart the Python backend to pick the new value
+                // up — same path Settings → Manage Interfaces → Apply &
+                // Restart uses. ~1-2s connectivity outage.
                 Task {
-                    if newValue {
-                        await appServices.transport?.setTransportEnabled(true, identity: appServices.identity)
-                    } else {
-                        await appServices.transport?.setTransportEnabled(false)
-                    }
+                    await appServices.restartPythonBackend()
                 }
             })
         ) {
@@ -355,11 +365,27 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Text("Toggling restarts Reticulum (~1-2s offline).")
+                .font(.caption2)
+                .foregroundStyle(Theme.textSecondary.opacity(0.7))
         }
     }
 
     #if ENABLE_NETWORK_EXTENSION
     // MARK: - Background Transport Card
+    //
+    // Currently compile-guarded off. The previous wiring tied each
+    // toggle into reticulum-swift's `TCPInterface.beginTunnelMode` /
+    // `endTunnelMode`, which routed outbound bytes through the
+    // PacketTunnelProvider extension. The Python RNS migration deletes
+    // that entire path (the Compat-layer TCPInterface has no tunnel
+    // mode) and replaces it with rns_bridge.py's own socket. Bringing
+    // background transport back means re-architecting the NE side to
+    // either (a) drive Python's event loop from within the extension
+    // (heavy — needs CPython embedded twice) or (b) re-wake the app
+    // via BGProcessingTask + silent push when a peer announces and
+    // immediately polls drain_events. Phase 2/3.
 
     @ViewBuilder
     private func backgroundTransportCard() -> some View {

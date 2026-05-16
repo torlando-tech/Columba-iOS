@@ -81,6 +81,26 @@ public final class PythonRNSBackend: @unchecked Sendable {
         try await bridge.sendOpportunistic(destHashHex: destHashHex, content: content)
     }
 
+    /// Set / clear the outbound LXMF propagation node. Empty `destHashHex`
+    /// clears the selection.
+    @discardableResult
+    public func setPropagationNode(destHashHex: String, stampCost: Int = 0) async throws -> Bool {
+        try await bridge.setPropagationNode(destHashHex: destHashHex, stampCost: stampCost)
+    }
+
+    /// Block until the configured propagation-node sync completes.
+    public func propagationSync(timeout: TimeInterval = 60.0) async throws -> PythonBridge.PropagationSyncResult {
+        try await bridge.propagationSync(timeout: timeout)
+    }
+
+    /// Push a fresh LXMF delivery announce with the given display name.
+    /// Settings UI's manual Announce button + AutoAnnounceManager timer
+    /// both call into here.
+    @discardableResult
+    public func announce(displayName: String) async throws -> Bool {
+        try await bridge.announce(displayName: displayName)
+    }
+
     /// One-shot NomadNet page fetch — proxies bridge.fetchNomadNetPage.
     /// See PythonBridge.fetchNomadNetPage docs.
     public func fetchNomadNetPage(

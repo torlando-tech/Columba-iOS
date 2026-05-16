@@ -34,7 +34,10 @@ enum PythonConfigWriter {
     ///     should be filtered before this call.
     ///   - enableTransport: whether the local RNS instance should act as a
     ///     transport node. Phones usually want `false` (terminal device);
-    ///     desktop relays want `true`. Default `false`.
+    ///     desktop relays want `true`. Set from the Settings "Transport
+    ///     Mode" toggle (stored in App Group UserDefaults under
+    ///     `transport_enabled`). Changing this requires an Apply &
+    ///     Restart since RNS reads it at `Reticulum.__init__` time.
     /// - Returns: ConfigObj-format text suitable for writing to
     ///   `<configDir>/config`.
     static func write(
