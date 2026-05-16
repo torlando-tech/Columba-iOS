@@ -6,12 +6,11 @@ import SwiftUI
 struct NomadNetBrowserView: View {
     @State private var viewModel: NomadNetBrowserViewModel
 
-    init(nodeHash: Data, nodeName: String?, transport: ReticulumTransport, pathTable: PathTable, identity: Identity) {
+    init(nodeHash: Data, nodeName: String?, backend: PythonRNSBackend, identity: Identity) {
         _viewModel = State(initialValue: NomadNetBrowserViewModel(
             nodeHash: nodeHash,
             nodeName: nodeName,
-            transport: transport,
-            pathTable: pathTable,
+            backend: backend,
             identity: identity
         ))
     }

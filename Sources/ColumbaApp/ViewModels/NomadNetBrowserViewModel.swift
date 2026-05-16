@@ -109,15 +109,13 @@ public final class NomadNetBrowserViewModel {
     public init(
         nodeHash: Data,
         nodeName: String?,
-        transport: ReticulumTransport,
-        pathTable: PathTable,
+        backend: PythonRNSBackend,
         identity: Identity
     ) {
         self.currentNodeHash = nodeHash
         self.currentNodeName = nodeName
         self.browserService = NomadNetBrowserService(
-            transport: transport,
-            pathTable: pathTable,
+            backend: backend,
             identity: identity
         )
     }

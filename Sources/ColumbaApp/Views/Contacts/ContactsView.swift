@@ -144,21 +144,19 @@ public struct ContactsView: View {
                         )
                     case .browseSite(let contact):
                         #if COLUMBA_NOMADNET_ENABLED
-                        if let transport = appServices.transport,
-                           let pathTable = appServices.pathTable,
+                        if let backend = appServices.pythonBackend,
                            let identity = appServices.identity {
                             NomadNetBrowserView(
                                 nodeHash: contact.identityHash,
                                 nodeName: contact.displayName,
-                                transport: transport,
-                                pathTable: pathTable,
+                                backend: backend,
                                 identity: identity
                             )
                         } else {
                             ContentUnavailableView(
                                 "Browser Unavailable",
                                 systemImage: "globe.badge.chevron.backward",
-                                description: Text("The NomadNet browser requires an active transport.")
+                                description: Text("The NomadNet browser requires an active Python backend.")
                             )
                         }
                         #else

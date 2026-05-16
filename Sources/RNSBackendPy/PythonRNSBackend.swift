@@ -81,6 +81,22 @@ public final class PythonRNSBackend: @unchecked Sendable {
         try await bridge.sendOpportunistic(destHashHex: destHashHex, content: content)
     }
 
+    /// One-shot NomadNet page fetch — proxies bridge.fetchNomadNetPage.
+    /// See PythonBridge.fetchNomadNetPage docs.
+    public func fetchNomadNetPage(
+        destHashHex: String,
+        path: String,
+        timeout: TimeInterval = 30.0,
+        formFields: [String: String]? = nil
+    ) async throws -> PythonBridge.NomadNetFetchResult {
+        try await bridge.fetchNomadNetPage(
+            destHashHex: destHashHex,
+            path: path,
+            timeout: timeout,
+            formFields: formFields
+        )
+    }
+
     /// Single-shot status probe — proxies `bridge.status()` so AppServices can
     /// log RNS Transport state (interface list, online flags, traffic counters)
     /// for smoke-test diagnosis. Returns `nil` if the JSON round-trip fails

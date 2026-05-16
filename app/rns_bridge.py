@@ -337,6 +337,176 @@ def send_opportunistic(dest_hash_hex: str, content: str) -> dict[str, Any]:
         return {"ok": True, "reason": "queued"}
 
 
+def fetch_nomadnet_page(
+    dest_hash_hex: str,
+    path: str,
+    timeout: float = 30.0,
+    form_fields: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """One-shot fetch of a NomadNet page over an RNS Link.
+
+    Walks the full RNS request cycle synchronously so the Swift caller
+    doesn't have to manage Link / RequestReceipt lifecycles. Returns
+    `{ok, status, data, content_type}` where:
+
+      - ok: True on success
+      - status: short string ('ok' | 'no-identity' | 'no-path' |
+        'link-failed' | 'request-failed' | 'timeout')
+      - data: bytes (Micron markup or arbitrary file payload), or
+        empty bytes on failure
+      - content_type: optional mime hint when the server provides one
+
+    `form_fields` is a `dict[str, str]` (form name -> value) for
+    POST-style submissions; pass `None` for a plain GET-equivalent
+    fetch. Form values are passed as msgpack to match Reticulum's
+    convention. Link is established fresh each call and closed
+    before return — no link caching on the Python side yet (Swift's
+    NomadNetBrowserService used to cache, but with this simplified
+    bridge we trade a few hundred ms of re-establishment for a much
+    smaller API surface)."""
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "status": "not-started", "data": b"", "content_type": ""}
+    try:
+        dest_hash = bytes.fromhex(dest_hash_hex)
+    except ValueError:
+        return {"ok": False, "status": "bad-hash", "data": b"", "content_type": ""}
+
+    # Recall the remote identity. If we haven't received an announce yet,
+    # kick off a request_path and bail — caller can retry once the path
+    # arrives. (Mirrors send_opportunistic's behavior.)
+    peer_identity = RNS.Identity.recall(dest_hash)
+    if peer_identity is None:
+        try:
+            RNS.Transport.request_path(dest_hash)
+        except Exception:
+            pass
+        return {"ok": False, "status": "no-path", "data": b"", "content_type": ""}
+
+    peer_dest = RNS.Destination(
+        peer_identity,
+        RNS.Destination.OUT,
+        RNS.Destination.SINGLE,
+        "nomadnetwork",
+        "node",
+    )
+
+    # Use threading.Event for synchronous waits on the async RNS callbacks.
+    link_ready = threading.Event()
+    link_closed = threading.Event()
+    response_ready = threading.Event()
+    state = {
+        "response_data": None,
+        "response_error": None,
+        "link_close_reason": None,
+    }
+
+    def _on_link_established(_link: Any) -> None:
+        link_ready.set()
+
+    def _on_link_closed(link: Any) -> None:
+        try:
+            state["link_close_reason"] = getattr(link, "teardown_reason", None)
+        except Exception:
+            pass
+        link_closed.set()
+        # If we were waiting for a response when the link died, unblock.
+        response_ready.set()
+
+    def _on_response(request_receipt: Any) -> None:
+        try:
+            state["response_data"] = request_receipt.response
+        except Exception as e:
+            state["response_error"] = f"response-extract-failed: {e}"
+        response_ready.set()
+
+    def _on_failed(_request_receipt: Any) -> None:
+        state["response_error"] = "request-failed"
+        response_ready.set()
+
+    link = RNS.Link(peer_dest, established_callback=_on_link_established, closed_callback=_on_link_closed)
+    # We need to identify on the link so the remote knows who we are; nomadnet's
+    # node app expects it for stateful pages.
+    try:
+        if _state["identity"] is not None:
+            link.identify(_state["identity"])
+    except Exception:
+        pass
+
+    if not link_ready.wait(timeout=min(20.0, timeout)):
+        try:
+            link.teardown()
+        except Exception:
+            pass
+        return {"ok": False, "status": "link-failed", "data": b"", "content_type": ""}
+
+    # Pack form fields as msgpack when present (Reticulum/LXMF convention).
+    request_data: Any = None
+    if form_fields:
+        try:
+            from RNS.vendor import umsgpack
+            request_data = umsgpack.packb(dict(form_fields))
+        except Exception:
+            # Fall back to nothing — better to send the request unform'd
+            # than to fail outright.
+            request_data = None
+
+    try:
+        link.request(
+            path,
+            data=request_data,
+            response_callback=_on_response,
+            failed_callback=_on_failed,
+            timeout=timeout,
+        )
+    except Exception as e:
+        try:
+            link.teardown()
+        except Exception:
+            pass
+        return {"ok": False, "status": "request-failed", "data": b"", "content_type": str(e)}
+
+    if not response_ready.wait(timeout=timeout):
+        try:
+            link.teardown()
+        except Exception:
+            pass
+        return {"ok": False, "status": "timeout", "data": b"", "content_type": ""}
+
+    try:
+        link.teardown()
+    except Exception:
+        pass
+
+    if state["response_error"]:
+        return {"ok": False, "status": "request-failed", "data": b"", "content_type": state["response_error"]}
+
+    response = state["response_data"]
+    if response is None:
+        return {"ok": False, "status": "request-failed", "data": b"", "content_type": "empty-response"}
+
+    # NomadNet wraps payloads in msgpack as [page_data, [files]] for resource
+    # responses, or just raw bytes for short responses. Unwrap if it looks
+    # msgpack-packed; otherwise return as-is.
+    payload = response
+    if isinstance(response, (bytes, bytearray)):
+        payload = bytes(response)
+    elif isinstance(response, str):
+        payload = response.encode("utf-8", errors="replace")
+    elif isinstance(response, (list, tuple)) and len(response) >= 1:
+        first = response[0]
+        if isinstance(first, (bytes, bytearray)):
+            payload = bytes(first)
+        elif isinstance(first, str):
+            payload = first.encode("utf-8", errors="replace")
+        else:
+            payload = b""
+    else:
+        payload = b""
+
+    return {"ok": True, "status": "ok", "data": payload, "content_type": ""}
+
+
 def reset_identity(identity_path: str) -> None:
     """Delete identity bytes on disk and tear down state. Caller must call
     start() again after this. Safe to call when not started."""

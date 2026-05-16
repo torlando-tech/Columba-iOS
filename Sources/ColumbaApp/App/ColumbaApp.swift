@@ -77,6 +77,19 @@ struct ColumbaApp: App {
                 // Test trigger: lxma://test-send?to=HEX&content=...
                 // bypasses the UI and directly invokes PythonRNSBackend.sendOpportunistic
                 // so external scripts can exercise the Python round-trip during the smoke test.
+                if url.host == "test-nomad-fetch" {
+                    // lxma://test-nomad-fetch?to=HEX&path=/page/index.mu
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+                    let path = components?.queryItems?.first(where: { $0.name == "path" })?.value ?? "/page/index.mu"
+                    DiagLog.log("[TEST-NOMAD] requested to=\(to) path=\(path)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestNomadFetch"),
+                        object: nil,
+                        userInfo: ["to": to, "path": path]
+                    )
+                    return
+                }
                 if url.host == "test-restart" {
                     DiagLog.log("[TEST-RESTART] requested via URL")
                     NotificationCenter.default.post(

@@ -148,6 +148,95 @@ public final class PythonBridge: @unchecked Sendable {
         }
     }
 
+    /// Outcome of a one-shot NomadNet page fetch over RNS Link.
+    /// Mirrors what `rns_bridge.fetch_nomadnet_page` returns.
+    public struct NomadNetFetchResult: Sendable, Equatable {
+        public enum Status: String, Sendable {
+            case ok
+            case noPath = "no-path"
+            case linkFailed = "link-failed"
+            case requestFailed = "request-failed"
+            case timeout
+            case badHash = "bad-hash"
+            case notStarted = "not-started"
+            case unknown
+        }
+        public let ok: Bool
+        public let status: Status
+        public let data: Data
+        public let contentType: String
+
+        public init(ok: Bool, status: Status, data: Data, contentType: String) {
+            self.ok = ok
+            self.status = status
+            self.data = data
+            self.contentType = contentType
+        }
+    }
+
+    /// Establish an RNS Link to the destination, request `path`, wait up to
+    /// `timeout` seconds for the response, tear down the link, and return
+    /// the bytes. `formFields` is `nil` for a plain GET-style fetch or a
+    /// dictionary for form submission (msgpack-packed on the Python side).
+    public func fetchNomadNetPage(
+        destHashHex: String,
+        path: String,
+        timeout: TimeInterval = 30.0,
+        formFields: [String: String]? = nil
+    ) async throws -> NomadNetFetchResult {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else {
+                    return NomadNetFetchResult(ok: false, status: .notStarted, data: Data(), contentType: "")
+                }
+                guard let fn = PyObject_GetAttrString(module, "fetch_nomadnet_page") else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                let args = PyTuple_New(4)!
+                defer { Py_DecRef(args) }
+                PyTuple_SetItem(args, 0, PyUnicode_FromString(destHashHex)!)
+                PyTuple_SetItem(args, 1, PyUnicode_FromString(path)!)
+                PyTuple_SetItem(args, 2, PyFloat_FromDouble(timeout))
+
+                if let fields = formFields, !fields.isEmpty {
+                    let dict = PyDict_New()!
+                    for (k, v) in fields {
+                        let pyk = PyUnicode_FromString(k)
+                        let pyv = PyUnicode_FromString(v)
+                        PyDict_SetItem(dict, pyk, pyv)
+                        if let pyk { Py_DecRef(pyk) }
+                        if let pyv { Py_DecRef(pyv) }
+                    }
+                    PyTuple_SetItem(args, 3, dict)
+                } else {
+                    PyTuple_SetItem(args, 3, ColumbaPy_None())
+                }
+
+                guard let result = PyObject_CallObject(fn, args) else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(result) }
+
+                let ok = pyBoolFromDict(result, key: "ok") ?? false
+                let statusStr = pyStringFromDict(result, key: "status") ?? ""
+                let contentType = pyStringFromDict(result, key: "content_type") ?? ""
+
+                // Extract bytes from the `data` key — Python returns a bytes object.
+                var data = Data()
+                if let dataObj = PyDict_GetItemString(result, "data") {
+                    var buf: UnsafeMutablePointer<CChar>? = nil
+                    var len: Py_ssize_t = 0
+                    if PyBytes_AsStringAndSize(dataObj, &buf, &len) == 0, let buf, len > 0 {
+                        data = Data(bytes: buf, count: Int(len))
+                    }
+                }
+                let status = NomadNetFetchResult.Status(rawValue: statusStr) ?? .unknown
+                return NomadNetFetchResult(ok: ok, status: status, data: data, contentType: contentType)
+            }
+        }
+    }
+
     public func sendOpportunistic(destHashHex: String, content: String) async throws -> SendOutcome {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in

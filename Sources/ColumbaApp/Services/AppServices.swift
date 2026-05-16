@@ -660,6 +660,31 @@ public final class AppServices {
                 DiagLog.log("[TEST-RESTART] done")
             }
         }
+
+        // lxma://test-nomad-fetch?to=HEX&path=/page/index.mu — calls
+        // bridge.fetchNomadNetPage and logs the response.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestNomadFetch"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            guard let to = note.userInfo?["to"] as? String,
+                  let path = note.userInfo?["path"] as? String else { return }
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-NOMAD] no backend")
+                    return
+                }
+                do {
+                    let res = try await backend.fetchNomadNetPage(destHashHex: to, path: path)
+                    let preview = String(data: res.data.prefix(120), encoding: .utf8) ?? "(non-utf8 \(res.data.count) bytes)"
+                    DiagLog.log("[TEST-NOMAD] result ok=\(res.ok) status=\(res.status.rawValue) bytes=\(res.data.count) preview=\(preview)")
+                } catch {
+                    DiagLog.log("[TEST-NOMAD] error=\(error)")
+                }
+            }
+        }
     }
 
     /// Look up the matching Python interface for each user `InterfaceEntity`
