@@ -90,6 +90,17 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-identity-switch" {
+                    // lxma://test-identity-switch — creates a fresh identity
+                    // and switches to it via the full AppServices.switchIdentity
+                    // path so we can verify Python reboots with the new keys.
+                    DiagLog.log("[TEST-IDSWITCH] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestIdentitySwitch"),
+                        object: nil
+                    )
+                    return
+                }
                 if url.host == "test-prop-sync" {
                     // lxma://test-prop-sync?node=HEX
                     let components = URLComponents(url: url, resolvingAgainstBaseURL: false)

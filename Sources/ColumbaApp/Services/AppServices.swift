@@ -665,6 +665,37 @@ public final class AppServices {
             }
         }
 
+        // lxma://test-identity-switch — exercise the multi-identity swap
+        // path: create a fresh identity in IdentityManager and call
+        // AppServices.switchIdentity. Logs the destination hash before
+        // and after so we can verify Python actually rebooted with the
+        // new keys.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestIdentitySwitch"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                let manager = IdentityManager()
+                let before = self.pythonBackend?.localInfo?.destinationHash ?? "nil"
+                DiagLog.log("[TEST-IDSWITCH] before destination=\(before)")
+                do {
+                    let created = try await manager.createIdentity(displayName: "SwitchTarget")
+                    let (localId, identity) = try await manager.switchToIdentity(created.identityHash)
+                    try await self.switchIdentity(
+                        to: identity,
+                        identityHash: localId.identityHash,
+                        tcpServerAddress: ""
+                    )
+                    let after = self.pythonBackend?.localInfo?.destinationHash ?? "nil"
+                    DiagLog.log("[TEST-IDSWITCH] after destination=\(after) (changed=\(before != after))")
+                } catch {
+                    DiagLog.log("[TEST-IDSWITCH] error=\(error)")
+                }
+            }
+        }
+
         // lxma://test-prop-sync?node=HEX — set propagation node, kick a sync,
         // log the outcome.
         NotificationCenter.default.addObserver(
