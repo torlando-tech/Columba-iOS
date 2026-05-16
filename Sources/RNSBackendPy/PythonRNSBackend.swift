@@ -83,8 +83,9 @@ public final class PythonRNSBackend: @unchecked Sendable {
 
     /// Single-shot status probe — proxies `bridge.status()` so AppServices can
     /// log RNS Transport state (interface list, online flags, traffic counters)
-    /// for smoke-test diagnosis.
-    public func statusSnapshot() async -> [String: String] {
+    /// for smoke-test diagnosis. Returns `nil` if the JSON round-trip fails
+    /// (Python error, decode error, or the bridge hasn't started yet).
+    public func statusSnapshot() async -> PythonBridge.StatusSnapshot? {
         await bridge.status()
     }
 

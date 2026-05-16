@@ -352,9 +352,14 @@ def status() -> dict[str, Any]:
             interfaces = RNS.Transport.interfaces
             iface_info = []
             for iface in interfaces:
+                # `iface.name` is the config section name (e.g.
+                # "Smoke_Test_Hub-smoke-"); str(iface) is the friendly
+                # "TCPInterface[name/host:port]" form. Swift matches by
+                # section name to update the TCPInterface stub's state.
                 iface_info.append({
+                    "section_name": getattr(iface, "name", ""),
                     "name": str(iface),
-                    "online": getattr(iface, "online", None),
+                    "online": bool(getattr(iface, "online", False)),
                     "ifac_size": getattr(iface, "ifac_size", None),
                     "rx_bytes": getattr(iface, "rxb", 0),
                     "tx_bytes": getattr(iface, "txb", 0),
@@ -371,6 +376,14 @@ def status() -> dict[str, Any]:
         except Exception:
             out["path_table_size"] = -1
         return out
+
+
+def status_json() -> str:
+    """JSON-serialized form of `status()` for the Swift bridge to parse.
+    Avoids round-tripping a Python dict through the C API one PyObject at
+    a time — Swift just calls `json.JSONDecoder.decode(...)`."""
+    import json as _json
+    return _json.dumps(status())
 
 
 def drain_events() -> list[dict[str, Any]]:

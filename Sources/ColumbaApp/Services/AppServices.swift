@@ -141,6 +141,12 @@ public final class AppServices {
     /// the other's auto-reply forever.
     private var smokeTestAutoSentTo: Set<String> = []
 
+    /// Periodic poller that mirrors Python's RNS.Transport interface state
+    /// into the Compat TCPInterface stubs so the existing
+    /// NetworkStatusView / InterfaceManagementScreen show correct
+    /// connected/disconnected badges. Cancelled in `shutdown()`.
+    private var pythonStatusPollTask: Task<Void, Never>?
+
     #if ENABLE_NETWORK_EXTENSION
     /// Network Extension tunnel manager.
     public private(set) var tunnelManager: TunnelManager?
@@ -555,12 +561,48 @@ public final class AppServices {
             }
         }
 
-        // One-shot status probe a few seconds after connect, so we can
-        // verify the TCP interface is online from RNS's perspective.
-        Task { [backend] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            let status = await backend.statusSnapshot()
-            DiagLog.log("[PY] status \(status)")
+        // Seed Compat TCPInterface stubs for each enabled InterfaceEntity so
+        // the InterfaceManagement UI has something to render against. Their
+        // state starts `.connecting`; the periodic status poll below flips
+        // each one to `.connected` / `.disconnected` based on what Python's
+        // RNS.Transport reports.
+        for entity in interfaces where entity.type == .tcpClient || entity.type == .tcpServer {
+            if tcpInterfaces[entity.id] == nil {
+                let host: String
+                let port: UInt16
+                switch entity.config {
+                case .tcpClient(let cfg): host = cfg.targetHost; port = cfg.targetPort
+                case .tcpServer(let cfg): host = cfg.listenIp; port = cfg.listenPort
+                default: host = ""; port = 0
+                }
+                let config = InterfaceConfig(
+                    id: entity.id,
+                    name: entity.name,
+                    type: entity.type == .tcpClient ? .tcp : .tcp,
+                    enabled: entity.enabled,
+                    mode: .full,
+                    host: host,
+                    port: port
+                )
+                if let iface = try? TCPInterface(config: config) {
+                    iface.state = .connecting
+                    tcpInterfaces[entity.id] = iface
+                }
+            }
+        }
+
+        // Periodic status poll: mirror Python's view of interface state into
+        // the Compat TCPInterface stubs so the existing NetworkStatusView /
+        // InterfaceManagementScreen show online / offline accurately.
+        pythonStatusPollTask?.cancel()
+        let entityById = Dictionary(uniqueKeysWithValues: interfaces.map { ($0.id, $0) })
+        pythonStatusPollTask = Task { [weak self, backend] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s
+                guard let snapshot = await backend.statusSnapshot() else { continue }
+                guard let self else { return }
+                await self.applyPythonInterfaceStatus(snapshot: snapshot, entityById: entityById)
+            }
         }
 
         // Listen for test-send deep links (lxma://test-send?to=HEX&content=...).
@@ -585,6 +627,51 @@ public final class AppServices {
                 }
             }
         }
+    }
+
+    /// Look up the matching Python interface for each user `InterfaceEntity`
+    /// and update the Compat TCPInterface stub's `state` to reflect the
+    /// `online` flag RNS.Transport reports.
+    private func applyPythonInterfaceStatus(
+        snapshot: PythonBridge.StatusSnapshot,
+        entityById: [String: InterfaceEntity]
+    ) async {
+        // The config section name PythonConfigWriter wrote is the matching
+        // key — it's stable across the bridge and unique per entity.
+        var byEntity: [String: PythonBridge.StatusSnapshot.InterfaceStatus] = [:]
+        for status in snapshot.interfaces {
+            for (entityId, entity) in entityById {
+                let expected = expectedSectionName(for: entity)
+                if status.sectionName == expected {
+                    byEntity[entityId] = status
+                }
+            }
+        }
+        for (entityId, status) in byEntity {
+            guard let iface = tcpInterfaces[entityId] else { continue }
+            let newState: InterfaceState = status.online ? .connected : .disconnected
+            if iface.state != newState {
+                DiagLog.log("[PY] iface \(status.sectionName) -> \(newState) (rx=\(status.rxBytes) tx=\(status.txBytes))")
+                iface.state = newState
+                iface.online = status.online
+            }
+        }
+    }
+
+    /// Recompute the config-section name PythonConfigWriter would have
+    /// written for an entity, so we can match Python interface objects back
+    /// to entities by section_name.
+    private func expectedSectionName(for entity: InterfaceEntity) -> String {
+        let sanitized = entity.name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "[", with: "_")
+            .replacingOccurrences(of: "]", with: "_")
+            .replacingOccurrences(of: "=", with: "_")
+            .replacingOccurrences(of: "#", with: "_")
+        return sanitized.isEmpty
+            ? entity.id
+            : "\(sanitized)-\(entity.id.prefix(6))"
     }
 
     /// Save a Python-delivered inbound LXMF message to the repository and
@@ -1398,6 +1485,8 @@ public final class AppServices {
         // Stop Python event drain and tear down the Python RNS stack
         pythonEventTask?.cancel()
         pythonEventTask = nil
+        pythonStatusPollTask?.cancel()
+        pythonStatusPollTask = nil
         if let backend = pythonBackend {
             await backend.stop()
             pythonBackend = nil

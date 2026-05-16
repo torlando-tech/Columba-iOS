@@ -177,30 +177,62 @@ public final class PythonBridge: @unchecked Sendable {
         }
     }
 
+    /// Decoded view of the Python `status()` snapshot. Mirrors the JSON
+    /// rns_bridge.status_json returns. The Swift UI uses this to drive the
+    /// "interface online / offline" badges in Network Status + Manage
+    /// Interfaces without re-querying the C-level RNS Transport state.
+    public struct StatusSnapshot: Decodable, Sendable {
+        public let started: Bool
+        public let interfaces: [InterfaceStatus]
+        public let destinationTableSize: Int?
+        public let pathTableSize: Int?
+
+        public struct InterfaceStatus: Decodable, Sendable {
+            /// Config section name (matches what PythonConfigWriter wrote).
+            public let sectionName: String
+            /// Friendly `"TCPInterface[section/host:port]"` representation.
+            public let name: String
+            public let online: Bool
+            public let rxBytes: Int
+            public let txBytes: Int
+
+            enum CodingKeys: String, CodingKey {
+                case sectionName = "section_name"
+                case name
+                case online
+                case rxBytes = "rx_bytes"
+                case txBytes = "tx_bytes"
+            }
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case started
+            case interfaces
+            case destinationTableSize = "destination_table_size"
+            case pathTableSize = "path_table_size"
+        }
+    }
+
     /// Read RNS Transport diagnostic info — interfaces, online state, table sizes.
-    public func status() async -> [String: String] {
-        await withCheckedContinuation { cont in
+    public func status() async -> StatusSnapshot? {
+        let raw: String? = await withCheckedContinuation { cont in
             queue.async {
-                let out = PythonRuntime.shared.withGIL { () -> [String: String] in
-                    guard let module = self.module else { return [:] }
-                    guard let fn = PyObject_GetAttrString(module, "status") else { return [:] }
+                let out = PythonRuntime.shared.withGIL { () -> String? in
+                    guard let module = self.module else { return nil }
+                    guard let fn = PyObject_GetAttrString(module, "status_json") else { return nil }
                     defer { Py_DecRef(fn) }
-                    guard let args = PyTuple_New(0) else { return [:] }
+                    guard let args = PyTuple_New(0) else { return nil }
                     defer { Py_DecRef(args) }
-                    guard let result = PyObject_CallObject(fn, args) else { return [:] }
+                    guard let result = PyObject_CallObject(fn, args) else { return nil }
                     defer { Py_DecRef(result) }
-                    return self.dictToStringMap(result)
+                    guard let c = PyUnicode_AsUTF8(result) else { return nil }
+                    return String(cString: c)
                 }
                 cont.resume(returning: out)
             }
         }
-    }
-
-    private func dictToStringMap(_ d: UnsafeMutablePointer<PyObject>) -> [String: String] {
-        guard let repr = PyObject_Str(d) else { return [:] }
-        defer { Py_DecRef(repr) }
-        guard let c = PyUnicode_AsUTF8(repr) else { return [:] }
-        return ["raw": String(cString: c)]
+        guard let raw, let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(StatusSnapshot.self, from: data)
     }
 
     /// Drain pending events from the Python-side queue.Queue. Returns empty list
