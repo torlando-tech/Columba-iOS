@@ -278,9 +278,21 @@ struct BLEConnectionsView: View {
 
             Spacer()
 
-            Text(conn.rssi.map { "\($0) dBm" } ?? "-- dBm")
-                .font(.system(.subheadline, design: .monospaced).bold())
-                .foregroundStyle(Theme.textPrimary)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(conn.rssi.map { "\($0) dBm" } ?? "—")
+                    .font(.system(.subheadline, design: .monospaced).bold())
+                    .foregroundStyle(Theme.textPrimary)
+                // iOS exposes RSSI only for central-side connections
+                // (CBPeripheral.readRSSI). When a peer connects to us as a
+                // central — i.e., we hold a CBCentral for them via
+                // CBPeripheralManager — there's no equivalent API. Show a
+                // hint so the dash doesn't look like a missing-data bug.
+                if conn.rssi == nil && conn.connectionType == "peripheral" {
+                    Text("peripheral mode")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
         }
         .padding(12)
         .background(Theme.backgroundTertiary)
