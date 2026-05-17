@@ -912,7 +912,19 @@ public final class LXMFDatabase: @unchecked Sendable {
     public func getMessageRecords(forConversation hash: Data, limit: Int = 200, offset: Int = 0) throws -> [MessageRecord] {
         lock.lock(); defer { lock.unlock() }
         let all = messagesByConversation[hash] ?? []
-        let sorted = all.sorted { $0.timestamp < $1.timestamp }
+        // DESC by timestamp — offset 0 returns the newest `limit` messages,
+        // subsequent pages walk backward in time. Callers
+        // (MessagingViewModel.loadMessages / loadMoreMessages) `.reversed()`
+        // each page so the in-memory `messages` array ends up
+        // [oldest .. newest] for top-down chat display, and
+        // `loadMoreMessages` can insert older pages at the front.
+        //
+        // Before this was ASC, which combined with the caller's reverse
+        // meant offset 0 fetched the OLDEST `limit` messages and put the
+        // newest of THAT page at index 0 — so once a conversation passed
+        // `limit` total messages, freshly-sent ones disappeared on reload
+        // and ordering looked inverted.
+        let sorted = all.sorted { $0.timestamp > $1.timestamp }
         let end = min(offset + limit, sorted.count)
         guard offset < end else { return [] }
         return Array(sorted[offset..<end])

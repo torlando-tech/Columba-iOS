@@ -760,6 +760,28 @@ public final class AppServices {
             }
         }
 
+        // Dump path-table entries so we can see what the Node Details
+        // "Interface Heard" card would render without taking a screenshot.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestPathTable"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-PATH-TABLE] no backend")
+                    return
+                }
+                let result = await backend.pythonBridge.callModuleFunctionReturningString(
+                    name: "diagnose_path_table"
+                ) ?? "(call returned nil)"
+                for line in result.split(separator: "\n", omittingEmptySubsequences: false) {
+                    DiagLog.log("[TEST-PATH-TABLE] \(line)")
+                }
+            }
+        }
+
         // Diagnose AutoInterface peer discovery: introspect the live
         // AutoInterface Python object so we can see whether multicast
         // join succeeded, what interfaces are bound, peer count, etc.
@@ -1406,8 +1428,8 @@ public final class AppServices {
 
     private func handlePythonEvent(_ event: PythonBridge.Event) async {
         switch event {
-        case .announce(let destHash, let displayName, let aspect, let publicKeysHex, let interfaceName, let t):
-            DiagLog.log("[PY] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\"")
+        case .announce(let destHash, let displayName, let aspect, let publicKeysHex, let interfaceName, let hops, let t):
+            DiagLog.log("[PY] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\" hops=\(hops)")
             guard let data = Data(hexString: destHash) else { return }
 
             // Insert the announce into the Compat PathTable so the Contacts
@@ -1424,7 +1446,7 @@ public final class AppServices {
                     destinationHash: data,
                     displayName: displayName,
                     nextHop: data,
-                    hopCount: 0,
+                    hopCount: hops,
                     lastSeen: t,
                     publicKeys: publicKeys,
                     interfaceId: ifaceId,

@@ -108,15 +108,23 @@ class _AspectAnnounceHandler:
                 public_keys_hex = pub().hex()
         except Exception:
             pass
-        # Look up the receiving interface for this announce so the iOS UI's
-        # Node Details "Interface Heard" card can attribute it correctly.
-        # RNS stores the iface object at `path_table[dest_hash][5]`
-        # immediately after the announce is processed (Transport.py:1999).
+        # Look up the receiving interface and hop count for this announce.
+        # RNS stores both on the path_table entry immediately after the
+        # announce is processed (Transport.py:1999):
+        #   entry = [now, received_from, announce_hops, expires,
+        #            random_blobs, receiving_interface, packet_hash]
+        # So index 2 is `announce_hops` (number of network hops the
+        # announce traversed; 0 = direct neighbor, 1+ = transit through
+        # transport nodes). Index 5 is the receiving Interface object.
         interface_name = ""
+        hops = 0
         try:
             entry = RNS.Transport.path_table.get(destination_hash)
-            if entry and len(entry) > 5 and entry[5] is not None:
-                interface_name = getattr(entry[5], "name", None) or str(entry[5])
+            if entry:
+                if len(entry) > 5 and entry[5] is not None:
+                    interface_name = getattr(entry[5], "name", None) or str(entry[5])
+                if len(entry) > 2 and entry[2] is not None:
+                    hops = int(entry[2])
         except Exception:
             pass
         _put(
@@ -126,6 +134,7 @@ class _AspectAnnounceHandler:
             aspect=self._aspect,
             public_keys=public_keys_hex,
             interface_name=interface_name,
+            hops=hops,
         )
 
 
@@ -1164,6 +1173,32 @@ def _install_test_roundtrip_callback() -> None:
     def _cb(value: int) -> bool:
         return int(value) % 2 == 0
     set_ble_callback("_test_roundtrip", _cb)
+
+
+def diagnose_path_table() -> str:
+    """Dump the first N entries of `RNS.Transport.path_table` with the
+    receiving-interface attribution we'd plumb up to a Node Details view.
+    Mirrors what `[Interface Heard]` should render — useful when we can't
+    screenshot the actual UI."""
+    lines: list[str] = []
+    try:
+        pt = RNS.Transport.path_table
+    except Exception as e:
+        return f"path_table unavailable: {e}"
+    if not pt:
+        return "path_table is empty (no announces received yet)"
+    lines.append(f"path_table count={len(pt)}")
+    for i, (dh, entry) in enumerate(list(pt.items())[:10]):
+        try:
+            dest_hex = dh.hex() if isinstance(dh, (bytes, bytearray)) else str(dh)
+            iface = entry[5] if entry and len(entry) > 5 else None
+            iface_name = getattr(iface, "name", None) or (str(iface) if iface else "<none>")
+            timestamp = entry[0] if entry else "?"
+            hops = entry[2] if entry and len(entry) > 2 else "?"
+            lines.append(f"  [{i}] dest={dest_hex[:16]} hops={hops} ts={timestamp} iface={iface_name}")
+        except Exception as e:
+            lines.append(f"  [{i}] dump err: {e}")
+    return "\n".join(lines)
 
 
 def diagnose_auto_interface() -> str:
