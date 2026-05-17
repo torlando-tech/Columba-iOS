@@ -1209,7 +1209,40 @@ public final class ReticulumTransport: @unchecked Sendable {
     public func listInterfaceIds() async -> [String] { interfaceIds }
     public func getInterfaceName(for interfaceId: String) async -> String? {
         _interfaceLock.lock(); defer { _interfaceLock.unlock() }
-        return registeredInterfaces[interfaceId]?.name
+        // Exact match on Swift-side entity ID — that's what
+        // user-defined interfaces register under.
+        if let direct = registeredInterfaces[interfaceId]?.name { return direct }
+        // The Python side may pass us the RNS config section name
+        // (e.g. "Hub-FFB1F1"), which PythonConfigWriter formats as
+        // `<sanitized name>-<6 char entity id prefix>`. Strip that
+        // suffix and try matching by the sanitized name. Avoids the
+        // user seeing "Hub-FFB1F1" or "python-rns" in the UI.
+        if let dash = interfaceId.lastIndex(of: "-") {
+            let suffix = interfaceId[interfaceId.index(after: dash)...]
+            let suffixIsHexId = suffix.count == 6
+                && suffix.allSatisfy { $0.isHexDigit }
+            if suffixIsHexId {
+                let candidateName = String(interfaceId[..<dash])
+                // Match by sanitized iface name. Same sanitize rules as
+                // PythonConfigWriter so we don't accidentally false-match.
+                let target = candidateName
+                    .replacingOccurrences(of: "_", with: " ")
+                for iface in registeredInterfaces.values {
+                    let sanitized = iface.name
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .replacingOccurrences(of: " ", with: "_")
+                    if sanitized == candidateName || iface.name == target {
+                        return iface.name
+                    }
+                }
+                // No match — return the human portion anyway (better than
+                // the raw section name with hex suffix).
+                return candidateName.replacingOccurrences(of: "_", with: " ")
+            }
+        }
+        // Fall through: leave the caller's value (likely something like
+        // "AutoInterfacePeer[en0/fe80::xxxx]" which we want shown as-is).
+        return nil
     }
     public func getInterfaceSnapshots() async -> [InterfaceSnapshot] {
         _interfaceLock.lock(); defer { _interfaceLock.unlock() }

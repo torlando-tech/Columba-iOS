@@ -61,7 +61,7 @@ public final class PythonBridge: @unchecked Sendable {
     }
 
     public enum Event: Equatable, Sendable {
-        case announce(destHash: String, displayName: String, aspect: String, publicKeysHex: String, t: Date)
+        case announce(destHash: String, displayName: String, aspect: String, publicKeysHex: String, interfaceName: String, t: Date)
         case inbound(sourceHash: String, content: String, title: String, t: Date)
         case state(String, t: Date)
 
@@ -658,7 +658,8 @@ public final class PythonBridge: @unchecked Sendable {
                 let name = pyStringFromDict(item, key: "display_name") ?? ""
                 let aspect = pyStringFromDict(item, key: "aspect") ?? ""
                 let pubKeys = pyStringFromDict(item, key: "public_keys") ?? ""
-                out.append(.announce(destHash: h, displayName: name, aspect: aspect, publicKeysHex: pubKeys, t: t))
+                let ifaceName = pyStringFromDict(item, key: "interface_name") ?? ""
+                out.append(.announce(destHash: h, displayName: name, aspect: aspect, publicKeysHex: pubKeys, interfaceName: ifaceName, t: t))
             case "inbound":
                 let h = pyStringFromDict(item, key: "source_hash") ?? ""
                 let c = pyStringFromDict(item, key: "content") ?? ""

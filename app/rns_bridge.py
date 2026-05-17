@@ -108,12 +108,24 @@ class _AspectAnnounceHandler:
                 public_keys_hex = pub().hex()
         except Exception:
             pass
+        # Look up the receiving interface for this announce so the iOS UI's
+        # Node Details "Interface Heard" card can attribute it correctly.
+        # RNS stores the iface object at `path_table[dest_hash][5]`
+        # immediately after the announce is processed (Transport.py:1999).
+        interface_name = ""
+        try:
+            entry = RNS.Transport.path_table.get(destination_hash)
+            if entry and len(entry) > 5 and entry[5] is not None:
+                interface_name = getattr(entry[5], "name", None) or str(entry[5])
+        except Exception:
+            pass
         _put(
             "announce",
             dest_hash=destination_hash.hex(),
             display_name=display_name,
             aspect=self._aspect,
             public_keys=public_keys_hex,
+            interface_name=interface_name,
         )
 
 

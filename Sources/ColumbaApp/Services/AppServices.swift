@@ -1406,8 +1406,8 @@ public final class AppServices {
 
     private func handlePythonEvent(_ event: PythonBridge.Event) async {
         switch event {
-        case .announce(let destHash, let displayName, let aspect, let publicKeysHex, let t):
-            DiagLog.log("[PY] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\"")
+        case .announce(let destHash, let displayName, let aspect, let publicKeysHex, let interfaceName, let t):
+            DiagLog.log("[PY] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\"")
             guard let data = Data(hexString: destHash) else { return }
 
             // Insert the announce into the Compat PathTable so the Contacts
@@ -1415,6 +1415,11 @@ public final class AppServices {
             // AsyncStream subscription in ContactsViewModel.
             if let pathTable = self.pathTable {
                 let publicKeys = Data(hexString: publicKeysHex) ?? Data()
+                // Python tells us the receiving-interface section name —
+                // e.g. "Hub-FFB1F1" / "Bluetooth_LE-77CFC2" / "AutoInterfacePeer".
+                // Fall back to the "python-rns" sentinel only when Python
+                // couldn't determine an iface (shouldn't happen post-fix).
+                let ifaceId = interfaceName.isEmpty ? "python-rns" : interfaceName
                 let entry = PathEntry(
                     destinationHash: data,
                     displayName: displayName,
@@ -1422,7 +1427,7 @@ public final class AppServices {
                     hopCount: 0,
                     lastSeen: t,
                     publicKeys: publicKeys,
-                    interfaceId: "python-rns",
+                    interfaceId: ifaceId,
                     appData: nil,
                     expires: t.addingTimeInterval(7 * 86400),
                     timestamp: t,
