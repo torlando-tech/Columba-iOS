@@ -278,7 +278,7 @@ struct BLEConnectionsView: View {
 
             Spacer()
 
-            Text(conn.rssi == 0 ? "--" : "\(conn.rssi) dBm")
+            Text(conn.rssi.map { "\($0) dBm" } ?? "-- dBm")
                 .font(.system(.subheadline, design: .monospaced).bold())
                 .foregroundStyle(Theme.textPrimary)
         }
