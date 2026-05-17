@@ -361,7 +361,23 @@ public final class InterfaceRepository: @unchecked Sendable {
 
     public init(userDefaults: UserDefaults? = nil) {
         self.defaults = userDefaults ?? UserDefaults(suiteName: appGroupIdentifier) ?? .standard
+        migrateFromStandardDefaultsIfNeeded()
         loadInterfaces()
+    }
+
+    /// Migration shim: when the app-group entitlement first gets approved
+    /// and wired in, `UserDefaults(suiteName: appGroupIdentifier)` starts
+    /// returning a valid (but empty) defaults pointer. Before that, the
+    /// `?? .standard` fallback ran and all saved interfaces lived in the
+    /// app's regular UserDefaults under the same `storageKey`. Copy them
+    /// over once so users don't lose their config on the entitlement
+    /// rollout.
+    private func migrateFromStandardDefaultsIfNeeded() {
+        guard defaults !== UserDefaults.standard else { return }
+        guard defaults.data(forKey: storageKey) == nil else { return }
+        guard let standardData = UserDefaults.standard.data(forKey: storageKey) else { return }
+        defaults.set(standardData, forKey: storageKey)
+        logger.notice("Migrated interface store from standard UserDefaults to app group (\(standardData.count) bytes)")
     }
 
     // MARK: - CRUD Operations

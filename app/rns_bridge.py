@@ -1139,6 +1139,68 @@ def _install_test_roundtrip_callback() -> None:
     set_ble_callback("_test_roundtrip", _cb)
 
 
+def diagnose_auto_interface() -> str:
+    """Introspect the running AutoInterface instance(s) and report the state
+    of peer discovery so we can tell whether multicast join / socket bind
+    is working at all."""
+    import socket as _socket
+    lines: list[str] = []
+    try:
+        ifs = RNS.Transport.interfaces
+    except Exception as e:
+        return f"Transport.interfaces unavailable: {e}"
+    all_types = [(type(i).__name__, getattr(i, "name", "?")) for i in ifs]
+    lines.append(f"all_interfaces ({len(ifs)}): {all_types}")
+    autos = [i for i in ifs if type(i).__name__ == "AutoInterface"]
+    if not autos:
+        return "\n".join(lines + ["no AutoInterface instance in Transport.interfaces"])
+    for ai in autos:
+        lines.append(f"name={getattr(ai, 'name', '?')} online={getattr(ai, 'online', '?')}")
+        lines.append(f"  group_id={getattr(ai, 'group_id', '?')}")
+        lines.append(f"  discovery_scope={getattr(ai, 'discovery_scope', '?')}")
+        lines.append(f"  discovery_port={getattr(ai, 'discovery_port', '?')}")
+        lines.append(f"  data_port={getattr(ai, 'data_port', '?')}")
+        try:
+            lines.append(f"  ifnames={list(getattr(ai, 'ifnames', []) or [])}")
+        except Exception:
+            pass
+        try:
+            ifs_addrs = getattr(ai, "interface_servers", None) or getattr(ai, "ifaddrs", None)
+            lines.append(f"  ifaddrs/servers={ifs_addrs!r}")
+        except Exception:
+            pass
+        try:
+            peers = getattr(ai, "peers", {}) or {}
+            lines.append(f"  peers={len(peers)} {list(peers.keys())[:5]}")
+        except Exception:
+            pass
+        try:
+            # AutoInterface has a per-ifname socket dict; introspect bindings.
+            sockets = []
+            for attr in ("multicast_sockets", "sockets", "interface_servers"):
+                val = getattr(ai, attr, None)
+                if val:
+                    sockets.append(f"{attr}={val!r}")
+            if sockets:
+                lines.append("  " + "; ".join(sockets))
+        except Exception:
+            pass
+    # Also list the local IP interfaces visible to Python — confirms what
+    # iOS is exposing. If en0 isn't here, the iPhone is on cellular and
+    # AutoInterface has nothing to bind.
+    try:
+        import netifaces  # not bundled — skip if absent
+        lines.append(f"  netifaces={netifaces.interfaces()}")
+    except Exception:
+        # Fall back to gethostbyname_ex
+        try:
+            host_info = _socket.gethostbyname_ex(_socket.gethostname())
+            lines.append(f"  hostname={host_info[0]} addrs={host_info[2]}")
+        except Exception as e:
+            lines.append(f"  host lookup failed: {e}")
+    return "\n".join(lines)
+
+
 def diagnose_ios_ble_interface() -> str:
     """Smoke-test the same exec() path RNS uses for external interfaces.
     Reads `<configDir>/interfaces/IOSBLEInterface.py`, exec()s it in a

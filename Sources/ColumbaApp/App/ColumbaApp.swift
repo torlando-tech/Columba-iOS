@@ -200,6 +200,14 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-auto-diagnose" {
+                    DiagLog.log("[TEST-AUTO-DIAG] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestAutoDiagnose"),
+                        object: nil
+                    )
+                    return
+                }
                 if url.host == "test-ble-status" {
                     DiagLog.log("[TEST-BLE-STATUS] requested")
                     NotificationCenter.default.post(
