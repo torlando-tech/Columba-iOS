@@ -27,6 +27,11 @@ internal final class BleGattServerPeer {
     /// (backpressure). Drained on peripheralManagerIsReady(toUpdateSubscribers:).
     var pendingNotifies: [Data] = []
 
+    /// When this central first subscribed to our TX char (or sent its
+    /// identity handshake). Used to compute connection duration for the
+    /// BLE Connections UI screen.
+    var connectedAt: Date = Date()
+
     init(central: CBCentral) {
         self.central = central
         self.mtu = central.maximumUpdateValueLength

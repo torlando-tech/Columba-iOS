@@ -2278,47 +2278,60 @@ public final class AppServices {
     public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
         guard bleInterface != nil else { return [] }
         let details = SwiftBLEBridge.shared.getConnectionDetails()
-        // Dedup by identity, preferring the entry with non-nil identity and
-        // higher mtu — when a peer is connected via both central and
-        // peripheral roles (each direction opens its own GATT connection),
-        // both come back here with the same identity hash. Pick the
-        // peripheral entry when present since it's the established path
-        // for backgrounded receivers.
-        var byIdentity: [String: BleConnectionDetails] = [:]
+        // Group by identity. When a peer is connected via BOTH central
+        // and peripheral roles (each direction opens its own GATT link),
+        // we get two entries with the same identity hash. Pick the
+        // peripheral entry when present (typically the established path
+        // with higher MTU), but BORROW the RSSI from the central entry
+        // since CB doesn't expose central-side RSSI to a peripheral.
+        var rep: [String: BleConnectionDetails] = [:]
+        var rssiByIdentity: [String: Int] = [:]
+        var earliestConnectedAt: [String: Date] = [:]
         for d in details {
             guard let id = d.identityHashHex else { continue }
-            if let existing = byIdentity[id] {
-                // Prefer peripheral (typically has the full handshake +
-                // higher MTU); fall back to higher MTU.
+            if let r = d.rssi { rssiByIdentity[id] = r }
+            // Earliest connectedAt of all the GATT paths to this peer —
+            // closer to "when we first established with them".
+            if let existing = earliestConnectedAt[id] {
+                earliestConnectedAt[id] = min(existing, d.connectedAt)
+            } else {
+                earliestConnectedAt[id] = d.connectedAt
+            }
+            if let existing = rep[id] {
                 if d.role == .peripheral && existing.role != .peripheral {
-                    byIdentity[id] = d
+                    rep[id] = d
                 } else if d.mtu > existing.mtu {
-                    byIdentity[id] = d
+                    rep[id] = d
                 }
             } else {
-                byIdentity[id] = d
+                rep[id] = d
             }
         }
-        return byIdentity.values.map { d in
+        let now = Date()
+        return rep.values.map { d in
             let idHex = d.identityHashHex ?? d.address
             let displayName = d.identityHashHex.map { String($0.prefix(8)) }
+            // Merge: prefer the picked entry's RSSI, else the borrowed
+            // central-side value, else nil.
+            let rssi = d.rssi ?? d.identityHashHex.flatMap { rssiByIdentity[$0] }
+            let startedAt = d.identityHashHex.flatMap { earliestConnectedAt[$0] } ?? d.connectedAt
             return BLEConnectionInfo(
                 identityHex: idHex,
                 identityHash: idHex,
                 displayName: displayName,
-                rssi: d.rssi,
+                rssi: rssi,
                 connected: true,
                 lastSeen: d.lastActivity,
                 lastActivity: d.lastActivity,
                 connectionType: d.role.rawValue,
-                connectionDuration: 0,
+                connectionDuration: max(0, now.timeIntervalSince(startedAt)),
                 isOutgoing: d.role == .central,
                 mtu: d.mtu,
                 bytesSent: 0,
                 bytesReceived: 0,
                 packetsSent: 0,
                 packetsReceived: 0,
-                signalQuality: signalQuality(forRssi: d.rssi)
+                signalQuality: signalQuality(forRssi: rssi)
             )
         }
     }

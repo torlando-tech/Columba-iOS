@@ -83,6 +83,12 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // without strong refs, dropping the connection.
     private var gattClients: [String: BleGattClient] = [:]
 
+    // RSSI poll cadence for established central-side connections. Reads
+    // are async (via didReadRSSI callback) so we just kick a `readRSSI()`
+    // periodically and the result lands on the client.
+    private var rssiPollTask: Task<Void, Never>?
+    private let rssiPollInterval: TimeInterval = 3.0
+
     // Discovered peripherals from scan, retained by `identifier.uuidString`.
     // `connect(address:)` looks them up here.
     private var discoveredPeripherals: [String: CBPeripheral] = [:]
@@ -151,9 +157,34 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             self.peripheralManager = CBPeripheralManager(delegate: self, queue: queue)
             self.isStartedFlag = true
         }
+        startRssiPolling()
+    }
+
+    /// Periodically request RSSI samples from connected centrals so the
+    /// BLE Connections UI can show a current-ish dBm reading instead of
+    /// the (often stale) scan-time RSSI. Results land asynchronously via
+    /// `peripheral(_:didReadRSSI:error:)` and get stored on the
+    /// `BleGattClient`.
+    private func startRssiPolling() {
+        rssiPollTask?.cancel()
+        rssiPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64((self?.rssiPollInterval ?? 3.0) * 1_000_000_000))
+                guard let self else { return }
+                self.queue.async {
+                    for (_, client) in self.gattClients
+                        where client.state == .established
+                            && client.peripheral.state == .connected {
+                        client.peripheral.readRSSI()
+                    }
+                }
+            }
+        }
     }
 
     public func stop() {
+        rssiPollTask?.cancel()
+        rssiPollTask = nil
         queue.sync {
             guard isStartedFlag else { return }
             if let cm = centralManager, cm.isScanning { cm.stopScan() }
@@ -371,13 +402,17 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
         queue.sync {
             var details: [BleConnectionDetails] = []
             for (addr, client) in gattClients {
+                // Prefer the fresh `readRSSI()` sample if we have one;
+                // fall back to the last scan-time RSSI from discovery.
+                let rssi = client.rssi ?? lastDiscoveryReport[addr]?.rssi
                 details.append(BleConnectionDetails(
                     address: addr,
                     identityHashHex: client.peerIdentity.map { hex($0) },
                     role: .central,
                     mtu: client.mtu,
-                    rssi: lastDiscoveryReport[addr]?.rssi,
-                    lastActivity: lastDiscoveryReport[addr]?.time ?? Date()
+                    rssi: rssi,
+                    lastActivity: lastDiscoveryReport[addr]?.time ?? client.connectedAt,
+                    connectedAt: client.connectedAt
                 ))
             }
             for (addr, peer) in gattServerPeers {
@@ -386,8 +421,9 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                     identityHashHex: peer.identity.map { hex($0) },
                     role: .peripheral,
                     mtu: peer.mtu,
-                    rssi: nil,
-                    lastActivity: Date()
+                    rssi: nil, // CB doesn't expose central-side RSSI to peripherals
+                    lastActivity: peer.connectedAt,
+                    connectedAt: peer.connectedAt
                 ))
             }
             return details
@@ -661,8 +697,15 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
                 client.state = .writingIdentity
                 peripheral.writeValue(localIdentity, for: rxChar, type: .withoutResponse)
                 // Move to established right after — there's no didWriteValueFor
-                // callback for .withoutResponse.
+                // callback for .withoutResponse. Re-stamp connectedAt so the
+                // UI's "Connected Xs" starts from a meaningful point (the
+                // moment the link is actually usable, not when CB first
+                // returned didConnect).
                 client.state = .established
+                client.connectedAt = Date()
+                // Kick a one-shot RSSI read immediately so the UI doesn't
+                // wait the full poll interval for the first sample.
+                peripheral.readRSSI()
             } else {
                 emitError("warning", "no localIdentity or rxChar; handshake incomplete")
             }
@@ -688,6 +731,25 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
         if let error {
             emitError("warning", "didWriteValueFor error uuid=\(characteristic.uuid): \(error)")
         }
+    }
+
+    /// Result of a `peripheral.readRSSI()` call. The `rssiPollTask` kicks
+    /// these requests every ~3s for established peers; the value lands on
+    /// the BleGattClient where getConnectionDetails picks it up.
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didReadRSSI RSSI: NSNumber,
+        error: Error?
+    ) {
+        if let error {
+            emitError("warning", "didReadRSSI error addr=\(peripheral.identifier.uuidString): \(error)")
+            return
+        }
+        let address = peripheral.identifier.uuidString
+        let value = RSSI.intValue
+        // CB sometimes returns 127 / 0 as sentinels; ignore those samples.
+        guard value != 127, value != 0 else { return }
+        gattClients[address]?.rssi = value
     }
 }
 
@@ -798,6 +860,10 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
                     }
                     callbackInvoker?.invoke(slot: .onDeviceConnected, args: [address, value])
                     peer.state = .established
+                    // Re-stamp connectedAt at the moment handshake completes
+                    // (was init-time on subscribe, but subscribe happens
+                    // before the identity write).
+                    peer.connectedAt = Date()
                 } else {
                     emitError("warning", "first write wasn't 16-byte handshake; len=\(value.count)")
                 }

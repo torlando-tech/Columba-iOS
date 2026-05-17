@@ -43,6 +43,15 @@ internal final class BleGattClient {
     /// Whether we've already fired `on_mtu_negotiated`. Same dedup reason.
     var mtuFired: Bool = false
 
+    /// When the GATT connection was established (didConnect → service
+    /// discovery complete). Used to compute connection duration for the
+    /// BLE Connections UI screen.
+    var connectedAt: Date = Date()
+
+    /// Most-recent RSSI sample from `readRSSI()`. nil until first read
+    /// completes. The bridge polls periodically post-connect.
+    var rssi: Int?
+
     init(peripheral: CBPeripheral) {
         self.peripheral = peripheral
     }

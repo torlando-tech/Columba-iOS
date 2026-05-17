@@ -20,6 +20,7 @@ public struct BleConnectionDetails: Sendable, Equatable {
     public let mtu: Int
     public let rssi: Int?
     public let lastActivity: Date
+    public let connectedAt: Date
 
     public init(
         address: String,
@@ -27,7 +28,8 @@ public struct BleConnectionDetails: Sendable, Equatable {
         role: BleConnectionRole,
         mtu: Int,
         rssi: Int?,
-        lastActivity: Date
+        lastActivity: Date,
+        connectedAt: Date = Date()
     ) {
         self.address = address
         self.identityHashHex = identityHashHex
@@ -35,5 +37,6 @@ public struct BleConnectionDetails: Sendable, Equatable {
         self.mtu = mtu
         self.rssi = rssi
         self.lastActivity = lastActivity
+        self.connectedAt = connectedAt
     }
 }
