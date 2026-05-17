@@ -43,6 +43,21 @@ class _SysLogStream:
 sys.stdout = _SysLogStream("py-stdout")
 # stderr is left raw so Python tracebacks remain unfiltered.
 
+# Patch platform.system() to return "Darwin" on iOS before RNS imports.
+#
+# RNS.Interfaces.util.netinfo branches on `platform.system() == "Darwin" or
+# "BSD" in platform.system()` to pick the right sockaddr ctypes struct
+# layout. iOS' Python returns `platform.system() == "iOS"`, so netinfo
+# falls through to the Linux layout (sa_family at offset 0, 2 bytes wide)
+# and misreads every address. iOS is Darwin under the hood (sa_len at
+# byte 0, sa_family at byte 1, confirmed via raw getifaddrs probe), so
+# the Darwin path is the correct one — we just have to make netinfo
+# take it. No upstream RNS code branches on "iOS" specifically, so
+# nothing else cares about this rename.
+import platform as _platform
+_real_system = _platform.system
+_platform.system = lambda *a, **kw: "Darwin" if _real_system(*a, **kw) == "iOS" else _real_system(*a, **kw)
+
 import RNS
 import LXMF
 
@@ -1186,18 +1201,61 @@ def diagnose_auto_interface() -> str:
         except Exception:
             pass
     # Also list the local IP interfaces visible to Python — confirms what
-    # iOS is exposing. If en0 isn't here, the iPhone is on cellular and
-    # AutoInterface has nothing to bind.
+    # iOS is exposing. If en0 isn't here, AutoInterface has nothing to bind.
+    import platform as _platform
+    lines.append(f"  platform.system()={_platform.system()!r} platform.platform()={_platform.platform()!r}")
+    lines.append(f"  AF_INET={_socket.AF_INET} AF_INET6={_socket.AF_INET6}")
+    # Try RNS' own netinfo first (uses libc getifaddrs via ctypes).
     try:
-        import netifaces  # not bundled — skip if absent
-        lines.append(f"  netifaces={netifaces.interfaces()}")
-    except Exception:
-        # Fall back to gethostbyname_ex
+        from RNS.Interfaces.util import netinfo as _netinfo
+        ifs_seen = _netinfo.interfaces()
+        lines.append(f"  netinfo.interfaces() (n={len(ifs_seen)}): {ifs_seen}")
+        # Specifically probe en0 — that's the WiFi interface on iOS.
+        for ifname in ("en0", "en1", "awdl0"):
+            if ifname in ifs_seen:
+                try:
+                    addrs = _netinfo.ifaddresses(ifname)
+                    lines.append(f"    {ifname}: {addrs}")
+                except Exception as e:
+                    lines.append(f"    {ifname}: ifaddresses err={e}")
+        # Also poke directly at the libc layer to surface raw sa_familiy
+        # values for en0 — distinguishes "struct layout wrong" from
+        # "iOS sandbox returns nothing".
         try:
-            host_info = _socket.gethostbyname_ex(_socket.gethostname())
-            lines.append(f"  hostname={host_info[0]} addrs={host_info[2]}")
+            import ctypes as _ct
+            libc = _ct.CDLL(_ct.util.find_library("c"), use_errno=True)
+            class ifaddrs(_ct.Structure): pass
+            ifaddrs._fields_ = [
+                ("ifa_next", _ct.POINTER(ifaddrs)),
+                ("ifa_name", _ct.c_char_p),
+                ("ifa_flags", _ct.c_uint),
+                ("ifa_addr", _ct.POINTER(_ct.c_uint8 * 16)),
+            ]
+            ptr = _ct.POINTER(ifaddrs)()
+            if libc.getifaddrs(_ct.byref(ptr)) == 0:
+                en0_seen = []
+                walker = ptr
+                while walker:
+                    name = walker[0].ifa_name.decode("utf-8", errors="replace") if walker[0].ifa_name else "<null>"
+                    if name in ("en0", "en1"):
+                        raw = walker[0].ifa_addr
+                        if raw:
+                            buf = list(bytes(raw[0]))
+                            en0_seen.append(f"{name} sa_len={buf[0]} sa_family={buf[1]} bytes={buf[:8]}")
+                        else:
+                            en0_seen.append(f"{name} addr=NULL")
+                    walker = walker[0].ifa_next
+                libc.freeifaddrs(ptr)
+                lines.append(f"  raw getifaddrs en0/en1: {en0_seen}")
         except Exception as e:
-            lines.append(f"  host lookup failed: {e}")
+            lines.append(f"  raw getifaddrs probe failed: {e}")
+    except Exception as e:
+        lines.append(f"  netinfo unavailable: {e}")
+    try:
+        host_info = _socket.gethostbyname_ex(_socket.gethostname())
+        lines.append(f"  hostname={host_info[0]} addrs={host_info[2]}")
+    except Exception as e:
+        lines.append(f"  host lookup failed: {e}")
     return "\n".join(lines)
 
 
