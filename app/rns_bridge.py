@@ -100,6 +100,14 @@ class _AspectAnnounceHandler:
         announced_identity: "RNS.Identity",
         app_data: bytes | None,
     ) -> None:
+        # Surface every handler invocation so we can tell aspect-filter
+        # mismatches apart from "handler never ran". Goes to stdout which
+        # rns_bridge redirects to NSLog; AppServices picks it up as
+        # [py-stdout] lines.
+        try:
+            print(f"[announce-handler] aspect={self._aspect} dest={destination_hash.hex()[:16]}", flush=True)
+        except Exception:
+            pass
         display_name = _decode_announce_app_data(app_data)
         public_keys_hex = ""
         try:
@@ -257,6 +265,17 @@ def start(
             h = _AspectAnnounceHandler(aspect)
             RNS.Transport.register_announce_handler(h)
             handlers.append(h)
+        # Wildcard handler — aspect_filter=None means RNS dispatches every
+        # announce to it regardless of aspect. Useful for diagnosing
+        # whether announces arrive at all when the per-aspect handlers
+        # appear silent (e.g. peer is announcing on an aspect we don't
+        # track, or our aspect-filter hashes mismatch). The wildcard's
+        # received_announce uses its own _aspect="*" sentinel so events
+        # are tagged distinguishably.
+        wildcard = _AspectAnnounceHandler("*")
+        wildcard.aspect_filter = None
+        RNS.Transport.register_announce_handler(wildcard)
+        handlers.append(wildcard)
         _state["handler"] = handlers  # list now, was singleton — stop() handles both
 
         # Register the lxst.telephony destination on our identity so
