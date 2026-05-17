@@ -155,12 +155,7 @@ public final class AppServices {
     /// the restart path (same reason as pythonStartIdentity).
     private var pythonStartDisplayName: String = ""
 
-    /// Hashes we've already auto-replied to during the smoke test.
-    /// Prevents a feedback loop where each sim's auto-reply triggers
-    /// the other's auto-reply forever.
-    private var smokeTestAutoSentTo: Set<String> = []
-
-    /// Periodic poller that mirrors Python's RNS.Transport interface state
+/// Periodic poller that mirrors Python's RNS.Transport interface state
     /// into the Compat TCPInterface stubs so the existing
     /// NetworkStatusView / InterfaceManagementScreen show correct
     /// connected/disconnected badges. Cancelled in `shutdown()`.
@@ -1361,22 +1356,6 @@ public final class AppServices {
                 await pathTable.insert(entry)
             }
 
-            // Smoke-test auto-send: first time we see a peer's LXMF
-            // delivery announce, fire a hello message back through the
-            // Python stack. Skipped for non-lxmf.delivery aspects so we
-            // don't try to LXMF a nomadnet node.
-            if aspect == "lxmf.delivery", smokeTestAutoSentTo.insert(destHash).inserted {
-                let backend = pythonBackend
-                Task {
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                    guard let backend else { return }
-                    let outcome = (try? await backend.sendOpportunistic(
-                        destHashHex: destHash,
-                        content: "[smoke] hello from \(self.localIdentityHashHex.prefix(8))"
-                    )) ?? .other("threw")
-                    DiagLog.log("[PY] smoke-send to=\(destHash) outcome=\(outcome)")
-                }
-            }
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonAnnounce"),
                 object: nil,
