@@ -1,5 +1,24 @@
 import Foundation
 
+// PythonBridge can't import ColumbaApp's DiagLog (lives in the app target);
+// duplicate the writer here for status-side diagnostics. Same file path
+// (Documents/diag.log) so output interleaves with the rest.
+private func DiagLog_status(_ message: String) {
+    let ts = ISO8601DateFormatter().string(from: Date())
+    let line = "[\(ts)] [PY-STATUS] \(message)\n"
+    NSLog("%@", "[PY-STATUS] \(message)")
+    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    guard let url = docs?.appendingPathComponent("diag.log"),
+          let data = line.data(using: .utf8) else { return }
+    if FileManager.default.fileExists(atPath: url.path) {
+        if let fh = try? FileHandle(forWritingTo: url) {
+            fh.seekToEndOfFile(); fh.write(data); fh.closeFile()
+        }
+    } else {
+        try? data.write(to: url)
+    }
+}
+
 /// Wraps the Python `rns_bridge` module. Every call hops onto a dedicated serial
 /// queue (so all Python work is serialized — RNS internally still runs its own
 /// background threads, but our Swift-initiated calls don't race) and uses
@@ -403,6 +422,9 @@ public final class PythonBridge: @unchecked Sendable {
 
         public struct InterfaceStatus: Decodable, Sendable {
             /// Config section name (matches what PythonConfigWriter wrote).
+            /// Dynamically-spawned interfaces (AutoInterfacePeer, etc.) can
+            /// have `name=None` upstream, which serializes as JSON null;
+            /// tolerate it by decoding optional and substituting "".
             public let sectionName: String
             /// Friendly `"TCPInterface[section/host:port]"` representation.
             public let name: String
@@ -416,6 +438,15 @@ public final class PythonBridge: @unchecked Sendable {
                 case online
                 case rxBytes = "rx_bytes"
                 case txBytes = "tx_bytes"
+            }
+
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                self.sectionName = (try? c.decode(String?.self, forKey: .sectionName)) ?? ""
+                self.name = (try? c.decode(String?.self, forKey: .name)) ?? ""
+                self.online = (try? c.decode(Bool.self, forKey: .online)) ?? false
+                self.rxBytes = (try? c.decode(Int.self, forKey: .rxBytes)) ?? 0
+                self.txBytes = (try? c.decode(Int.self, forKey: .txBytes)) ?? 0
             }
         }
 
@@ -433,20 +464,36 @@ public final class PythonBridge: @unchecked Sendable {
             queue.async {
                 let out = PythonRuntime.shared.withGIL { () -> String? in
                     guard let module = self.module else { return nil }
-                    guard let fn = PyObject_GetAttrString(module, "status_json") else { return nil }
+                    guard let fn = PyObject_GetAttrString(module, "status_json") else {
+                        let exc = self.currentPythonException()
+                        DiagLog_status("status_json attr lookup failed: \(exc)")
+                        return nil
+                    }
                     defer { Py_DecRef(fn) }
                     guard let args = PyTuple_New(0) else { return nil }
                     defer { Py_DecRef(args) }
-                    guard let result = PyObject_CallObject(fn, args) else { return nil }
+                    guard let result = PyObject_CallObject(fn, args) else {
+                        let exc = self.currentPythonException()
+                        DiagLog_status("status_json call raised: \(exc)")
+                        return nil
+                    }
                     defer { Py_DecRef(result) }
-                    guard let c = PyUnicode_AsUTF8(result) else { return nil }
+                    guard let c = PyUnicode_AsUTF8(result) else {
+                        DiagLog_status("status_json returned non-str")
+                        return nil
+                    }
                     return String(cString: c)
                 }
                 cont.resume(returning: out)
             }
         }
         guard let raw, let data = raw.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(StatusSnapshot.self, from: data)
+        do {
+            return try JSONDecoder().decode(StatusSnapshot.self, from: data)
+        } catch {
+            DiagLog_status("decode failed: \(error) raw=\(raw.prefix(200))")
+            return nil
+        }
     }
 
     /// Invoke a no-arg module-level function in `rns_bridge` that returns

@@ -1024,8 +1024,12 @@ def status() -> dict[str, Any]:
                 # "Smoke_Test_Hub-smoke-"); str(iface) is the friendly
                 # "TCPInterface[name/host:port]" form. Swift matches by
                 # section name to update the TCPInterface stub's state.
+                # AutoInterfacePeer (spawned dynamically) sets `name=None`,
+                # so coerce to empty string — JSON null breaks Swift's
+                # String decoder and silently drops the whole snapshot.
+                section_name = getattr(iface, "name", None) or ""
                 iface_info.append({
-                    "section_name": getattr(iface, "name", ""),
+                    "section_name": section_name,
                     "name": str(iface),
                     "online": bool(getattr(iface, "online", False)),
                     "ifac_size": getattr(iface, "ifac_size", None),

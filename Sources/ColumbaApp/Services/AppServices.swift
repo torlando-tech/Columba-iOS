@@ -165,6 +165,12 @@ public final class AppServices {
     /// changes (not every 2s tick).
     private var lastInterfaceSnapshotKey: String = ""
 
+    /// Same idea for the python-derived auxiliary list (peer interfaces
+    /// like AutoInterfacePeer / BLEPeer that Python spawned dynamically).
+    /// Init to sentinel so the first observation always logs (even if the
+    /// count is 0 — that's useful too: "no peers discovered yet").
+    private var lastAuxiliaryKey: String = "<uninitialized>"
+
     // MARK: - Telephony link bridge state
     //
     // Maps the Python RNS.Link IDs (bridge-allocated UInt64) to the Compat
@@ -1090,13 +1096,62 @@ public final class AppServices {
         // The config section name PythonConfigWriter wrote is the matching
         // key — it's stable across the bridge and unique per entity.
         var byEntity: [String: PythonBridge.StatusSnapshot.InterfaceStatus] = [:]
+        var matchedSectionNames: Set<String> = []
         for status in snapshot.interfaces {
             for (entityId, entity) in entityById {
                 let expected = expectedSectionName(for: entity)
                 if status.sectionName == expected {
                     byEntity[entityId] = status
+                    matchedSectionNames.insert(status.sectionName)
                 }
             }
+        }
+        // Auxiliary: any Python interface that didn't match an entity is a
+        // dynamically-spawned peer (AutoInterfacePeer / BLEPeer / etc.).
+        // Push these into the Transport so NetworkStatusView can render them.
+        // Python AutoInterfacePeer's `name` is the class name; the `name`
+        // field of the status dict is `str(iface)` which gives us the
+        // friendly "AutoInterfacePeer[en0/fe80::xxxx]" — peel out the
+        // peer address from there for the row subtitle.
+        var auxiliary: [InterfaceSnapshot] = []
+        for status in snapshot.interfaces where !matchedSectionNames.contains(status.sectionName) {
+            // Skip user-defined sections we just couldn't match for some
+            // reason (rename race, etc.) — only emit synthetic rows for
+            // peer-style names.
+            let isAutoPeer = status.name.hasPrefix("AutoInterfacePeer")
+            let isBlePeer = status.name.hasPrefix("BLEPeerInterface") || status.name.hasPrefix("BLEPeer")
+            guard isAutoPeer || isBlePeer else { continue }
+            let typeLabel = isAutoPeer ? "AutoInterfacePeer" : "BLEPeer"
+            // Peel out the bracketed addr — "AutoInterfacePeer[en0/fe80::1]"
+            // gives "en0/fe80::1".
+            let peerAddress: String? = {
+                guard let open = status.name.firstIndex(of: "["),
+                      let close = status.name.lastIndex(of: "]"),
+                      open < close else { return nil }
+                return String(status.name[status.name.index(after: open)..<close])
+            }()
+            auxiliary.append(InterfaceSnapshot(
+                id: "py-aux:\(status.sectionName.isEmpty ? status.name : status.sectionName)",
+                name: status.name,
+                online: status.online,
+                typeLabel: typeLabel,
+                type: isAutoPeer ? .autoInterface : .ble,
+                state: status.online ? .connected : .disconnected,
+                isAutoInterfacePeer: isAutoPeer,
+                isBLEPeerInterface: isBlePeer,
+                peerAddress: peerAddress,
+                lastErrorDescription: nil
+            ))
+        }
+        if let transport = transport {
+            transport.setPythonAuxiliarySnapshots(auxiliary)
+        }
+        // One-shot log of auxiliary count changes so we can see whether
+        // LAN / BLE peer discovery is actually firing.
+        let auxKey = auxiliary.map(\.id).sorted().joined(separator: ",")
+        if auxKey != lastAuxiliaryKey {
+            DiagLog.log("[PY] auxiliary interfaces (\(auxiliary.count)): \(auxKey)")
+            lastAuxiliaryKey = auxKey
         }
         for (entityId, status) in byEntity {
             let newState: InterfaceState = status.online ? .connected : .disconnected

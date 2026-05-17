@@ -1157,6 +1157,18 @@ public final class ReticulumTransport: @unchecked Sendable {
     private var registeredInterfaces: [String: any NetworkInterface] = [:]
     private var registeredInterfaceTypes: [String: WireInterfaceType] = [:]
 
+    // Python-discovered auxiliary interfaces — AutoInterfacePeer /
+    // BLEPeer / etc. that RNS spawns dynamically and registers with
+    // `RNS.Transport.interfaces` but Swift never explicitly adds. Pushed
+    // here by `AppServices.applyPythonInterfaceStatus` each poll tick
+    // (~2s) so getInterfaceSnapshots can include them.
+    private var pythonAuxiliarySnapshots: [InterfaceSnapshot] = []
+
+    public func setPythonAuxiliarySnapshots(_ snapshots: [InterfaceSnapshot]) {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        pythonAuxiliarySnapshots = snapshots
+    }
+
     public func addInterface(_ interface: any NetworkInterface) async throws {
         _interfaceLock.lock(); defer { _interfaceLock.unlock() }
         registeredInterfaces[interface.id] = interface
@@ -1201,7 +1213,7 @@ public final class ReticulumTransport: @unchecked Sendable {
     }
     public func getInterfaceSnapshots() async -> [InterfaceSnapshot] {
         _interfaceLock.lock(); defer { _interfaceLock.unlock() }
-        return registeredInterfaces.values.map { iface in
+        var out: [InterfaceSnapshot] = registeredInterfaces.values.map { iface in
             let wireType = registeredInterfaceTypes[iface.id] ?? .tcp
             let label: String
             switch wireType {
@@ -1231,6 +1243,12 @@ public final class ReticulumTransport: @unchecked Sendable {
                 lastErrorDescription: nil
             )
         }
+        // Append python-discovered auxiliary interfaces (AutoInterfacePeer,
+        // BLEPeer, etc.) — these aren't user-configured rows so they don't
+        // get added via add*Interface, but they should still render so the
+        // user can see when LAN/BLE peer discovery is working.
+        out.append(contentsOf: pythonAuxiliarySnapshots)
+        return out
     }
 
     // ──────── Backend bridge hooks ────────
