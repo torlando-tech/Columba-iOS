@@ -280,7 +280,13 @@ public final class MessagingViewModel {
         }
 
         do {
-            // Send via router (router saves to DB internally via Task.detached)
+            // Send via router. NOTE the comment used to say "router saves to
+            // DB internally via Task.detached" — that's stale. The Compat
+            // router's only side effect is invoking `sendHook` (which routes
+            // the outbound LXMF over Python's RNS). Nothing persists the
+            // outbound message to the local DB, so an inbound-triggered
+            // loadMessages() reload would wipe the optimistic entry. Save
+            // explicitly below once `lxMessage.hash` is populated.
             try await router.handleOutbound(&lxMessage)
 
             // Replace optimistic message with real one (using actual hash from pack)
@@ -300,6 +306,13 @@ public final class MessagingViewModel {
                         replyToPreview: replyPreview
                     )
                 }
+            }
+
+            // Persist so a subsequent loadMessages() doesn't wipe it.
+            do {
+                try await repository.saveMessage(lxMessage)
+            } catch {
+                logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
             }
 
             return true
@@ -327,7 +340,8 @@ public final class MessagingViewModel {
                 )
 
                 do {
-                    // Router saves to DB internally
+                    // Same comment as the opportunistic path above —
+                    // router.handleOutbound only routes; we save here.
                     try await router.handleOutbound(&retryMessage)
                     let realId = retryMessage.hash.map { String(format: "%02x", $0) }.joined()
                     if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
@@ -345,6 +359,11 @@ public final class MessagingViewModel {
                                 replyToPreview: replyPreview
                             )
                         }
+                    }
+                    do {
+                        try await repository.saveMessage(retryMessage)
+                    } catch {
+                        logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                     }
                     return true
                 } catch {
