@@ -2267,15 +2267,82 @@ public final class AppServices {
 
     #if canImport(CoreBluetooth)
     /// Get snapshot of all BLE peer connection info for UI display.
+    ///
+    /// The actual peer state lives in `SwiftBLEBridge.shared` — that's the
+    /// process-wide CoreBluetooth singleton our Python `IOSBLEDriver` calls
+    /// into via ctypes. Compat's `BLEInterface.getConnectionInfos()` was a
+    /// `[]` stub, which is why BLEConnectionsView showed nothing even when
+    /// a peer was visible in Network Status. Map the bridge's
+    /// `BleConnectionDetails` → `BLEConnectionInfo` here so the dedicated
+    /// connections screen renders real peers.
     public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
-        guard let ble = bleInterface else { return [] }
-        return await ble.getConnectionInfos()
+        guard bleInterface != nil else { return [] }
+        let details = SwiftBLEBridge.shared.getConnectionDetails()
+        // Dedup by identity, preferring the entry with non-nil identity and
+        // higher mtu — when a peer is connected via both central and
+        // peripheral roles (each direction opens its own GATT connection),
+        // both come back here with the same identity hash. Pick the
+        // peripheral entry when present since it's the established path
+        // for backgrounded receivers.
+        var byIdentity: [String: BleConnectionDetails] = [:]
+        for d in details {
+            guard let id = d.identityHashHex else { continue }
+            if let existing = byIdentity[id] {
+                // Prefer peripheral (typically has the full handshake +
+                // higher MTU); fall back to higher MTU.
+                if d.role == .peripheral && existing.role != .peripheral {
+                    byIdentity[id] = d
+                } else if d.mtu > existing.mtu {
+                    byIdentity[id] = d
+                }
+            } else {
+                byIdentity[id] = d
+            }
+        }
+        return byIdentity.values.map { d in
+            let idHex = d.identityHashHex ?? d.address
+            let displayName = d.identityHashHex.map { String($0.prefix(8)) }
+            return BLEConnectionInfo(
+                identityHex: idHex,
+                identityHash: idHex,
+                displayName: displayName,
+                rssi: d.rssi,
+                connected: true,
+                lastSeen: d.lastActivity,
+                lastActivity: d.lastActivity,
+                connectionType: d.role.rawValue,
+                connectionDuration: 0,
+                isOutgoing: d.role == .central,
+                mtu: d.mtu,
+                bytesSent: 0,
+                bytesReceived: 0,
+                packetsSent: 0,
+                packetsReceived: 0,
+                signalQuality: signalQuality(forRssi: d.rssi)
+            )
+        }
+    }
+
+    /// Map RSSI dBm to a coarse signal-quality bucket. Thresholds borrowed
+    /// from the existing BLEDevicePickerSheet indicator (60/80 dBm steps).
+    private func signalQuality(forRssi rssi: Int?) -> SignalQuality {
+        guard let rssi else { return .unknown }
+        let absRssi = abs(rssi)
+        if absRssi < 60 { return .excellent }
+        if absRssi < 75 { return .good }
+        if absRssi < 90 { return .fair }
+        return .poor
     }
 
     /// Disconnect a specific BLE peer.
     public func disconnectBLEPeer(identityHex: String) async {
-        guard let ble = bleInterface else { return }
-        await ble.disconnectPeer(identityHex: identityHex)
+        // Resolve identity → address via the bridge; if found, ask the
+        // bridge to drop the GATT connection. The Compat stub's
+        // disconnectPeer was a no-op, so this is the path that actually
+        // closes the link.
+        if let address = SwiftBLEBridge.shared.getPeerAddress(identityHashHex: identityHex) {
+            SwiftBLEBridge.shared.disconnect(address: address)
+        }
     }
 
     /// Whether BLE interface is currently active.
