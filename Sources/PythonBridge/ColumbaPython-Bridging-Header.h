@@ -20,4 +20,16 @@ static inline PyObject *ColumbaPy_None(void) {
     return Py_None;
 }
 
+// Py_True / Py_False are likewise macros. New refs so they can be packed into
+// tuples + lists where slot setters steal the ref.
+static inline PyObject *ColumbaPy_True(void) {
+    Py_INCREF(Py_True);
+    return Py_True;
+}
+
+static inline PyObject *ColumbaPy_False(void) {
+    Py_INCREF(Py_False);
+    return Py_False;
+}
+
 #endif

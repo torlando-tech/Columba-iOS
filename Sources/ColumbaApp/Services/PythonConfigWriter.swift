@@ -99,13 +99,23 @@ enum PythonConfigWriter {
             lines.append("    discovery_scope = \(cfg.discoveryScope)")
             if let port = cfg.discoveryPort { lines.append("    discovery_port = \(port)") }
             if let port = cfg.dataPort { lines.append("    data_port = \(port)") }
-        case .ble, .rnode, .multipeer:
-            // BLE / RNode / Multipeer interfaces are owned by Swift
-            // (CoreBluetooth, Oboe NDK, MultipeerConnectivity) — Python
-            // sees them through a custom RNS.Interface subclass that
-            // hasn't landed yet. Emit a placeholder comment so the file
-            // is still valid for the rest of the config; the Swift-side
-            // driver wakes the radio independently.
+        case .ble:
+            // Loaded from <configDir>/interfaces/IOSBLEInterface.py — the
+            // file is copied there at startup by AppServices.startBLEInterface()
+            // from the app bundle. The Python `IOSBLEDriver` calls into Swift
+            // via ctypes-bound `columba_ble_*` C-ABI shims (see
+            // Sources/SwiftBLEBridge/BleNativeBindings.swift).
+            lines.append("    type = IOSBLEInterface")
+            // Optional power preset — currently informational on iOS (the
+            // OS auto-manages duty cycle). Surfaced for parity with
+            // Android's BleConnections settings.
+            lines.append("    ble_power_preset = balanced")
+        case .rnode, .multipeer:
+            // RNode / Multipeer interfaces are owned by Swift (KISS-over-BLE,
+            // MultipeerConnectivity) — Python sees them through a custom
+            // RNS.Interface subclass that hasn't landed yet. Emit a placeholder
+            // comment so the file is still valid for the rest of the config;
+            // the Swift-side driver wakes the radio independently.
             lines.append("    type = TCPClientInterface  # placeholder; \(iface.type) bridged from Swift not yet wired")
             lines.append("    target_host = 127.0.0.1")
             lines.append("    target_port = 65535")

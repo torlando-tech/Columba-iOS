@@ -744,6 +744,12 @@ def stop() -> None:
         _links.clear()
         _telephony_destination = None
 
+        # Drop registered BLE callbacks so a subsequent start() doesn't
+        # invoke closures bound to the previous driver / Swift bridge.
+        clear_ble_callbacks()
+        global _ble_bridge_handle
+        _ble_bridge_handle = None
+
         _state.update({
             "started": False,
             "reticulum": None,
@@ -1056,3 +1062,124 @@ def drain_events() -> list[dict[str, Any]]:
         except queue.Empty:
             break
     return out
+
+
+# ────────────────────────────────────────────────────────────────────
+# BLE bridge: registry for Swift→Python callbacks + handle to the
+# Swift `SwiftBLEBridge` instance that the Python driver
+# (`ios_ble_driver.IOSBLEDriver`) calls into.
+#
+# Direction matrix:
+#   Swift → Python (sync):     PythonBridge.invokeBLECallback / -BoolSync
+#                              looks up callables via `_ble_get_callback`
+#                              and calls them under the GIL.
+#   Python → Swift (sync):     Driver calls C-ABI shims exported by
+#                              SwiftBLEBridge via ctypes (wired in Phase 3).
+# ────────────────────────────────────────────────────────────────────
+
+_ble_callbacks: dict[str, Any] = {}
+_ble_bridge_handle: Any = None
+
+
+def set_ble_bridge(handle: Any) -> None:
+    """Hand the SwiftBLEBridge instance handle to Python. Called from Swift's
+    `AppServices.startBLEInterface()` after the Swift bridge is constructed.
+    The IOSBLEDriver reads this on its first `start()` call so it knows where
+    to route outbound commands.
+
+    `handle` is opaque to Python (currently a PyCapsule wrapping a Swift
+    object pointer); the ctypes shims in `ios_ble_driver.py` don't need it
+    because `ctypes.CDLL(None)` resolves through the process's symbol table.
+    Stashed here so future driver code that does need a per-bridge handle
+    can find it without a re-init."""
+    global _ble_bridge_handle
+    _ble_bridge_handle = handle
+
+
+def get_ble_bridge() -> Any:
+    """Driver-side accessor for the SwiftBLEBridge handle."""
+    return _ble_bridge_handle
+
+
+def set_ble_callback(slot: str, callable_: Any) -> None:
+    """Register a Python callable as the handler for a BLE event slot. Used
+    by IOSBLEDriver during `_setup_callbacks` after BLEInterface assigns its
+    own callbacks to the driver. Pass `None` to clear."""
+    if callable_ is None:
+        _ble_callbacks.pop(slot, None)
+    else:
+        _ble_callbacks[slot] = callable_
+
+
+def _ble_get_callback(slot: str) -> Any:
+    """Swift-called lookup. Returns the stored callable for `slot`, or None.
+    PythonBridge.invokeBLECallback uses this to fetch the PyObject*  ref then
+    calls it via `PyObject_CallObject`."""
+    return _ble_callbacks.get(slot)
+
+
+def clear_ble_callbacks() -> None:
+    """Drop every registered BLE callback. Called from `stop()` / restart so
+    we don't keep references to closures bound to a torn-down driver."""
+    _ble_callbacks.clear()
+
+
+# Smoke-test entry point: register a callable that doubles its arg. The
+# Swift side calls `invokeBLECallbackBoolSync(slot="_test_roundtrip", args=[5])`
+# and asserts the bool return is True. Used by `lxma-test://test-ble-callback-roundtrip`
+# to validate the Phase 2 wiring without needing a real BLE peer.
+def _install_test_roundtrip_callback() -> None:
+    """Register a `_test_roundtrip` slot that returns True iff the int arg is even."""
+    def _cb(value: int) -> bool:
+        return int(value) % 2 == 0
+    set_ble_callback("_test_roundtrip", _cb)
+
+
+def diagnose_ios_ble_interface() -> str:
+    """Smoke-test the same exec() path RNS uses for external interfaces.
+    Reads `<configDir>/interfaces/IOSBLEInterface.py`, exec()s it in a
+    fresh namespace mirroring RNS.Reticulum:1011-1017, returns the
+    formatted exception (or "ok") so Swift can write it to DiagLog.
+
+    Used to surface IOSBLEInterface import errors that RNS swallows
+    when `panic_on_interface_error = no` is set."""
+    import os
+    import traceback as _tb
+    with _lock:
+        config_dir = _state.get("config_dir") or ""
+    if not config_dir:
+        return "no config_dir set"
+    path = os.path.join(config_dir, "interfaces", "IOSBLEInterface.py")
+    if not os.path.isfile(path):
+        return f"file missing: {path}"
+    interface_globals = {}
+    try:
+        import RNS as _RNS
+        interface_globals["Interface"] = _RNS.Interfaces.Interface.Interface
+        interface_globals["RNS"] = _RNS
+        # Important: set __file__ so the file's `_this_file` discovery works.
+        interface_globals["__file__"] = path
+        with open(path) as f:
+            code = f.read()
+        exec(code, interface_globals)
+        cls = interface_globals.get("interface_class")
+        if cls is None:
+            return "exec ok but interface_class is None"
+    except BaseException as e:
+        return "EXC at exec: " + _tb.format_exc()
+    # Try to instantiate exactly as RNS does: pass Transport + a minimal
+    # interface_config dict mirroring what Reticulum would build from
+    # the [[ble0]] section.
+    try:
+        config_section = {
+            "name": "ble-diagnose",
+            "type": "IOSBLEInterface",
+            "interface_enabled": True,
+            "enabled": True,
+            "mode": "full",
+            "ble_power_preset": "balanced",
+        }
+        instance = cls(_RNS.Transport, config_section)
+        return f"instantiate ok class={cls.__name__} repr={instance!r}"
+    except BaseException as e:
+        return "EXC at instantiate: " + _tb.format_exc()

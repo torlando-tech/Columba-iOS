@@ -12,6 +12,7 @@
 import Foundation
 import RNSAPI
 import LXSTSwift
+import SwiftBLEBridge
 import CryptoKit
 #if os(iOS)
 #endif
@@ -561,6 +562,13 @@ public final class AppServices {
         let identityFile = pyDir.appendingPathComponent("identity.bin").path
         DiagLog.log("[PY] configDir=\(configDir)")
 
+        // Deploy iOS BLE custom interface files BEFORE Python boots so RNS's
+        // external-interface loader can `exec()` them when reading config.
+        // Always copied (regardless of whether BLE is enabled in the
+        // current config) so a later restart with BLE-enabled config finds
+        // them without an extra deployment step.
+        deployIOSBLEPythonFilesIfPossible(configDir: pyDir)
+
         // Generate the RNS config from user-saved interface entities. The
         // file lands at `<configDir>/config` where Python's
         // `RNS.Reticulum(config_dir)` will pick it up. Transport mode is
@@ -652,12 +660,20 @@ public final class AppServices {
         pythonStatusPollTask?.cancel()
         let entityById = Dictionary(uniqueKeysWithValues: interfaces.map { ($0.id, $0) })
         pythonStatusPollTask = Task { [weak self, backend] in
+            var tick = 0
+            DiagLog.log("[PY-POLL] task started")
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s
-                guard let snapshot = await backend.statusSnapshot() else { continue }
+                tick += 1
+                let snapshot = await backend.statusSnapshot()
+                if snapshot == nil {
+                    if tick % 5 == 0 { DiagLog.log("[PY-POLL] tick=\(tick) snapshot=nil") }
+                    continue
+                }
                 guard let self else { return }
-                await self.applyPythonInterfaceStatus(snapshot: snapshot, entityById: entityById)
+                await self.applyPythonInterfaceStatus(snapshot: snapshot!, entityById: entityById)
             }
+            DiagLog.log("[PY-POLL] task exiting (cancelled)")
         }
 
         // Listen for test-send deep links (lxma://test-send?to=HEX&content=...).
@@ -695,6 +711,162 @@ public final class AppServices {
                 DiagLog.log("[TEST-RESTART] invoking restartPythonBackend")
                 await self.restartPythonBackend()
                 DiagLog.log("[TEST-RESTART] done")
+            }
+        }
+
+        // Phase 4 smoke test: direct CB manager state probe. Bypasses the
+        // Python driver so we can isolate Swift-side CB readiness from
+        // Python wiring during early-bring-up debugging.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestBLEStatus"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            #if canImport(CoreBluetooth)
+            let bridge = SwiftBLEBridge.shared
+            let isStarted = bridge.isStarted
+            let connected = bridge.getConnectedPeers()
+            DiagLog.log("[TEST-BLE-STATUS] started=\(isStarted) connected_peers=\(connected.count)")
+            #else
+            DiagLog.log("[TEST-BLE-STATUS] CoreBluetooth unavailable")
+            #endif
+        }
+
+        // Diagnose IOSBLEInterface load: exec the file in the same fresh
+        // namespace RNS uses, surface any exception to DiagLog. Helps when
+        // panic_on_interface_error=no silently swallows external-iface
+        // load errors so the row shows "disconnected" with no signal.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestBLEDiagnose"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-BLE-DIAG] no backend")
+                    return
+                }
+                let result = await backend.pythonBridge.callModuleFunctionReturningString(
+                    name: "diagnose_ios_ble_interface"
+                ) ?? "(call returned nil)"
+                // Multi-line tracebacks would get truncated by NSLog
+                // formatting if logged as a single line; split and log
+                // each line for readability.
+                for line in result.split(separator: "\n", omittingEmptySubsequences: false) {
+                    DiagLog.log("[TEST-BLE-DIAG] \(line)")
+                }
+            }
+        }
+
+        // Phase 6 smoke test: dump current connection details (Android parity).
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestBLEPeerList"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            #if canImport(CoreBluetooth)
+            let details = SwiftBLEBridge.shared.getConnectionDetails()
+            DiagLog.log("[TEST-BLE-PEER-LIST] count=\(details.count)")
+            for d in details {
+                let idPrefix = d.identityHashHex.map { String($0.prefix(8)) } ?? "<no-id>"
+                DiagLog.log("[TEST-BLE-PEER-LIST]   addr=\(d.address.prefix(8)) role=\(d.role.rawValue) mtu=\(d.mtu) id=\(idPrefix) rssi=\(d.rssi.map(String.init) ?? "?")")
+            }
+            #else
+            DiagLog.log("[TEST-BLE-PEER-LIST] CoreBluetooth unavailable")
+            #endif
+        }
+
+        // Phase 4 smoke test: direct CB scan toggle. Drives SwiftBLEBridge
+        // without going through Python, so we can validate scan start/stop
+        // works before plugging in the BLEDriverInterface contract.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestBLEScan"),
+            object: nil,
+            queue: .main
+        ) { note in
+            #if canImport(CoreBluetooth)
+            let action = (note.userInfo?["action"] as? String) ?? "start"
+            let bridge = SwiftBLEBridge.shared
+            // Lazy-start the bridge so the CB managers exist when we call.
+            if !bridge.isStarted {
+                bridge.start(
+                    serviceUuid: BleConstants.serviceUuid,
+                    rxCharUuid: BleConstants.rxCharUuid,
+                    txCharUuid: BleConstants.txCharUuid,
+                    identityCharUuid: BleConstants.identityCharUuid
+                )
+            }
+            if action == "stop" {
+                bridge.stopScanning()
+                DiagLog.log("[TEST-BLE-SCAN] stopScanning called")
+            } else {
+                bridge.startScanning()
+                DiagLog.log("[TEST-BLE-SCAN] startScanning called")
+            }
+            #else
+            DiagLog.log("[TEST-BLE-SCAN] CoreBluetooth unavailable")
+            #endif
+        }
+
+        // Phase 4 smoke test: direct CB advertise toggle.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestBLEAdvertise"),
+            object: nil,
+            queue: .main
+        ) { note in
+            #if canImport(CoreBluetooth)
+            let action = (note.userInfo?["action"] as? String) ?? "start"
+            let name = (note.userInfo?["name"] as? String) ?? ""
+            let bridge = SwiftBLEBridge.shared
+            if !bridge.isStarted {
+                bridge.start(
+                    serviceUuid: BleConstants.serviceUuid,
+                    rxCharUuid: BleConstants.rxCharUuid,
+                    txCharUuid: BleConstants.txCharUuid,
+                    identityCharUuid: BleConstants.identityCharUuid
+                )
+            }
+            if action == "stop" {
+                bridge.stopAdvertising()
+                DiagLog.log("[TEST-BLE-ADVERTISE] stopAdvertising called")
+            } else {
+                bridge.startAdvertising(deviceName: name.isEmpty ? nil : name)
+                DiagLog.log("[TEST-BLE-ADVERTISE] startAdvertising name=\"\(name)\"")
+            }
+            #else
+            DiagLog.log("[TEST-BLE-ADVERTISE] CoreBluetooth unavailable")
+            #endif
+        }
+
+        // Phase 2 smoke test: Swift→Python BLE callback round-trip.
+        // Installs `_test_roundtrip` Python callback that returns
+        // True iff its int arg is even, then invokes it through the
+        // synchronous bool-return BLE callback path. PASS iff Swift
+        // gets back the expected bool for both even and odd inputs.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestBLECallback"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            let value = (note.userInfo?["value"] as? Int) ?? 4
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-BLE-CB] FAIL: no backend")
+                    return
+                }
+                let installed = await backend.installBLETestRoundtripCallback()
+                guard installed else {
+                    DiagLog.log("[TEST-BLE-CB] FAIL: callback install failed")
+                    return
+                }
+                let evenResult = backend.invokeBLETestRoundtrip(value: value)
+                let oddResult = backend.invokeBLETestRoundtrip(value: value + 1)
+                let evenExpected = value % 2 == 0
+                let oddExpected = (value + 1) % 2 == 0
+                let pass = evenResult == evenExpected && oddResult == oddExpected
+                DiagLog.log("[TEST-BLE-CB] value=\(value) even=\(evenResult) odd=\(oddResult) \(pass ? "PASS" : "FAIL")")
             }
         }
 
@@ -932,12 +1104,36 @@ public final class AppServices {
             }
         }
         for (entityId, status) in byEntity {
-            guard let iface = tcpInterfaces[entityId] else { continue }
             let newState: InterfaceState = status.online ? .connected : .disconnected
-            if iface.state != newState {
-                DiagLog.log("[PY] iface \(status.sectionName) -> \(newState) (rx=\(status.rxBytes) tx=\(status.txBytes))")
-                iface.state = newState
-                iface.online = status.online
+            // TCP interfaces keyed by entity ID.
+            if let iface = tcpInterfaces[entityId] {
+                if iface.state != newState {
+                    DiagLog.log("[PY] iface \(status.sectionName) -> \(newState) (rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    iface.state = newState
+                    iface.online = status.online
+                }
+                continue
+            }
+            // Auto + BLE interfaces are singletons on AppServices, keyed by
+            // entity type rather than ID. Match the corresponding entity and
+            // mirror Python's reported state onto the Swift stub so the UI
+            // can render an accurate "connected/disconnected" badge.
+            guard let entity = entityById[entityId] else { continue }
+            switch entity.config {
+            case .autoInterface:
+                if let auto = self.autoInterface, auto.state != newState {
+                    DiagLog.log("[PY] iface \(status.sectionName) -> \(newState) (Auto, rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    auto.state = newState
+                    auto.online = status.online
+                }
+            case .ble:
+                if let ble = self.bleInterface, ble.state != newState {
+                    DiagLog.log("[PY] iface \(status.sectionName) -> \(newState) (BLE, rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    ble.state = newState
+                    ble.online = status.online
+                }
+            default:
+                break
             }
         }
     }
@@ -973,6 +1169,14 @@ public final class AppServices {
         // recomputes the set from the latest enabled-interfaces list.
         // (Disabled rows leave their stub behind in stale state otherwise.)
         tcpInterfaces.removeAll()
+        // Same for Auto + BLE singletons — recreated below if their entity
+        // row is still enabled. Without this, the UI shows stale state and
+        // NetworkStatusView returns "No interfaces" (transport snapshots
+        // come from registered interface stubs, not Python-side state).
+        await stopAutoInterface()
+        #if canImport(CoreBluetooth)
+        await stopBLEInterface()
+        #endif
 
         let displayName = pythonStartDisplayName
         let fresh = InterfaceRepository().getEnabledInterfaces()
@@ -984,6 +1188,52 @@ public final class AppServices {
             interfaces: fresh,
             displayName: displayName
         )
+        // Re-spawn the Swift-side interface stubs so the UI binds. Mirrors
+        // ColumbaApp.swift's initial startup loop. Without this,
+        // NetworkStatusView shows "No interfaces" after Apply & Restart and
+        // the per-entity rows stay stuck in `.disconnected` even though
+        // Python is happily routing traffic.
+        await respawnSwiftInterfaceStubs(enabled: fresh)
+    }
+
+    /// Re-instantiate the Swift-side interface singletons / stubs for each
+    /// enabled `InterfaceEntity` after a Python restart. Idempotent (each
+    /// start*Interface method early-exits if already up).
+    private func respawnSwiftInterfaceStubs(enabled: [InterfaceEntity]) async {
+        for entity in enabled {
+            switch entity.config {
+            case .tcpClient(let config):
+                let entityId = entity.id
+                do {
+                    try await connectTCPInterface(entityId: entityId, host: config.targetHost, port: config.targetPort)
+                    DiagLog.log("[RESPAWN] TCP \(entityId) connected")
+                } catch {
+                    DiagLog.log("[RESPAWN] TCP \(entityId) failed: \(error)")
+                }
+            case .autoInterface(let config):
+                let groupId = config.groupId ?? "reticulum"
+                do {
+                    try await startAutoInterface(groupId: groupId)
+                    DiagLog.log("[RESPAWN] AutoInterface started groupId=\(groupId)")
+                } catch {
+                    DiagLog.log("[RESPAWN] AutoInterface failed: \(error)")
+                }
+            case .ble:
+                #if canImport(CoreBluetooth)
+                do {
+                    try await startBLEInterface()
+                    DiagLog.log("[RESPAWN] BLEInterface started")
+                } catch {
+                    DiagLog.log("[RESPAWN] BLEInterface failed: \(error)")
+                }
+                #endif
+            case .tcpServer, .rnode, .multipeer:
+                // tcpServer + RNode + Multipeer aren't auto-started on
+                // restart yet (no parity with ColumbaApp.swift initial
+                // startup); add when those flows are formalized.
+                break
+            }
+        }
     }
 
     /// Recompute the config-section name PythonConfigWriter would have
@@ -1627,18 +1877,26 @@ public final class AppServices {
 
     #if canImport(CoreBluetooth)
     /// Start the BLE interface for Bluetooth peer-to-peer networking.
+    ///
+    /// Phase 3 flow:
+    ///   1. Copy `IOSBLEInterface.py` + `IOSBLEDriver.py` from `<bundle>/app/ble/`
+    ///      to `<configDir>/interfaces/` so RNS's external-interface loader can
+    ///      `exec()` them when reading config.
+    ///   2. Install `PythonBLECallbackBridge` as `SwiftBLEBridge.shared`'s
+    ///      callback invoker so events fire through to Python's callback
+    ///      registry.
+    ///   3. Notify Python via `set_ble_bridge` that BLE is enabled. (Phase 3
+    ///      passes a placeholder; the C-ABI shims in `BleNativeBindings.swift`
+    ///      are how `IOSBLEDriver` actually calls into Swift.)
+    ///   4. Update Compat-layer BLEInterface stub for the UI.
     public func startBLEInterface() async throws {
         logger.info("[BLE_DIAG] startBLEInterface() called")
 
-        // Stop existing BLE interface if running
         if bleInterface != nil {
             await stopBLEInterface()
-            // Give CoreBluetooth time to release the old CBCentralManager/CBPeripheralManager
-            // before creating new ones. Without this, the new managers can see "resetting" state.
             try? await Task.sleep(for: .milliseconds(500))
         }
 
-        // Ensure base stack exists
         if transport == nil {
             logger.info("[BLE_DIAG] No transport, initializing base stack")
             try await initializeBaseStack()
@@ -1652,6 +1910,20 @@ public final class AppServices {
         let identityHash = identity.hash
         logger.info("[BLE_DIAG] Identity hash: \(identityHash.map { String(format: "%02x", $0) }.joined().prefix(16), privacy: .public)")
 
+        // 1. Files deployed eagerly during startPythonBackend — see
+        //    deployIOSBLEPythonFilesIfPossible. No-op here.
+
+        // 2. Wire Swift→Python callback bridge.
+        if let backend = pythonBackend {
+            let invoker = PythonBLECallbackBridge(pythonBridge: backend.pythonBridge)
+            SwiftBLEBridge.shared.setCallbackInvoker(invoker)
+            SwiftBLEBridge.shared.setIdentity(identityHash)
+            DiagLog.log("[BLE_DIAG] PythonBLECallbackBridge installed; identity set (\(identityHash.prefix(8).map { String(format: "%02x", $0) }.joined()))")
+        } else {
+            DiagLog.log("[BLE_DIAG] WARNING: no pythonBackend yet — bridge invoker not installed")
+        }
+
+        // 3. Update the Compat BLEInterface stub so UI binding has a target.
         let config = InterfaceConfig(
             id: "ble0",
             name: "Bluetooth LE",
@@ -1661,13 +1933,56 @@ public final class AppServices {
             host: "",
             port: 0
         )
-
         let driver = CoreBluetoothBLEDriver(identityHash: identityHash)
         let newBLEInterface = BLEInterface(config: config, driver: driver, transportIdentity: identityHash)
         self.bleInterface = newBLEInterface
 
         try await transport.addBLEInterface(newBLEInterface)
         logger.info("[BLE_DIAG] BLEInterface started successfully")
+    }
+
+    /// Copy `IOSBLEInterface.py` and `IOSBLEDriver.py` from `<bundle>/app/ble/`
+    /// to `<configDir>/interfaces/` so RNS's external-interface loader can find
+    /// them when reading config. Idempotent — overwrites on each call so
+    /// build-time updates ship without manual cleanup.
+    ///
+    /// Called eagerly during `startPythonBackend` (before `backend.start()`)
+    /// so the files are in place whether or not the current config has BLE
+    /// enabled. A subsequent restart with BLE-enabled config then works
+    /// without a separate deploy step.
+    private func deployIOSBLEPythonFilesIfPossible(configDir: URL) {
+        let fm = FileManager.default
+        guard let bundleAppDir = Bundle.main.url(forResource: "app", withExtension: nil) else {
+            DiagLog.log("[BLE_DIAG] app/ bundle resource missing — skipping deploy")
+            return
+        }
+        let srcDir = bundleAppDir.appendingPathComponent("ble", isDirectory: true)
+        guard fm.fileExists(atPath: srcDir.path) else {
+            DiagLog.log("[BLE_DIAG] app/ble/ missing in bundle at \(srcDir.path) — skipping deploy")
+            return
+        }
+
+        let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
+        do {
+            try fm.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
+        } catch {
+            DiagLog.log("[BLE_DIAG] failed to create interfaces dir: \(error)")
+            return
+        }
+
+        for name in ["IOSBLEInterface.py", "IOSBLEDriver.py"] {
+            let src = srcDir.appendingPathComponent(name)
+            let dst = interfacesDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: dst.path) {
+                try? fm.removeItem(at: dst)
+            }
+            do {
+                try fm.copyItem(at: src, to: dst)
+                DiagLog.log("[BLE_DIAG] Deployed \(name) to \(dst.path)")
+            } catch {
+                DiagLog.log("[BLE_DIAG] Failed to copy \(name): \(error)")
+            }
+        }
     }
 
     /// Stop the BLE interface.
@@ -1677,6 +1992,10 @@ public final class AppServices {
         if let transport = transport {
             await transport.removeInterface(id: ble.id)
         }
+        // Tear down the Swift bridge so a subsequent start gets a clean
+        // CBCentralManager / CBPeripheralManager pair.
+        SwiftBLEBridge.shared.stop()
+        SwiftBLEBridge.shared.setCallbackInvoker(nil)
         bleInterface = nil
         logger.info("BLEInterface stopped")
     }

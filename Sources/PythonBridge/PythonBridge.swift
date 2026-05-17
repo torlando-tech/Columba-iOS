@@ -449,6 +449,62 @@ public final class PythonBridge: @unchecked Sendable {
         return try? JSONDecoder().decode(StatusSnapshot.self, from: data)
     }
 
+    /// Invoke a no-arg module-level function in `rns_bridge` that returns
+    /// a Python string. Used for diagnostic hooks that want to surface
+    /// a string back to Swift (e.g., interface-load error messages).
+    /// Returns nil on Python error or if the function doesn't exist.
+    public func callModuleFunctionReturningString(name: String) async -> String? {
+        await withCheckedContinuation { cont in
+            queue.async { [self] in
+                let out = PythonRuntime.shared.withGIL { () -> String? in
+                    guard let module = self.module else { return nil }
+                    guard let fn = PyObject_GetAttrString(module, name) else {
+                        PyErr_Clear()
+                        return nil
+                    }
+                    defer { Py_DecRef(fn) }
+                    guard let args = PyTuple_New(0) else { return nil }
+                    defer { Py_DecRef(args) }
+                    guard let r = PyObject_CallObject(fn, args) else {
+                        PyErr_Print()
+                        return nil
+                    }
+                    defer { Py_DecRef(r) }
+                    guard let c = PyUnicode_AsUTF8(r) else { return nil }
+                    return String(cString: c)
+                }
+                cont.resume(returning: out)
+            }
+        }
+    }
+
+    /// Invoke a no-arg module-level function in `rns_bridge`. Returns true if
+    /// the call completes without raising; the function's return value is
+    /// discarded. Convenience for test hooks and one-shot helpers.
+    public func callModuleFunctionNoArgs(name: String) async -> Bool {
+        await withCheckedContinuation { cont in
+            queue.async { [self] in
+                let ok = PythonRuntime.shared.withGIL { () -> Bool in
+                    guard let module = self.module else { return false }
+                    guard let fn = PyObject_GetAttrString(module, name) else {
+                        PyErr_Clear()
+                        return false
+                    }
+                    defer { Py_DecRef(fn) }
+                    guard let args = PyTuple_New(0) else { return false }
+                    defer { Py_DecRef(args) }
+                    guard let r = PyObject_CallObject(fn, args) else {
+                        PyErr_Print()
+                        return false
+                    }
+                    Py_DecRef(r)
+                    return true
+                }
+                cont.resume(returning: ok)
+            }
+        }
+    }
+
     /// Drain pending events from the Python-side queue.Queue. Returns empty list
     /// if the bridge isn't started yet.
     public func drainEvents() async -> [Event] {
@@ -701,5 +757,157 @@ private extension Data {
             idx = next
         }
         self = out
+    }
+}
+
+// MARK: - BLE callback invocation
+//
+// Direction: Swift → Python. Used by SwiftBLEBridge's CoreBluetooth delegate
+// methods to fire the upstream BLEInterface callbacks (`on_device_discovered`,
+// `on_device_connected`, etc.). Python registers callables under named slots
+// via `rns_bridge.set_ble_callback(slot, callable)`; Swift looks them up
+// here and invokes them under the GIL.
+//
+// The synchronous variant (`invokeBLECallbackBoolSync`) backs upstream's
+// `on_duplicate_identity_detected` which must return a bool BEFORE the
+// driver completes a connection. All other callbacks are fire-and-forget.
+
+/// Argument shape for BLE callbacks. Mirror of the small set of types
+/// upstream BLEInterface receives: addresses (str), data (bytes),
+/// identity hashes (str hex), MTU (int), service UUIDs (list[str]),
+/// severity strings, etc.
+public enum BLEArg: Sendable {
+    case string(String)
+    case int(Int)
+    case bool(Bool)
+    case bytes(Data)
+    case stringList([String])
+    case none
+}
+
+public extension PythonBridge {
+
+    /// Fire a Python BLE callback under the given slot name. Args are converted
+    /// to PyObjects, packed into a tuple, and passed via `PyObject_CallObject`.
+    /// Fire-and-forget: any return value is discarded.
+    ///
+    /// Safe to call from any Swift queue — internally hops to the Python serial
+    /// queue and acquires the GIL.
+    func invokeBLECallback(slot: String, args: [BLEArg]) {
+        queue.async { [self] in
+            _ = PythonRuntime.shared.withGIL { () -> Int in
+                self.invokeBLECallbackLocked(slot: slot, args: args)
+                return 0
+            }
+        }
+    }
+
+    /// Synchronous bool-return invocation. Backs upstream's
+    /// `on_duplicate_identity_detected(addr, identity_bytes) -> bool`. The
+    /// CoreBluetooth delegate calling this is expected to block on the result;
+    /// we sync to the Python queue, acquire the GIL, invoke, and return the bool.
+    ///
+    /// MUST NOT be called from the Python queue itself (re-entrancy would
+    /// deadlock). The BLE queue is a different DispatchQueue, so calling from
+    /// CB delegate methods is safe.
+    func invokeBLECallbackBoolSync(slot: String, args: [BLEArg]) -> Bool {
+        queue.sync { [self] in
+            PythonRuntime.shared.withGIL { () -> Bool in
+                let result = self.invokeBLECallbackLocked(slot: slot, args: args, wantResult: true)
+                if let pyResult = result {
+                    defer { Py_DecRef(pyResult) }
+                    return PyObject_IsTrue(pyResult) == 1
+                }
+                return false
+            }
+        }
+    }
+
+    /// MUST be called with the GIL held. Returns the raw `PyObject*` result if
+    /// `wantResult` is true (caller owns the ref), else nil.
+    @discardableResult
+    private func invokeBLECallbackLocked(
+        slot: String,
+        args: [BLEArg],
+        wantResult: Bool = false
+    ) -> UnsafeMutablePointer<PyObject>? {
+        guard let module = self.module else { return nil }
+        guard let getterFn = PyObject_GetAttrString(module, "_ble_get_callback") else {
+            PyErr_Clear()
+            return nil
+        }
+        defer { Py_DecRef(getterFn) }
+        guard let slotStr = PyUnicode_FromString(slot) else { return nil }
+        guard let callable = PyObject_CallOneArg(getterFn, slotStr) else {
+            Py_DecRef(slotStr)
+            PyErr_Clear()
+            return nil
+        }
+        Py_DecRef(slotStr)
+        defer { Py_DecRef(callable) }
+        // None means "no callback registered" — silent no-op.
+        if isNone(callable) { return nil }
+        guard let argsTuple = bleArgsToPyTuple(args) else { return nil }
+        defer { Py_DecRef(argsTuple) }
+        guard let result = PyObject_CallObject(callable, argsTuple) else {
+            // Print the traceback to stderr so RNS log captures it; clear
+            // the error indicator so subsequent Python calls don't see it.
+            PyErr_Print()
+            return nil
+        }
+        if wantResult { return result }
+        Py_DecRef(result)
+        return nil
+    }
+
+    private func bleArgsToPyTuple(_ args: [BLEArg]) -> UnsafeMutablePointer<PyObject>? {
+        guard let tuple = PyTuple_New(args.count) else { return nil }
+        for (idx, arg) in args.enumerated() {
+            guard let pyobj = bleArgToPy(arg) else {
+                Py_DecRef(tuple)
+                return nil
+            }
+            PyTuple_SetItem(tuple, idx, pyobj) // steals ref
+        }
+        return tuple
+    }
+
+    private func bleArgToPy(_ arg: BLEArg) -> UnsafeMutablePointer<PyObject>? {
+        switch arg {
+        case .string(let s):
+            return PyUnicode_FromString(s)
+        case .int(let i):
+            return PyLong_FromLongLong(Int64(i))
+        case .bool(let b):
+            return b ? ColumbaPy_True() : ColumbaPy_False()
+        case .bytes(let data):
+            return data.withUnsafeBytes { raw -> UnsafeMutablePointer<PyObject>? in
+                guard let base = raw.baseAddress else {
+                    return PyBytes_FromStringAndSize(nil, 0)
+                }
+                return PyBytes_FromStringAndSize(
+                    base.assumingMemoryBound(to: CChar.self),
+                    raw.count
+                )
+            }
+        case .stringList(let strs):
+            guard let list = PyList_New(strs.count) else { return nil }
+            for (idx, s) in strs.enumerated() {
+                guard let u = PyUnicode_FromString(s) else {
+                    Py_DecRef(list)
+                    return nil
+                }
+                PyList_SetItem(list, idx, u) // steals ref
+            }
+            return list
+        case .none:
+            return ColumbaPy_None()
+        }
+    }
+
+    private func isNone(_ obj: UnsafeMutablePointer<PyObject>) -> Bool {
+        guard let none = ColumbaPy_None() else { return false }
+        defer { Py_DecRef(none) }
+        return obj == none
     }
 }

@@ -192,6 +192,72 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-ble-diagnose" {
+                    DiagLog.log("[TEST-BLE-DIAG] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEDiagnose"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-ble-status" {
+                    DiagLog.log("[TEST-BLE-STATUS] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEStatus"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-ble-peer-list" {
+                    DiagLog.log("[TEST-BLE-PEER-LIST] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEPeerList"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-ble-scan" {
+                    // lxma://test-ble-scan?action=start|stop
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let action = components?.queryItems?.first(where: { $0.name == "action" })?.value ?? "start"
+                    DiagLog.log("[TEST-BLE-SCAN] action=\(action)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEScan"),
+                        object: nil,
+                        userInfo: ["action": action]
+                    )
+                    return
+                }
+                if url.host == "test-ble-advertise" {
+                    // lxma://test-ble-advertise?action=start|stop[&name=...]
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let action = components?.queryItems?.first(where: { $0.name == "action" })?.value ?? "start"
+                    let name = components?.queryItems?.first(where: { $0.name == "name" })?.value ?? ""
+                    DiagLog.log("[TEST-BLE-ADVERTISE] action=\(action) name=\(name)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEAdvertise"),
+                        object: nil,
+                        userInfo: ["action": action, "name": name]
+                    )
+                    return
+                }
+                if url.host == "test-ble-callback-roundtrip" {
+                    // lxma://test-ble-callback-roundtrip[?value=N]
+                    // Phase 2 smoke test: registers a Python callable that
+                    // returns True iff the int arg is even, then invokes it
+                    // via the synchronous Swift→Python BLE callback path and
+                    // asserts the answer matches. Logs PASS/FAIL to DiagLog.
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let valueStr = components?.queryItems?.first(where: { $0.name == "value" })?.value ?? "4"
+                    let value = Int(valueStr) ?? 4
+                    DiagLog.log("[TEST-BLE-CB] value=\(value)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLECallback"),
+                        object: nil,
+                        userInfo: ["value": value]
+                    )
+                    return
+                }
                 if url.host == "test-send" {
                     let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
                     let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""

@@ -30,6 +30,14 @@ PLATFORM_DEV="ios_13_0_arm64_iphoneos"
 RNS_SPEC="rns"
 LXMF_SPEC="lxmf"
 PYSERIAL_SPEC="pyserial>=3.5"
+# ble-reticulum is not on PyPI; install from the local checkout if present,
+# otherwise from Torlando's GitHub. Pure-Python, zero runtime deps.
+BLE_RETICULUM_LOCAL="$HOME/repos/ble-reticulum"
+if [ -d "$BLE_RETICULUM_LOCAL" ]; then
+    BLE_RETICULUM_SPEC="$BLE_RETICULUM_LOCAL"
+else
+    BLE_RETICULUM_SPEC="git+https://github.com/torlando-tech/ble-reticulum.git"
+fi
 
 rm -rf "$SIM_DIR" "$DEV_DIR"
 mkdir -p "$SIM_DIR" "$DEV_DIR"
@@ -71,7 +79,7 @@ install_binary_wheel "$PLATFORM_SIM" "$SIM_DIR" "${BINARY_WHEELS[@]}"
 install_binary_wheel "$PLATFORM_DEV" "$DEV_DIR" "${BINARY_WHEELS[@]}"
 
 for dst in "$SIM_DIR" "$DEV_DIR"; do
-    install_pure_python "$dst" "$RNS_SPEC" "$LXMF_SPEC" "$PYSERIAL_SPEC"
+    install_pure_python "$dst" "$RNS_SPEC" "$LXMF_SPEC" "$PYSERIAL_SPEC" "$BLE_RETICULUM_SPEC"
 done
 
 echo

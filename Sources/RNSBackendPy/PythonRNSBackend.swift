@@ -159,6 +159,30 @@ public final class PythonRNSBackend: @unchecked Sendable {
         await bridge.status()
     }
 
+    // MARK: - BLE bridge plumbing
+    //
+    // Surface the BLE callback invocation primitives so AppServices /
+    // SwiftBLEBridge can fire registered Python callbacks. The actual
+    // registration site (Python → register `on_device_discovered` etc.)
+    // happens inside `app/ble/ios_ble_driver.py` once Phase 3 wires it up.
+
+    /// Direct access for the BLE callback bridge.
+    public var pythonBridge: PythonBridge { bridge }
+
+    /// Wire up the Phase 2 smoke-test callback. Returns true on success.
+    @discardableResult
+    public func installBLETestRoundtripCallback() async -> Bool {
+        await bridge.callModuleFunctionNoArgs(name: "_install_test_roundtrip_callback")
+    }
+
+    /// Fire the registered `_test_roundtrip` callback with an int arg and
+    /// receive the synchronous bool result. Used by
+    /// `lxma-test://test-ble-callback-roundtrip` to assert the Swift → Python
+    /// callback path is alive end-to-end.
+    public func invokeBLETestRoundtrip(value: Int) -> Bool {
+        bridge.invokeBLECallbackBoolSync(slot: "_test_roundtrip", args: [.int(value)])
+    }
+
     private func startDrainLoop() {
         guard eventDrainTask == nil else { return }
         eventDrainTask = Task { [weak self] in

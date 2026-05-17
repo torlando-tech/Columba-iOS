@@ -26,6 +26,7 @@ let package = Package(
     products: [
         .library(name: "RNSAPI", targets: ["RNSAPI"]),
         .library(name: "LXSTSwift", targets: ["LXSTSwift"]),
+        .library(name: "SwiftBLEBridge", targets: ["SwiftBLEBridge"]),
     ],
     dependencies: [],
     targets: [
@@ -110,6 +111,19 @@ let package = Package(
             name: "LXSTSwift",
             dependencies: ["RNSAPI", "COpus", "CCodec2"],
             path: "Sources/LXSTSwift"
+        ),
+
+        // ──────── SwiftBLEBridge: CoreBluetooth wrapper for ble-reticulum ──
+        // Mirror of Columba Android's reticulum/ble module. Holds CBCentralManager
+        // + CBPeripheralManager state and exposes a Swift API that the iOS BLE
+        // driver (app/ble/ios_ble_driver.py) calls into. The Python ↔ Swift
+        // callback invocation path lives separately in the pbxproj-only
+        // `PythonBLECallbackBridge.swift` (which needs Python.h); SwiftBLEBridge
+        // itself is pure CoreBluetooth so `swift build` compiles it cleanly.
+        .target(
+            name: "SwiftBLEBridge",
+            dependencies: ["RNSAPI"],
+            path: "Sources/SwiftBLEBridge"
         ),
     ]
 )

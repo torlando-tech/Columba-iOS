@@ -29,6 +29,7 @@
 		020 /* IdenticonGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F020 /* IdenticonGenerator.swift */; };
 		021 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* MapView.swift */; platformFilter = ios; };
 		022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022 /* Assets.xcassets */; };
+		0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */; };
 		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
 		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
 		026 /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsRepository.swift */; };
@@ -105,6 +106,7 @@
 		082B /* MicronRenderContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F083 /* MicronRenderContainer.swift */; };
 		083B /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		084B /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
+		13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */; };
 		3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
 		4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */; };
 		5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A49337EFC55C10979AEB702B /* LXSTSwift */; };
@@ -176,6 +178,7 @@
 		ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
 		B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; includeInIndex = 1; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		B68384C48BFF8F5294340EDB /* PttButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PttButton.swift; sourceTree = "<group>"; };
+		CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBLECallbackBridge.swift; sourceTree = "<group>"; };
 		D001472BC7DFD3CD7BF27F0C /* app */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = app; sourceTree = "<group>"; };
 		D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
 		E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; includeInIndex = 1; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
@@ -305,6 +308,7 @@
 				8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */,
 				5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */,
 				F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */,
+				13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -389,6 +393,7 @@
 				710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */,
 				A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */,
 				11D4DB375C0C7BB62E8A8B23 /* ColumbaPython-Bridging-Header.h */,
+				CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */,
 			);
 			name = PythonBridge;
 			path = Sources/PythonBridge;
@@ -750,6 +755,7 @@
 				P002 /* MapLibre */,
 				A49337EFC55C10979AEB702B /* LXSTSwift */,
 				0FD6A68A52A54D21FDB70324 /* RNSAPI */,
+				5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */,
 			);
 			productName = ColumbaApp;
 			productReference = PROD /* ColumbaApp.app */;
@@ -982,6 +988,7 @@
 				EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */,
 				3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */,
 				7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */,
+				0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1365,6 +1372,10 @@
 		0FD6A68A52A54D21FDB70324 /* RNSAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RNSAPI;
+		};
+		5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwiftBLEBridge;
 		};
 		A49337EFC55C10979AEB702B /* LXSTSwift */ = {
 			isa = XCSwiftPackageProductDependency;

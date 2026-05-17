@@ -159,6 +159,21 @@ if local_pkg_class
     app_target.frameworks_build_phase.files << bf
     puts "  Linked product: RNSAPI (local)"
   end
+  # SwiftBLEBridge: CoreBluetooth wrapper for the iOS BLE mesh interface.
+  # Pure-Swift SwiftPM target so `swift build` can typecheck it without
+  # the Python bridging header. PythonBLECallbackBridge.swift (auto-pulled
+  # into ColumbaApp via the Sources/PythonBridge/**/*.swift glob below)
+  # bridges between SwiftBLEBridge's `BleCallbackInvoker` protocol and
+  # the Python-side callback registry in rns_bridge.py.
+  unless app_target.package_product_dependencies.any? { |d| d.product_name == 'SwiftBLEBridge' }
+    product = project.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
+    product.product_name = 'SwiftBLEBridge'
+    app_target.package_product_dependencies << product
+    bf = project.new(Xcodeproj::Project::Object::PBXBuildFile)
+    bf.product_ref = product
+    app_target.frameworks_build_phase.files << bf
+    puts "  Linked product: SwiftBLEBridge (local)"
+  end
 else
   puts "  WARNING: xcodeproj gem doesn't support XCLocalSwiftPackageReference; skip local-pkg wiring"
 end
