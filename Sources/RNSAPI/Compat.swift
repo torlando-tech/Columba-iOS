@@ -1146,17 +1146,92 @@ public final class ReticulumTransport: @unchecked Sendable {
         onDiagnostic = callback
     }
 
-    public func addInterface(_ interface: any NetworkInterface) async throws {}
-    public func removeInterface(id: String) async {}
-    public func addAutoInterface(_ autoInterface: AutoInterface) async throws {}
-    public func addBLEInterface(_ bleInterface: BLEInterface) async throws {}
-    public func addMPCInterface(_ mpcInterface: MPCInterface) async throws {}
-    public func getInterface(id: String) -> (any NetworkInterface)? { nil }
-    public var interfaceCount: Int { 0 }
-    public var interfaceIds: [String] { [] }
-    public func listInterfaceIds() async -> [String] { [] }
-    public func getInterfaceName(for interfaceId: String) async -> String? { nil }
-    public func getInterfaceSnapshots() async -> [InterfaceSnapshot] { [] }
+    // Registered interfaces — the Compat layer is a stub for ReticulumSwift's
+    // transport, but Network Status UI still needs to know what's wired so
+    // it can render the per-interface rows. AppServices calls add*Interface
+    // for each enabled entity at startup and after Apply & Restart, the
+    // transport mirrors them into `registeredInterfaces` keyed by id, and
+    // `getInterfaceSnapshots()` reflects current state (state field is
+    // mutated on the interface stub by `applyPythonInterfaceStatus`).
+    private let _interfaceLock = NSLock()
+    private var registeredInterfaces: [String: any NetworkInterface] = [:]
+    private var registeredInterfaceTypes: [String: WireInterfaceType] = [:]
+
+    public func addInterface(_ interface: any NetworkInterface) async throws {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        registeredInterfaces[interface.id] = interface
+        registeredInterfaceTypes[interface.id] = .tcp
+    }
+    public func removeInterface(id: String) async {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        registeredInterfaces.removeValue(forKey: id)
+        registeredInterfaceTypes.removeValue(forKey: id)
+    }
+    public func addAutoInterface(_ autoInterface: AutoInterface) async throws {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        registeredInterfaces[autoInterface.id] = autoInterface
+        registeredInterfaceTypes[autoInterface.id] = .autoInterface
+    }
+    public func addBLEInterface(_ bleInterface: BLEInterface) async throws {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        registeredInterfaces[bleInterface.id] = bleInterface
+        registeredInterfaceTypes[bleInterface.id] = .ble
+    }
+    public func addMPCInterface(_ mpcInterface: MPCInterface) async throws {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        registeredInterfaces[mpcInterface.id] = mpcInterface
+        registeredInterfaceTypes[mpcInterface.id] = .multipeerConnectivity
+    }
+    public func getInterface(id: String) -> (any NetworkInterface)? {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        return registeredInterfaces[id]
+    }
+    public var interfaceCount: Int {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        return registeredInterfaces.count
+    }
+    public var interfaceIds: [String] {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        return Array(registeredInterfaces.keys)
+    }
+    public func listInterfaceIds() async -> [String] { interfaceIds }
+    public func getInterfaceName(for interfaceId: String) async -> String? {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        return registeredInterfaces[interfaceId]?.name
+    }
+    public func getInterfaceSnapshots() async -> [InterfaceSnapshot] {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        return registeredInterfaces.values.map { iface in
+            let wireType = registeredInterfaceTypes[iface.id] ?? .tcp
+            let label: String
+            switch wireType {
+            case .tcp: label = "TCPClient"
+            case .udp: label = "UDP"
+            case .i2p: label = "I2P"
+            case .autoInterface: label = "AutoInterface"
+            case .rnode: label = "RNode"
+            case .ble: label = "BLE"
+            case .multipeerConnectivity: label = "Multipeer"
+            }
+            // The `NetworkInterface` protocol only carries `online`. Derive
+            // a coarse state from that — `applyPythonInterfaceStatus` updates
+            // the concrete iface's `online` flag from Python's view, so
+            // `connected/disconnected` here lines up with the real picture.
+            let state: InterfaceState = iface.online ? .connected : .disconnected
+            return InterfaceSnapshot(
+                id: iface.id,
+                name: iface.name,
+                online: iface.online,
+                typeLabel: label,
+                type: wireType,
+                state: state,
+                isAutoInterfacePeer: false,
+                isBLEPeerInterface: false,
+                peerAddress: nil,
+                lastErrorDescription: nil
+            )
+        }
+    }
 
     // ──────── Backend bridge hooks ────────
     //
