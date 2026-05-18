@@ -299,9 +299,14 @@ public final class InterfaceManagementViewModel {
             isApplyingChanges = false
         }
 
-        logger.info("Applying interface changes: restarting Reticulum")
+        logger.info("Applying interface changes: writing config; relaunch required")
+        // Writes the new RNS config to disk but does NOT restart Python
+        // in-place — that path crashed reliably (Reticulum singleton +
+        // AutoInterface multicast sockets don't tear down cleanly inside
+        // an embedded interpreter). Config is picked up on next app
+        // launch instead.
         await appServices.restartPythonBackend()
-        showSuccess("Interfaces applied — Reticulum restarted")
+        showSuccess("Interfaces saved — relaunch Columba to apply changes")
     }
 
     // MARK: - Status Observation

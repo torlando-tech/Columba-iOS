@@ -1244,51 +1244,40 @@ public final class AppServices {
     /// transition in the UI (the Apply button already shows a
     /// ProgressView while `isApplyingChanges` is set).
     public func restartPythonBackend() async {
-        guard let identity = pythonStartIdentity, let router = self.router else {
+        guard let identity = pythonStartIdentity else {
             DiagLog.log("[PY] restart skipped — backend was never started")
             return
         }
-        DiagLog.log("[PY] restartPythonBackend: stopping current instance")
-
-        pythonEventTask?.cancel()
-        pythonEventTask = nil
-        pythonStatusPollTask?.cancel()
-        pythonStatusPollTask = nil
-
-        if let backend = pythonBackend {
-            await backend.stop()
-        }
-        pythonBackend = nil
-
-        // Drop the Compat TCPInterface stubs so the seed pass below
-        // recomputes the set from the latest enabled-interfaces list.
-        // (Disabled rows leave their stub behind in stale state otherwise.)
-        tcpInterfaces.removeAll()
-        // Same for Auto + BLE singletons — recreated below if their entity
-        // row is still enabled. Without this, the UI shows stale state and
-        // NetworkStatusView returns "No interfaces" (transport snapshots
-        // come from registered interface stubs, not Python-side state).
-        await stopAutoInterface()
-        #if canImport(CoreBluetooth)
-        await stopBLEInterface()
-        #endif
-
-        let displayName = pythonStartDisplayName
+        // Rewrite the RNS config on disk so the new interface set is
+        // captured. The actual Python-side restart is DELIBERATELY skipped
+        // — in-place restart of the embedded interpreter is flaky on iOS
+        // (Reticulum is a class-level singleton, AutoInterface holds
+        // multicast socket threads that don't tear down deterministically,
+        // and the embedded Python aborts ~130ms into the second
+        // `Reticulum.__init__` when the previous instance's threads still
+        // hold the multicast bind). RNS has no hot-reload of [interfaces]
+        // anyway, so the right model is: write the config, tell the user
+        // to relaunch Columba. The full app launch on the next start gets
+        // a clean Python + clean RNS singleton.
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let identityHashHex = identity.hexHash
+        let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
         let fresh = InterfaceRepository().getEnabledInterfaces()
-        DiagLog.log("[PY] restartPythonBackend: starting with \(fresh.count) interfaces")
-        await startPythonBackend(
-            identity: identity,
-            identityHashHex: identity.hexHash,
-            router: router,
-            interfaces: fresh,
-            displayName: displayName
+        let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
+        let configText = PythonConfigWriter.write(interfaces: fresh, enableTransport: transportEnabled)
+        let configFile = pyDir.appendingPathComponent("config")
+        do {
+            try configText.write(to: configFile, atomically: true, encoding: .utf8)
+            DiagLog.log("[PY] restartPythonBackend: wrote new config (\(configText.count) bytes, \(fresh.count) interfaces); awaiting next app launch to apply")
+        } catch {
+            DiagLog.log("[PY] restartPythonBackend: config write FAILED: \(error)")
+        }
+        // Notify the UI so it can show a "relaunch Columba" prompt.
+        NotificationCenter.default.post(
+            name: Notification.Name("ColumbaRelaunchRequired"),
+            object: nil
         )
-        // Re-spawn the Swift-side interface stubs so the UI binds. Mirrors
-        // ColumbaApp.swift's initial startup loop. Without this,
-        // NetworkStatusView shows "No interfaces" after Apply & Restart and
-        // the per-entity rows stay stuck in `.disconnected` even though
-        // Python is happily routing traffic.
-        await respawnSwiftInterfaceStubs(enabled: fresh)
     }
 
     /// Re-instantiate the Swift-side interface singletons / stubs for each
