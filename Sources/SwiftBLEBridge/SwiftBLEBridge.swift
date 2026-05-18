@@ -153,9 +153,27 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             // Central + peripheral managers share our BLE serial queue —
             // delegate callbacks land on this queue, callback invocations
             // hop back to the Python serial queue inside PythonBridge.
-            self.centralManager = CBCentralManager(delegate: self, queue: queue)
-            self.peripheralManager = CBPeripheralManager(delegate: self, queue: queue)
+            //
+            // Reuse existing managers when they exist (Apply & Restart
+            // calls stop() then start() in quick succession; stop() now
+            // intentionally leaves the managers alive to avoid CB
+            // teardown races). Only create on first start.
+            if self.centralManager == nil {
+                self.centralManager = CBCentralManager(delegate: self, queue: queue)
+            }
+            if self.peripheralManager == nil {
+                self.peripheralManager = CBPeripheralManager(delegate: self, queue: queue)
+            }
             self.isStartedFlag = true
+            // Surface any already-poweredOn managers so scan/advertise
+            // requests don't sit pending forever after a restart.
+            if self.centralManager?.state == .poweredOn {
+                tryStartScanLocked()
+            }
+            if self.peripheralManager?.state == .poweredOn {
+                setUpGattServiceIfNeeded()
+                tryStartAdvertiseLocked()
+            }
         }
         startRssiPolling()
     }
@@ -203,13 +221,20 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             serverTxChar = nil
             serverIdentityChar = nil
             gattServiceAdded = false
-            centralManager = nil
-            peripheralManager = nil
             lastDiscoveryReport.removeAll()
             pendingScanRequested = false
             pendingAdvertiseRequested = false
             pendingAdvertiseDeviceName = nil
             isStartedFlag = false
+            // NOTE: do NOT null out centralManager / peripheralManager
+            // here. Tying their lifetime to the bridge singleton lets
+            // start() be called repeatedly without churning CB internals.
+            // Apple's CB stack crashes (watchdog-kills the app via
+            // exit-code-65280 abort path) if a new CBCentralManager /
+            // CBPeripheralManager is created while the previous instance
+            // is still in mid-teardown — the symptom we hit on
+            // Apply & Restart when stop() was followed milliseconds
+            // later by another start().
         }
     }
 
