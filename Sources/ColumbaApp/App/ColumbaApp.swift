@@ -208,6 +208,14 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-path-table" {
+                    DiagLog.log("[TEST-PATH-TABLE] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestPathTable"),
+                        object: nil
+                    )
+                    return
+                }
                 if url.host == "test-ble-status" {
                     DiagLog.log("[TEST-BLE-STATUS] requested")
                     NotificationCenter.default.post(
