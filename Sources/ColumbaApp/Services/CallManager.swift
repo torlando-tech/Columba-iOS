@@ -833,12 +833,8 @@ public final class CallManager {
 
     /// Feed decoded PCM audio from the remote peer for playback.
     ///
-    /// Called by the Telephone actor (via callback) when decoded audio frames
-    /// arrive from the network. Schedules samples for immediate playback.
-    ///
-    /// TODO: Wire this to Telephone's decoded frame output once the codec
-    /// pipeline delivers frames. The Telephone actor should call:
-    ///   await callManager.playReceivedAudio(decodedSamples)
+    /// Wired from `Telephone.setDecodedAudioCallback` — fires when decoded audio
+    /// frames arrive from the network. Schedules samples for immediate playback.
     ///
     /// - Parameter samples: Float32 PCM samples at the profile's sample rate
     private var playReceivedCount = 0

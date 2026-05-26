@@ -64,9 +64,7 @@ public final class AudioManager {
 
     /// Called with captured PCM Float32 samples ready for codec encoding.
     /// The frame size matches `samplesPerFrame` (sampleRate * frameTimeMs / 1000).
-    ///
-    /// TODO: Wire this to Telephone.sendAudioFrame() once the codec pipeline
-    /// is connected. For now, CallManager can set this to forward frames.
+    /// CallManager sets this to forward frames to `Telephone.sendAudioFrame`.
     var onCapturedFrame: (([Float]) -> Void)?
 
     // MARK: - Private State
@@ -713,12 +711,10 @@ public final class AudioManager {
 
     /// Schedule decoded PCM samples for playback through the speaker/earpiece.
     ///
-    /// Call this when the Telephone actor delivers decoded audio frames.
-    /// Handles buffer underruns gracefully by simply skipping frames (voice
-    /// audio tolerates small gaps better than stuttering).
-    ///
-    /// TODO: Wire this to Telephone's decoded frame output once the codec
-    /// pipeline is connected. CallManager should call this with decoded PCM data.
+    /// Called by CallManager when the Telephone actor delivers decoded audio
+    /// frames (via `decodedAudioCallback`). Handles buffer underruns gracefully
+    /// by simply skipping frames (voice audio tolerates small gaps better than
+    /// stuttering).
     ///
     /// - Parameter samples: Float32 PCM samples at the configured sample rate
     private var playCount: Int = 0
