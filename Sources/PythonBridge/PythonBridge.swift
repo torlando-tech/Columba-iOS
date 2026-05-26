@@ -53,7 +53,11 @@ public final class PythonBridge: @unchecked Sendable {
     }
 
     public enum SendOutcome: Equatable, Sendable {
-        case queued
+        /// Successfully queued. `messageHash` is the real LXMF message hash hex
+        /// (populated once Python packs the message); empty if unavailable.
+        /// Callers persist the outbound message under this so a later
+        /// `.delivery` event can match it.
+        case queued(messageHash: String)
         case requestingPath
         case badHash
         case notStarted
@@ -64,6 +68,11 @@ public final class PythonBridge: @unchecked Sendable {
         case announce(destHash: String, displayName: String, aspect: String, publicKeysHex: String, interfaceName: String, hops: Int, t: Date)
         case inbound(sourceHash: String, content: String, title: String, t: Date)
         case state(String, t: Date)
+
+        /// Delivery / failure proof for an outbound message, keyed by its LXMF
+        /// message hash hex. `state` is "delivered" or "failed". Drives the
+        /// chat UI's double-check / failed indicator.
+        case delivery(messageHash: String, state: String, t: Date)
 
         // RNS.Link events — used by lxst-swift for voice calls. The
         // Swift LXST state machine consumes these to drive its own
@@ -399,7 +408,10 @@ public final class PythonBridge: @unchecked Sendable {
                 defer { Py_DecRef(result) }
                 let reason = pyStringFromDict(result, key: "reason") ?? "unknown"
                 let ok = pyBoolFromDict(result, key: "ok") ?? false
-                if ok { return .queued }
+                if ok {
+                    let hash = pyStringFromDict(result, key: "message_hash") ?? ""
+                    return .queued(messageHash: hash)
+                }
                 switch reason {
                 case "requesting-path": return .requestingPath
                 case "bad-hash": return .badHash
@@ -702,6 +714,10 @@ public final class PythonBridge: @unchecked Sendable {
             case "state":
                 let v = pyStringFromDict(item, key: "value") ?? "?"
                 out.append(.state(v, t: t))
+            case "delivery":
+                let h = pyStringFromDict(item, key: "message_hash") ?? ""
+                let state = pyStringFromDict(item, key: "state") ?? ""
+                out.append(.delivery(messageHash: h, state: state, t: t))
             case "link_state":
                 let linkId = pyIntFromDict(item, key: "link_id") ?? 0
                 let state = pyStringFromDict(item, key: "state") ?? ""

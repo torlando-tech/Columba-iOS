@@ -597,8 +597,12 @@ public final class LXMessage: @unchecked Sendable {
 public final class LXMRouter: @unchecked Sendable {
     public weak var delegate: LXMRouterDelegate?
 
-    /// Set by AppServices once RNSBackendPy is ready.
-    public var sendHook: ((LXMessage) async throws -> Void)?
+    /// Set by AppServices once RNSBackendPy is ready. Returns the real LXMF
+    /// message hash hex once Python packs the message (or nil if unavailable),
+    /// so the inout `handleOutbound` can stamp it onto the message — the chat
+    /// then persists the outbound row under the same key the delivery proof
+    /// event carries.
+    public var sendHook: ((LXMessage) async throws -> String?)?
 
     public init() {}
     public init(identity: Identity, databasePath: String) async throws {}
@@ -614,15 +618,24 @@ public final class LXMRouter: @unchecked Sendable {
 
     @discardableResult
     public func handleOutbound(_ message: LXMessage) async throws -> Bool {
-        if let hook = sendHook { try await hook(message); return true }
+        if let hook = sendHook { _ = try await hook(message); return true }
         return false
     }
 
     /// Inout variant used by ViewModels that need the router to populate
-    /// `hash` / `state` / `timestamp` on the message after pack.
+    /// `hash` / `state` / `timestamp` on the message after pack. Stamps the
+    /// real LXMF message hash (returned by the send hook) onto `message.hash`,
+    /// replacing the caller's optimistic placeholder, so the persisted row is
+    /// keyed by the hash that delivery-proof events reference.
     @discardableResult
     public func handleOutbound(_ message: inout LXMessage) async throws -> Bool {
-        if let hook = sendHook { try await hook(message); return true }
+        if let hook = sendHook {
+            if let hashHex = try await hook(message), !hashHex.isEmpty,
+               let hashData = try? hashHex.hexToData() {
+                message.hash = hashData
+            }
+            return true
+        }
         return false
     }
 

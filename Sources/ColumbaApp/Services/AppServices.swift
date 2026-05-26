@@ -621,10 +621,14 @@ public final class AppServices {
 
         // Route outbound LXMF through Python.
         router.sendHook = { [weak backend] message in
-            guard let backend else { return }
+            guard let backend else { return nil }
             let destHex = message.destinationHash.map { String(format: "%02x", $0) }.joined()
             let text = String(data: message.content, encoding: .utf8) ?? ""
-            _ = try await backend.sendOpportunistic(destHashHex: destHex, content: text)
+            let outcome = try await backend.sendOpportunistic(destHashHex: destHex, content: text)
+            // Return the real LXMF hash so the router can key the persisted
+            // message by it (matches the delivery-proof event).
+            if case .queued(let hash) = outcome, !hash.isEmpty { return hash }
+            return nil
         }
 
         // Drain Python events into Columba's UI plumbing.
@@ -1702,6 +1706,23 @@ public final class AppServices {
         case .state(let value, _):
             DiagLog.log("[PY] state \(value)")
             logger.info("Python state: \(value, privacy: .public)")
+        case .delivery(let messageHash, let state, _):
+            DiagLog.log("[PY] delivery \(messageHash.prefix(16)) state=\(state)")
+            guard let hashData = Data(hexString: messageHash) else { return }
+            let newState: LXMessageState = (state == "delivered") ? .delivered : .failed
+            if let database = self.database {
+                try? database.updateMessageState(id: hashData, state: newState)
+            }
+            // Notify the open chat so it can flip the bubble's indicator
+            // (double-check for delivered / failed) without a full reload.
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonDelivery"),
+                object: nil,
+                userInfo: [
+                    "messageHash": hashData,
+                    "state": state,
+                ]
+            )
         case .linkState(let linkId, let state, let reason, let inbound, _):
             DiagLog.log("[PY] link \(linkId) state=\(state) inbound=\(inbound)\(reason.isEmpty ? "" : " reason=\(reason)")")
             // Surface via NotificationCenter for any subscribers (debug

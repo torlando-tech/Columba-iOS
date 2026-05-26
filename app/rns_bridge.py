@@ -1019,8 +1019,34 @@ def send_opportunistic(dest_hash_hex: str, content: str) -> dict[str, Any]:
             title="",
             desired_method=LXMF.LXMessage.OPPORTUNISTIC,
         )
+
+        # Surface delivery / failure proofs to Swift so the chat UI can flip a
+        # sent message to the double-check (delivered) or failed state. The
+        # callbacks fire on RNS worker threads when a proof arrives; we drop a
+        # "delivery" event onto the queue keyed by the LXMF message hash so the
+        # Swift side can match it to the persisted message row.
+        def _on_delivered(m: "LXMF.LXMessage") -> None:
+            try:
+                _put("delivery", message_hash=m.hash.hex(), state="delivered")
+            except Exception:
+                pass
+
+        def _on_failed(m: "LXMF.LXMessage") -> None:
+            try:
+                _put("delivery", message_hash=m.hash.hex(), state="failed")
+            except Exception:
+                pass
+
+        msg.register_delivery_callback(_on_delivered)
+        msg.register_failed_callback(_on_failed)
+
         router.handle_outbound(msg)
-        return {"ok": True, "reason": "queued"}
+
+        # `handle_outbound` packs the message, so `msg.hash` is now the real
+        # LXMF message hash. Return it so Swift persists the outbound message
+        # under the same key the delivery event will carry.
+        message_hash = msg.hash.hex() if msg.hash is not None else ""
+        return {"ok": True, "reason": "queued", "message_hash": message_hash}
 
 
 def fetch_nomadnet_page(

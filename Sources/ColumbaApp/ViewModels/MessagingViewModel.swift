@@ -53,6 +53,7 @@ public final class MessagingViewModel {
 
     /// Observation token for incoming message notifications.
     private var notificationTask: Any?
+    private var deliveryTask: Any?
 
     // MARK: - Initialization
 
@@ -89,10 +90,31 @@ public final class MessagingViewModel {
                 await self.loadMessages()
             }
         }
+
+        // Listen for delivery / failure proofs (double-check indicator). The DB
+        // row is already updated by AppServices; we just flip the in-memory
+        // bubble in place so the open chat reflects it without a full reload.
+        deliveryTask = NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaPythonDelivery"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let hashData = notification.userInfo?["messageHash"] as? Data,
+                  let state = notification.userInfo?["state"] as? String else { return }
+            let hashHex = hashData.map { String(format: "%02x", $0) }.joined()
+            Task { @MainActor in
+                guard let index = self.messages.firstIndex(where: { $0.id == hashHex }) else { return }
+                self.messages[index].deliveryStatus = (state == "delivered") ? .delivered : .failed
+            }
+        }
     }
 
     deinit {
         if let token = notificationTask {
+            NotificationCenter.default.removeObserver(token)
+        }
+        if let token = deliveryTask {
             NotificationCenter.default.removeObserver(token)
         }
     }
