@@ -436,6 +436,10 @@ struct RootView: View {
             #if os(iOS)
             if newPhase == .background {
                 scheduleBackgroundSync()
+                // Flush RNS's path table + known destinations to disk now —
+                // iOS won't run RNS's clean-exit persist, so without this a
+                // cold start can't recall previously-heard peers.
+                appServices.persistRNSStateOnBackground()
             }
             appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
             #endif

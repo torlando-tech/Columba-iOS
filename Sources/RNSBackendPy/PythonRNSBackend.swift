@@ -159,6 +159,15 @@ public final class PythonRNSBackend: @unchecked Sendable {
         await bridge.status()
     }
 
+    /// Force RNS to flush its path table + known destinations to disk
+    /// (`rns_bridge.persist()`). RNS only persists on a 12h timer / clean exit,
+    /// which iOS skips — call this on app-background so heard peers survive a
+    /// cold start. Returns false if the call raised.
+    @discardableResult
+    public func persist() async -> Bool {
+        await bridge.callModuleFunctionNoArgs(name: "persist")
+    }
+
     // MARK: - Live interface reconfiguration (no restart)
     //
     // RNS attaches/detaches interfaces on a running Transport without

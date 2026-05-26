@@ -14,6 +14,9 @@ import RNSAPI
 import LXSTSwift
 import SwiftBLEBridge
 import CryptoKit
+#if canImport(UIKit)
+import UIKit
+#endif
 #if os(iOS)
 #endif
 import os.log
@@ -1282,6 +1285,33 @@ public final class AppServices {
             name: Notification.Name("ColumbaRelaunchRequired"),
             object: nil
         )
+    }
+
+    /// Force the Python RNS stack to flush its path table + known destinations
+    /// to disk. RNS only persists on a 12h timer / clean exit, and iOS suspends
+    /// the app without a clean exit — so we call this when the app backgrounds,
+    /// otherwise RNS's `destination_table` / `known_destinations` are rarely
+    /// written and a cold start can't recall previously-heard peers.
+    ///
+    /// Wrapped in a UIKit background task so the file writes have a chance to
+    /// finish before iOS suspends us.
+    @MainActor
+    public func persistRNSStateOnBackground() {
+        guard let backend = pythonBackend else { return }
+        #if canImport(UIKit)
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "rns-persist") {
+            if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
+        }
+        Task {
+            _ = await backend.persist()
+            await MainActor.run {
+                if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
+            }
+        }
+        #else
+        Task { _ = await backend.persist() }
+        #endif
     }
 
     /// Directory holding the running Python instance's RNS config, derived from

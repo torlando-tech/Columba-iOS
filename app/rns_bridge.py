@@ -956,6 +956,32 @@ def remove_interface(name: str) -> dict[str, Any]:
         return {"ok": removed > 0, "reason": f"removed-{removed}" if removed else "not-found"}
 
 
+def persist() -> dict[str, Any]:
+    """Force RNS to flush its path table + known destinations to disk now.
+
+    RNS only persists on a 12-hour timer (`Reticulum.PERSIST_INTERVAL`) or in
+    `exit_handler` on a clean shutdown. iOS suspends/kills the app without a
+    clean exit and long before 12h, so left to itself RNS almost never writes
+    `<storage>/destination_table` or `known_destinations` — and a cold start
+    then reloads nothing. Columba calls this when the app backgrounds so RNS's
+    routing + recalled identities (and thus the ability to message previously
+    heard peers) survive an app restart. Mirrors what RNS's own periodic
+    `__persist_data` does, but unthrottled.
+    """
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "reason": "not-started"}
+        try:
+            RNS.Transport.persist_data()
+        except Exception as e:
+            RNS.log(f"persist: Transport.persist_data failed: {e}", RNS.LOG_ERROR)
+        try:
+            RNS.Identity.persist_data()
+        except Exception as e:
+            RNS.log(f"persist: Identity.persist_data failed: {e}", RNS.LOG_ERROR)
+        return {"ok": True, "reason": "persisted"}
+
+
 def send_opportunistic(dest_hash_hex: str, content: str) -> dict[str, Any]:
     """Send an opportunistic LXMF message. Returns a dict with 'ok' (bool)
     and 'reason' (string) describing the outcome. If the destination's
