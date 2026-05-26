@@ -1355,6 +1355,34 @@ def clear_ble_callbacks() -> None:
     _ble_callbacks.clear()
 
 
+# ── RNode bridge callback registry (mirrors the BLE one above) ──
+# Swift's SwiftRNodeBridge pushes Nordic-UART TX bytes + connection-state
+# changes into the Python IOSRNodeInterface through these. Slots:
+#   "data"  → cb(data: bytes)            — decrypted NUS TX payload
+#   "state" → cb(connected: bool, name)  — link up/down + device name
+_rnode_callbacks: dict[str, Any] = {}
+
+
+def set_rnode_callback(slot: str, callable_: Any) -> None:
+    """Register a Python callable for an RNode bridge event slot ("data" /
+    "state"). Used by IOSRNodeInterface's _RNodeBLEBridge. Pass None to clear."""
+    if callable_ is None:
+        _rnode_callbacks.pop(slot, None)
+    else:
+        _rnode_callbacks[slot] = callable_
+
+
+def _rnode_get_callback(slot: str) -> Any:
+    """Swift-called lookup (PythonRNodeCallbackBridge) for the RNode "data" /
+    "state" handler. Returns the stored callable, or None."""
+    return _rnode_callbacks.get(slot)
+
+
+def clear_rnode_callbacks() -> None:
+    """Drop every registered RNode callback (stop()/restart)."""
+    _rnode_callbacks.clear()
+
+
 # Smoke-test entry point: register a callable that doubles its arg. The
 # Swift side calls `invokeBLECallbackBoolSync(slot="_test_roundtrip", args=[5])`
 # and asserts the bool return is True. Used by `lxma-test://test-ble-callback-roundtrip`

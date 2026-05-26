@@ -30,6 +30,7 @@
 		021 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* MapView.swift */; platformFilter = ios; };
 		022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022 /* Assets.xcassets */; };
 		0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */; };
+		PRC001 /* PythonRNodeCallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRC002 /* PythonRNodeCallbackBridge.swift */; };
 		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
 		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
 		026 /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsRepository.swift */; };
@@ -181,6 +182,7 @@
 		B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		B68384C48BFF8F5294340EDB /* PttButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PttButton.swift; sourceTree = "<group>"; };
 		CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBLECallbackBridge.swift; sourceTree = "<group>"; };
+		PRC002 /* PythonRNodeCallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNodeCallbackBridge.swift; sourceTree = "<group>"; };
 		D001472BC7DFD3CD7BF27F0C /* app */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = app; sourceTree = "<group>"; };
 		D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
 		E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
@@ -396,6 +398,7 @@
 				A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */,
 				11D4DB375C0C7BB62E8A8B23 /* ColumbaPython-Bridging-Header.h */,
 				CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */,
+				PRC002 /* PythonRNodeCallbackBridge.swift */,
 			);
 			name = PythonBridge;
 			path = Sources/PythonBridge;
@@ -994,6 +997,7 @@
 				3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */,
 				7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */,
 				0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */,
+				PRC001 /* PythonRNodeCallbackBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

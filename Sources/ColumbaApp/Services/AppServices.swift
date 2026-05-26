@@ -580,6 +580,11 @@ public final class AppServices {
         // current config) so a later restart with BLE-enabled config finds
         // them without an extra deployment step.
         deployIOSBLEPythonFilesIfPossible(configDir: pyDir)
+        // Likewise deploy the RNode (LoRa) custom interface so RNS can load a
+        // `type = IOSRNodeInterface` section if the config has one. Always
+        // copied — cheap, and a later RNode-enabled restart then needs no extra
+        // deploy step (mirrors the BLE case).
+        deployIOSRNodePythonFilesIfPossible(configDir: pyDir)
 
         // Generate the RNS config from user-saved interface entities. The
         // file lands at `<configDir>/config` where Python's
@@ -618,6 +623,19 @@ public final class AppServices {
             self.pythonBackend = nil
             return
         }
+
+        // Install the Swift→Python RNode callback bridge. Unlike BLE (which has
+        // an explicit startBLEInterface()), an RNode interface is instantiated
+        // by RNS's config loader, whose _RNodeBLEBridge registers callbacks via
+        // rns_bridge as soon as it loads — so the invoker must already be in
+        // place. Cheap to install unconditionally: it only stores a ref; the
+        // CBCentralManager isn't created until Python calls columba_rnode_start.
+        #if canImport(CoreBluetooth)
+        SwiftRNodeBridge.shared.setCallbackInvoker(
+            PythonRNodeCallbackBridge(pythonBridge: backend.pythonBridge)
+        )
+        DiagLog.log("[RNODE] PythonRNodeCallbackBridge installed")
+        #endif
 
         // Route outbound LXMF through Python.
         router.sendHook = { [weak backend] message in
@@ -2307,6 +2325,48 @@ public final class AppServices {
                 DiagLog.log("[BLE_DIAG] Deployed \(name) to \(dst.path)")
             } catch {
                 DiagLog.log("[BLE_DIAG] Failed to copy \(name): \(error)")
+            }
+        }
+    }
+
+    /// Copy `IOSRNodeInterface.py` from `<bundle>/app/rnode/` to
+    /// `<configDir>/interfaces/` so RNS's external-interface loader can `exec()`
+    /// it for a `type = IOSRNodeInterface` config section. Idempotent —
+    /// overwrites each call so build-time updates ship without manual cleanup.
+    /// Called eagerly during `startPythonBackend` (before `backend.start()`),
+    /// regardless of whether the current config has an RNode interface, so a
+    /// later RNode-enabled restart finds the file. Mirror of the BLE deploy.
+    private func deployIOSRNodePythonFilesIfPossible(configDir: URL) {
+        let fm = FileManager.default
+        guard let bundleAppDir = Bundle.main.url(forResource: "app", withExtension: nil) else {
+            DiagLog.log("[RNODE] app/ bundle resource missing — skipping deploy")
+            return
+        }
+        let srcDir = bundleAppDir.appendingPathComponent("rnode", isDirectory: true)
+        guard fm.fileExists(atPath: srcDir.path) else {
+            DiagLog.log("[RNODE] app/rnode/ missing in bundle at \(srcDir.path) — skipping deploy")
+            return
+        }
+
+        let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
+        do {
+            try fm.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
+        } catch {
+            DiagLog.log("[RNODE] failed to create interfaces dir: \(error)")
+            return
+        }
+
+        for name in ["IOSRNodeInterface.py"] {
+            let src = srcDir.appendingPathComponent(name)
+            let dst = interfacesDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: dst.path) {
+                try? fm.removeItem(at: dst)
+            }
+            do {
+                try fm.copyItem(at: src, to: dst)
+                DiagLog.log("[RNODE] Deployed \(name) to \(dst.path)")
+            } catch {
+                DiagLog.log("[RNODE] Failed to copy \(name): \(error)")
             }
         }
     }

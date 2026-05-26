@@ -120,12 +120,30 @@ enum PythonConfigWriter {
             // OS auto-manages duty cycle). Surfaced for parity with
             // Android's BleConnections settings.
             lines.append("    ble_power_preset = balanced")
-        case .rnode, .multipeer:
-            // RNode / Multipeer interfaces are owned by Swift (KISS-over-BLE,
-            // MultipeerConnectivity) — Python sees them through a custom
-            // RNS.Interface subclass that hasn't landed yet. Emit a placeholder
-            // comment so the file is still valid for the rest of the config;
-            // the Swift-side driver wakes the radio independently.
+        case .rnode(let cfg):
+            // Loaded from <configDir>/interfaces/IOSRNodeInterface.py (copied at
+            // startup by deployIOSRNodePythonFilesIfPossible). That Python
+            // interface runs the KISS / RNode protocol and bridges serial I/O to
+            // Swift's SwiftRNodeBridge (CoreBluetooth Nordic-UART client) via the
+            // ctypes-bound `columba_rnode_*` C-ABI shims (Sources/SwiftBLEBridge/
+            // RNodeNativeBindings.swift). Radio keys are written WITHOUT
+            // underscores (txpower / spreadingfactor / codingrate) to match what
+            // the ported interface parses and upstream RNS's RNodeInterface
+            // convention. iOS is BLE-only — no usb_* / port keys.
+            lines.append("    type = IOSRNodeInterface")
+            lines.append("    target_device_name = \(cfg.deviceName)")
+            lines.append("    frequency = \(cfg.frequency)")
+            lines.append("    bandwidth = \(cfg.bandwidth)")
+            lines.append("    txpower = \(cfg.txPower)")
+            lines.append("    spreadingfactor = \(cfg.spreadingFactor)")
+            lines.append("    codingrate = \(cfg.codingRate)")
+            if let st = cfg.stAlock { lines.append("    st_alock = \(st)") }
+            if let lt = cfg.ltAlock { lines.append("    lt_alock = \(lt)") }
+        case .multipeer:
+            // MultipeerConnectivity bridge not yet wired (separate effort, its
+            // own branch — see rnode_interface_port_plan.md). Emit a disabled
+            // placeholder so the rest of the config stays valid; the UI still
+            // gates this type out (InterfaceTypeSelector).
             lines.append("    type = TCPClientInterface  # placeholder; \(iface.type) bridged from Swift not yet wired")
             lines.append("    target_host = 127.0.0.1")
             lines.append("    target_port = 65535")
