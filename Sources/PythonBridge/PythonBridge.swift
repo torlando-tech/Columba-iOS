@@ -65,7 +65,7 @@ public final class PythonBridge: @unchecked Sendable {
     }
 
     public enum Event: Equatable, Sendable {
-        case announce(destHash: String, displayName: String, aspect: String, publicKeysHex: String, interfaceName: String, hops: Int, t: Date)
+        case announce(destHash: String, appDataHex: String, aspect: String, publicKeysHex: String, interfaceName: String, hops: Int, t: Date)
         case inbound(sourceHash: String, content: String, title: String, t: Date)
         case state(String, t: Date)
 
@@ -700,12 +700,12 @@ public final class PythonBridge: @unchecked Sendable {
             switch kind {
             case "announce":
                 let h = pyStringFromDict(item, key: "dest_hash") ?? ""
-                let name = pyStringFromDict(item, key: "display_name") ?? ""
+                let appData = pyStringFromDict(item, key: "app_data") ?? ""
                 let aspect = pyStringFromDict(item, key: "aspect") ?? ""
                 let pubKeys = pyStringFromDict(item, key: "public_keys") ?? ""
                 let ifaceName = pyStringFromDict(item, key: "interface_name") ?? ""
                 let hops = pyIntFromDict(item, key: "hops") ?? 0
-                out.append(.announce(destHash: h, displayName: name, aspect: aspect, publicKeysHex: pubKeys, interfaceName: ifaceName, hops: hops, t: t))
+                out.append(.announce(destHash: h, appDataHex: appData, aspect: aspect, publicKeysHex: pubKeys, interfaceName: ifaceName, hops: hops, t: t))
             case "inbound":
                 let h = pyStringFromDict(item, key: "source_hash") ?? ""
                 let c = pyStringFromDict(item, key: "content") ?? ""

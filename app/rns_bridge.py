@@ -108,7 +108,10 @@ class _AspectAnnounceHandler:
             print(f"[announce-handler] aspect={self._aspect} dest={destination_hash.hex()[:16]}", flush=True)
         except Exception:
             pass
-        display_name = _decode_announce_app_data(app_data)
+        # Pass the raw announce app_data straight up; Swift decodes the
+        # display name (aspect-specific layout knowledge lives there, in
+        # AppDataParser / PropagationNodeInfo, not in this thin bridge).
+        app_data_hex = app_data.hex() if app_data else ""
         public_keys_hex = ""
         try:
             pub = getattr(announced_identity, "get_public_key", None)
@@ -138,7 +141,7 @@ class _AspectAnnounceHandler:
         _put(
             "announce",
             dest_hash=destination_hash.hex(),
-            display_name=display_name,
+            app_data=app_data_hex,
             aspect=self._aspect,
             public_keys=public_keys_hex,
             interface_name=interface_name,
@@ -154,28 +157,6 @@ _TRACKED_ASPECTS = (
     "nomadnetwork.node",
     "lxst.telephony",
 )
-
-
-def _decode_announce_app_data(app_data: bytes | None) -> str:
-    """LXMF announce app_data is msgpack-packed [display_name_bytes, stamp_cost].
-    Older clients may send raw UTF-8 bytes — fall back to that on decode failure.
-    See LXMF.LXMRouter.get_announce_app_data."""
-    if not app_data:
-        return ""
-    try:
-        from RNS.vendor import umsgpack
-        decoded = umsgpack.unpackb(app_data)
-        if isinstance(decoded, (list, tuple)) and decoded and decoded[0] is not None:
-            name = decoded[0]
-            if isinstance(name, bytes):
-                return name.decode("utf-8", errors="replace")
-            return str(name)
-    except Exception:
-        pass
-    try:
-        return app_data.decode("utf-8", errors="replace")
-    except Exception:
-        return ""
 
 
 def _delivery_callback(message: "LXMF.LXMessage") -> None:

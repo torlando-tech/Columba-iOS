@@ -2155,8 +2155,65 @@ public struct PropagationNodeInfo: Identifiable, Equatable, Sendable, Codable {
         self.enabled = enabled
     }
 
-    public static func parse(_ data: Data) -> PropagationNodeInfo? { nil }
-    public static func parse(from data: Data) -> PropagationNodeInfo? { nil }
+    public static func parse(_ data: Data) -> PropagationNodeInfo? { parse(from: data) }
+
+    /// Parse an `lxmf.propagation` announce's app_data. Mirrors canonical
+    /// Python `LXMF.LXMRouter.get_propagation_node_app_data`:
+    ///   msgpack [legacy_bool, timebase, node_state, per_transfer_limit,
+    ///            per_sync_limit, stamp_cost, metadata_map]
+    /// `node_state` (index 2) is the enabled flag; the optional display name is
+    /// in the metadata map (index 6) at key PN_META_NAME. `destinationHash` /
+    /// `lastSeen` / `hopCount` aren't in app_data — the caller fills those from
+    /// the PathEntry. Returns nil if the data isn't a propagation announce.
+    public static func parse(from data: Data) -> PropagationNodeInfo? {
+        guard !data.isEmpty,
+              let value = try? unpackMsgPack(data),
+              case .array(let arr) = value,
+              arr.count >= 3 else { return nil }
+
+        let enabled = arr[2].boolValue ?? false
+        let perTransfer = arr.count > 3 ? (arr[3].intValue ?? 0) : 0
+        let perSync = arr.count > 4 ? (arr[4].intValue ?? 0) : 0
+        // stamp_cost (index 5) is itself a list [cost, flexibility, peering] in
+        // current LXMF; take the first element. Tolerate a bare int too.
+        var stampCost = 0
+        if arr.count > 5 {
+            if case .array(let sc) = arr[5], let first = sc.first { stampCost = first.intValue ?? 0 }
+            else { stampCost = arr[5].intValue ?? 0 }
+        }
+        var name: String?
+        if arr.count > 6, case .map(let metadata) = arr[6] {
+            let v = metadata[.uint(AppDataParser.pnMetaName)] ?? metadata[.int(Int64(AppDataParser.pnMetaName))]
+            switch v {
+            case .string(let s): name = s
+            case .binary(let d): name = String(data: d, encoding: .utf8)
+            default: break
+            }
+        }
+
+        return PropagationNodeInfo(
+            displayName: name,
+            perTransferLimit: perTransfer,
+            perSyncLimit: perSync,
+            stampCost: stampCost,
+            enabled: enabled
+        )
+    }
+}
+
+private extension MessagePackValue {
+    var boolValue: Bool? {
+        if case .bool(let b) = self { return b }
+        return nil
+    }
+    /// Coerce an int-ish msgpack value (fixint can decode as .uint or .int).
+    var intValue: Int? {
+        switch self {
+        case .uint(let u): return Int(u)
+        case .int(let i): return Int(i)
+        default: return nil
+        }
+    }
 }
 
 public enum PropagationState: String, Equatable, Sendable {

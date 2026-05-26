@@ -1646,9 +1646,16 @@ public final class AppServices {
 
     private func handlePythonEvent(_ event: PythonBridge.Event) async {
         switch event {
-        case .announce(let destHash, let displayName, let aspect, let publicKeysHex, let interfaceName, let hops, let t):
-            DiagLog.log("[PY] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\" hops=\(hops)")
+        case .announce(let destHash, let appDataHex, let aspect, let publicKeysHex, let interfaceName, let hops, let t):
             guard let data = Data(hexString: destHash) else { return }
+            // The bridge forwards raw app_data; decode the display name here
+            // (aspect-specific layout knowledge lives in AppDataParser, not the
+            // bridge). `appData` is also stashed on the PathEntry so the
+            // propagation-node subsystem (PropagationNodeManager / relay badge /
+            // NodeDetailsView) can parse limits + stamp cost from it.
+            let appData = Data(hexString: appDataHex) ?? Data()
+            let displayName = AppDataParser.displayName(from: appData, aspect: aspect)
+            DiagLog.log("[PY] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\" hops=\(hops)")
 
             // Insert the announce into the Compat PathTable so the Contacts
             // tab's networkAnnounces list picks it up via the pathUpdates
@@ -1668,7 +1675,7 @@ public final class AppServices {
                     lastSeen: t,
                     publicKeys: publicKeys,
                     interfaceId: ifaceId,
-                    appData: nil,
+                    appData: appData.isEmpty ? nil : appData,
                     expires: t.addingTimeInterval(7 * 86400),
                     timestamp: t,
                     detectedAspect: aspect,
