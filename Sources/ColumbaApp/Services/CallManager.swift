@@ -195,7 +195,6 @@ public final class CallManager {
         await phone.setEndedCallback { [weak self] _, reason in
             await MainActor.run {
                 guard let self else { return }
-                self.stopAudio()
                 self.stopDurationTimer()
                 let reasonText: String
                 switch reason {
@@ -213,6 +212,19 @@ public final class CallManager {
                     self.callState = .ended(reasonText)
                 }
                 self.logger.error("[CALL] Ended: \(reasonText, privacy: .public)")
+
+                // Busy: play the caller-side busy tone before tearing down,
+                // mirroring Python LXST __play_busy_tone. playBusyTone handles
+                // the rest of teardown (stopAudio + CallKit ended + reset) once
+                // the tone finishes; returns false if it couldn't bring up
+                // output (then fall through to immediate teardown).
+                #if os(iOS)
+                if reason == .busy, self.playBusyTone() {
+                    return
+                }
+                #endif
+
+                self.stopAudio()
 
                 // Report call ended to CallKit
                 #if os(iOS)
@@ -677,6 +689,73 @@ public final class CallManager {
         audioManager = nil
         logger.info("Audio pipeline stopped")
     }
+
+    #if os(iOS)
+    /// LXST busy-tone duration + frequency (mirrors Python LXST: 4.25 s of
+    /// 0.25 s-on / 0.25 s-off at the 382 Hz dial-tone frequency).
+    private static let busyToneSeconds: Double = 4.25
+
+    /// Play the caller-side busy tone, then finish teardown. Returns false if
+    /// audio output couldn't be brought up (caller falls back to immediate
+    /// teardown). Only meaningful for an outgoing call (busy is received by the
+    /// caller); needs the CallKit audio session active — which it normally is
+    /// by the time an outbound link is up.
+    ///
+    /// Mirrors LXST `__play_busy_tone`, adapted to our split where audio output
+    /// lives in AudioManager. NOTE: `reportCallEnded` deactivates the audio
+    /// session, so it is deliberately deferred until after the tone.
+    @discardableResult
+    private func playBusyTone() -> Bool {
+        guard audioSessionActivatedByCallKit else { return false }
+
+        // Bring up output if the call never reached the established/startAudio
+        // path (the usual case for a busy rejection).
+        if audioManager == nil {
+            let manager = AudioManager(profile: activeProfile)
+            self.audioManager = manager
+            manager.start(speakerEnabled: isSpeakerOn)
+        }
+        guard let manager = audioManager else { return false }
+
+        let samples = Self.busyTonePCM(sampleRate: manager.sampleRate, channels: manager.channels)
+        manager.playDecodedAudio(samples)
+        logger.error("[CALL] Playing busy tone (\(Self.busyToneSeconds, privacy: .public)s)")
+
+        // Finish teardown once the tone has played out.
+        endedDismissTask?.cancel()
+        endedDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.busyToneSeconds + 0.4))
+            guard !Task.isCancelled, let self else { return }
+            self.stopAudio()
+            if let uuid = self.currentCallUUID {
+                self.callKitManager?.reportCallEnded(uuid: uuid, reason: .failed)
+            }
+            self.resetState()
+        }
+        return true
+    }
+
+    /// Generate the busy-tone PCM: a 382 Hz sine gated 0.25 s on / 0.25 s off
+    /// for `busyToneSeconds`, interleaved across `channels` at `sampleRate`
+    /// (matching what AudioManager.playDecodedAudio expects).
+    private static func busyTonePCM(sampleRate: Double, channels: Int) -> [Float] {
+        let frequency = TelephonyConstants.dialToneFrequency
+        let frames = Int(sampleRate * busyToneSeconds)
+        let ch = max(channels, 1)
+        let window = 0.5          // 0.5 s beep cycle
+        let onThreshold = 0.25    // on for the second half of each cycle
+        let gain: Float = 0.2
+        let twoPiF = 2.0 * Double.pi * frequency
+        var out = [Float](repeating: 0, count: frames * ch)
+        for f in 0..<frames {
+            let t = Double(f) / sampleRate
+            let inWindow = t.truncatingRemainder(dividingBy: window)
+            let sample: Float = inWindow > onThreshold ? gain * Float(sin(twoPiF * t)) : 0
+            for c in 0..<ch { out[f * ch + c] = sample }
+        }
+        return out
+    }
+    #endif
 
     /// Feed decoded PCM audio from the remote peer for playback.
     ///
