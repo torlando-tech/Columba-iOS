@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import SQLite3
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RNSAPI v1 compatibility layer — types that mirror the public API surface
@@ -827,12 +828,21 @@ public protocol LXMRouterDelegate: AnyObject {
     func router(_ router: LXMRouter, didReceiveMessage message: LXMessage)
 }
 
-// MARK: - LXMFDatabase (stubs mirror the AI Swift surface exactly)
+// MARK: - LXMFDatabase (SQLite-backed; in-memory dicts are a write-through cache)
 
-/// Minimum-viable in-memory persistence for LXMF messages and conversations.
-/// Real SQLite-backed implementation lives in Phase 2; this is enough for the
-/// smoke test (and the Python backend's first-light end-to-end run) — chats
-/// list and message thread render from these in-memory maps.
+/// SQLite-backed persistence for LXMF conversations and messages.
+///
+/// Architecture: the in-memory dicts below are a **write-through cache** over a
+/// SQLite database at `init(path:)`. On launch the whole store is loaded from
+/// disk into the dicts (`loadAll`); all reads serve from the dicts (preserving
+/// the exact ordering/paging semantics the UI relies on); every mutation writes
+/// the affected row back to SQLite so it survives app restarts. Records are
+/// stored as Codable-JSON blobs with a few indexed columns for querying, so the
+/// schema doesn't churn when record fields change.
+///
+/// (Replaces the previous pure in-memory stub — the "Phase 2: real SQLite" TODO.
+/// Loads everything into RAM on launch, which is fine at current volumes; a
+/// future optimisation is lazy/paged queries straight off SQLite.)
 public final class LXMFDatabase: @unchecked Sendable {
     private let lock = NSLock()
     private var conversations: [Data: ConversationRecord] = [:]
@@ -840,7 +850,157 @@ public final class LXMFDatabase: @unchecked Sendable {
     private var messagesById: [Data: MessageRecord] = [:]
     private var peerIcons: [Data: IconAppearance] = [:]
 
-    public init(path: String) {}
+    /// Open SQLite handle, or nil if the database couldn't be opened (in which
+    /// case the store degrades to in-memory-only for the session rather than
+    /// crashing).
+    private var db: OpaquePointer?
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    // SQLite wants to know whether a bound buffer is transient (copy now) or
+    // static (kept). We always pass transient so it copies during bind.
+    private static let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+    public init(path: String) {
+        var handle: OpaquePointer?
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        if sqlite3_open_v2(path, &handle, flags, nil) == SQLITE_OK {
+            self.db = handle
+            createSchema()
+            loadAll()
+        } else {
+            if let handle { sqlite3_close(handle) }
+            self.db = nil
+            // Degrade gracefully: dicts stay empty, store works in-memory only.
+        }
+    }
+
+    deinit {
+        if let db { sqlite3_close(db) }
+    }
+
+    // MARK: SQLite plumbing
+
+    private func createSchema() {
+        let ddl = """
+        CREATE TABLE IF NOT EXISTS conversations (
+            hash BLOB PRIMARY KEY,
+            last_message_at REAL,
+            data BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+            id BLOB PRIMARY KEY,
+            conversation_hash BLOB NOT NULL,
+            timestamp REAL NOT NULL,
+            data BLOB NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_hash);
+        CREATE TABLE IF NOT EXISTS peer_icons (
+            hash BLOB PRIMARY KEY,
+            data BLOB NOT NULL
+        );
+        """
+        sqlite3_exec(db, ddl, nil, nil, nil)
+    }
+
+    /// Hydrate the in-memory caches from disk. Called once at init.
+    private func loadAll() {
+        // Conversations
+        forEachRow("SELECT data FROM conversations") { stmt in
+            if let conv = try? self.decoder.decode(ConversationRecord.self, from: self.columnBlob(stmt, 0)) {
+                self.conversations[conv.hash] = conv
+            }
+        }
+        // Messages
+        forEachRow("SELECT data FROM messages") { stmt in
+            if let rec = try? self.decoder.decode(MessageRecord.self, from: self.columnBlob(stmt, 0)) {
+                self.messagesById[rec.id] = rec
+                self.messagesByConversation[rec.conversationHash, default: []].append(rec)
+            }
+        }
+        // Peer icons
+        forEachRow("SELECT hash, data FROM peer_icons") { stmt in
+            let hash = self.columnBlob(stmt, 0)
+            if let icon = try? self.decoder.decode(IconAppearance.self, from: self.columnBlob(stmt, 1)) {
+                self.peerIcons[hash] = icon
+            }
+        }
+    }
+
+    /// Prepare `sql`, step every row, invoking `body` per row. Caller binds
+    /// nothing (used for parameterless SELECTs at load).
+    private func forEachRow(_ sql: String, _ body: (OpaquePointer?) -> Void) {
+        guard let db else { return }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW { body(stmt) }
+    }
+
+    private func bindBlob(_ stmt: OpaquePointer?, _ idx: Int32, _ data: Data) {
+        if data.isEmpty {
+            sqlite3_bind_zeroblob(stmt, idx, 0)
+        } else {
+            data.withUnsafeBytes { raw in
+                _ = sqlite3_bind_blob(stmt, idx, raw.baseAddress, Int32(data.count), Self.SQLITE_TRANSIENT)
+            }
+        }
+    }
+
+    private func columnBlob(_ stmt: OpaquePointer?, _ idx: Int32) -> Data {
+        guard let p = sqlite3_column_blob(stmt, idx) else { return Data() }
+        let n = sqlite3_column_bytes(stmt, idx)
+        return Data(bytes: p, count: Int(n))
+    }
+
+    // MARK: Persistence helpers (assume `lock` is held by the caller)
+
+    private func persistConversation(_ conv: ConversationRecord) {
+        guard let db, let data = try? encoder.encode(conv) else { return }
+        var stmt: OpaquePointer?
+        let sql = "INSERT OR REPLACE INTO conversations (hash, last_message_at, data) VALUES (?, ?, ?)"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        bindBlob(stmt, 1, conv.hash)
+        if let at = conv.lastMessageAt { sqlite3_bind_double(stmt, 2, at.timeIntervalSince1970) }
+        else { sqlite3_bind_null(stmt, 2) }
+        bindBlob(stmt, 3, data)
+        sqlite3_step(stmt)
+    }
+
+    private func persistMessage(_ rec: MessageRecord) {
+        guard let db, let data = try? encoder.encode(rec) else { return }
+        var stmt: OpaquePointer?
+        let sql = "INSERT OR REPLACE INTO messages (id, conversation_hash, timestamp, data) VALUES (?, ?, ?, ?)"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        bindBlob(stmt, 1, rec.id)
+        bindBlob(stmt, 2, rec.conversationHash)
+        sqlite3_bind_double(stmt, 3, rec.timestamp)
+        bindBlob(stmt, 4, data)
+        sqlite3_step(stmt)
+    }
+
+    private func persistPeerIcon(_ hash: Data, _ icon: IconAppearance) {
+        guard let db, let data = try? encoder.encode(icon) else { return }
+        var stmt: OpaquePointer?
+        let sql = "INSERT OR REPLACE INTO peer_icons (hash, data) VALUES (?, ?)"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        bindBlob(stmt, 1, hash)
+        bindBlob(stmt, 2, data)
+        sqlite3_step(stmt)
+    }
+
+    /// Run a parameterless DELETE-style statement with a single blob param.
+    private func execWithBlob(_ sql: String, _ blob: Data) {
+        guard let db else { return }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        bindBlob(stmt, 1, blob)
+        sqlite3_step(stmt)
+    }
 
     private func keyFor(_ message: LXMessage) -> Data {
         // Inbound: source is the peer. Outbound: destination is the peer.
@@ -880,7 +1040,17 @@ public final class LXMFDatabase: @unchecked Sendable {
             method: message.method.rawValue
         )
         messagesById[message.hash] = record
-        messagesByConversation[convHash, default: []].append(record)
+        // Replace in-place if this hash was already cached (re-save), else
+        // append — mirrors the DB's INSERT OR REPLACE so the cache can't
+        // accumulate duplicate rows for the same message.
+        if let idx = messagesByConversation[convHash]?.firstIndex(where: { $0.id == message.hash }) {
+            messagesByConversation[convHash]?[idx] = record
+        } else {
+            messagesByConversation[convHash, default: []].append(record)
+        }
+
+        if let conv = conversations[convHash] { persistConversation(conv) }
+        persistMessage(record)
     }
 
     public func getMessage(id: Data) throws -> LXMessage? { nil }
@@ -897,12 +1067,14 @@ public final class LXMFDatabase: @unchecked Sendable {
             if let idx = messagesByConversation[rec.conversationHash]?.firstIndex(where: { $0.id == id }) {
                 messagesByConversation[rec.conversationHash]?[idx] = rec
             }
+            persistMessage(rec)
         }
     }
     public func deleteMessage(id messageId: Data) throws {
         lock.lock(); defer { lock.unlock() }
         if let rec = messagesById.removeValue(forKey: messageId) {
             messagesByConversation[rec.conversationHash]?.removeAll { $0.id == messageId }
+            execWithBlob("DELETE FROM messages WHERE id = ?", messageId)
         }
     }
     public func getMessageRecord(id: Data) throws -> MessageRecord? {
@@ -955,12 +1127,14 @@ public final class LXMFDatabase: @unchecked Sendable {
                 unreadCount: 0
             )
         }
+        if let conv = conversations[hash] { persistConversation(conv) }
     }
     public func updateDisplayName(hash: Data, displayName: String?) throws {
         lock.lock(); defer { lock.unlock() }
         if var conv = conversations[hash] {
             conv.displayName = displayName ?? ""
             conversations[hash] = conv
+            persistConversation(conv)
         }
     }
     public func setFavorite(hash: Data, isFavorite: Bool) throws {
@@ -968,6 +1142,7 @@ public final class LXMFDatabase: @unchecked Sendable {
         if var conv = conversations[hash] {
             conv.isFavorite = isFavorite ? 1 : 0
             conversations[hash] = conv
+            persistConversation(conv)
         }
     }
     public func setPinned(hash: Data, isPinned: Bool) throws {
@@ -975,6 +1150,7 @@ public final class LXMFDatabase: @unchecked Sendable {
         if var conv = conversations[hash] {
             conv.isPinned = isPinned ? 1 : 0
             conversations[hash] = conv
+            persistConversation(conv)
         }
     }
     public func setUnreadCount(hash: Data, count: Int) throws {
@@ -982,6 +1158,7 @@ public final class LXMFDatabase: @unchecked Sendable {
         if var conv = conversations[hash] {
             conv.unreadCount = count
             conversations[hash] = conv
+            persistConversation(conv)
         }
     }
     public func markConversationRead(hash: Data) throws { try setUnreadCount(hash: hash, count: 0) }
@@ -990,6 +1167,8 @@ public final class LXMFDatabase: @unchecked Sendable {
         conversations.removeValue(forKey: hash)
         messagesByConversation.removeValue(forKey: hash)
         messagesById = messagesById.filter { $0.value.conversationHash != hash }
+        execWithBlob("DELETE FROM conversations WHERE hash = ?", hash)
+        execWithBlob("DELETE FROM messages WHERE conversation_hash = ?", hash)
     }
     public func updateConversation(for message: LXMessage) throws {
         // saveMessage already updates the conversation row; this is a no-op for now.
@@ -997,7 +1176,9 @@ public final class LXMFDatabase: @unchecked Sendable {
 
     public func updatePeerIcon(_ hash: Data, iconName: String, fgColor: String, bgColor: String) throws {
         lock.lock(); defer { lock.unlock() }
-        peerIcons[hash] = IconAppearance(iconName: iconName, fgColor: fgColor, bgColor: bgColor)
+        let icon = IconAppearance(iconName: iconName, fgColor: fgColor, bgColor: bgColor)
+        peerIcons[hash] = icon
+        persistPeerIcon(hash, icon)
     }
     public func getPeerIcon(_ hash: Data) throws -> IconAppearance? {
         lock.lock(); defer { lock.unlock() }
@@ -1012,6 +1193,10 @@ public final class LXMFDatabase: @unchecked Sendable {
         if var rec = messagesById[messageId] {
             rec.replyToId = replyToId
             messagesById[messageId] = rec
+            if let idx = messagesByConversation[rec.conversationHash]?.firstIndex(where: { $0.id == messageId }) {
+                messagesByConversation[rec.conversationHash]?[idx] = rec
+            }
+            persistMessage(rec)
         }
     }
     public func updateReactions(messageId: Data, reactionsJson: String) throws {
@@ -1019,6 +1204,10 @@ public final class LXMFDatabase: @unchecked Sendable {
         if var rec = messagesById[messageId] {
             rec.reactionsJson = reactionsJson
             messagesById[messageId] = rec
+            if let idx = messagesByConversation[rec.conversationHash]?.firstIndex(where: { $0.id == messageId }) {
+                messagesByConversation[rec.conversationHash]?[idx] = rec
+            }
+            persistMessage(rec)
         }
     }
     public func getReactionsJson(messageId: Data) throws -> String? {
@@ -1423,8 +1612,76 @@ public final class PathTable: @unchecked Sendable {
     private var entries: [Data: PathEntry] = [:]
     private var continuations: [UUID: AsyncStream<PathEntry>.Continuation] = [:]
 
+    // SQLite backing (write-through cache, same pattern as LXMFDatabase). The
+    // dict above stays the live read/notify layer; the DB persists path entries
+    // (heard announces) so the Network tab survives an app restart instead of
+    // coming up empty. `init()` (no path) stays pure in-memory.
+    private var db: OpaquePointer?
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+    private static let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
     public init() {}
-    public init(databasePath: String) throws {}
+
+    public init(databasePath: String) throws {
+        var handle: OpaquePointer?
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        if sqlite3_open_v2(databasePath, &handle, flags, nil) == SQLITE_OK {
+            self.db = handle
+            sqlite3_exec(handle, "CREATE TABLE IF NOT EXISTS path_entries (hash BLOB PRIMARY KEY, data BLOB NOT NULL);", nil, nil, nil)
+            loadAll()
+        } else {
+            if let handle { sqlite3_close(handle) }
+            self.db = nil
+        }
+    }
+
+    deinit { if let db { sqlite3_close(db) } }
+
+    private func loadAll() {
+        guard let db else { return }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT data FROM path_entries", -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let p = sqlite3_column_blob(stmt, 0) else { continue }
+            let n = sqlite3_column_bytes(stmt, 0)
+            let data = Data(bytes: p, count: Int(n))
+            if let entry = try? decoder.decode(PathEntry.self, from: data) {
+                entries[entry.destinationHash] = entry
+            }
+        }
+    }
+
+    /// Persist one entry. Caller must hold `lock`.
+    private func persist(_ entry: PathEntry) {
+        guard let db, let data = try? encoder.encode(entry) else { return }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO path_entries (hash, data) VALUES (?, ?)", -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        bindBlob(stmt, 1, entry.destinationHash)
+        bindBlob(stmt, 2, data)
+        sqlite3_step(stmt)
+    }
+
+    private func bindBlob(_ stmt: OpaquePointer?, _ idx: Int32, _ data: Data) {
+        if data.isEmpty {
+            sqlite3_bind_zeroblob(stmt, idx, 0)
+        } else {
+            data.withUnsafeBytes { raw in
+                _ = sqlite3_bind_blob(stmt, idx, raw.baseAddress, Int32(data.count), Self.SQLITE_TRANSIENT)
+            }
+        }
+    }
+
+    private func execWithBlob(_ sql: String, _ blob: Data) {
+        guard let db else { return }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        bindBlob(stmt, 1, blob)
+        sqlite3_step(stmt)
+    }
 
     public func lookup(destinationHash: Data) async -> PathEntry? {
         lock.lock(); defer { lock.unlock() }
@@ -1441,10 +1698,12 @@ public final class PathTable: @unchecked Sendable {
     public func remove(_ destinationHash: Data) async {
         lock.lock(); defer { lock.unlock() }
         entries.removeValue(forKey: destinationHash)
+        execWithBlob("DELETE FROM path_entries WHERE hash = ?", destinationHash)
     }
     public func removeAll() async {
         lock.lock(); defer { lock.unlock() }
         entries.removeAll()
+        sqlite3_exec(db, "DELETE FROM path_entries", nil, nil, nil)
     }
 
     /// Insert or update a path entry. Keyed by `destinationHash`; replacing
@@ -1453,6 +1712,7 @@ public final class PathTable: @unchecked Sendable {
     public func insert(_ entry: PathEntry) async {
         lock.lock()
         entries[entry.destinationHash] = entry
+        persist(entry)
         let continuationsCopy = continuations.values
         lock.unlock()
         for continuation in continuationsCopy {
@@ -1484,7 +1744,7 @@ public final class PathTable: @unchecked Sendable {
     }
 }
 
-public struct PathEntry: Identifiable, Equatable, Sendable {
+public struct PathEntry: Identifiable, Equatable, Sendable, Codable {
     public let destinationHash: Data
     public var displayName: String
     public var nextHop: Data

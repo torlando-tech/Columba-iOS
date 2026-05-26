@@ -33,7 +33,9 @@ let package = Package(
         // ──────── RNSAPI: pure-interface protocol surface ────────
         .target(
             name: "RNSAPI",
-            path: "Sources/RNSAPI"
+            path: "Sources/RNSAPI",
+            // libsqlite3 (system) backs LXMFDatabase's on-disk persistence.
+            linkerSettings: [.linkedLibrary("sqlite3")]
         ),
 
         // ──────── COpus: libopus 1.5.2, compiled from source ────────
