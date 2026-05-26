@@ -109,8 +109,31 @@ public final class CallManager {
         self.pathTable = pathTable
         self.transport = transport
         self.database = database
-        let phone = await Telephone(identity: identity, transport: transport)
+        // Build the LXST network transport over the Compat RNS layer, then the
+        // transport-agnostic Telephone on top of it. The transport owns
+        // identity, telephony-destination registration, link lifecycle,
+        // encryption, packetization, identify, and incoming-link detection.
+        let networkTransport = PythonNetworkTransport(identity: identity, transport: transport, pathTable: pathTable)
+        await networkTransport.start()
+        let phone = await Telephone.make(transport: networkTransport)
         self.telephone = phone
+
+        // Cache the telephony destination for announcing (peers need this hash
+        // to call us). The transport registers it internally; this mirror is
+        // just for display / the announce path.
+        self.telephonyDestination = Destination(
+            identity: identity,
+            appName: "lxst",
+            aspects: ["telephony"],
+            type: .single,
+            direction: .in
+        )
+
+        // Prepare the CallKit UUID as soon as an inbound link establishes
+        // (pre-identify), mirroring the old handleIncomingLink → prepare timing.
+        await networkTransport.setIncomingCallStartedHandler { [weak self] in
+            await MainActor.run { self?.prepareForIncomingCall() }
+        }
 
         // Wire diagnostic logging
         await phone.setDiagnostic { msg in DiagLog.log(msg) }
@@ -136,37 +159,18 @@ public final class CallManager {
             }
         }
 
-        // Register destination link callback with transport so incoming links
-        // to the LXST telephony destination are routed to our Telephone actor.
-        // Without this, the transport accepts LINKREQUESTs and establishes links
-        // but never notifies the Telephone about them.
-        let telephonyDest = await phone.destination
-        self.telephonyDestination = telephonyDest
-        let telephonyDestHash = telephonyDest.hash
-        let hexPrefix = telephonyDestHash.prefix(8).map { String(format: "%02x", $0) }.joined()
-        logger.error("[CALL] Registering LXST link callback for dest \(hexPrefix, privacy: .public)")
+        // Incoming-link detection now lives in PythonNetworkTransport, which
+        // registers the telephony destination and routes an established inbound
+        // link to Telephone (via the NetworkTransport seam) + to CallManager
+        // (via the incoming-call-started hook wired above).
 
-        await transport.registerDestinationLinkCallback(for: telephonyDestHash) { [weak self] (link: Link) async in
-            guard let self else { return }
-            // This callback fires BEFORE the link is fully established (pre-LRRTT).
-            // Only configure the link here — do NOT send data (no encryption keys yet).
-            // Set the link established callback to handle the incoming call once
-            // the link is active and we can safely send AVAILABLE/RINGING signals.
-            await link.setLinkEstablishedCallback { [weak self] (establishedLink: Link) async in
-                guard let self else { return }
-                await MainActor.run {
-                    self.handleIncomingLink(establishedLink)
-                }
-            }
-        }
-
-        await phone.setRingingCallback { [weak self] remoteIdentity in
+        await phone.setRingingCallback { [weak self] remoteHash in
             await MainActor.run {
-                self?.handleCallerIdentified(remoteIdentity)
+                self?.handleCallerIdentified(remoteHash)
             }
         }
 
-        await phone.setEstablishedCallback { [weak self] remoteIdentity in
+        await phone.setEstablishedCallback { [weak self] remoteHash in
             await MainActor.run {
                 guard let self else { return }
                 DiagLog.log("[CALL] establishedCallback fired, isIncoming=\(self.isIncoming), profile=\(self.activeProfile.displayName)")
@@ -174,7 +178,7 @@ public final class CallManager {
                 self.startDurationTimer()
                 self.startAudio()
                 DiagLog.log("[CALL] startAudio() done, audioManager=\(self.audioManager != nil)")
-                self.logger.error("[CALL] Established with: \(remoteIdentity.hexHash, privacy: .public)")
+                self.logger.error("[CALL] Established with: \(remoteHash.toHex(), privacy: .public)")
 
                 // Report call connected to CallKit (outgoing calls ONLY).
                 // For incoming calls, CallKit already considers the call connected
@@ -188,7 +192,7 @@ public final class CallManager {
             }
         }
 
-        await phone.setEndedCallback { [weak self] remoteIdentity, reason in
+        await phone.setEndedCallback { [weak self] _, reason in
             await MainActor.run {
                 guard let self else { return }
                 self.stopAudio()
@@ -269,25 +273,12 @@ public final class CallManager {
 
         Task {
             do {
-                // We need the remote identity to call. Look it up from the path table
-                // by resolving the destination hash to a known identity.
+                // The transport resolves the delivery hash → identity →
+                // telephony destination and establishes the link; if the peer
+                // isn't reachable, call() throws and we surface "Call Failed".
                 let destHex = destinationHash.map { String(format: "%02x", $0) }.joined()
-                self.logger.error("[CALL] resolveIdentity for dest \(destHex, privacy: .public)")
-                guard let remoteIdentity = await resolveIdentity(for: destinationHash) else {
-                    self.logger.error("[CALL] resolveIdentity FAILED — peer not in path table")
-                    await MainActor.run {
-                        self.callState = .ended("Peer not found")
-                        self.endedDismissTask?.cancel()
-                        self.endedDismissTask = Task { @MainActor [weak self] in
-                            try? await Task.sleep(for: .seconds(1.5))
-                            guard !Task.isCancelled else { return }
-                            self?.resetState()
-                        }
-                    }
-                    return
-                }
-                self.logger.error("[CALL] resolveIdentity OK, calling Telephone.call()")
-                try await telephone.call(remoteIdentity: remoteIdentity, profile: profile)
+                self.logger.error("[CALL] calling Telephone.call() for dest \(destHex, privacy: .public)")
+                try await telephone.call(destinationHash: destinationHash, profile: profile)
             } catch {
                 await MainActor.run {
                     self.callState = .ended("Call Failed")
@@ -447,18 +438,10 @@ public final class CallManager {
     /// identification completes (see `handleCallerIdentified`), so
     /// scanners / probes / aborted dials that open a link without
     /// identifying don't surface as phantom "Unknown" calls.
-    func handleIncomingLink(_ link: Link) {
-        guard let telephone else {
-            DiagLog.log("[CALL] handleIncomingLink: telephone is nil!")
-            return
-        }
-        DiagLog.log("[CALL] handleIncomingLink: starting incoming call setup (deferring CallKit until caller identifies)")
-        prepareForIncomingCall()
-
-        Task {
-            await telephone.handleIncomingLink(link)
-        }
-    }
+    // Incoming-link detection moved to PythonNetworkTransport. It fires
+    // `setIncomingCallStartedHandler` → `prepareForIncomingCall()` (below) when
+    // an inbound link establishes, and drives Telephone via the NetworkTransport
+    // seam. (Was `handleIncomingLink(_ link: Link)`.)
 
     /// Reset call state for an incoming link before the caller identifies.
     ///
@@ -493,7 +476,7 @@ public final class CallManager {
     ///
     /// Outgoing calls reach this with `isIncoming == false` and report
     /// the connecting state via `reportOutgoingCall`.
-    func handleCallerIdentified(_ remoteIdentity: Identity) {
+    func handleCallerIdentified(_ remoteDeliveryHash: Data) {
         // Bail BEFORE mutating call state if the call was reset between
         // prepareForIncomingCall (or the outgoing-call setup) and
         // identify completing — e.g. an abort or remote hangup raced
@@ -507,12 +490,12 @@ public final class CallManager {
             return
         }
 
-        self.peerHash = remoteIdentity.hexHash
+        self.peerHash = remoteDeliveryHash.toHex()
         self.callState = .ringing
-        self.logger.error("[CALL] Ringing from: \(remoteIdentity.hexHash, privacy: .public)")
+        self.logger.error("[CALL] Ringing from: \(remoteDeliveryHash.toHex(), privacy: .public)")
 
         if self.isIncoming {
-            self.resolveContactName(remoteIdentity: remoteIdentity)
+            self.resolveContactName(deliveryHash: remoteDeliveryHash)
             // Surface the incoming call to the system now that the caller
             // is verified. `resolveContactName` has populated `peerName`
             // synchronously with the `"Peer XXXXXXXX"` truncated-hash
@@ -781,14 +764,10 @@ public final class CallManager {
     /// 3. Truncated hex hash fallback
     ///
     /// Updates CallKit with the resolved name if available.
-    private func resolveContactName(remoteIdentity: Identity) {
-        // Compute the LXMF delivery destination hash for this identity
-        // (conversations and path entries are keyed by this hash, not the raw identity hash)
-        let deliveryHash = Destination.hash(
-            identity: remoteIdentity,
-            appName: "lxmf",
-            aspects: ["delivery"]
-        )
+    private func resolveContactName(deliveryHash: Data) {
+        // `deliveryHash` is the peer's lxmf.delivery destination hash — the key
+        // conversations and path entries are stored under. (The transport
+        // computed it from the verified caller identity.)
 
         // 1. Try conversation display name from database, then path table announce name
         Task {
@@ -829,7 +808,7 @@ public final class CallManager {
 
         // 3. Fallback: truncated hash
         if self.peerName == nil {
-            let hexPrefix = remoteIdentity.hexHash.prefix(8).uppercased()
+            let hexPrefix = deliveryHash.toHex().prefix(8).uppercased()
             self.peerName = "Peer " + hexPrefix
         }
 
@@ -842,16 +821,9 @@ public final class CallManager {
         // real display name (by which time the UUID is registered).
     }
 
-    /// Resolve a destination hash to a known Identity via the path table.
-    ///
-    /// Looks up the public keys stored from the peer's announce in the path table,
-    /// then constructs a public-key-only Identity from them.
-    private func resolveIdentity(for destinationHash: Data) async -> Identity? {
-        guard let pathTable else { return nil }
-        guard let entry = await pathTable.lookup(destinationHash: destinationHash) else { return nil }
-        guard entry.publicKeys.count == 64 else { return nil }
-        return try? Identity(publicKeyBytes: entry.publicKeys)
-    }
+    // Identity resolution (delivery hash → public-key Identity) moved into
+    // PythonNetworkTransport.openOutboundCall, where the telephony destination
+    // and link are built.
 
     /// Format call duration as mm:ss.
     var formattedDuration: String {

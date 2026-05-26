@@ -1,6 +1,15 @@
 {
-  "originHash" : "e70d3525c8e2819a8b34f22909815dab5c700c25a06c32388f3930f7b3627768",
+  "originHash" : "c6238b92f29bac0c2437bee30ef56dcf4e736811e836a07830defe6172cc77b8",
   "pins" : [
+    {
+      "identity" : "lxst-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/torlando-tech/LXST-swift.git",
+      "state" : {
+        "branch" : "feat/transport-agnostic",
+        "revision" : "b192964e14af193814685e43fddc233525262615"
+      }
+    },
     {
       "identity" : "maplibre-gl-native-distribution",
       "kind" : "remoteSourceControl",

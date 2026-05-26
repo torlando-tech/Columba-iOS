@@ -1,5 +1,0 @@
-module CCodec2 {
-    header "codec2.h"
-    header "comp.h"
-    export *
-}
