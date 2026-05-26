@@ -69,14 +69,24 @@ enum PythonConfigWriter {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func appendInterface(_ iface: InterfaceEntity, to lines: inout [String]) {
-        // RNS interface names show up in `rnstatus`; use Columba's
-        // human-readable name (sanitized) plus the entity id so we can
-        // round-trip if multiple have the same display name.
-        let sectionName = sanitize(iface.name).isEmpty
+    /// The ConfigObj section name written for an interface. This is also the
+    /// `iface.name` RNS assigns once the section is synthesized, so it's the
+    /// key the Python status snapshot and the hot-add / hot-remove bridge
+    /// calls (`AppServices.applyInterfaceChanges`) use to match a live
+    /// interface back to its `InterfaceEntity`. Single source of truth — do
+    /// not recompute this elsewhere.
+    ///
+    /// RNS interface names show up in `rnstatus`; use Columba's human-readable
+    /// name (sanitized) plus the entity id so we can round-trip if multiple
+    /// have the same display name.
+    static func sectionName(for iface: InterfaceEntity) -> String {
+        sanitize(iface.name).isEmpty
             ? iface.id
             : "\(sanitize(iface.name))-\(iface.id.prefix(6))"
-        lines.append("  [[\(sectionName)]]")
+    }
+
+    private static func appendInterface(_ iface: InterfaceEntity, to lines: inout [String]) {
+        lines.append("  [[\(sectionName(for: iface))]]")
         lines.append("    enabled = yes")
         lines.append("    interface_enabled = yes")
         appendMode(iface.mode, to: &lines)

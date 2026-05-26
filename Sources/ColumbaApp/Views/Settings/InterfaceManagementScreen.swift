@@ -94,17 +94,17 @@ struct InterfaceManagementScreen: View {
                             HStack(spacing: 6) {
                                 ProgressView()
                                     .tint(Theme.accentColor)
-                                Text("Restarting…")
+                                Text("Applying…")
                                     .foregroundStyle(Theme.accentColor)
                             }
                         } else {
-                            Text("Apply & Restart")
+                            Text("Apply")
                                 .fontWeight(.semibold)
                                 .foregroundStyle(Theme.accentColor)
                         }
                     }
                     .disabled(viewModel.isApplyingChanges)
-                    .accessibilityHint("Restarts Reticulum to apply pending interface changes")
+                    .accessibilityHint("Applies pending interface changes to the running network")
                 }
             }
         }

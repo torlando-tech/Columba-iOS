@@ -27,7 +27,18 @@ PLATFORM_DEV="ios_13_0_arm64_iphoneos"
 # (msgpack intentionally NOT installed: RNS and LXMF use the vendored pure-Python
 #  umsgpack in RNS.vendor.umsgpack. Installing the binary msgpack wheel from PyPI
 #  pulls a macOS-built .so that won't load on iOS.)
-RNS_SPEC="rns"
+#
+# RNS is sourced from Torlando's fork (patches/columba-ios branch), not PyPI —
+# it carries iOS-specific patches (e.g. AutoInterface.detach() teardown that
+# lets Columba hot-add / hot-remove interfaces on a running stack). Same
+# local-checkout-preferred-else-GitHub pattern as ble-reticulum below.
+RETICULUM_LOCAL="$HOME/repos/Reticulum"
+RETICULUM_BRANCH="patches/columba-ios"
+if [ -d "$RETICULUM_LOCAL" ]; then
+    RNS_SPEC="$RETICULUM_LOCAL"
+else
+    RNS_SPEC="git+https://github.com/torlando-tech/Reticulum.git@${RETICULUM_BRANCH}"
+fi
 LXMF_SPEC="lxmf"
 PYSERIAL_SPEC="pyserial>=3.5"
 # ble-reticulum is not on PyPI; install from the local checkout if present,

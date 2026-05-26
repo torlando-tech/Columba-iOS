@@ -277,18 +277,17 @@ public final class InterfaceManagementViewModel {
 
     // MARK: - Apply Changes
 
-    /// Apply pending interface changes by restarting the Reticulum stack.
+    /// Apply pending interface changes to the running Reticulum stack live —
+    /// no restart, no relaunch.
     ///
-    /// RNS doesn't support hot-reloading interface config — the only way
-    /// to make Python pick up a new `[interfaces]` section is a full
-    /// `RNS.Reticulum(...)` re-init. AppServices.restartPythonBackend()
-    /// stops the running instance, rewrites the config file from the
-    /// repository's enabled list, and starts a fresh instance. Causes
-    /// a ~1-2s outage (TCP socket drops, then reconnects + re-announces).
-    ///
-    /// Columba Android's python flavor publishes the same constraint via
-    /// `BackendCapabilities.InterfaceCaps.hotReloadInterfaces = false`,
-    /// and surfaces this same "Apply & Restart" affordance.
+    /// RNS attaches/detaches interfaces on a running `Transport` (the same
+    /// primitive its interface-discovery autoconnect uses), so changing the
+    /// `[interfaces]` set does NOT require a full `RNS.Reticulum(...)` re-init.
+    /// `AppServices.applyInterfaceChanges()` diffs the saved enabled list
+    /// against what's currently live and hot-adds / hot-removes the delta,
+    /// while also rewriting the config file so the change survives a cold
+    /// launch. New TCP interfaces connect within ~1-2s; removed ones drop
+    /// immediately.
     @MainActor
     public func applyChanges() async {
         guard hasPendingChanges else { return }
@@ -299,14 +298,9 @@ public final class InterfaceManagementViewModel {
             isApplyingChanges = false
         }
 
-        logger.info("Applying interface changes: writing config; relaunch required")
-        // Writes the new RNS config to disk but does NOT restart Python
-        // in-place — that path crashed reliably (Reticulum singleton +
-        // AutoInterface multicast sockets don't tear down cleanly inside
-        // an embedded interpreter). Config is picked up on next app
-        // launch instead.
-        await appServices.restartPythonBackend()
-        showSuccess("Interfaces saved — relaunch Columba to apply changes")
+        logger.info("Applying interface changes live (hot add/remove)")
+        await appServices.applyInterfaceChanges()
+        showSuccess("Interface changes applied")
     }
 
     // MARK: - Status Observation

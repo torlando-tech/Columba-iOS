@@ -159,6 +159,27 @@ public final class PythonRNSBackend: @unchecked Sendable {
         await bridge.status()
     }
 
+    // MARK: - Live interface reconfiguration (no restart)
+    //
+    // RNS attaches/detaches interfaces on a running Transport without
+    // re-initialising. These proxy `rns_bridge.add_interface` /
+    // `remove_interface`; AppServices.applyInterfaceChanges() drives them off
+    // the diff between the saved interface set and what's currently live.
+
+    /// Hot-add the interface whose config section is `name`. The caller must
+    /// have already written the full RNS config file (so Python can read the
+    /// new section). Returns the Python outcome.
+    @discardableResult
+    public func addInterface(name: String) async throws -> (ok: Bool, reason: String) {
+        try await bridge.applyInterface(name: name, add: true)
+    }
+
+    /// Hot-remove the interface whose config section is `name`.
+    @discardableResult
+    public func removeInterface(name: String) async throws -> (ok: Bool, reason: String) {
+        try await bridge.applyInterface(name: name, add: false)
+    }
+
     // MARK: - BLE bridge plumbing
     //
     // Surface the BLE callback invocation primitives so AppServices /

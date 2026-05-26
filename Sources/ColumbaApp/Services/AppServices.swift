@@ -155,6 +155,14 @@ public final class AppServices {
     /// the restart path (same reason as pythonStartIdentity).
     private var pythonStartDisplayName: String = ""
 
+    /// The interface entities currently live in the Python RNS stack, keyed by
+    /// entity id. Seeded when the backend starts and updated incrementally by
+    /// `applyInterfaceChanges()` as interfaces are hot-added / hot-removed.
+    /// The status poll matches Python-reported sections against this set, so
+    /// it must always reflect what's actually attached to Transport (not the
+    /// launch-time snapshot — that was the source of the stale-status bug).
+    private var pythonInterfaceEntities: [String: InterfaceEntity] = [:]
+
 /// Periodic poller that mirrors Python's RNS.Transport interface state
     /// into the Compat TCPInterface stubs so the existing
     /// NetworkStatusView / InterfaceManagementScreen show correct
@@ -655,11 +663,16 @@ public final class AppServices {
             }
         }
 
+        // Seed the live-interface set the status poll matches against. Kept
+        // current by applyInterfaceChanges() on every hot-add / hot-remove —
+        // the poll reads this each tick (NOT a value captured here) so a
+        // mid-session interface change is reflected without a relaunch.
+        self.pythonInterfaceEntities = Dictionary(uniqueKeysWithValues: interfaces.map { ($0.id, $0) })
+
         // Periodic status poll: mirror Python's view of interface state into
         // the Compat TCPInterface stubs so the existing NetworkStatusView /
         // InterfaceManagementScreen show online / offline accurately.
         pythonStatusPollTask?.cancel()
-        let entityById = Dictionary(uniqueKeysWithValues: interfaces.map { ($0.id, $0) })
         pythonStatusPollTask = Task { [weak self, backend] in
             var tick = 0
             DiagLog.log("[PY-POLL] task started")
@@ -672,6 +685,7 @@ public final class AppServices {
                     continue
                 }
                 guard let self else { return }
+                let entityById = await MainActor.run { self.pythonInterfaceEntities }
                 await self.applyPythonInterfaceStatus(snapshot: snapshot!, entityById: entityById)
             }
             DiagLog.log("[PY-POLL] task exiting (cancelled)")
@@ -1259,25 +1273,212 @@ public final class AppServices {
         // anyway, so the right model is: write the config, tell the user
         // to relaunch Columba. The full app launch on the next start gets
         // a clean Python + clean RNS singleton.
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let identityHashHex = identity.hexHash
-        let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
+        _ = identity // pythonStartIdentity presence is the only precondition
         let fresh = InterfaceRepository().getEnabledInterfaces()
-        let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
-        let configText = PythonConfigWriter.write(interfaces: fresh, enableTransport: transportEnabled)
-        let configFile = pyDir.appendingPathComponent("config")
-        do {
-            try configText.write(to: configFile, atomically: true, encoding: .utf8)
-            DiagLog.log("[PY] restartPythonBackend: wrote new config (\(configText.count) bytes, \(fresh.count) interfaces); awaiting next app launch to apply")
-        } catch {
-            DiagLog.log("[PY] restartPythonBackend: config write FAILED: \(error)")
-        }
+        writePythonConfig(interfaces: fresh)
+        DiagLog.log("[PY] restartPythonBackend: config written (\(fresh.count) interfaces); awaiting next app launch to apply")
         // Notify the UI so it can show a "relaunch Columba" prompt.
         NotificationCenter.default.post(
             name: Notification.Name("ColumbaRelaunchRequired"),
             object: nil
         )
+    }
+
+    /// Directory holding the running Python instance's RNS config, derived from
+    /// the identity the backend was started with. Returns nil if the backend
+    /// was never started (no cached identity). Creates the directory if needed.
+    private func pythonConfigDirURL() -> URL? {
+        guard let identity = pythonStartIdentity else { return nil }
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let pyDir = appSupport.appendingPathComponent("Columba/python-\(identity.hexHash)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
+        return pyDir
+    }
+
+    /// Write the RNS config file from the given interface set. This is the
+    /// durability backstop: it keeps `<configDir>/config` authoritative so a
+    /// cold launch (or the transport-mode full restart) reflects the current
+    /// interfaces. It is NOT how live changes take effect — `add_interface` /
+    /// `remove_interface` reads this file but the running stack is reconfigured
+    /// by `applyInterfaceChanges()`.
+    @discardableResult
+    private func writePythonConfig(interfaces: [InterfaceEntity]) -> Bool {
+        guard let pyDir = pythonConfigDirURL() else {
+            DiagLog.log("[PY] writePythonConfig skipped — no start identity")
+            return false
+        }
+        let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
+        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled)
+        let configFile = pyDir.appendingPathComponent("config")
+        do {
+            try configText.write(to: configFile, atomically: true, encoding: .utf8)
+            DiagLog.log("[PY] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
+            return true
+        } catch {
+            DiagLog.log("[PY] config write FAILED: \(error)")
+            return false
+        }
+    }
+
+    /// Apply pending interface changes to the *running* RNS stack with no
+    /// restart and no app relaunch.
+    ///
+    /// RNS attaches/detaches interfaces on a live `Transport` (the same
+    /// primitive its 1.x interface-discovery autoconnect uses). We diff the
+    /// just-saved enabled set against what's currently live
+    /// (`pythonInterfaceEntities`) and:
+    ///   1. rewrite the config file (durability for the next cold launch),
+    ///   2. hot-remove dropped interfaces (and the old form of edited ones),
+    ///   3. hot-add new interfaces (and the new form of edited ones),
+    ///   4. seed/tear down the Swift-side status mirrors so the UI badges
+    ///      track reality immediately,
+    ///   5. update `pythonInterfaceEntities` so the status poll matches the
+    ///      new set.
+    ///
+    /// Edited interfaces are handled as remove-then-add: `add_interface` reads
+    /// the freshly-written config section, so changed host/port/etc. take
+    /// effect. Caveat: removing an AutoInterface is not a clean teardown
+    /// upstream (its `detach()` leaves multicast sockets bound until process
+    /// exit), so re-adding the same AutoInterface mid-session may collide —
+    /// TCP is unaffected.
+    @MainActor
+    public func applyInterfaceChanges() async {
+        let fresh = InterfaceRepository().getEnabledInterfaces()
+        let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
+
+        // 1. Durability — always persist, even if there's no live backend.
+        writePythonConfig(interfaces: fresh)
+
+        guard let backend = pythonBackend else {
+            DiagLog.log("[PY-HOT] no running backend — config written, applies on next launch")
+            pythonInterfaceEntities = freshById
+            return
+        }
+
+        let live = pythonInterfaceEntities
+        let removed = live.values.filter { freshById[$0.id] == nil }
+        let added = fresh.filter { live[$0.id] == nil }
+        let changed = fresh.filter { e in
+            guard let old = live[e.id] else { return false }
+            return old != e
+        }
+
+        DiagLog.log("[PY-HOT] applyInterfaceChanges: +\(added.count) -\(removed.count) ~\(changed.count)")
+
+        // 2. Remove dropped interfaces, and the OLD form of edited ones.
+        for entity in removed {
+            await hotRemoveInterface(entity, backend: backend)
+        }
+        for entity in changed {
+            if let old = live[entity.id] {
+                await hotRemoveInterface(old, backend: backend)
+            }
+        }
+
+        // 3. Add new interfaces, and the NEW form of edited ones.
+        for entity in added + changed {
+            await hotAddInterface(entity, backend: backend)
+        }
+
+        // 5. Keep the status-poll's matching set in sync with what's live.
+        pythonInterfaceEntities = freshById
+    }
+
+    /// Hot-add one interface to the running Python stack and seed its Swift
+    /// status mirror. Assumes the config file already contains the section
+    /// (callers run `writePythonConfig` first).
+    @MainActor
+    private func hotAddInterface(_ entity: InterfaceEntity, backend: PythonRNSBackend) async {
+        let section = PythonConfigWriter.sectionName(for: entity)
+        do {
+            let r = try await backend.addInterface(name: section)
+            DiagLog.log("[PY-HOT] add \(section): ok=\(r.ok) reason=\(r.reason)")
+        } catch {
+            DiagLog.log("[PY-HOT] add \(section) error: \(error)")
+        }
+        await seedSwiftStub(for: entity)
+    }
+
+    /// Hot-remove one interface from the running Python stack and tear down its
+    /// Swift status mirror.
+    @MainActor
+    private func hotRemoveInterface(_ entity: InterfaceEntity, backend: PythonRNSBackend) async {
+        let section = PythonConfigWriter.sectionName(for: entity)
+        do {
+            let r = try await backend.removeInterface(name: section)
+            DiagLog.log("[PY-HOT] remove \(section): ok=\(r.ok) reason=\(r.reason)")
+        } catch {
+            DiagLog.log("[PY-HOT] remove \(section) error: \(error)")
+        }
+        await teardownSwiftStub(for: entity)
+    }
+
+    /// Create the Swift-side status mirror for a freshly hot-added interface so
+    /// NetworkStatusView / Manage Interfaces / the Settings card can render it.
+    /// TCP interfaces get a Compat stub (state starts `.connecting`; the status
+    /// poll flips it based on Python's view). Auto/BLE/RNode reuse the existing
+    /// start* singletons, matching what the launch path (ColumbaApp Step 7) does.
+    @MainActor
+    private func seedSwiftStub(for entity: InterfaceEntity) async {
+        switch entity.config {
+        case .tcpClient(let cfg):
+            if tcpInterfaces[entity.id] == nil {
+                let config = InterfaceConfig(
+                    id: entity.id, name: entity.name, type: .tcp,
+                    enabled: true, mode: .full, host: cfg.targetHost, port: cfg.targetPort
+                )
+                if let iface = try? TCPInterface(config: config) {
+                    iface.state = .connecting
+                    tcpInterfaces[entity.id] = iface
+                }
+            }
+        case .tcpServer(let cfg):
+            if tcpInterfaces[entity.id] == nil {
+                let config = InterfaceConfig(
+                    id: entity.id, name: entity.name, type: .tcp,
+                    enabled: true, mode: .full, host: cfg.listenIp, port: cfg.listenPort
+                )
+                if let iface = try? TCPInterface(config: config) {
+                    iface.state = .connecting
+                    tcpInterfaces[entity.id] = iface
+                }
+            }
+        case .autoInterface(let cfg):
+            try? await startAutoInterface(groupId: cfg.groupId ?? "reticulum")
+        case .ble:
+            #if canImport(CoreBluetooth)
+            try? await startBLEInterface()
+            #endif
+        case .rnode(let cfg):
+            try? await startRNodeInterface(config: cfg, name: entity.name)
+        case .multipeer:
+            break // Multipeer status mirror not wired for hot-add yet.
+        }
+    }
+
+    /// Tear down the Swift-side status mirror for a hot-removed interface so the
+    /// UI stops showing it as connected. This is what fixes the stale
+    /// "Bluetooth connected" card after disabling BLE.
+    @MainActor
+    private func teardownSwiftStub(for entity: InterfaceEntity) async {
+        switch entity.config {
+        case .tcpClient, .tcpServer:
+            if let iface = tcpInterfaces[entity.id] {
+                await iface.disconnect()
+                await transport?.removeInterface(id: entity.id)
+                tcpInterfaces.removeValue(forKey: entity.id)
+            }
+        case .autoInterface:
+            await stopAutoInterface()
+        case .ble:
+            #if canImport(CoreBluetooth)
+            await stopBLEInterface()
+            #endif
+        case .rnode:
+            await stopRNodeInterface()
+        case .multipeer:
+            break
+        }
     }
 
     /// Re-instantiate the Swift-side interface singletons / stubs for each
@@ -1324,16 +1525,10 @@ public final class AppServices {
     /// written for an entity, so we can match Python interface objects back
     /// to entities by section_name.
     private func expectedSectionName(for entity: InterfaceEntity) -> String {
-        let sanitized = entity.name
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: " ", with: "_")
-            .replacingOccurrences(of: "[", with: "_")
-            .replacingOccurrences(of: "]", with: "_")
-            .replacingOccurrences(of: "=", with: "_")
-            .replacingOccurrences(of: "#", with: "_")
-        return sanitized.isEmpty
-            ? entity.id
-            : "\(sanitized)-\(entity.id.prefix(6))"
+        // Delegate to the single source of truth used by the config writer and
+        // the hot-add / hot-remove path, so status matching can never drift
+        // from the section names actually written to the RNS config.
+        PythonConfigWriter.sectionName(for: entity)
     }
 
     /// Save a Python-delivered inbound LXMF message to the repository and

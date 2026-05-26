@@ -410,6 +410,39 @@ public final class PythonBridge: @unchecked Sendable {
         }
     }
 
+    /// Hot-add or hot-remove a single interface on the *running* Reticulum
+    /// stack — no restart. Calls `rns_bridge.add_interface(name)` /
+    /// `remove_interface(name)`, which attach/detach against the live
+    /// `RNS.Transport`. `name` is the config section name (see
+    /// `PythonConfigWriter.sectionName(for:)`); the caller must have written
+    /// the full config file first so `add` can read the new section.
+    ///
+    /// Returns the Python `{"ok", "reason"}` outcome. Throws only on a hard
+    /// bridge/marshalling error — a failed add (bad config, unreachable
+    /// endpoint) comes back as `(ok: false, reason: ...)`, never a crash.
+    public func applyInterface(name: String, add: Bool) async throws -> (ok: Bool, reason: String) {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else { return (false, "not-started") }
+                let fnName = add ? "add_interface" : "remove_interface"
+                guard let fn = PyObject_GetAttrString(module, fnName) else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                let args = PyTuple_New(1)!
+                defer { Py_DecRef(args) }
+                PyTuple_SetItem(args, 0, PyUnicode_FromString(name)!) // steals ref
+                guard let result = PyObject_CallObject(fn, args) else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(result) }
+                let ok = pyBoolFromDict(result, key: "ok") ?? false
+                let reason = pyStringFromDict(result, key: "reason") ?? "unknown"
+                return (ok, reason)
+            }
+        }
+    }
+
     /// Decoded view of the Python `status()` snapshot. Mirrors the JSON
     /// rns_bridge.status_json returns. The Swift UI uses this to drive the
     /// "interface online / offline" badges in Network Status + Manage
