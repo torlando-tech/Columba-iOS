@@ -382,7 +382,14 @@ public struct Message: Identifiable, Equatable {
         self.id = record.messageId.map { String(format: "%02x", $0) }.joined()
         self.content = String(data: record.content, encoding: .utf8) ?? ""
         self.timestamp = Date(timeIntervalSince1970: record.timestamp)
-        self.isFromMe = record.sourceHash == localHash
+        // Use the persisted direction (.outbound for messages we sent), set at
+        // save time from `LXMessage.incoming`. The previous `record.sourceHash
+        // == localHash` check was always false on reload: sourceHash is the
+        // sender's *identity* hash, while localHash is the local *lxmf.delivery
+        // destination* hash — two different values — so every reloaded sent
+        // message rendered as received. (localHash is still used below for
+        // reaction `includesMe`.)
+        self.isFromMe = record.direction == .outbound
         self.messageHash = record.messageId
 
         // Map raw state value to DeliveryStatus
