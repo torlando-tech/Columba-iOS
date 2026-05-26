@@ -28,13 +28,20 @@ PLATFORM_DEV="ios_13_0_arm64_iphoneos"
 #  umsgpack in RNS.vendor.umsgpack. Installing the binary msgpack wheel from PyPI
 #  pulls a macOS-built .so that won't load on iOS.)
 #
-# RNS is sourced from Torlando's fork (patches/columba-ios branch), not PyPI —
-# it carries iOS-specific patches (e.g. AutoInterface.detach() teardown that
-# lets Columba hot-add / hot-remove interfaces on a running stack). Same
-# local-checkout-preferred-else-GitHub pattern as ble-reticulum below.
-RETICULUM_LOCAL="$HOME/repos/Reticulum"
+# RNS is sourced permanently from Torlando's fork branch (not PyPI, not a local
+# checkout) so every build — CI and local — resolves the same dependency. The
+# patches/columba-ios branch carries iOS-specific patches (e.g. the
+# AutoInterface.detach() teardown that lets Columba hot-add / hot-remove
+# interfaces on a running stack).
+#
+# To develop the fork itself, point at a local working copy explicitly:
+#   RETICULUM_LOCAL=~/repos/Reticulum support/fetch-wheels.sh
+# Otherwise the GitHub branch is always used — the local checkout is never
+# picked up implicitly (that made builds depend on whatever branch happened to
+# be checked out on the dev's machine).
 RETICULUM_BRANCH="patches/columba-ios"
-if [ -d "$RETICULUM_LOCAL" ]; then
+if [ -n "${RETICULUM_LOCAL:-}" ]; then
+    echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
 else
     RNS_SPEC="git+https://github.com/torlando-tech/Reticulum.git@${RETICULUM_BRANCH}"
