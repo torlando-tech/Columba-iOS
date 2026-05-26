@@ -95,6 +95,9 @@ public final class CallManager {
     private var database: LXMFDatabase?
     private var durationTask: Task<Void, Never>?
     private var endedDismissTask: Task<Void, Never>?
+    /// Caller-side ring-back cadence loop (runs while the callee's phone rings).
+    private var ringbackTask: Task<Void, Never>?
+    private var ringbackActive = false
     private let logger = Logger(subsystem: "network.columba.Columba", category: "CallManager")
 
     // MARK: - Initialization
@@ -176,6 +179,9 @@ public final class CallManager {
                 DiagLog.log("[CALL] establishedCallback fired, isIncoming=\(self.isIncoming), profile=\(self.activeProfile.displayName)")
                 self.callState = .established
                 self.startDurationTimer()
+                #if os(iOS)
+                self.stopRingback()  // hand off the tone engine to the call audio
+                #endif
                 self.startAudio()
                 DiagLog.log("[CALL] startAudio() done, audioManager=\(self.audioManager != nil)")
                 self.logger.error("[CALL] Established with: \(remoteHash.toHex(), privacy: .public)")
@@ -196,6 +202,9 @@ public final class CallManager {
             await MainActor.run {
                 guard let self else { return }
                 self.stopDurationTimer()
+                #if os(iOS)
+                self.stopRingback()  // stop ring-back if the call ended while ringing
+                #endif
                 let reasonText: String
                 switch reason {
                 case .localHangup: reasonText = "Call Ended"
@@ -540,9 +549,11 @@ public final class CallManager {
                 }
             }
         } else {
-            // Outgoing call: report connecting state to CallKit
+            // Outgoing call: report connecting state to CallKit, and play the
+            // caller-side ring-back tone while the callee's phone rings.
             #if os(iOS)
             self.callKitManager?.reportOutgoingCall(uuid: uuid)
+            self.startRingback()
             #endif
         }
     }
@@ -704,18 +715,24 @@ public final class CallManager {
     /// Mirrors LXST `__play_busy_tone`, adapted to our split where audio output
     /// lives in AudioManager. NOTE: `reportCallEnded` deactivates the audio
     /// session, so it is deliberately deferred until after the tone.
-    @discardableResult
-    private func playBusyTone() -> Bool {
-        guard audioSessionActivatedByCallKit else { return false }
-
-        // Bring up output if the call never reached the established/startAudio
-        // path (the usual case for a busy rejection).
+    /// Bring up output-only audio for call-progress tones (busy / ring-back) on
+    /// a call that hasn't reached the established/startAudio path. Gated on the
+    /// CallKit audio session being active (it normally is for an outgoing call
+    /// by the time signalling arrives). Returns the manager, or nil if output
+    /// can't be started.
+    private func ensureToneOutput() -> AudioManager? {
+        guard audioSessionActivatedByCallKit else { return nil }
         if audioManager == nil {
             let manager = AudioManager(profile: activeProfile)
             self.audioManager = manager
             manager.start(speakerEnabled: isSpeakerOn)
         }
-        guard let manager = audioManager else { return false }
+        return audioManager
+    }
+
+    @discardableResult
+    private func playBusyTone() -> Bool {
+        guard let manager = ensureToneOutput() else { return false }
 
         let samples = Self.busyTonePCM(sampleRate: manager.sampleRate, channels: manager.channels)
         manager.playDecodedAudio(samples)
@@ -751,6 +768,63 @@ public final class CallManager {
             let t = Double(f) / sampleRate
             let inWindow = t.truncatingRemainder(dividingBy: window)
             let sample: Float = inWindow > onThreshold ? gain * Float(sin(twoPiF * t)) : 0
+            for c in 0..<ch { out[f * ch + c] = sample }
+        }
+        return out
+    }
+
+    /// Start the caller-side ring-back tone (the "ringing" the caller hears
+    /// while the callee's phone rings). Mirrors LXST `__activate_dial_tone`:
+    /// 382 Hz, ~2 s on / ~5 s off (7 s cadence), looping until the call is
+    /// answered or ends. CallKit does NOT provide ring-back for outgoing VoIP
+    /// calls, so we render it. Caller-side only (the callee's ring is CallKit's
+    /// system ringtone).
+    private func startRingback() {
+        guard !isIncoming, !ringbackActive else { return }
+        guard let manager = ensureToneOutput() else { return }
+        ringbackActive = true
+        let tone = Self.ringbackTonePCM(sampleRate: manager.sampleRate, channels: manager.channels)
+        logger.error("[CALL] Starting ring-back tone")
+        ringbackTask?.cancel()
+        ringbackTask = Task { @MainActor [weak self] in
+            // 7 s cadence: schedule the 2 s tone, then idle (silence) for the
+            // remainder before scheduling the next burst.
+            while !Task.isCancelled {
+                guard let self, self.ringbackActive else { return }
+                self.audioManager?.playDecodedAudio(tone)
+                try? await Task.sleep(for: .seconds(7))
+            }
+        }
+    }
+
+    /// Stop the ring-back loop. Tears down the tone-only output engine so the
+    /// established path recreates it fresh with the negotiated profile + mic
+    /// capture (startAudio early-returns if a manager already exists).
+    private func stopRingback() {
+        ringbackTask?.cancel()
+        ringbackTask = nil
+        if ringbackActive {
+            ringbackActive = false
+            stopAudio()
+        }
+    }
+
+    /// Generate one 2 s ring-back burst: a 382 Hz sine with 10 ms fade in/out
+    /// (to avoid clicks), interleaved across `channels` at `sampleRate`.
+    private static func ringbackTonePCM(sampleRate: Double, channels: Int) -> [Float] {
+        let frequency = TelephonyConstants.dialToneFrequency
+        let onSeconds = 2.0
+        let frames = Int(sampleRate * onSeconds)
+        let ch = max(channels, 1)
+        let gain: Float = 0.12
+        let twoPiF = 2.0 * Double.pi * frequency
+        let fade = max(Int(sampleRate * 0.01), 1)  // 10 ms ramp
+        var out = [Float](repeating: 0, count: frames * ch)
+        for f in 0..<frames {
+            var env: Float = 1
+            if f < fade { env = Float(f) / Float(fade) }
+            else if f >= frames - fade { env = Float(frames - 1 - f) / Float(fade) }
+            let sample = gain * env * Float(sin(twoPiF * Double(f) / sampleRate))
             for c in 0..<ch { out[f * ch + c] = sample }
         }
         return out
