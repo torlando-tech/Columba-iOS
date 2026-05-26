@@ -265,17 +265,14 @@ def start(
             h = _AspectAnnounceHandler(aspect)
             RNS.Transport.register_announce_handler(h)
             handlers.append(h)
-        # Wildcard handler — aspect_filter=None means RNS dispatches every
-        # announce to it regardless of aspect. Useful for diagnosing
-        # whether announces arrive at all when the per-aspect handlers
-        # appear silent (e.g. peer is announcing on an aspect we don't
-        # track, or our aspect-filter hashes mismatch). The wildcard's
-        # received_announce uses its own _aspect="*" sentinel so events
-        # are tagged distinguishably.
-        wildcard = _AspectAnnounceHandler("*")
-        wildcard.aspect_filter = None
-        RNS.Transport.register_announce_handler(wildcard)
-        handlers.append(wildcard)
+        # NOTE: no wildcard (aspect_filter=None) handler. One used to be
+        # registered here as a diagnostic, but it surfaced every announce the
+        # node heard — including aspects Columba doesn't display — as phantom
+        # "*"/Peer cards (e.g. a propagation announce whose bool-first app_data
+        # rendered as the display name "False"), and could clobber a
+        # correctly-typed announce since path entries are keyed by destination
+        # hash (last write wins). Only the four tracked aspects above feed the
+        # network list now.
         _state["handler"] = handlers  # list now, was singleton — stop() handles both
 
         # Register the lxst.telephony destination on our identity so
