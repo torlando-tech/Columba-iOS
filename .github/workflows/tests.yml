@@ -37,11 +37,27 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      - name: Build
+      - name: Build (Python backend — default)
         run: |
           xcodebuild build \
             -project Columba.xcodeproj \
             -scheme Columba \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.sim.outputs.device_id }}" \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      # Verify the native reticulum-swift/LXMF-swift backend variant also builds
+      # (COLUMBA_BACKEND_SWIFT). The UI/AppServices are backend-agnostic, so this
+      # guards against the Swift backend or its seam drifting out of compile.
+      - name: Build (Swift-native backend)
+        run: |
+          xcodebuild build \
+            -project Columba.xcodeproj \
+            -scheme Columba-Swift \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             CODE_SIGN_IDENTITY=- \
