@@ -90,36 +90,58 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
         // Save to database asynchronously, then notify
         Task {
-            // Check for FIELD_APP_DATA (0x10) — reactions and replies
+            // Reaction — canonical FIELD_REACTION (0x40) = {0x00: targetHashBytes,
+            // 0x01: emojiUTF8}; the reacting user is the inbound source hash (not
+            // on the wire). Merges into the target message; the empty reaction
+            // frame itself is deleted by handleIncomingReaction.
+            if let reaction = message.fields?[LxmfFields.FIELD_REACTION] as? [UInt8: Any],
+               let toData = reaction[LxmfFields.REACTION_TO] as? Data,
+               let emojiData = reaction[LxmfFields.REACTION_CONTENT] as? Data,
+               let emoji = String(data: emojiData, encoding: .utf8) {
+                let reactionTo = toData.map { String(format: "%02x", $0) }.joined()
+                let senderHex = sourceHash.map { String(format: "%02x", $0) }.joined()
+                self.logger.info("Reaction \(emoji) (0x40) from \(senderHex.prefix(8)) to \(reactionTo.prefix(8))")
+                await self.handleIncomingReaction(
+                    targetMessageHex: reactionTo, emoji: emoji,
+                    senderHex: senderHex, reactionMessageHash: message.hash
+                )
+                NotificationCenter.default.post(
+                    name: IncomingMessageHandler.messageReceivedNotification,
+                    object: nil, userInfo: ["sourceHash": sourceHash]
+                )
+                return
+            }
+
+            // Legacy reaction / reply on FIELD_APP_DATA (0x10) — un-upgraded peers.
             if let appData = message.fields?[LXMessage.FIELD_APP_DATA] as? [String: Any] {
-                // Handle reaction messages: merge into target, delete reaction message from DB
                 if let reactionTo = appData["reaction_to"] as? String,
                    let emoji = appData["emoji"] as? String,
                    let sender = appData["sender"] as? String {
-                    self.logger.info("Reaction \(emoji) from \(sender.prefix(8)) to \(reactionTo.prefix(8))")
+                    self.logger.info("Reaction \(emoji) (0x10 legacy) from \(sender.prefix(8)) to \(reactionTo.prefix(8))")
                     await self.handleIncomingReaction(
-                        targetMessageHex: reactionTo,
-                        emoji: emoji,
-                        senderHex: sender,
-                        reactionMessageHash: message.hash
+                        targetMessageHex: reactionTo, emoji: emoji,
+                        senderHex: sender, reactionMessageHash: message.hash
                     )
-                    // Post notification so open conversation reloads with updated reactions
                     NotificationCenter.default.post(
                         name: IncomingMessageHandler.messageReceivedNotification,
-                        object: nil,
-                        userInfo: ["sourceHash": sourceHash]
+                        object: nil, userInfo: ["sourceHash": sourceHash]
                     )
-                    return  // Skip normal message processing
+                    return
                 }
-
-                // Handle reply messages: update reply_to_id column
                 if let replyTo = appData["reply_to"] as? String {
-                    self.logger.info("Reply to \(replyTo.prefix(8))")
-                    do {
-                        try await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
-                    } catch {
-                        self.logger.error("Failed to update reply_to_id: \(error.localizedDescription)")
-                    }
+                    self.logger.info("Reply (0x10 legacy) to \(replyTo.prefix(8))")
+                    try? await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
+                }
+            }
+
+            // Reply — canonical FIELD_REPLY_HASH (0x30) = raw target-hash bytes.
+            if let replyHashData = message.fields?[LxmfFields.FIELD_REPLY_HASH] as? Data {
+                let replyTo = replyHashData.map { String(format: "%02x", $0) }.joined()
+                self.logger.info("Reply (0x30) to \(replyTo.prefix(8))")
+                do {
+                    try await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
+                } catch {
+                    self.logger.error("Failed to update reply_to_id (0x30): \(error.localizedDescription)")
                 }
             }
 

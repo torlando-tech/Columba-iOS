@@ -318,7 +318,7 @@ public final class MessagingViewModel {
                 imageData: imageData, imageFormat: imageFormat,
                 fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
                 iconAppearance: icon,
-                replyToMessageHashHex: nil, replyQuotedContent: nil, extraFields: nil)
+                replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
             guard case .queued(let sentHashHex) = outcome, let sentHash = Data(hexString: sentHashHex) else {
                 throw SendError.notQueued
             }
@@ -382,7 +382,7 @@ public final class MessagingViewModel {
                         imageData: imageData, imageFormat: imageFormat,
                         fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
                         iconAppearance: icon,
-                        replyToMessageHashHex: nil, replyQuotedContent: nil, extraFields: nil)
+                        replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
                     guard case .queued(let retryHashHex) = retryOutcome, let retryHash = Data(hexString: retryHashHex) else {
                         throw SendError.notQueued
                     }
@@ -494,7 +494,7 @@ public final class MessagingViewModel {
     @MainActor
     public func sendReaction(targetMessageId: String, targetMessageHash: Data?, emoji: String) async {
         guard let hash = targetMessageHash else { return }
-        guard let identity = appServices.identity, let router = appServices.router else { return }
+        guard let backend = appServices.backend else { return }
 
         let localHashHex = appServices.localIdentityHash.map { String(format: "%02x", $0) }.joined()
 
@@ -538,25 +538,15 @@ public final class MessagingViewModel {
             }
         }
 
-        // Send reaction LXMF message (empty content)
-        var fields: [UInt8: Any] = [:]
-        fields[LXMessage.FIELD_APP_DATA] = [
-            "reaction_to": targetMessageId,
-            "emoji": emoji,
-            "sender": localHashHex
-        ] as [String: Any]
-
-        var lxMessage = LXMessage(
-            destinationHash: conversationHash,
-            sourceIdentity: identity,
-            content: Data(),
-            title: Data(),
-            fields: fields,
-            desiredMethod: .opportunistic
-        )
-
+        // Send via the canonical FIELD_REACTION (0x40): the backend builds the
+        // {0x00: targetHashBytes, 0x01: emojiUTF8} dict on an empty-content
+        // message; the reacting user is derived from the source hash on receive
+        // (not on the wire). Replaces the legacy 0x10 {reaction_to,emoji,sender}.
         do {
-            try await router.handleOutbound(&lxMessage)
+            try await backend.lxmf.sendReaction(
+                destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
+                targetMessageHashHex: targetMessageId,
+                emoji: emoji)
         } catch {
             logger.error("Failed to send reaction: \(error.localizedDescription)")
         }
