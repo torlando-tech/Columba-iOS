@@ -223,27 +223,13 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         guard let router, let id = identity else { return .notStarted }
         guard let destHash = Self.hexData(destHashHex), !destHash.isEmpty else { return .badHash }
 
-        // Assemble the on-wire LXMF field map from the typed params using the
-        // canonical LxmfFields IDs (LXMessage.fields is [UInt8: Any]).
-        var fields: [UInt8: Any] = [:]
-        if let imageData, let imageFormat {
-            fields[LxmfFields.FIELD_IMAGE] = [imageFormat, imageData] as [Any]
-        }
-        if let fileAttachments, !fileAttachments.isEmpty {
-            fields[LxmfFields.FIELD_FILE_ATTACHMENTS] = fileAttachments.map { [$0.name, $0.data] as [Any] }
-        }
-        if let iconAppearance {
-            fields[LxmfFields.FIELD_ICON_APPEARANCE] = iconAppearance.toLXMFFieldValue()
-        }
-        if let replyToMessageHashHex, let replyHash = Self.hexData(replyToMessageHashHex) {
-            fields[LxmfFields.FIELD_REPLY_HASH] = replyHash
-            if let replyQuotedContent {
-                fields[LxmfFields.FIELD_REPLY_QUOTE] = Data(replyQuotedContent.utf8)
-            }
-        }
-        if let extraFields {
-            for (k, v) in extraFields { fields[k] = v }
-        }
+        // Build the canonical on-wire LXMF field map (shared with PythonRNSBackend
+        // so both backends encode identically). LXMessage.fields is [UInt8: Any].
+        let fields = LxmfFieldCodec.buildFieldMap(
+            imageData: imageData, imageFormat: imageFormat,
+            fileAttachments: fileAttachments, iconAppearance: iconAppearance,
+            replyToMessageHashHex: replyToMessageHashHex, replyQuotedContent: replyQuotedContent,
+            extraFields: extraFields)
 
         var msg = LXMFSwift.LXMessage(
             destinationHash: destHash,

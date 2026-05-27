@@ -87,17 +87,28 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         replyQuotedContent: String?,
         extraFields: [UInt8: Data]?
     ) async throws -> SendOutcome {
-        // TODO(task #32): thread LXMF fields (image / attachments / icon / reply /
-        // telemetry) through PythonBridge to the embedded LXMF. Content-only for now
-        // — matches the pre-existing seam behavior; the Swift backend carries fields
-        // natively. Python telemetry/attachments stay capability-gated until wired.
-        Self.map(try await bridge.sendOpportunistic(destHashHex: destHashHex, content: content))
+        // Build the canonical LXMF field map (shared builder → identical to the
+        // Swift backend) and forward it MessagePack-packed (hex) to Python, which
+        // unpacks it onto the outbound LXMF message.
+        let fields = LxmfFieldCodec.buildFieldMap(
+            imageData: imageData, imageFormat: imageFormat,
+            fileAttachments: fileAttachments, iconAppearance: iconAppearance,
+            replyToMessageHashHex: replyToMessageHashHex, replyQuotedContent: replyQuotedContent,
+            extraFields: extraFields)
+        let fieldsHex = fields.isEmpty ? "" : LxmfFieldCodec.pack(fields).toHex()
+        return Self.map(try await bridge.sendOpportunistic(destHashHex: destHashHex, content: content, fieldsHex: fieldsHex))
     }
 
     @discardableResult
     public func sendReaction(destHashHex: String, targetMessageHashHex: String, emoji: String) async throws -> SendOutcome {
-        // Reactions need FIELD_REACTION (0x40) plumbed to Python (task #32).
-        .other("reactions not yet supported on the Python backend")
+        guard let targetHash = try? targetMessageHashHex.hexToData() else { return .badHash }
+        // Canonical FIELD_REACTION (0x40) on an empty-content message.
+        let reaction: [UInt8: Any] = [
+            LxmfFields.REACTION_TO: targetHash,
+            LxmfFields.REACTION_CONTENT: Data(emoji.utf8),
+        ]
+        let fieldsHex = LxmfFieldCodec.pack([LxmfFields.FIELD_REACTION: reaction]).toHex()
+        return Self.map(try await bridge.sendOpportunistic(destHashHex: destHashHex, content: "", fieldsHex: fieldsHex))
     }
 
     /// Set / clear the outbound LXMF propagation node. Empty `destHashHex` clears.

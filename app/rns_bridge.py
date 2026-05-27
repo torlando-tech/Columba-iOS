@@ -1078,7 +1078,7 @@ def persist() -> dict[str, Any]:
         return {"ok": True, "reason": "persisted"}
 
 
-def send_opportunistic(dest_hash_hex: str, content: str) -> dict[str, Any]:
+def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "") -> dict[str, Any]:
     """Send an opportunistic LXMF message. Returns a dict with 'ok' (bool)
     and 'reason' (string) describing the outcome. If the destination's
     identity isn't recallable yet (no announce / no path), kicks off a
@@ -1108,11 +1108,22 @@ def send_opportunistic(dest_hash_hex: str, content: str) -> dict[str, Any]:
             "lxmf",
             "delivery",
         )
+        # Decode the MessagePack-packed LXMF field map from Swift (image /
+        # attachments / icon / reply / reaction / telemetry), if any.
+        fields = None
+        if fields_hex:
+            try:
+                from RNS.vendor import umsgpack
+                fields = umsgpack.unpackb(bytes.fromhex(fields_hex))
+            except Exception:
+                fields = None
+
         msg = LXMF.LXMessage(
             peer_dest,
             local_dest,
             content,
             title="",
+            fields=fields,
             desired_method=LXMF.LXMessage.OPPORTUNISTIC,
         )
 

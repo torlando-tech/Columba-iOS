@@ -390,7 +390,7 @@ public final class PythonBridge: @unchecked Sendable {
         }
     }
 
-    public func sendOpportunistic(destHashHex: String, content: String) async throws -> SendOutcome {
+    public func sendOpportunistic(destHashHex: String, content: String, fieldsHex: String = "") async throws -> SendOutcome {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 guard let module = self.module else { return .notStarted }
@@ -398,10 +398,11 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(2)!
+                let args = PyTuple_New(3)!
                 defer { Py_DecRef(args) }
                 PyTuple_SetItem(args, 0, PyUnicode_FromString(destHashHex)!)
                 PyTuple_SetItem(args, 1, PyUnicode_FromString(content)!)
+                PyTuple_SetItem(args, 2, PyUnicode_FromString(fieldsHex)!)
                 guard let result = PyObject_CallObject(fn, args) else {
                     throw BridgeError.pythonException(currentPythonException())
                 }

@@ -28,6 +28,43 @@ public enum LxmfFieldCodec {
         return packMsgPack(value(fromFieldMap: fields))
     }
 
+    /// Build the canonical on-wire LXMF field map from typed send params, shared
+    /// by both backends so they encode identically: FIELD_IMAGE (0x06) =
+    /// [format, bytes]; FIELD_FILE_ATTACHMENTS (0x05) = [[name, bytes], …];
+    /// FIELD_ICON_APPEARANCE (0x04); FIELD_REPLY_HASH (0x30) = raw target-hash
+    /// bytes + optional FIELD_REPLY_QUOTE (0x31). `extraFields` (pre-encoded raw
+    /// bytes, e.g. telemetry/custom-meta) are merged last.
+    public static func buildFieldMap(
+        imageData: Data?,
+        imageFormat: String?,
+        fileAttachments: [RnsFileAttachment]?,
+        iconAppearance: IconAppearance?,
+        replyToMessageHashHex: String?,
+        replyQuotedContent: String?,
+        extraFields: [UInt8: Data]?
+    ) -> [UInt8: Any] {
+        var fields: [UInt8: Any] = [:]
+        if let imageData, let imageFormat {
+            fields[LxmfFields.FIELD_IMAGE] = [imageFormat, imageData] as [Any]
+        }
+        if let fileAttachments, !fileAttachments.isEmpty {
+            fields[LxmfFields.FIELD_FILE_ATTACHMENTS] = fileAttachments.map { [$0.name, $0.data] as [Any] }
+        }
+        if let iconAppearance {
+            fields[LxmfFields.FIELD_ICON_APPEARANCE] = iconAppearance.toLXMFFieldValue()
+        }
+        if let replyToMessageHashHex, let replyHash = try? replyToMessageHashHex.hexToData() {
+            fields[LxmfFields.FIELD_REPLY_HASH] = replyHash
+            if let replyQuotedContent {
+                fields[LxmfFields.FIELD_REPLY_QUOTE] = Data(replyQuotedContent.utf8)
+            }
+        }
+        if let extraFields {
+            for (k, v) in extraFields { fields[k] = v }
+        }
+        return fields
+    }
+
     /// Unpack MessagePack bytes back to an LXMF field map. Returns nil for empty
     /// or malformed data, or if the top level isn't a map.
     public static func unpack(_ data: Data) -> [UInt8: Any]? {
