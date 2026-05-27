@@ -47,6 +47,13 @@ public final class SwiftRNSBackend: @unchecked Sendable {
     private let eventContinuation: AsyncStream<BackendEvent>.Continuation
     private var delegate: RouterDelegate?
 
+    /// Polls the path table for received announces and bridges them onto the
+    /// event stream as `.announce`. reticulum-swift exposes no announce callback —
+    /// the path table IS the announce record (the UI's announces tab reads it the
+    /// same way), so we diff it on a short cadence, mirroring the Python backend's
+    /// periodic drain.
+    private var announcePoller: Task<Void, Never>?
+
     public var events: AsyncStream<BackendEvent> { eventStream }
 
     /// Native backend capabilities. Unlike the Python backend, the Swift stack
@@ -119,6 +126,8 @@ public final class SwiftRNSBackend: @unchecked Sendable {
         self.telephonyDestination = tel
         await tp.registerDestination(tel)
 
+        // 7. Start bridging received announces (path-table diff) onto events.
+        startAnnouncePolling()
 
         let info = LocalInfo(identityHash: id.hexHash, destinationHash: dest.hexHash)
         self.localInfo = info
@@ -126,6 +135,8 @@ public final class SwiftRNSBackend: @unchecked Sendable {
     }
 
     public func stop() async {
+        announcePoller?.cancel()
+        announcePoller = nil
         eventContinuation.finish()
         router = nil
         transport = nil
@@ -134,6 +145,36 @@ public final class SwiftRNSBackend: @unchecked Sendable {
         telephonyDestination = nil
         links.removeAll()
         localInfo = nil
+    }
+
+    /// Diff the path table on a short cadence, emitting `.announce` for each
+    /// newly-seen or freshly re-announced known destination (lxmf.delivery /
+    /// lxmf.propagation / lxst.telephony / nomadnetwork.node). `lastSeen` is
+    /// task-local, so no shared mutable state escapes the poller.
+    private func startAnnouncePolling() {
+        guard let pathTable else { return }
+        let cont = eventContinuation
+        announcePoller = Task {
+            var lastSeen: [String: Date] = [:]
+            while !Task.isCancelled {
+                for entry in await pathTable.allEntries() {
+                    guard let aspect = entry.detectedAspect else { continue }
+                    let hash = entry.destinationHash.hexHash
+                    if let prev = lastSeen[hash], prev >= entry.timestamp { continue }
+                    lastSeen[hash] = entry.timestamp
+                    cont.yield(.announce(
+                        destHash: hash,
+                        appDataHex: (entry.appData ?? Data()).hexHash,
+                        aspect: aspect,
+                        publicKeysHex: entry.publicKeys.hexHash,
+                        interfaceName: entry.interfaceId,
+                        hops: Int(entry.hopCount),
+                        t: entry.timestamp
+                    ))
+                }
+                try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+            }
+        }
     }
 
     // MARK: - Messaging (ported from main's sendAnnounce / handleOutbound)
