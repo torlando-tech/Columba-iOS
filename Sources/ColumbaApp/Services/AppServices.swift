@@ -1067,6 +1067,7 @@ public final class AppServices {
                     sourceHash: from,
                     content: content,
                     title: "",
+                    fields: nil,
                     timestamp: Date()
                 )
             }
@@ -1605,10 +1606,14 @@ public final class AppServices {
     /// sender is a known + favorited contact. This must live here
     /// because we bypass IncomingMessageHandler — Python's delivery
     /// callback feeds straight into this method.
-    private func persistInboundFromPython(sourceHash: Data, content: String, title: String, timestamp: Date) async {
+    /// Persist an inbound message + return it (with its fields) so the caller can
+    /// run side-channel handling (reactions/replies/telemetry/icon/cease) through
+    /// IncomingMessageHandler. Returns nil if blocked or persistence failed.
+    @discardableResult
+    private func persistInboundFromPython(sourceHash: Data, content: String, title: String, fields: [UInt8: Any]?, timestamp: Date) async -> LXMessage? {
         guard let database = self.database else {
             DiagLog.log("[PY] persistInbound: no database")
-            return
+            return nil
         }
         let repo = MessageRepository(database: database)
         let sourceHashHex = sourceHash.map { String(format: "%02x", $0) }.joined()
@@ -1629,7 +1634,7 @@ public final class AppServices {
             }
             if !isKnownContact {
                 DiagLog.log("[PY] persistInbound BLOCKED source=\(sourceHashHex.prefix(8)) (block_unknown_senders enabled)")
-                return
+                return nil
             }
         }
 
@@ -1650,7 +1655,7 @@ public final class AppServices {
                 sourceIdentity: nil,
                 content: content.data(using: .utf8) ?? Data(),
                 title: title.data(using: .utf8) ?? Data(),
-                fields: nil,
+                fields: fields,
                 desiredMethod: .opportunistic
             )
             message.sourceHash = sourceHash
@@ -1669,8 +1674,10 @@ public final class AppServices {
                 object: nil,
                 userInfo: ["sourceHash": sourceHash]
             )
+            return message
         } catch {
             DiagLog.log("[PY] persistInbound failed: \(error)")
+            return nil
         }
     }
 
@@ -1726,10 +1733,19 @@ public final class AppServices {
                     "timestamp": t,
                 ]
             )
-        case .inbound(let sourceHash, let content, let title, _, let t):
-            DiagLog.log("[PY] inbound source=\(sourceHash) content=\"\(content)\"")
+        case .inbound(let sourceHash, let content, let title, let fieldsPacked, let t):
+            DiagLog.log("[PY] inbound source=\(sourceHash) content=\"\(content)\" fields=\(fieldsPacked.count)B")
             guard let data = Data(hexString: sourceHash) else { return }
-            await persistInboundFromPython(sourceHash: data, content: content, title: title, timestamp: t)
+            let fields = fieldsPacked.isEmpty ? nil : LxmfFieldCodec.unpack(fieldsPacked)
+            // Persist the base message (carrying its fields), then run side-channel
+            // handling (reactions / replies / telemetry / icon / cease) through
+            // IncomingMessageHandler — the router.delegate, wired in ColumbaApp.
+            // Same path for both backends (Python sends empty fields until its
+            // bridge plumbing lands; the Swift backend populates them now).
+            if let saved = await persistInboundFromPython(sourceHash: data, content: content, title: title, fields: fields, timestamp: t),
+               fields != nil, let router = self.router {
+                router.delegate?.router(router, didReceiveMessage: saved)
+            }
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonInbound"),
                 object: nil,
