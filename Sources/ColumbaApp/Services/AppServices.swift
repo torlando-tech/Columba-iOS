@@ -150,6 +150,11 @@ public final class AppServices {
     /// backend is active; those paths are then correctly skipped.
     public var pythonBackend: PythonRNSBackend? { backend as? PythonRNSBackend }
 
+    /// What the active backend supports — drives UI capability gating. `.unknown`
+    /// (everything unsupported) until a backend is bound; re-evaluated via
+    /// @Observable through `backend` when the backend changes.
+    public var capabilities: BackendCapabilities { backend?.capabilities ?? .unknown }
+
     /// Background task that drains Python events (announces, inbound
     /// messages) into Columba's existing UI plumbing.
     private var pythonEventTask: Task<Void, Never>?

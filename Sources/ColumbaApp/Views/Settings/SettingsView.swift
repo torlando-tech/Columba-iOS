@@ -89,8 +89,13 @@ struct SettingsView: View {
                         // Auto Announce
                         autoAnnounceCard(vm)
 
-                        // Location Sharing
-                        locationSharingCard(vm)
+                        // Location Sharing — shown only when the active
+                        // backend implements telemetry/location (the Python
+                        // backend stubs it; the native backend supports it).
+                        // Honest capability gate, not a silent dead-end toggle.
+                        if appServices.capabilities.telemetry.storeOwnTelemetry != .unsupported {
+                            locationSharingCard(vm)
+                        }
 
                         // Map Sources
                         mapSourcesCard(vm)
