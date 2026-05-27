@@ -134,6 +134,7 @@ public struct BackendCapabilities: Equatable, Sendable {
     /// churning UI code.
     public enum BackendID: String, Equatable, Sendable {
         case pythonEmbedded   // iOS-only: BeeWare Python-Apple-support + canonical RNS
+        case swiftNative      // native reticulum-swift / LXMF-swift / LXST-swift
     }
 
     /// Sentinel snapshot returned before a backend binding has been
