@@ -56,20 +56,24 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
 
     public var events: AsyncStream<BackendEvent> { eventStream }
 
-    /// Native backend capabilities. Unlike the Python backend, the Swift stack
-    /// implements telemetry/location; it does not hot-reload interfaces (a
-    /// restart is cheap here, but kept honest). LXST voice is the Swift stack.
+    /// Native backend capabilities. The Swift stack hot-reloads interfaces (live
+    /// add/remove via RnsTransportAdmin, no restart). Telemetry caps are honest-
+    /// unsupported for now: `RnsTelemetry.sendLocationTelemetry` is wired and
+    /// Sideband-compatible, but collector-host mode isn't implemented and the app
+    /// location feature is gated off — flip to `.full` once those land. Battery-
+    /// profile tuning hooks aren't implemented on this stack either.
     public var capabilities: BackendCapabilities {
         BackendCapabilities(
             backendId: .swiftNative,
             versions: .init(reticulum: "0.2.3", lxmf: "0.3.4", lxst: nil, bleReticulum: nil),
             interfaces: .init(hotReloadInterfaces: true),
             telemetry: .init(
-                collectorHostMode: .full,
-                storeOwnTelemetry: .full,
-                allowedRequestersFilter: .full
+                collectorHostMode: .unsupported,
+                storeOwnTelemetry: .unsupported,
+                allowedRequestersFilter: .unsupported,
+                degradationHint: "Telemetry send is wired (Sideband-compatible FIELD_TELEMETRY 0x02); collector-host mode isn't implemented and the app location feature is currently gated off."
             ),
-            performance: .init(batteryProfileTuning: .full, sharedInstanceAvailabilityChecks: false)
+            performance: .init(batteryProfileTuning: .unsupported, sharedInstanceAvailabilityChecks: false)
         )
     }
 
