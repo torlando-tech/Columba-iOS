@@ -131,6 +131,61 @@ public final class SwiftRNSBackend: @unchecked Sendable {
         localInfo = nil
     }
 
+    // MARK: - Messaging (ported from main's sendAnnounce / handleOutbound)
+
+    @discardableResult
+    public func announce(displayName: String) async throws -> Bool {
+        try await emitAnnounce(on: deliveryDestination, displayName: displayName, withRatchet: true)
+    }
+
+    @discardableResult
+    public func announceTelephony(displayName: String) async throws -> Bool {
+        try await emitAnnounce(on: telephonyDestination, displayName: displayName, withRatchet: false)
+    }
+
+    private func emitAnnounce(on destination: ReticulumSwift.Destination?, displayName: String, withRatchet: Bool) async throws -> Bool {
+        guard let transport, let destination else { return false }
+        destination.appData = displayName.data(using: .utf8)
+        var ratchetPub: Data? = nil
+        if withRatchet, let mgr = destination.ratchetManager {
+            await mgr.rotateIfNeeded()
+            ratchetPub = await mgr.currentRatchetPublicBytes()
+        }
+        let announce = ReticulumSwift.Announce(destination: destination, ratchet: ratchetPub)
+        let packet = try announce.buildPacket()
+        try await transport.send(packet: packet)
+        return true
+    }
+
+    public func sendOpportunistic(destHashHex: String, content: String) async throws -> SendOutcome {
+        guard let router, let id = identity else { return .notStarted }
+        guard let destHash = Self.hexData(destHashHex), !destHash.isEmpty else { return .badHash }
+        var msg = LXMFSwift.LXMessage(
+            destinationHash: destHash,
+            sourceIdentity: id,
+            content: Data(content.utf8),
+            title: Data(),
+            fields: nil,
+            desiredMethod: .opportunistic
+        )
+        try await router.handleOutbound(&msg)
+        return .queued(messageHash: msg.hash.hexHash)
+    }
+
+    /// Decode a hex string to Data (RNSAPI's HexExt is Data→String only, and
+    /// reticulum-swift's Data here would make a shared helper ambiguous).
+    private static func hexData(_ hex: String) -> Data? {
+        guard hex.count % 2 == 0 else { return nil }
+        var out = Data(capacity: hex.count / 2)
+        var i = hex.startIndex
+        while i < hex.endIndex {
+            let j = hex.index(i, offsetBy: 2)
+            guard let b = UInt8(hex[i..<j], radix: 16) else { return nil }
+            out.append(b); i = j
+        }
+        return out
+    }
+
     // MARK: - Router delegate → BackendEvent
 
     /// Bridges LXMRouter delegate callbacks (inbound / delivery / failure) onto
