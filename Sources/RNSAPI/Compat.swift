@@ -184,12 +184,6 @@ public final class Destination: @unchecked Sendable {
         self.direction = direction
     }
 
-    public func setCallbackManager(_ manager: Any) {}
-
-    public func registerCallback(_ callback: @escaping (Data, Packet) -> Void) throws {}
-
-    public func createPacketStream() -> AsyncStream<(Data, Packet)>? { nil }
-
     public func enableRatchets(storagePath: String) async throws {
         ratchetsEnabled = true
         ratchetManager = RatchetManager()
@@ -1514,7 +1508,6 @@ public final class ReticulumTransport: @unchecked Sendable {
     public var initiateLinkHook:
         (@Sendable (Destination, Identity) async throws -> Link)?
 
-    public func isDestinationRegistered(_ hash: Data) async -> Bool { false }
     public func registeredDestinationHashes() -> [String] { [] }
     public func registeredLinkCallbackHashes() -> [String] { [] }
     public func registerDestination(_ destination: Destination) async {
@@ -1526,9 +1519,7 @@ public final class ReticulumTransport: @unchecked Sendable {
     public func unregisterDestination(hash: Data) {
         unregisterDestinationHook?(hash)
     }
-    public func isLocalDestination(_ hash: Data) -> Bool { false }
     public var destinationCount: Int { 0 }
-    public func nextHopInterfaceHwMtu(for destinationHash: Data) async -> Int? { nil }
 
     public func initiateLink(to destination: Destination, identity: Identity) async throws -> Link {
         if let hook = initiateLinkHook {
@@ -1536,31 +1527,17 @@ public final class ReticulumTransport: @unchecked Sendable {
         }
         return Link(identityHash: destination.identity?.hash ?? Data())
     }
-    public func registerLink(_ link: Link) async {}
-    public func unregisterLink(linkId: Data) {}
-    public func getLink(linkId: Data) -> Link? { nil }
     public var activeLinkCount: Int { 0 }
     public var pendingLinkCount: Int { 0 }
 
-    public func waitForPacketProof(packetHash: Data, timeout: TimeInterval = 15) async -> Bool { false }
-    public func registerProofCallback(truncatedHash: Data, callback: @Sendable @escaping () async -> Void) {}
-    public func removeProofCallback(truncatedHash: Data) {}
 
-    public func send(packet: Packet) async throws {}
-    public func send(packet: Packet, via interfaceId: String) async throws {}
-    public func sendLinkData(packet: Packet) async throws {}
-    public func sendToInterface(_ data: Data, interfaceId: String) async throws {}
 
     public func handleReceivedData(data: Data, from interfaceId: String) async {}
-    public func receive(packet: Packet, from interfaceId: String) async {}
-    public func startRetransmissionLoop() {}
-    public func stopRetransmissionLoop() {}
 
     public func setTransportEnabled(_ enabled: Bool, identity: Identity? = nil) {
         self.transportEnabled = enabled
     }
 
-    public func requestPath(_ destinationHash: Data) async {}
     public func requestPath(for destinationHash: Data) async {}
 
     /// Wait up to `timeout` seconds for a path to `destinationHash`. Stub
@@ -1571,9 +1548,7 @@ public final class ReticulumTransport: @unchecked Sendable {
         true
     }
 
-    public func validateIFAC(raw: Data, interfaceId: String) -> Data? { nil }
     public func applyIFAC(raw: Data, interfaceId: String) -> Data { raw }
-    public func registerAnnounceHandler(_ handler: AnnounceHandler) async {}
 }
 
 public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
