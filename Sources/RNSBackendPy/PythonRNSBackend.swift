@@ -74,8 +74,30 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         localInfo = nil
     }
 
-    public func sendOpportunistic(destHashHex: String, content: String) async throws -> SendOutcome {
+    @discardableResult
+    public func sendLxmfMessage(
+        destHashHex: String,
+        content: String,
+        method: LXDeliveryMethod,
+        imageData: Data?,
+        imageFormat: String?,
+        fileAttachments: [RnsFileAttachment]?,
+        iconAppearance: IconAppearance?,
+        replyToMessageHashHex: String?,
+        replyQuotedContent: String?,
+        extraFields: [UInt8: Data]?
+    ) async throws -> SendOutcome {
+        // TODO(task #32): thread LXMF fields (image / attachments / icon / reply /
+        // telemetry) through PythonBridge to the embedded LXMF. Content-only for now
+        // — matches the pre-existing seam behavior; the Swift backend carries fields
+        // natively. Python telemetry/attachments stay capability-gated until wired.
         Self.map(try await bridge.sendOpportunistic(destHashHex: destHashHex, content: content))
+    }
+
+    @discardableResult
+    public func sendReaction(destHashHex: String, targetMessageHashHex: String, emoji: String) async throws -> SendOutcome {
+        // Reactions need FIELD_REACTION (0x40) plumbed to Python (task #32).
+        .other("reactions not yet supported on the Python backend")
     }
 
     /// Set / clear the outbound LXMF propagation node. Empty `destHashHex` clears.
@@ -88,6 +110,19 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
     public func propagationSync(timeout: TimeInterval = 60.0) async throws -> PropagationSyncResult {
         Self.map(try await bridge.propagationSync(timeout: timeout))
     }
+
+    // MARK: - Telemetry (RnsTelemetry) — unsupported on the Python backend.
+    // `capabilities` declares telemetry `.unsupported`; these are honest no-ops,
+    // not stubs pretending to work. The Swift-native backend implements telemetry.
+    public func sendLocationTelemetry(destHashHex: String, packed: Data, customMeta: Data?) async throws -> SendOutcome {
+        .other("telemetry unsupported on the Python backend")
+    }
+    public func sendTelemetryCease(destHashHex: String) async throws -> SendOutcome {
+        .other("telemetry unsupported on the Python backend")
+    }
+    public func setTelemetryCollectorMode(enabled: Bool) async -> Bool { false }
+    public func storeOwnTelemetry(packed: Data) async -> Bool { false }
+    public func setTelemetryAllowedRequesters(_ allowedHashesHex: Set<String>) async -> Bool { false }
 
     /// Push a fresh LXMF delivery announce (Settings Announce button + auto-announce timer).
     @discardableResult

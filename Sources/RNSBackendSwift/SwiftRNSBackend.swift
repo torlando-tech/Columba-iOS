@@ -203,20 +203,118 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         return true
     }
 
-    public func sendOpportunistic(destHashHex: String, content: String) async throws -> SendOutcome {
+    @discardableResult
+    public func sendLxmfMessage(
+        destHashHex: String,
+        content: String,
+        method: RNSAPI.LXDeliveryMethod,
+        imageData: Data?,
+        imageFormat: String?,
+        fileAttachments: [RnsFileAttachment]?,
+        iconAppearance: RNSAPI.IconAppearance?,
+        replyToMessageHashHex: String?,
+        replyQuotedContent: String?,
+        extraFields: [UInt8: Data]?
+    ) async throws -> SendOutcome {
         guard let router, let id = identity else { return .notStarted }
         guard let destHash = Self.hexData(destHashHex), !destHash.isEmpty else { return .badHash }
+
+        // Assemble the on-wire LXMF field map from the typed params using the
+        // canonical LxmfFields IDs (LXMessage.fields is [UInt8: Any]).
+        var fields: [UInt8: Any] = [:]
+        if let imageData, let imageFormat {
+            fields[LxmfFields.FIELD_IMAGE] = [imageFormat, imageData] as [Any]
+        }
+        if let fileAttachments, !fileAttachments.isEmpty {
+            fields[LxmfFields.FIELD_FILE_ATTACHMENTS] = fileAttachments.map { [$0.name, $0.data] as [Any] }
+        }
+        if let iconAppearance {
+            fields[LxmfFields.FIELD_ICON_APPEARANCE] = iconAppearance.toLXMFFieldValue()
+        }
+        if let replyToMessageHashHex, let replyHash = Self.hexData(replyToMessageHashHex) {
+            fields[LxmfFields.FIELD_REPLY_HASH] = replyHash
+            if let replyQuotedContent {
+                fields[LxmfFields.FIELD_REPLY_QUOTE] = Data(replyQuotedContent.utf8)
+            }
+        }
+        if let extraFields {
+            for (k, v) in extraFields { fields[k] = v }
+        }
+
         var msg = LXMFSwift.LXMessage(
             destinationHash: destHash,
             sourceIdentity: id,
             content: Data(content.utf8),
             title: Data(),
-            fields: nil,
+            fields: fields.isEmpty ? nil : fields,
+            desiredMethod: Self.lxmfMethod(method)
+        )
+        try await router.handleOutbound(&msg)
+        return .queued(messageHash: msg.hash.hexHash)
+    }
+
+    @discardableResult
+    public func sendReaction(destHashHex: String, targetMessageHashHex: String, emoji: String) async throws -> SendOutcome {
+        guard let router, let id = identity else { return .notStarted }
+        guard let destHash = Self.hexData(destHashHex), !destHash.isEmpty,
+              let targetHash = Self.hexData(targetMessageHashHex) else { return .badHash }
+        // Canonical FIELD_REACTION (0x40): {0x00: targetHashBytes, 0x01: emojiUTF8}.
+        let reaction: [UInt8: Any] = [
+            LxmfFields.REACTION_TO: targetHash,
+            LxmfFields.REACTION_CONTENT: Data(emoji.utf8),
+        ]
+        var msg = LXMFSwift.LXMessage(
+            destinationHash: destHash,
+            sourceIdentity: id,
+            content: Data(),
+            title: Data(),
+            fields: [LxmfFields.FIELD_REACTION: reaction],
             desiredMethod: .opportunistic
         )
         try await router.handleOutbound(&msg)
         return .queued(messageHash: msg.hash.hexHash)
     }
+
+    private static func lxmfMethod(_ m: RNSAPI.LXDeliveryMethod) -> LXMFSwift.LXDeliveryMethod {
+        switch m {
+        case .direct: return .direct
+        case .propagated: return .propagated
+        default: return .opportunistic
+        }
+    }
+
+    // MARK: - Telemetry (RnsTelemetry)
+    //
+    // Location payloads are Sideband-`Telemeter`-packed by the caller (LXMF-swift's
+    // Telemetry codec is Sideband-compatible) and carried under FIELD_TELEMETRY
+    // (0x02); cease/extras ride FIELD_CUSTOM_META (0xFD). Collector-host mode isn't
+    // implemented on the Swift backend yet — the capability declares it unsupported.
+
+    @discardableResult
+    public func sendLocationTelemetry(destHashHex: String, packed: Data, customMeta: Data?) async throws -> SendOutcome {
+        var extra: [UInt8: Data] = [LxmfFields.FIELD_TELEMETRY: packed]
+        if let customMeta { extra[LxmfFields.FIELD_CUSTOM_META] = customMeta }
+        return try await sendLxmfMessage(
+            destHashHex: destHashHex, content: "", method: .opportunistic,
+            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
+            replyToMessageHashHex: nil, replyQuotedContent: nil, extraFields: extra
+        )
+    }
+
+    @discardableResult
+    public func sendTelemetryCease(destHashHex: String) async throws -> SendOutcome {
+        let cease = Data(#"{"cease": true}"#.utf8)
+        return try await sendLxmfMessage(
+            destHashHex: destHashHex, content: "", method: .opportunistic,
+            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
+            replyToMessageHashHex: nil, replyQuotedContent: nil,
+            extraFields: [LxmfFields.FIELD_CUSTOM_META: cease]
+        )
+    }
+
+    public func setTelemetryCollectorMode(enabled: Bool) async -> Bool { false }
+    public func storeOwnTelemetry(packed: Data) async -> Bool { false }
+    public func setTelemetryAllowedRequesters(_ allowedHashesHex: Set<String>) async -> Bool { false }
 
     // MARK: - Propagation + persistence
 

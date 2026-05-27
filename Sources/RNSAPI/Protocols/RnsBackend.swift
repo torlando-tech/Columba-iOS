@@ -182,27 +182,28 @@ public struct StatusSnapshot: Decodable, Sendable {
     }
 }
 
-// MARK: - Protocols (Android :rns-api parity)
+// MARK: - Protocols (Android :rns-api parity — composed sub-interfaces)
+//
+// Mirrors Android Columba's rns-api: the umbrella `RnsBackend` composes focused
+// sub-interfaces — `core` (RNS lifecycle/announce/status), `lxmf` (messaging),
+// `telephony` (voice links), `telemetry` (location sharing), `nomadnet` (node
+// browsing), `transportAdmin` (live interfaces). `RnsLxmf` / `RnsTelemetry` /
+// `RnsNomadnet` live in their own files.
 
-/// Core RNS/LXMF lifecycle, messaging, announces, propagation, status.
+/// Core RNS lifecycle, announces, status. (LXMF messaging is `RnsLxmf`; NomadNet
+/// is `RnsNomadnet`; telemetry is `RnsTelemetry`.)
 public protocol RnsCore: AnyObject, Sendable {
     /// Local identity + delivery destination once started (nil before `start`).
     var localInfo: LocalInfo? { get }
     /// Stream of backend events (announce / inbound / delivery / link). The
     /// first subscription starts the drain.
     var events: AsyncStream<BackendEvent> { get }
-    /// What this backend can do — drives UI capability gating.
-    var capabilities: BackendCapabilities { get }
 
     @discardableResult
     func start(_ params: StartParams) async throws -> LocalInfo
     func stop() async
-    func sendOpportunistic(destHashHex: String, content: String) async throws -> SendOutcome
     @discardableResult func announce(displayName: String) async throws -> Bool
     @discardableResult func announceTelephony(displayName: String) async throws -> Bool
-    @discardableResult func setPropagationNode(destHashHex: String, stampCost: Int) async throws -> Bool
-    func propagationSync(timeout: TimeInterval) async throws -> PropagationSyncResult
-    func fetchNomadNetPage(destHashHex: String, path: String, timeout: TimeInterval, formFields: [String: String]?) async throws -> NomadNetFetchResult
     func statusSnapshot() async -> StatusSnapshot?
     @discardableResult func persist() async -> Bool
 }
@@ -222,25 +223,23 @@ public protocol RnsTransportAdmin: AnyObject, Sendable {
     @discardableResult func removeInterface(name: String) async throws -> (ok: Bool, reason: String)
 }
 
-/// The umbrella the factory returns and `AppServices` holds.
-public protocol RnsBackend: RnsCore, RnsTelephony, RnsTransportAdmin {}
+/// The umbrella the factory returns and `AppServices` holds. Composes the six
+/// facets (Android `RnsBackend` parity) and exposes them as accessors so call
+/// sites read `backend.lxmf.send…` / `backend.core.start…` like Android.
+public protocol RnsBackend: RnsCore, RnsLxmf, RnsTelemetry, RnsNomadnet, RnsTelephony, RnsTransportAdmin {
+    /// What this backend can do — drives UI capability gating.
+    var capabilities: BackendCapabilities { get }
+}
 
-// MARK: - Convenience defaults
-// (Protocol requirements can't carry default argument values, so the ergonomic
-// call sites the app uses are restored here as overloads that forward to the
-// requirement.)
-
-public extension RnsCore {
-    @discardableResult
-    func setPropagationNode(destHashHex: String) async throws -> Bool {
-        try await setPropagationNode(destHashHex: destHashHex, stampCost: 0)
-    }
-    func propagationSync() async throws -> PropagationSyncResult {
-        try await propagationSync(timeout: 60.0)
-    }
-    func fetchNomadNetPage(destHashHex: String, path: String) async throws -> NomadNetFetchResult {
-        try await fetchNomadNetPage(destHashHex: destHashHex, path: path, timeout: 30.0, formFields: nil)
-    }
+// Facet accessors — a composition view over the conforming backend (the backend
+// implements every facet, so each accessor is just `self` viewed as that facet).
+public extension RnsBackend {
+    var core: RnsCore { self }
+    var lxmf: RnsLxmf { self }
+    var telephony: RnsTelephony { self }
+    var telemetry: RnsTelemetry { self }
+    var nomadnet: RnsNomadnet { self }
+    var transportAdmin: RnsTransportAdmin { self }
 }
 
 public extension RnsTelephony {

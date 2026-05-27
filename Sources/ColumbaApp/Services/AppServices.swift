@@ -654,7 +654,7 @@ public final class AppServices {
             guard let backend else { return nil }
             let destHex = message.destinationHash.map { String(format: "%02x", $0) }.joined()
             let text = String(data: message.content, encoding: .utf8) ?? ""
-            let outcome = try await backend.sendOpportunistic(destHashHex: destHex, content: text)
+            let outcome = try await backend.lxmf.sendLxmfMessage(destHashHex: destHex, content: text)
             // Return the real LXMF hash so the router can key the persisted
             // message by it (matches the delivery-proof event).
             if case .queued(let hash) = outcome, !hash.isEmpty { return hash }
@@ -743,7 +743,7 @@ public final class AppServices {
                     return
                 }
                 do {
-                    let outcome = try await backend.sendOpportunistic(destHashHex: to, content: content)
+                    let outcome = try await backend.lxmf.sendLxmfMessage(destHashHex: to, content: content)
                     DiagLog.log("[TEST-SEND] outcome=\(outcome)")
                 } catch {
                     DiagLog.log("[TEST-SEND] error=\(error)")
