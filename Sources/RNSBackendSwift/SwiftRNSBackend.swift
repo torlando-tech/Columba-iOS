@@ -199,6 +199,124 @@ public final class SwiftRNSBackend: @unchecked Sendable {
         return true
     }
 
+    // MARK: - Telephony (RNS.Link pipe for LXST voice)
+    //
+    // The Swift LXST voice state machine drives these; the backend just owns the
+    // Link and bridges its inbound packets + state changes onto the neutral event
+    // stream. Ported from main's CallManager identity-resolve + initiateLink path.
+
+    public func openLink(destHashHex: String, aspect: String) async throws -> (ok: Bool, linkId: Int, reason: String) {
+        guard let transport, let localId = identity, let pathTable else {
+            return (false, 0, "not started")
+        }
+        guard let destHash = Self.hexData(destHashHex), !destHash.isEmpty else {
+            return (false, 0, "bad hash")
+        }
+
+        // 1. Ensure a path exists (request + await if not already known).
+        if await transport.hasPath(for: destHash) == false {
+            await transport.requestPath(for: destHash)
+            if await transport.awaitPath(for: destHash, timeout: 15.0) == false {
+                return (false, 0, "no path")
+            }
+        }
+
+        // 2. Recall the peer identity from the path entry's announced public keys
+        //    (64 bytes = enc + sig public keys), exactly as main's resolveIdentity.
+        guard let entry = await pathTable.lookup(destinationHash: destHash),
+              entry.publicKeys.count == 64,
+              let remoteIdentity = try? ReticulumSwift.Identity(publicKeyBytes: entry.publicKeys) else {
+            return (false, 0, "no identity")
+        }
+
+        // 3. Build the outbound destination from the aspect ("lxst.telephony" →
+        //    appName "lxst", aspects ["telephony"]) so its hash matches destHash.
+        let parts = aspect.split(separator: ".").map(String.init)
+        let appName = parts.first ?? "lxst"
+        let aspects = Array(parts.dropFirst())
+        let dest = ReticulumSwift.Destination(
+            identity: remoteIdentity, appName: appName, aspects: aspects,
+            type: .single, direction: .out
+        )
+
+        // 4. Initiate the link (throws TransportError.noPathAvailable if the path
+        //    evaporated between the check above and here).
+        let link = try await transport.initiateLink(to: dest, identity: localId)
+        let linkId = nextLinkId
+        nextLinkId += 1
+        links[linkId] = link
+
+        // 5. Bridge inbound link packets + state transitions onto the event stream.
+        //    stateUpdates yields the terminal .closed(reason) itself, so a separate
+        //    close callback would only duplicate it.
+        let cont = eventContinuation
+        await link.setPacketCallback { data, _ in
+            cont.yield(.linkPacket(linkId: linkId, data: data, t: Date()))
+        }
+        Task {
+            for await st in await link.stateUpdates {
+                let (s, r) = Self.linkStateString(st)
+                cont.yield(.linkState(linkId: linkId, state: s, reason: r, inbound: false, t: Date()))
+            }
+        }
+        return (true, linkId, "")
+    }
+
+    @discardableResult
+    public func linkSend(linkId: Int, data: Data) async throws -> Bool {
+        guard let link = links[linkId] else { return false }
+        try await link.send(data)
+        return true
+    }
+
+    @discardableResult
+    public func linkIdentify(linkId: Int) async throws -> Bool {
+        guard let link = links[linkId], let localId = identity else { return false }
+        try await link.identify(identity: localId)
+        return true
+    }
+
+    @discardableResult
+    public func linkTeardown(linkId: Int) async throws -> Bool {
+        guard let link = links.removeValue(forKey: linkId) else { return false }
+        await link.close(reason: .initiatorClosed)
+        return true
+    }
+
+    private static func linkStateString(_ s: ReticulumSwift.LinkState) -> (String, String) {
+        switch s {
+        case .pending:   return ("pending", "")
+        case .handshake: return ("handshake", "")
+        case .active:    return ("active", "")
+        case .stale:     return ("stale", "")
+        case .closed(let reason): return ("closed", String(describing: reason))
+        }
+    }
+
+    // MARK: - Status
+
+    public func statusSnapshot() async -> StatusSnapshot? {
+        guard let transport else { return nil }
+        let snaps = await transport.getInterfaceSnapshots()
+        let ifaces = snaps.map { s in
+            StatusSnapshot.InterfaceStatus(
+                sectionName: s.id,
+                name: s.name,
+                online: s.state == .connected,
+                rxBytes: 0,   // reticulum-swift's InterfaceSnapshot exposes no byte counters
+                txBytes: 0
+            )
+        }
+        let destCount = await transport.destinationCount
+        let pathCount = await transport.getPathTable().count
+        return StatusSnapshot(
+            started: identity != nil,
+            interfaces: ifaces,
+            destinationTableSize: destCount,
+            pathTableSize: pathCount
+        )
+    }
+
     /// Decode a hex string to Data (RNSAPI's HexExt is Data→String only, and
     /// reticulum-swift's Data here would make a shared helper ambiguous).
     private static func hexData(_ hex: String) -> Data? {
