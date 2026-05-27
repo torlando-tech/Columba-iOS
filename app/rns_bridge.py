@@ -62,6 +62,99 @@ import RNS
 import LXMF
 
 
+# ── Native multi-threaded stamp PoW (iOS) ──────────────────────────────────
+# iOS's embedded CPython ships no `_multiprocessing`, so upstream LXMF's
+# `LXStamper.job_linux` throws `ModuleNotFoundError: _multiprocessing` and no
+# stamp is ever produced — messages to peers that require a stamp cost (e.g.
+# Sideband) never deliver. (iOS reports `sys.platform == "ios"`, which misses
+# LXStamper's macOS `job_simple` branch.) We offload the proof-of-work to a
+# native, multi-threaded Swift implementation reached via ctypes — the iOS
+# analog of Columba Android's `event_bridge.install_external_stamp_generator`
+# + Kotlin `StampGenerator`. `columba_stamp_generate` is a @_cdecl shim in
+# SwiftBLEBridge (statically linked → resolvable through `CDLL(None)`).
+import ctypes
+
+try:
+    _columba_lib = ctypes.CDLL(None)
+except OSError:
+    _columba_lib = None
+
+
+def _bind_stamp_fn():
+    if _columba_lib is None:
+        return None
+    try:
+        fn = _columba_lib.columba_stamp_generate
+    except AttributeError:
+        return None
+    # (workblock, workblock_len, stamp_cost, out_stamp[32]) -> bytes_written
+    fn.argtypes = [ctypes.c_char_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_char_p]
+    fn.restype = ctypes.c_int32
+    return fn
+
+
+_stamp_generate_fn = _bind_stamp_fn()
+
+
+def _native_stamp_pow(workblock: bytes, stamp_cost: int):
+    """Run the stamp PoW natively (Swift, multi-threaded across cores). Returns
+    the 32-byte stamp, or None if the native symbol is unavailable / found
+    nothing."""
+    if _stamp_generate_fn is None:
+        return None
+    out = ctypes.create_string_buffer(32)
+    n = _stamp_generate_fn(bytes(workblock), len(workblock), int(stamp_cost), out)
+    if n == 32:
+        return out.raw[:32]
+    return None
+
+
+def _install_native_stamp_generator() -> None:
+    """Register the native (Swift, multi-threaded) PoW as LXMF's external stamp
+    generator. The torlando-tech LXMF fork's `LXStamper.set_external_generator`
+    hook makes `generate_stamp` delegate its proof-of-work to us — necessary on
+    iOS, whose embedded CPython has no `_multiprocessing` (stock `job_linux`
+    raises `ModuleNotFoundError`). LXMF still does its own workblock derivation +
+    value calc, so the stamp is byte-identical to what the receiver validates.
+    iOS analog of Android's `event_bridge.install_external_stamp_generator`.
+    No-ops (warning) if the native symbol or the fork hook is absent."""
+    try:
+        from LXMF import LXStamper
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"native stamp gen: LXStamper import failed: {e}", RNS.LOG_DEBUG)
+        return
+    if _stamp_generate_fn is None:
+        RNS.log(
+            "native stamp gen: columba_stamp_generate symbol not found; stamp "
+            "generation will fail on iOS (no _multiprocessing module)",
+            RNS.LOG_WARNING,
+        )
+        return
+    if not hasattr(LXStamper, "set_external_generator"):
+        RNS.log(
+            "native stamp gen: LXStamper has no set_external_generator — this is "
+            "stock LXMF, not the torlando fork; stamps will fail on iOS",
+            RNS.LOG_WARNING,
+        )
+        return
+
+    def _external_generator(workblock, stamp_cost):
+        # LXStamper contract: (workblock: bytes, stamp_cost: int) -> (stamp, rounds).
+        # `rounds` is cosmetic (generate_stamp recomputes value via stamp_value);
+        # the native generator doesn't surface a round count, so report 0.
+        _t0 = time.time()
+        stamp = _native_stamp_pow(bytes(workblock), int(stamp_cost))
+        RNS.log(
+            f"native stamp: cost={stamp_cost} in {round((time.time()-_t0)*1000)}ms"
+            + ("" if stamp is not None else " (FAILED — no stamp)"),
+            RNS.LOG_INFO,
+        )
+        return (stamp, 0) if stamp is not None else (None, 0)
+
+    LXStamper.set_external_generator(_external_generator)
+    RNS.log("native multi-threaded stamp generator registered via set_external_generator", RNS.LOG_INFO)
+
+
 _lock = threading.Lock()
 _events: "queue.Queue[dict]" = queue.Queue()
 _state: dict[str, Any] = {
@@ -231,6 +324,10 @@ def start(
             router = LXMF.LXMRouter(identity=identity, storagepath=storage_path)
             router.register_delivery_callback(_delivery_callback)
             _state["router"] = router
+            # Route LXMF stamp PoW to the native Swift generator (iOS has no
+            # _multiprocessing). Must be installed before the first outbound
+            # message to a stamp-requiring peer.
+            _install_native_stamp_generator()
         finally:
             _signal.signal = _orig_signal
 
@@ -627,11 +724,12 @@ def announce(display_name: str = "") -> dict[str, Any]:
     display name update. Called from the Settings UI's manual "Announce"
     button and from the AutoAnnounceManager timer.
 
-    Updates `delivery_destination.app_data` to the new display name
-    (msgpack-packed [name_bytes, stamp_cost] per LXMF's announce format
-    — matches LXMRouter.get_announce_app_data) so peers see the latest
-    name. Then calls `.announce()` which queues the announce packet for
-    every online interface.
+    Updates the delivery destination's display name and lets LXMF build the
+    announce app_data via its own `get_announce_app_data` (installed as the
+    destination's default-app-data callback), then calls
+    `delivery_destination.announce()` — the canonical LXMF delivery announce,
+    identical to what `LXMRouter.announce()` emits. Queues the announce packet
+    for every online interface.
 
     Returns `{ok: bool, reason: str}`. `not-started` when Python hasn't
     booted yet, `no-destination` when register_delivery_identity failed
@@ -640,20 +738,26 @@ def announce(display_name: str = "") -> dict[str, Any]:
         if not _state["started"]:
             return {"ok": False, "reason": "not-started"}
         destination = _state["destination"]
-        if destination is None:
+        router = _state["router"]
+        if destination is None or router is None:
             return {"ok": False, "reason": "no-destination"}
 
-        # LXMF expects app_data as msgpack-packed [name: bytes, stamp_cost: int].
-        # display_name="" still announces — peers will fall back to the
-        # short-hex shortHash for their UI.
+        # Announce via LXMF's own delivery-destination machinery instead of
+        # hand-rolling app_data. Update the display name, (re)install LXMF's
+        # get_announce_app_data as the destination's default app_data, then call
+        # delivery_destination.announce(): RNS invokes the callable to build the
+        # canonical msgpack [display_name, stamp_cost] — the exact format
+        # Sideband and Android Columba emit — and the SAME app_data is reused for
+        # any RNS path-request re-announce. (We previously froze app_data to
+        # static [name, 0] bytes here, diverging from the real LXMF format.)
         try:
-            from RNS.vendor import umsgpack
-            name_bytes = display_name.encode("utf-8", errors="replace")
-            destination.set_default_app_data(umsgpack.packb([name_bytes, 0]))
-        except Exception as e:
-            return {"ok": False, "reason": f"appdata-error: {e}"}
+            if display_name:
+                destination.display_name = display_name
 
-        try:
+            def _get_app_data() -> bytes:
+                return router.get_announce_app_data(destination.hash)
+            destination.set_default_app_data(_get_app_data)
+
             destination.announce()
         except Exception as e:
             return {"ok": False, "reason": f"announce-error: {e}"}

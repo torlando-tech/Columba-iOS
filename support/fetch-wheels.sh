@@ -46,7 +46,21 @@ if [ -n "${RETICULUM_LOCAL:-}" ]; then
 else
     RNS_SPEC="git+https://github.com/torlando-tech/Reticulum.git@${RETICULUM_BRANCH}"
 fi
-LXMF_SPEC="lxmf"
+# LXMF: torlando-tech fork with the external stamp generator hook. iOS embedded
+# CPython has no `_multiprocessing`, so stock LXStamper's job_linux crashes and
+# no stamp is produced (messages to stamp-cost peers like Sideband never
+# deliver). The fork's `set_external_generator` lets us run the PoW in native
+# Swift (see app/rns_bridge.py + Sources/SwiftBLEBridge/StampGenerator.swift).
+# Branch is 0.9.9 + the hook (forward-port of feature/external-stamp-generator).
+# Point at a local working copy to develop the fork:
+#   LXMF_LOCAL=~/repos/LXMF support/fetch-wheels.sh   (branch feature/external-stamp-generator-0.9.9)
+LXMF_BRANCH="feature/external-stamp-generator-0.9.9"
+if [ -n "${LXMF_LOCAL:-}" ]; then
+    echo "==> LXMF_LOCAL set — using local LXMF checkout: $LXMF_LOCAL"
+    LXMF_SPEC="$LXMF_LOCAL"
+else
+    LXMF_SPEC="git+https://github.com/torlando-tech/LXMF.git@${LXMF_BRANCH}"
+fi
 PYSERIAL_SPEC="pyserial>=3.5"
 # ble-reticulum is not on PyPI; install from the local checkout if present,
 # otherwise from Torlando's GitHub. Pure-Python, zero runtime deps.
