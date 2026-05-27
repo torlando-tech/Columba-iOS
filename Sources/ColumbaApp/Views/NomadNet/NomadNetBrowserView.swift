@@ -7,7 +7,7 @@ import RNSAPI
 struct NomadNetBrowserView: View {
     @State private var viewModel: NomadNetBrowserViewModel
 
-    init(nodeHash: Data, nodeName: String?, backend: PythonRNSBackend, identity: Identity) {
+    init(nodeHash: Data, nodeName: String?, backend: any RnsBackend, identity: Identity) {
         _viewModel = State(initialValue: NomadNetBrowserViewModel(
             nodeHash: nodeHash,
             nodeName: nodeName,

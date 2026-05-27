@@ -32,6 +32,7 @@
 		0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */; };
 		PRC001 /* PythonRNodeCallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRC002 /* PythonRNodeCallbackBridge.swift */; };
 		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
+		BKF001 /* BackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKF002 /* BackendFactory.swift */; };
 		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
 		026 /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsRepository.swift */; };
 		027 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027 /* NotificationObserver.swift */; };
@@ -212,6 +213,7 @@
 		F022 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F024 /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
+		BKF002 /* BackendFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFactory.swift; sourceTree = "<group>"; };
 		F025 /* MessageRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRepository.swift; sourceTree = "<group>"; };
 		F026 /* SettingsRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRepository.swift; sourceTree = "<group>"; };
 		F027 /* NotificationObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationObserver.swift; sourceTree = "<group>"; };
@@ -599,6 +601,7 @@
 			isa = PBXGroup;
 			children = (
 				F024 /* AppServices.swift */,
+				BKF002 /* BackendFactory.swift */,
 				F025 /* MessageRepository.swift */,
 				F026 /* SettingsRepository.swift */,
 				F027 /* NotificationObserver.swift */,
@@ -908,6 +911,7 @@
 				021 /* MapView.swift in Sources */,
 				048 /* MapLibreMapView.swift in Sources */,
 				024 /* AppServices.swift in Sources */,
+				BKF001 /* BackendFactory.swift in Sources */,
 				025 /* MessageRepository.swift in Sources */,
 				026 /* SettingsRepository.swift in Sources */,
 				027 /* NotificationObserver.swift in Sources */,

@@ -110,7 +110,7 @@ public final class NomadNetBrowserViewModel {
     public init(
         nodeHash: Data,
         nodeName: String?,
-        backend: PythonRNSBackend,
+        backend: any RnsBackend,
         identity: Identity
     ) {
         self.currentNodeHash = nodeHash

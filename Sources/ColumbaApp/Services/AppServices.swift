@@ -143,7 +143,12 @@ public final class AppServices {
     /// `initialize(...)` and torn down on `shutdown()`. The Compat-layer
     /// `LXMRouter` and `ReticulumTransport` stubs delegate real work
     /// (announce listening, opportunistic LXMF send/receive) through this.
-    public private(set) var pythonBackend: PythonRNSBackend?
+    public private(set) var backend: (any RnsBackend)?
+
+    /// The bound backend downcast to the Python impl — for Python-only wiring
+    /// (BLE/RNode callback bridges, diagnose_* deeplinks). nil when a non-Python
+    /// backend is active; those paths are then correctly skipped.
+    public var pythonBackend: PythonRNSBackend? { backend as? PythonRNSBackend }
 
     /// Background task that drains Python events (announces, inbound
     /// messages) into Columba's existing UI plumbing.
@@ -555,7 +560,7 @@ public final class AppServices {
         displayName: String
     ) async {
         DiagLog.log("[PY] startPythonBackend entered with \(interfaces.count) interfaces")
-        if pythonBackend != nil {
+        if backend != nil {
             DiagLog.log("[PY] already started")
             return
         }
@@ -564,8 +569,8 @@ public final class AppServices {
         self.pythonStartIdentity = identity
         self.pythonStartDisplayName = displayName
 
-        let backend = PythonRNSBackend()
-        self.pythonBackend = backend
+        let backend = BackendFactory.make()
+        self.backend = backend
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
@@ -620,7 +625,7 @@ public final class AppServices {
         } catch {
             DiagLog.log("[PY] start FAILED: \(error)")
             logger.error("Python backend start failed: \(error.localizedDescription, privacy: .public)")
-            self.pythonBackend = nil
+            self.backend = nil
             return
         }
 
@@ -631,10 +636,12 @@ public final class AppServices {
         // place. Cheap to install unconditionally: it only stores a ref; the
         // CBCentralManager isn't created until Python calls columba_rnode_start.
         #if canImport(CoreBluetooth)
-        SwiftRNodeBridge.shared.setCallbackInvoker(
-            PythonRNodeCallbackBridge(pythonBridge: backend.pythonBridge)
-        )
-        DiagLog.log("[RNODE] PythonRNodeCallbackBridge installed")
+        if let py = backend as? PythonRNSBackend {
+            SwiftRNodeBridge.shared.setCallbackInvoker(
+                PythonRNodeCallbackBridge(pythonBridge: py.pythonBridge)
+            )
+            DiagLog.log("[RNODE] PythonRNodeCallbackBridge installed")
+        }
         #endif
 
         // Route outbound LXMF through Python.
@@ -726,7 +733,7 @@ public final class AppServices {
             guard let to = note.userInfo?["to"] as? String,
                   let content = note.userInfo?["content"] as? String else { return }
             Task { @MainActor in
-                guard let backend = self.pythonBackend else {
+                guard let backend = self.backend else {
                     DiagLog.log("[TEST-SEND] no backend")
                     return
                 }
@@ -1022,7 +1029,7 @@ public final class AppServices {
             let to = (note.userInfo?["to"] as? String) ?? ""
             let aspect = (note.userInfo?["aspect"] as? String) ?? "lxst.telephony"
             Task { @MainActor in
-                guard let backend = self.pythonBackend else {
+                guard let backend = self.backend else {
                     DiagLog.log("[TEST-LINK] no backend")
                     return
                 }
@@ -1073,7 +1080,7 @@ public final class AppServices {
             guard let self else { return }
             Task { @MainActor in
                 let manager = IdentityManager()
-                let before = self.pythonBackend?.localInfo?.destinationHash ?? "nil"
+                let before = self.backend?.localInfo?.destinationHash ?? "nil"
                 DiagLog.log("[TEST-IDSWITCH] before destination=\(before)")
                 do {
                     let created = try await manager.createIdentity(displayName: "SwitchTarget")
@@ -1083,7 +1090,7 @@ public final class AppServices {
                         identityHash: localId.identityHash,
                         tcpServerAddress: ""
                     )
-                    let after = self.pythonBackend?.localInfo?.destinationHash ?? "nil"
+                    let after = self.backend?.localInfo?.destinationHash ?? "nil"
                     DiagLog.log("[TEST-IDSWITCH] after destination=\(after) (changed=\(before != after))")
                 } catch {
                     DiagLog.log("[TEST-IDSWITCH] error=\(error)")
@@ -1101,7 +1108,7 @@ public final class AppServices {
             guard let self else { return }
             let node = (note.userInfo?["node"] as? String) ?? ""
             Task { @MainActor in
-                guard let backend = self.pythonBackend else {
+                guard let backend = self.backend else {
                     DiagLog.log("[TEST-PROP-SYNC] no backend")
                     return
                 }
@@ -1147,7 +1154,7 @@ public final class AppServices {
             guard let to = note.userInfo?["to"] as? String,
                   let path = note.userInfo?["path"] as? String else { return }
             Task { @MainActor in
-                guard let backend = self.pythonBackend else {
+                guard let backend = self.backend else {
                     DiagLog.log("[TEST-NOMAD] no backend")
                     return
                 }
@@ -1319,7 +1326,7 @@ public final class AppServices {
     /// finish before iOS suspends us.
     @MainActor
     public func persistRNSStateOnBackground() {
-        guard let backend = pythonBackend else { return }
+        guard let backend = backend else { return }
         #if canImport(UIKit)
         var bgTask: UIBackgroundTaskIdentifier = .invalid
         bgTask = UIApplication.shared.beginBackgroundTask(withName: "rns-persist") {
@@ -1401,7 +1408,7 @@ public final class AppServices {
         // 1. Durability — always persist, even if there's no live backend.
         writePythonConfig(interfaces: fresh)
 
-        guard let backend = pythonBackend else {
+        guard let backend = backend else {
             DiagLog.log("[PY-HOT] no running backend — config written, applies on next launch")
             pythonInterfaceEntities = freshById
             return
@@ -1440,7 +1447,7 @@ public final class AppServices {
     /// status mirror. Assumes the config file already contains the section
     /// (callers run `writePythonConfig` first).
     @MainActor
-    private func hotAddInterface(_ entity: InterfaceEntity, backend: PythonRNSBackend) async {
+    private func hotAddInterface(_ entity: InterfaceEntity, backend: any RnsBackend) async {
         let section = PythonConfigWriter.sectionName(for: entity)
         do {
             let r = try await backend.addInterface(name: section)
@@ -1454,7 +1461,7 @@ public final class AppServices {
     /// Hot-remove one interface from the running Python stack and tear down its
     /// Swift status mirror.
     @MainActor
-    private func hotRemoveInterface(_ entity: InterfaceEntity, backend: PythonRNSBackend) async {
+    private func hotRemoveInterface(_ entity: InterfaceEntity, backend: any RnsBackend) async {
         let section = PythonConfigWriter.sectionName(for: entity)
         do {
             let r = try await backend.removeInterface(name: section)
@@ -2709,9 +2716,9 @@ public final class AppServices {
         pythonEventTask = nil
         pythonStatusPollTask?.cancel()
         pythonStatusPollTask = nil
-        if let backend = pythonBackend {
+        if let backend = backend {
             await backend.stop()
-            pythonBackend = nil
+            self.backend = nil
         }
 
         // Stop auto-announce manager
@@ -2937,7 +2944,7 @@ public final class AppServices {
         // delivery destination's app_data and calls .announce() under
         // the embedded CPython. The pre-Python-RNS path (Compat
         // Announce.buildPacket → transport.send) was a no-op stub.
-        guard let backend = pythonBackend else {
+        guard let backend = backend else {
             throw AppServicesError.transportNotConnected
         }
         let ok = try await backend.announce(displayName: displayName)
@@ -2968,7 +2975,7 @@ public final class AppServices {
         }
 
         #if os(iOS)
-        if let backend = pythonBackend {
+        if let backend = backend {
             do {
                 let ok = try await backend.announceTelephony(displayName: displayName)
                 DiagLog.log("[ANNOUNCE] Telephony announce \(ok ? "sent" : "skipped")")
@@ -3027,7 +3034,7 @@ public final class AppServices {
     /// forwards bytes through the bridge. AppServices-isolated so the
     /// initiateLinkHook stays @Sendable-safe.
     private func openOutboundLink(to destination: Destination) async throws -> Link {
-        guard let backend = self.pythonBackend else {
+        guard let backend = self.backend else {
             throw AppServicesError.transportNotConnected
         }
         let destHex = destination.hash.toHex()
@@ -3084,7 +3091,7 @@ public final class AppServices {
         let link = Link(identityHash: Data())
         link.linkId = linkId
         link.state = .established
-        if let backend = self.pythonBackend {
+        if let backend = self.backend {
             let backendRef = backend
             link.sendBytesHook = { data in
                 _ = try? await backendRef.linkSend(linkId: Int(linkId), data: data)
