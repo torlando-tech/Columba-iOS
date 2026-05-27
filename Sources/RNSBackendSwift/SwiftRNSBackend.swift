@@ -18,7 +18,7 @@ import ReticulumSwift
 import LXMFSwift
 
 @available(iOS 17.0, macOS 14.0, *)
-public final class SwiftRNSBackend: @unchecked Sendable {
+public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
 
     // MARK: - Stack (reticulum-swift / LXMF-swift), module-qualified
 
