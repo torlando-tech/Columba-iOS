@@ -1726,7 +1726,7 @@ public final class AppServices {
                     "timestamp": t,
                 ]
             )
-        case .inbound(let sourceHash, let content, let title, let t):
+        case .inbound(let sourceHash, let content, let title, _, let t):
             DiagLog.log("[PY] inbound source=\(sourceHash) content=\"\(content)\"")
             guard let data = Data(hexString: sourceHash) else { return }
             await persistInboundFromPython(sourceHash: data, content: content, title: title, timestamp: t)

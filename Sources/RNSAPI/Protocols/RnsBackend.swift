@@ -60,7 +60,10 @@ public enum SendOutcome: Equatable, Sendable {
 /// state machine consume.
 public enum BackendEvent: Equatable, Sendable {
     case announce(destHash: String, appDataHex: String, aspect: String, publicKeysHex: String, interfaceName: String, hops: Int, t: Date)
-    case inbound(sourceHash: String, content: String, title: String, t: Date)
+    /// `fieldsPacked` is the inbound LXMF field map as MessagePack bytes (empty
+    /// = no fields) — decode with `LxmfFieldCodec.unpack`. Carries telemetry /
+    /// attachments / reactions / replies / icon / cease through the seam.
+    case inbound(sourceHash: String, content: String, title: String, fieldsPacked: Data, t: Date)
     case state(String, t: Date)
     /// Delivery / failure proof for an outbound message, keyed by its LXMF
     /// message hash hex. `state` is "delivered" or "failed".

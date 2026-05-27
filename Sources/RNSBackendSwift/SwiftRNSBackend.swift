@@ -707,7 +707,8 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         func router(_ router: LXMFSwift.LXMRouter, didReceiveMessage message: LXMFSwift.LXMessage) {
             let content = String(data: message.content, encoding: .utf8) ?? ""
             let title = String(data: message.title, encoding: .utf8) ?? ""
-            continuation.yield(.inbound(sourceHash: message.sourceHash.hexHash, content: content, title: title, t: Date()))
+            let fieldsPacked = (message.fields?.isEmpty == false) ? LxmfFieldCodec.pack(message.fields!) : Data()
+            continuation.yield(.inbound(sourceHash: message.sourceHash.hexHash, content: content, title: title, fieldsPacked: fieldsPacked, t: Date()))
         }
         func router(_ router: LXMFSwift.LXMRouter, didUpdateMessage message: LXMFSwift.LXMessage) {
             if message.state == .delivered {

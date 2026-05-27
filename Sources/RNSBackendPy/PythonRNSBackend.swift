@@ -240,7 +240,8 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         case let .announce(d, a, asp, pk, ifn, h, t):
             return .announce(destHash: d, appDataHex: a, aspect: asp, publicKeysHex: pk, interfaceName: ifn, hops: h, t: t)
         case let .inbound(s, c, ti, t):
-            return .inbound(sourceHash: s, content: c, title: ti, t: t)
+            // fieldsPacked empty until the Python bridge extracts LXMF fields (task #32 increment 4).
+            return .inbound(sourceHash: s, content: c, title: ti, fieldsPacked: Data(), t: t)
         case let .state(s, t):
             return .state(s, t: t)
         case let .delivery(m, s, t):
