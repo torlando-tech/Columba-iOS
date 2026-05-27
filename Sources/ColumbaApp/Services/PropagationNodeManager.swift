@@ -304,7 +304,7 @@ public final class PropagationNodeManager {
     /// Translate Python LXMRouter PR_* state names to Compat
     /// PropagationTransferState cases. (Subset mapped; non-terminal
     /// intermediate states collapse to .transferring for UI purposes.)
-    private static func mapPythonState(_ state: PythonBridge.PropagationSyncResult.State) -> PropagationTransferState.State {
+    private static func mapPythonState(_ state: PropagationSyncResult.State) -> PropagationTransferState.State {
         switch state {
         case .complete: return .complete
         case .noPath: return .noPath

@@ -176,7 +176,7 @@ public actor NomadNetBrowserService {
 
     // MARK: - Helpers
 
-    private func ensureSuccess(_ result: PythonBridge.NomadNetFetchResult) throws {
+    private func ensureSuccess(_ result: NomadNetFetchResult) throws {
         if result.ok { return }
         switch result.status {
         case .noPath: throw NomadNetError.noPath(destinationHash: Data())

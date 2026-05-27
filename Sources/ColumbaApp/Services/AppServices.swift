@@ -1166,7 +1166,7 @@ public final class AppServices {
     /// and update the Compat TCPInterface stub's `state` to reflect the
     /// `online` flag RNS.Transport reports.
     private func applyPythonInterfaceStatus(
-        snapshot: PythonBridge.StatusSnapshot,
+        snapshot: StatusSnapshot,
         entityById: [String: InterfaceEntity]
     ) async {
         // Log every interface Python reports so we can see AutoInterface /
@@ -1179,7 +1179,7 @@ public final class AppServices {
         }
         // The config section name PythonConfigWriter wrote is the matching
         // key — it's stable across the bridge and unique per entity.
-        var byEntity: [String: PythonBridge.StatusSnapshot.InterfaceStatus] = [:]
+        var byEntity: [String: StatusSnapshot.InterfaceStatus] = [:]
         var matchedSectionNames: Set<String> = []
         for status in snapshot.interfaces {
             for (entityId, entity) in entityById {
@@ -1662,7 +1662,7 @@ public final class AppServices {
         }
     }
 
-    private func handlePythonEvent(_ event: PythonBridge.Event) async {
+    private func handlePythonEvent(_ event: BackendEvent) async {
         switch event {
         case .announce(let destHash, let appDataHex, let aspect, let publicKeysHex, let interfaceName, let hops, let t):
             guard let data = Data(hexString: destHash) else { return }
