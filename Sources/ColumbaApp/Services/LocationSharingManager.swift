@@ -10,6 +10,7 @@
 
 import Foundation
 import RNSAPI
+import LXMFSwift
 import CoreLocation
 import os.log
 #if canImport(UIKit)
@@ -48,7 +49,7 @@ public struct PeerLocation: Identifiable, Equatable {
     public var lastUpdate: Date
 
     /// Icon appearance from LXMF Field 0x04 (MDI icon + colors).
-    public var iconAppearance: IconAppearance?
+    public var iconAppearance: RNSAPI.IconAppearance?
 
     /// True if older than 5 minutes.
     public var isStale: Bool {
@@ -254,8 +255,11 @@ public final class LocationSharingManager: NSObject {
         logger.info("Peer \(hex) ceased location sharing (COLUMBA_META)")
     }
 
-    public func handleIncomingTelemetry(from peerHash: Data, packet: TelemetryPacket, displayName: String?, iconAppearance: IconAppearance? = nil) {
-        guard let location = packet.location else { return }
+    public func handleIncomingTelemetry(from peerHash: Data, packet: RNSAPI.TelemetryPacket, displayName: String?, iconAppearance: RNSAPI.IconAppearance? = nil) {
+        // `packet.payload` holds the raw FIELD_TELEMETRY bytes (IncomingMessageHandler
+        // wraps them in the Compat TelemetryPacket); decode with LXMF-swift's
+        // Sideband-compatible Telemeter codec to get the structured location.
+        guard let location = LXMFSwift.TelemetryPacket.decode(from: packet.payload)?.location else { return }
 
         // Preserve existing icon if new message doesn't include one
         let resolvedIcon = iconAppearance ?? peerLocations[peerHash]?.iconAppearance
@@ -397,8 +401,7 @@ public final class LocationSharingManager: NSObject {
 
     private func sendLocationUpdateToPeer(_ peerHash: Data) async {
         guard let appServices = appServices,
-              let identity = appServices.identity,
-              let router = appServices.router else {
+              let backend = appServices.backend else {
             return
         }
 
@@ -432,8 +435,8 @@ public final class LocationSharingManager: NSObject {
             radiusMeters: precisionRadius
         )
 
-        // Build telemetry packet
-        let telemetry = LocationTelemetry(
+        // Build the Sideband-compatible telemetry packet (LXMF-swift Telemeter codec).
+        let telemetry = LXMFSwift.LocationTelemetry(
             latitude: finalLat,
             longitude: finalLng,
             altitude: location.altitude,
@@ -442,35 +445,24 @@ public final class LocationSharingManager: NSObject {
             accuracy: precisionRadius > 0 ? Double(precisionRadius) : location.horizontalAccuracy,
             lastUpdate: Int(location.timestamp.timeIntervalSince1970)
         )
-
-        let packet = TelemetryPacket(
+        let packet = LXMFSwift.TelemetryPacket(
             timestamp: Int(Date().timeIntervalSince1970),
             location: telemetry
         )
+        let telemetryData = packet.encode()  // FIELD_TELEMETRY (0x02) payload bytes
 
-        // Encode telemetry as FIELD_TELEMETRY bytes
-        let telemetryData = packet.encode()
-
-        // Build and send LXMF message with telemetry field
-        var fields: [UInt8: Any] = [:]
-        fields[LXMessage.FIELD_TELEMETRY] = telemetryData
-
-        var lxMessage = LXMessage(
-            destinationHash: peerHash,
-            sourceIdentity: identity,
-            content: Data(),  // No text content for telemetry-only messages
-            title: Data(),
-            fields: fields,
-            desiredMethod: .opportunistic
-        )
-
+        // Send via the neutral telemetry facet — the backend assembles the LXMF
+        // message (Swift implements it; Python is capability-gated → unsupported).
+        let destHex = peerHash.map { String(format: "%02x", $0) }.joined()
         do {
-            try await router.handleOutbound(&lxMessage)
-            lastSentLocation = location
-            lastSentTime = Date()
-
-            let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
-            logger.info("Sent location to \(hex): \(telemetry.latitude), \(telemetry.longitude)")
+            let outcome = try await backend.telemetry.sendLocationTelemetry(destHashHex: destHex, packed: telemetryData, customMeta: nil)
+            if case .queued = outcome {
+                lastSentLocation = location
+                lastSentTime = Date()
+                logger.info("Sent location to \(destHex.prefix(8)): \(telemetry.latitude), \(telemetry.longitude)")
+            } else {
+                logger.info("Telemetry send not queued (\(String(describing: outcome))) — backend may not support telemetry")
+            }
         } catch {
             logger.warning("Failed to send location: \(error.localizedDescription)")
         }
@@ -478,29 +470,16 @@ public final class LocationSharingManager: NSObject {
 
     private func sendCeaseSignal(to peerHash: Data) async {
         guard let appServices = appServices,
-              let identity = appServices.identity,
-              let router = appServices.router else {
+              let backend = appServices.backend else {
             return
         }
 
-        // Match Android Columba format: FIELD_CUSTOM_META (0xFD) with JSON {"cease": true}
-        let ceaseJSON = "{\"cease\": true}"
-        var fields: [UInt8: Any] = [:]
-        fields[LXMessage.FIELD_COLUMBA_META] = ceaseJSON.data(using: .utf8)!
-
-        var lxMessage = LXMessage(
-            destinationHash: peerHash,
-            sourceIdentity: identity,
-            content: Data(),
-            title: Data(),
-            fields: fields,
-            desiredMethod: .opportunistic
-        )
-
+        // Stop-sharing signal — FIELD_CUSTOM_META (0xFD) {"cease": true}, assembled
+        // by the backend via the neutral telemetry facet (Android Columba format).
+        let destHex = peerHash.map { String(format: "%02x", $0) }.joined()
         do {
-            try await router.handleOutbound(&lxMessage)
-            let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
-            logger.info("Sent cease signal to \(hex)")
+            _ = try await backend.telemetry.sendTelemetryCease(destHashHex: destHex)
+            logger.info("Sent cease signal to \(destHex.prefix(8))")
         } catch {
             logger.warning("Failed to send cease signal: \(error.localizedDescription)")
         }

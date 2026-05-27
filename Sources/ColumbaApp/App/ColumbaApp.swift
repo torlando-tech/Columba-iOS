@@ -660,8 +660,14 @@ struct RootView: View {
             self.messageRepository = repo
 
             #if os(iOS)
-            // Initialize location sharing manager (stub when COLUMBA_LOCATION_ENABLED off)
+            // Initialize location sharing manager. The real impl (flag on) needs
+            // appServices to reach backend.telemetry; the Compat stub (flag off) is
+            // a no-arg no-op.
+            #if COLUMBA_LOCATION_ENABLED
+            let locManager = LocationSharingManager(appServices: appServices)
+            #else
             let locManager = LocationSharingManager()
+            #endif
             appServices.locationSharingManager = locManager
             let handler = IncomingMessageHandler(messageRepository: repo, database: db, locationSharingManager: locManager)
             #else
