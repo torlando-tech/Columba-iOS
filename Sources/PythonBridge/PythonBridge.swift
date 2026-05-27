@@ -66,7 +66,7 @@ public final class PythonBridge: @unchecked Sendable {
 
     public enum Event: Equatable, Sendable {
         case announce(destHash: String, appDataHex: String, aspect: String, publicKeysHex: String, interfaceName: String, hops: Int, t: Date)
-        case inbound(sourceHash: String, content: String, title: String, t: Date)
+        case inbound(sourceHash: String, content: String, title: String, fieldsHex: String, t: Date)
         case state(String, t: Date)
 
         /// Delivery / failure proof for an outbound message, keyed by its LXMF
@@ -710,7 +710,8 @@ public final class PythonBridge: @unchecked Sendable {
                 let h = pyStringFromDict(item, key: "source_hash") ?? ""
                 let c = pyStringFromDict(item, key: "content") ?? ""
                 let title = pyStringFromDict(item, key: "title") ?? ""
-                out.append(.inbound(sourceHash: h, content: c, title: title, t: t))
+                let fieldsHex = pyStringFromDict(item, key: "fields_hex") ?? ""
+                out.append(.inbound(sourceHash: h, content: c, title: title, fieldsHex: fieldsHex, t: t))
             case "state":
                 let v = pyStringFromDict(item, key: "value") ?? "?"
                 out.append(.state(v, t: t))

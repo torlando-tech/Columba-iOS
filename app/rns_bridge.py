@@ -262,8 +262,19 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
         title = message.title_as_string()
     except Exception:
         title = ""
+    # Carry the inbound LXMF field map (telemetry / attachments / reactions /
+    # replies / icon / cease) to Swift as MessagePack-packed hex. Swift decodes
+    # it via LxmfFieldCodec → IncomingMessageHandler. Empty when there are no
+    # fields or packing fails (graceful — content/title still flow).
+    fields_hex = ""
+    try:
+        if getattr(message, "fields", None):
+            from RNS.vendor import umsgpack
+            fields_hex = umsgpack.packb(message.fields).hex()
+    except Exception:
+        fields_hex = ""
     src = message.source_hash.hex() if message.source_hash else ""
-    _put("inbound", source_hash=src, content=content, title=title)
+    _put("inbound", source_hash=src, content=content, title=title, fields_hex=fields_hex)
 
 
 def start(
