@@ -483,7 +483,7 @@ public final class LocationSharingManager: NSObject {
             return
         }
 
-        // Match Android Columba format: FIELD_COLUMBA_META (0x70) with JSON {"cease": true}
+        // Match Android Columba format: FIELD_CUSTOM_META (0xFD) with JSON {"cease": true}
         let ceaseJSON = "{\"cease\": true}"
         var fields: [UInt8: Any] = [:]
         fields[LXMessage.FIELD_COLUMBA_META] = ceaseJSON.data(using: .utf8)!

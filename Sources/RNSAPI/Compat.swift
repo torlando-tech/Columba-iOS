@@ -492,14 +492,15 @@ public struct IconAppearance: Codable, Equatable, Sendable {
 // MARK: - LXMessage
 
 public final class LXMessage: @unchecked Sendable {
-    // Field constants — match AI Swift surface (UInt8).
-    public static let FIELD_ICON_APPEARANCE: UInt8 = 0x04
-    public static let FIELD_FILE_ATTACHMENTS: UInt8 = 0x05
-    public static let FIELD_IMAGE:            UInt8 = 0x06
-    public static let FIELD_AUDIO:            UInt8 = 0x07
-    public static let FIELD_TELEMETRY:        UInt8 = 0x08
-    public static let FIELD_APP_DATA:         UInt8 = 0x10
-    public static let FIELD_COLUMBA_META:     UInt8 = 0x70
+    // Field constants — canonical source is `LxmfFields` (upstream LXMF /
+    // Sideband-compatible). Aliased here for existing call sites.
+    public static let FIELD_ICON_APPEARANCE  = LxmfFields.FIELD_ICON_APPEARANCE   // 0x04
+    public static let FIELD_FILE_ATTACHMENTS = LxmfFields.FIELD_FILE_ATTACHMENTS  // 0x05
+    public static let FIELD_IMAGE            = LxmfFields.FIELD_IMAGE             // 0x06
+    public static let FIELD_AUDIO            = LxmfFields.FIELD_AUDIO             // 0x07
+    public static let FIELD_TELEMETRY        = LxmfFields.FIELD_TELEMETRY         // 0x02 — was 0x08 (FIELD_THREAD upstream): interop bug, fixed
+    public static let FIELD_APP_DATA: UInt8  = 0x10   // iOS-local; upstream 0x10 is reaction-legacy — audit (task #32)
+    public static let FIELD_COLUMBA_META     = LxmfFields.FIELD_CUSTOM_META       // 0xFD — was invented 0x70; matches Android's migration
 
     public let destinationHash: Data
     public var sourceHash: Data
