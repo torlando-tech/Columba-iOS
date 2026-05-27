@@ -36,6 +36,11 @@ public final class SwiftRNSBackend: @unchecked Sendable {
     private var links: [Int: ReticulumSwift.Link] = [:]
     private var nextLinkId: Int = 1
 
+    /// Section-name → reticulum interface id, backing the Python-shaped
+    /// `addInterface(name:)` / `removeInterface(name:)` contract (Python resolves
+    /// the name against its config file; we resolve it against InterfaceRepository).
+    private var interfaceIds: [String: String] = [:]
+
     // MARK: - Events
 
     private let eventStream: AsyncStream<BackendEvent>
@@ -436,6 +441,101 @@ public final class SwiftRNSBackend: @unchecked Sendable {
             }
         }
         return data
+    }
+
+    // MARK: - Transport admin (live interface add/remove, no restart)
+    //
+    // The Python backend resolves a section name against its on-disk RNS config;
+    // the Swift backend resolves it against the shared InterfaceRepository (the
+    // same entity store the UI writes), then builds the reticulum-swift interface
+    // for that entity — porting main's per-type bring-up (TCP/Auto/RNode/BLE/MPC).
+
+    @discardableResult
+    public func addInterface(name: String) async throws -> (ok: Bool, reason: String) {
+        guard transport != nil, identity != nil else { return (false, "not started") }
+        guard let entity = Self.entity(forSection: name) else {
+            return (false, "no configured interface named \(name)")
+        }
+        do {
+            try await buildAndAdd(entity)
+            interfaceIds[name] = entity.id
+            return (true, "")
+        } catch {
+            return (false, "\(error)")
+        }
+    }
+
+    @discardableResult
+    public func removeInterface(name: String) async throws -> (ok: Bool, reason: String) {
+        guard let transport else { return (false, "not started") }
+        // Prefer the tracked id; fall back to the entity's id if we never tracked
+        // it (e.g. added before this process started). removeInterface disconnects.
+        guard let rid = interfaceIds[name] ?? Self.entity(forSection: name)?.id else {
+            return (false, "no interface named \(name)")
+        }
+        await transport.removeInterface(id: rid)
+        interfaceIds.removeValue(forKey: name)
+        return (true, "")
+    }
+
+    /// Resolve a config-section name back to its InterfaceEntity via the shared
+    /// repository (mirrors how PythonConfigWriter names sections on write).
+    private static func entity(forSection name: String) -> InterfaceEntity? {
+        InterfaceRepository().interfaces.first { PythonConfigWriter.sectionName(for: $0) == name }
+    }
+
+    /// Build the reticulum-swift interface for an entity and register it on the
+    /// transport. The reticulum interface id is the entity id (stable across the
+    /// add/remove pair). Ported type-by-type from main's start*Interface methods.
+    private func buildAndAdd(_ entity: InterfaceEntity) async throws {
+        guard let transport, let localId = identity else { return }
+        let mode = ReticulumSwift.InterfaceMode(rawValue: entity.mode.rawValue) ?? .full
+        let rid = entity.id
+
+        func config(_ type: ReticulumSwift.InterfaceType, host: String, port: UInt16) -> ReticulumSwift.InterfaceConfig {
+            ReticulumSwift.InterfaceConfig(
+                id: rid, name: entity.name, type: type, enabled: true, mode: mode, host: host, port: port
+            )
+        }
+
+        switch entity.config {
+        case .tcpClient(let c):
+            let iface = try ReticulumSwift.TCPInterface(config: config(.tcp, host: c.targetHost, port: c.targetPort))
+            try await transport.addInterface(iface)
+
+        case .tcpServer(let c):
+            let iface = try ReticulumSwift.TCPServerInterface(config: config(.tcp, host: c.listenIp, port: c.listenPort))
+            try await transport.addInterface(iface)
+
+        case .autoInterface(let c):
+            let iface = ReticulumSwift.AutoInterface(config: config(.autoInterface, host: c.groupId ?? "reticulum", port: 0))
+            try await transport.addAutoInterface(iface)
+
+        case .rnode(let c):
+            let iface = try ReticulumSwift.RNodeInterface(config: config(.rnode, host: c.deviceName, port: 0))
+            // Compat.RadioConfig and ReticulumSwift.RadioConfig have identical
+            // fields; build the reticulum one directly from the entity config.
+            try await iface.configureRadio(ReticulumSwift.RadioConfig(
+                frequency: c.frequency, bandwidth: c.bandwidth, txPower: c.txPower,
+                spreadingFactor: c.spreadingFactor, codingRate: c.codingRate,
+                stAlock: c.stAlock, ltAlock: c.ltAlock
+            ))
+            try await transport.addInterface(iface)
+
+        case .ble:
+            let driver = ReticulumSwift.CoreBluetoothBLEDriver(identityHash: localId.hash)
+            let iface = ReticulumSwift.BLEInterface(
+                config: config(.ble, host: "", port: 0), driver: driver, transportIdentity: localId.hash
+            )
+            try await transport.addBLEInterface(iface)
+
+        case .multipeer(let c):
+            let iface = ReticulumSwift.MPCInterface(
+                config: config(.multipeerConnectivity, host: c.serviceType, port: 0),
+                displayName: String(localId.hexHash.prefix(8))
+            )
+            try await transport.addMPCInterface(iface)
+        }
     }
 
     /// Decode a hex string to Data (RNSAPI's HexExt is Data→String only, and
