@@ -649,17 +649,13 @@ public final class AppServices {
         }
         #endif
 
-        // Route outbound LXMF through Python.
-        router.sendHook = { [weak backend] message in
-            guard let backend else { return nil }
-            let destHex = message.destinationHash.map { String(format: "%02x", $0) }.joined()
-            let text = String(data: message.content, encoding: .utf8) ?? ""
-            let outcome = try await backend.lxmf.sendLxmfMessage(destHashHex: destHex, content: text)
-            // Return the real LXMF hash so the router can key the persisted
-            // message by it (matches the delivery-proof event).
-            if case .queued(let hash) = outcome, !hash.isEmpty { return hash }
-            return nil
-        }
+        // Outbound LXMF now goes directly through `backend.lxmf.sendLxmfMessage`
+        // (MessagingViewModel + RnsLxmf) with TYPED fields, so the old Compat
+        // router sendHook — which forwarded content only and dropped every field —
+        // is retired. The Compat LXMRouter remains solely as the inbound delegate
+        // holder (IncomingMessageHandler, wired in ColumbaApp); fully retiring it
+        // would require the LXMRouterDelegate protocol to drop its router param
+        // (a separate, lower-value cleanup).
 
         // Drain Python events into Columba's UI plumbing.
         pythonEventTask?.cancel()
