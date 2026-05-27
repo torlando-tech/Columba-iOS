@@ -172,6 +172,33 @@ public final class SwiftRNSBackend: @unchecked Sendable {
         return .queued(messageHash: msg.hash.hexHash)
     }
 
+    // MARK: - Propagation + persistence
+
+    @discardableResult
+    public func setPropagationNode(destHashHex: String, stampCost: Int) async throws -> Bool {
+        guard let router else { return false }
+        let hash = destHashHex.isEmpty ? nil : Self.hexData(destHashHex)
+        await router.setOutboundPropagationNode(hash)
+        if stampCost > 0 { await router.setPropagationStampCost(stampCost) }
+        return true
+    }
+
+    public func propagationSync(timeout: TimeInterval) async throws -> PropagationSyncResult {
+        guard let router else {
+            return PropagationSyncResult(ok: false, state: .noRouter, receivedMessages: 0, reason: "no router")
+        }
+        // syncFromPropagationNode returns Void; the new-message count arrives via
+        // the delegate's didCompleteSyncWithNewMessages → BackendEvent stream.
+        try await router.syncFromPropagationNode()
+        return PropagationSyncResult(ok: true, state: .complete, receivedMessages: 0, reason: "")
+    }
+
+    @discardableResult
+    public func persist() async -> Bool {
+        await router?.persistPendingState()
+        return true
+    }
+
     /// Decode a hex string to Data (RNSAPI's HexExt is Data→String only, and
     /// reticulum-swift's Data here would make a shared helper ambiguous).
     private static func hexData(_ hex: String) -> Data? {
