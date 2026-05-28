@@ -788,6 +788,46 @@ public final class AppServices {
             }
         }
 
+        // Listen for test-telemetry deep links — the Tests/interop/ harness
+        // uses these to pin `RnsTelemetry.sendLocationTelemetry` /
+        // `sendTelemetryCease` on the active backend, both of which are
+        // unreachable from the UI on a build without COLUMBA_LOCATION_ENABLED.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestTelemetry"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            guard let to = note.userInfo?["to"] as? String else { return }
+            let packedHex = (note.userInfo?["packed_hex"] as? String) ?? ""
+            let metaHex = (note.userInfo?["meta_hex"] as? String) ?? ""
+            let cease = (note.userInfo?["cease"] as? Bool) ?? false
+            Task { @MainActor in
+                guard let backend = self.backend else {
+                    DiagLog.log("[TEST-TELEMETRY] no backend")
+                    return
+                }
+                do {
+                    if cease {
+                        let outcome = try await backend.telemetry.sendTelemetryCease(destHashHex: to)
+                        DiagLog.log("[TEST-TELEMETRY] cease outcome=\(outcome)")
+                    } else {
+                        guard let packed = try? packedHex.hexToData(), !packed.isEmpty else {
+                            DiagLog.log("[TEST-TELEMETRY] packed_hex missing or invalid")
+                            return
+                        }
+                        let meta = (try? metaHex.hexToData()).flatMap { $0.isEmpty ? nil : $0 }
+                        let outcome = try await backend.telemetry.sendLocationTelemetry(
+                            destHashHex: to, packed: packed, customMeta: meta
+                        )
+                        DiagLog.log("[TEST-TELEMETRY] send outcome=\(outcome)")
+                    }
+                } catch {
+                    DiagLog.log("[TEST-TELEMETRY] error=\(error)")
+                }
+            }
+        }
+
         // Listen for test-restart deep link (lxma://test-restart) so
         // smoke tests can exercise the Apply & Restart path without UI.
         NotificationCenter.default.addObserver(

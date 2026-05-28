@@ -211,6 +211,43 @@ class Simulator:
             print(f"  {line}", flush=True)
         pytest.fail(f"test_send timed out waiting for [TEST-SEND] outcome on {url}")
 
+    def test_send_telemetry(
+        self,
+        *,
+        to_hex: str,
+        packed: Optional[bytes] = None,
+        custom_meta: Optional[bytes] = None,
+        cease: bool = False,
+        wait: float = 30.0,
+    ) -> str:
+        """Drive `lxma://test-telemetry` so iOS calls `backend.telemetry.*`
+        directly (the path the still-compile-gated LocationSharingManager
+        would otherwise drive). Returns the [TEST-TELEMETRY] outcome line
+        from diag.log so callers can assert what happened iOS-side."""
+        if cease:
+            url = f"lxma://test-telemetry?to={to_hex}&cease=1"
+        else:
+            if packed is None:
+                raise ValueError("test_send_telemetry requires packed= (or cease=True)")
+            params = [f"to={to_hex}", f"packed_hex={packed.hex()}"]
+            if custom_meta is not None:
+                params.append(f"meta_hex={custom_meta.hex()}")
+            url = "lxma://test-telemetry?" + "&".join(params)
+
+        before_size = self.diag_log.stat().st_size if self.diag_log.exists() else 0
+        self._open_url(url)
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            for line in self._read_diag_since(before_size):
+                if "[TEST-TELEMETRY] send outcome=" in line or \
+                   "[TEST-TELEMETRY] cease outcome=" in line or \
+                   "[TEST-TELEMETRY] error=" in line or \
+                   "[TEST-TELEMETRY] packed_hex missing" in line or \
+                   "[TEST-TELEMETRY] no backend" in line:
+                    return line.strip()
+            time.sleep(0.4)
+        pytest.fail(f"test_send_telemetry timed out on {url}")
+
     def _read_diag_since(self, start_offset: int) -> list[str]:
         """Return the diag.log lines written since `start_offset` bytes."""
         try:

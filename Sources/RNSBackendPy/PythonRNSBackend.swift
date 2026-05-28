@@ -34,8 +34,12 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
     }()
 
     /// What the iOS Python backend can do. Notably: interface hot-reload IS
-    /// supported here (unlike Android's Chaquopy python), but telemetry /
-    /// location sharing are not yet implemented (the genuine gap the UI gates).
+    /// supported here (unlike Android's Chaquopy python). Telemetry SEND (peer-to-peer
+    /// location sharing via FIELD_TELEMETRY 0x02 + cease via FIELD_CUSTOM_META 0xFD)
+    /// is wired and Sideband-compatible; the collector-host responder (FIELD_COMMANDS
+    /// 0x09, FIELD_TELEMETRY_STREAM 0x03) is still unimplemented because it needs
+    /// Python-side state in event_bridge.py to track allowed-requesters / stored
+    /// own-telemetry — deferred (no iOS UI consumer for it yet).
     public var capabilities: BackendCapabilities {
         BackendCapabilities(
             backendId: .pythonEmbedded,
@@ -45,7 +49,7 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
                 collectorHostMode: .unsupported,
                 storeOwnTelemetry: .unsupported,
                 allowedRequestersFilter: .unsupported,
-                degradationHint: "Location sharing & telemetry are not yet implemented on the iOS Python backend."
+                degradationHint: "Peer-to-peer location sharing is wired (FIELD_TELEMETRY 0x02, Sideband-compatible). Collector-host mode (acting as a hub for other peers' telemetry) isn't implemented yet."
             ),
             performance: .init(batteryProfileTuning: .unsupported, sharedInstanceAvailabilityChecks: false)
         )
@@ -136,15 +140,48 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         Self.map(try await bridge.propagationSync(timeout: timeout))
     }
 
-    // MARK: - Telemetry (RnsTelemetry) — unsupported on the Python backend.
-    // `capabilities` declares telemetry `.unsupported`; these are honest no-ops,
-    // not stubs pretending to work. The Swift-native backend implements telemetry.
+    // MARK: - Telemetry (RnsTelemetry)
+    //
+    // The send half routes through the same `sendLxmfMessage` path as text /
+    // image / file sends — typed payloads land in the extraFields slot,
+    // which `LxmfFieldCodec.buildFieldMap` merges into the field map before
+    // it crosses to Python and gets packed by upstream LXMF. The wire bytes
+    // are Sideband-canonical: FIELD_TELEMETRY (0x02) = packed `Telemeter`
+    // bytes, FIELD_CUSTOM_META (0xFD) = JSON-encoded Columba extras (cease /
+    // expires / approxRadius).
+    //
+    // Collector-host mode (set/store/allowedRequesters) stays unsupported
+    // here — that's the "be a telemetry hub for other peers" path and needs
+    // event_bridge.py state we haven't ported yet. Capability declares it
+    // .unsupported so the SwiftUI gate hides the toggle.
+
+    @discardableResult
     public func sendLocationTelemetry(destHashHex: String, packed: Data, customMeta: Data?) async throws -> SendOutcome {
-        .other("telemetry unsupported on the Python backend")
+        var extra: [UInt8: Data] = [LxmfFields.FIELD_TELEMETRY: packed]
+        if let customMeta { extra[LxmfFields.FIELD_CUSTOM_META] = customMeta }
+        return try await sendLxmfMessage(
+            destHashHex: destHashHex, content: "", method: .opportunistic,
+            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
+            replyToMessageHashHex: nil, replyQuotedContent: nil, extraFields: extra
+        )
     }
+
+    @discardableResult
     public func sendTelemetryCease(destHashHex: String) async throws -> SendOutcome {
-        .other("telemetry unsupported on the Python backend")
+        // Sideband / Columba-Android convention: a cease signal is an
+        // empty-content message carrying FIELD_CUSTOM_META = `{"cease": true}`
+        // (UTF-8 JSON, not msgpack — matches `IncomingMessageHandler`'s
+        // `metaStr.contains("\"cease\"")` check).
+        let cease = Data(#"{"cease": true}"#.utf8)
+        return try await sendLxmfMessage(
+            destHashHex: destHashHex, content: "", method: .opportunistic,
+            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
+            replyToMessageHashHex: nil, replyQuotedContent: nil,
+            extraFields: [LxmfFields.FIELD_CUSTOM_META: cease]
+        )
     }
+
+    // Collector-host responder — still unsupported. See capability hint above.
     public func setTelemetryCollectorMode(enabled: Bool) async -> Bool { false }
     public func storeOwnTelemetry(packed: Data) async -> Bool { false }
     public func setTelemetryAllowedRequesters(_ allowedHashesHex: Set<String>) async -> Bool { false }

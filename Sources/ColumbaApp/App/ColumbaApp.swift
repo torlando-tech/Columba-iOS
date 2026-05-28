@@ -274,6 +274,36 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-telemetry" {
+                    // lxma://test-telemetry?to=HEX[&packed_hex=…&meta_hex=…|&cease=1]
+                    //
+                    // Drives `backend.telemetry.sendLocationTelemetry` (when
+                    // `packed_hex` is supplied) or `sendTelemetryCease`
+                    // (when `cease=1`) so the Tests/interop/ harness can pin
+                    // the RnsTelemetry seam end-to-end against a Sideband
+                    // reference peer without driving the location-sharing UI
+                    // (which is compile-gated behind COLUMBA_LOCATION_ENABLED).
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    func q(_ n: String) -> String? {
+                        components?.queryItems?.first(where: { $0.name == n })?.value
+                    }
+                    let to = q("to") ?? ""
+                    let packedHex = q("packed_hex") ?? ""
+                    let metaHex = q("meta_hex") ?? ""
+                    let cease = (q("cease") ?? "") == "1"
+                    DiagLog.log("[TEST-TELEMETRY] to=\(to) packed=\(packedHex.count/2)B meta=\(metaHex.count/2)B cease=\(cease)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestTelemetry"),
+                        object: nil,
+                        userInfo: [
+                            "to": to,
+                            "packed_hex": packedHex,
+                            "meta_hex": metaHex,
+                            "cease": cease,
+                        ]
+                    )
+                    return
+                }
                 if url.host == "test-send" {
                     // lxma://test-send?to=HEX&content=…[&method=direct]
                     //   [&image_hex=…&image_format=jpeg]
