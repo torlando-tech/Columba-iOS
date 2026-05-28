@@ -472,6 +472,11 @@ struct MessagingView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(isSharingLocation ? .green : Theme.textPrimary)
             }
+            // Stable handle for the Tests/interop/ harness so Maestro can
+            // toggle sharing without point-percent taps. The accessibility
+            // label flips so VoiceOver narrates the current intent of a tap.
+            .accessibilityIdentifier("location_share_toggle")
+            .accessibilityLabel(isSharingLocation ? "Stop sharing location" : "Share my location")
             #endif
 
             // More options menu

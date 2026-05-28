@@ -126,6 +126,118 @@ def test_location_with_custom_meta_ios_to_sideband(sim, sideband):
     assert bytes(meta_bytes) == meta
 
 
+# Currently flakes when run after other telemetry/attachment tests in the
+# same pytest session — passes reliably in isolation. The shared mutable
+# state across tests (sim's RNS path table + LXMF outbound queue + the
+# simulator's CLLocationManager fix latency) makes it sensitive to ordering.
+# Mitigations possible later: a clean-sim teardown fixture, or moving this
+# to a separate pytest invocation.
+#
+#     pytest test_telemetry.py::test_chat_toggle_starts_periodic_sharing -v -s
+#
+# is reliable; pytest -v on the whole directory will fail this one ~50% of runs.
+def test_chat_toggle_starts_periodic_sharing(sim, sideband, tmp_path_factory):
+    """Drive the chat-screen location toggle (top-right) end-to-end:
+    Maestro taps the toggle in MessagingView, picks a duration in
+    LocationShareSheet, and asserts the LocationSharingManager fires
+    its first telemetry send within the foreground send interval.
+
+    Pins the UI path that ships in Columba — vs the `lxma://test-telemetry`
+    URL handler tested above, which bypasses the picker / GPS-fix wait."""
+    import subprocess
+    # 0. Drop any leftover location-sharing state from a previous run.
+    #    LocationSharingManager persists `activePeers` to UserDefaults so
+    #    a relaunch resumes sharing; without this, the toggle is already
+    #    *on* when the flow opens the chat, and the first tap turns it
+    #    off instead of opening LocationShareSheet.
+    subprocess.run(
+        ["xcrun", "simctl", "terminate", sim.udid, "network.columba.Columba"],
+        capture_output=True,
+    )
+    subprocess.run(
+        ["xcrun", "simctl", "spawn", sim.udid, "defaults", "delete",
+         "network.columba.Columba", "locationSharing_activePeers"],
+        capture_output=True,
+    )
+    subprocess.run(
+        ["xcrun", "simctl", "launch", sim.udid, "network.columba.Columba"],
+        check=True, capture_output=True,
+    )
+    # Wait for the relaunched app to come up before we start touching it.
+    time.sleep(8.0)
+
+    # 1. Pre-grant location permission on the sim so the toggle doesn't
+    #    block on the system Allow / Don't Allow dialog (the test would
+    #    need a separate Maestro step to dismiss). The privacy CLI is
+    #    idempotent — already-granted is a no-op.
+    subprocess.run(
+        ["xcrun", "simctl", "privacy", sim.udid, "grant", "location",
+         "network.columba.Columba"], check=True, capture_output=True
+    )
+    # 2. Stamp a simulated GPS fix so CLLocationManager.location is
+    #    non-nil before the first periodic send runs. Without this the
+    #    manager's `sendLocationUpdateToPeer` would short-circuit on
+    #    `location == nil` and we'd time out waiting on the tap.
+    expect_lat, expect_lon = 47.6062, -122.3321
+    subprocess.run(
+        ["xcrun", "simctl", "location", sim.udid, "set",
+         f"{expect_lat},{expect_lon}"], check=True, capture_output=True
+    )
+
+    baseline = len(sideband._taps)
+
+    # 3. Drive the Maestro flow: nav → tap location toggle → pick "15 min".
+    flow_path = "/Users/tyler/repos/Columba-iOS/Tests/interop/flows/share_location_chat_toggle.yaml"
+    r = subprocess.run(
+        ["maestro", "--device", sim.udid, "test", flow_path,
+         "-e", "PEER_DISPLAY=Anonymous Peer", "-e", "DURATION=15 min"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if r.returncode != 0:
+        pytest.fail(f"Maestro share-location flow failed:\n{r.stdout}\n{r.stderr}")
+
+    # 4. CLLocationManager on the sim is racy: a single `simctl location
+    #    set` before `startUpdatingLocation()` fires doesn't reliably get
+    #    delivered, and the sim logs `kCLErrorLocationUnknown` until a fix
+    #    push lands *after* the manager started observing. We re-push the
+    #    location periodically for a few seconds to make sure at least one
+    #    fix reaches `locationManager.location` before the manager's
+    #    initial-send Task wakes up. Cheap (each call is a few ms).
+    for _ in range(8):
+        subprocess.run(
+            ["xcrun", "simctl", "location", sim.udid, "set",
+             f"{expect_lat},{expect_lon}"], check=True, capture_output=True
+        )
+        time.sleep(0.6)
+
+    # 5. Wait for the LocationSharingManager's first periodic send to
+    #    land on Sideband. The manager fires an initial send ~2 s after
+    #    `startSharing(...)` once it has a fix.
+    lxm = sideband.wait_for_tapped_message(
+        from_hex=sim.lxmf_delivery_hex,
+        field_id=0x02,
+        baseline=baseline,
+        timeout=75.0,  # foreground interval is 60 s; cover one full beat.
+    )
+    telemetry_bytes = lxm.fields[0x02]
+    assert isinstance(telemetry_bytes, (bytes, bytearray)), \
+        f"FIELD_TELEMETRY arrived as {type(telemetry_bytes).__name__}, not bytes"
+
+    # 5. Decode the Telemeter blob and assert the lat/lon are close to
+    #    what we asked the sim to simulate. CLLocationManager's
+    #    `desiredAccuracy = kCLLocationAccuracyBest` lets the simulated
+    #    fix through unmodified; precision coarsening on
+    #    `locationPrecisionRadius` would clamp the value, but the
+    #    default precision in a fresh sim install is 0 (precise).
+    from sbapp.sideband.sense import Telemeter  # type: ignore
+    t = Telemeter.from_packed(bytes(telemetry_bytes))
+    loc = t.read_all().get("location", {})
+    assert abs(loc.get("latitude", 0) - expect_lat) < 0.01, \
+        f"lat drift too large: got {loc.get('latitude')}, expected {expect_lat}"
+    assert abs(loc.get("longitude", 0) - expect_lon) < 0.01, \
+        f"lon drift too large: got {loc.get('longitude')}, expected {expect_lon}"
+
+
 def test_cease_ios_to_sideband(sim, sideband):
     """iOS → Sideband cease signal. The wire shape is an empty-content
     message carrying FIELD_CUSTOM_META = `{"cease": true}` (UTF-8 JSON),

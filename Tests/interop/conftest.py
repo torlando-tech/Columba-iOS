@@ -114,25 +114,37 @@ class Simulator:
                 f"diag.log missing under {self.container}. Is Columba running on the sim?",
                 returncode=2,
             )
+        # Identity & lxmf_delivery hex are persistent across relaunches —
+        # cache the first successful read so a Maestro `launchApp` later
+        # (which clears diag.log via AppServices.initialize → DiagLog.clear)
+        # doesn't strand later property reads on a freshly-empty log.
+        self._cached_identity_hex: Optional[str] = None
+        self._cached_lxmf_delivery_hex: Optional[str] = None
 
     # ---- identity / destinations ----
 
     @property
     def identity_hex(self) -> str:
         """Local RNS identity hash hex (the `[PY] started identity=…` line)."""
-        for line in self._tail_diag(LOG_TAIL_LINES * 4):  # search wider
+        if self._cached_identity_hex is not None:
+            return self._cached_identity_hex
+        for line in self._tail_diag(LOG_TAIL_LINES * 4):
             m = re.search(r"\[PY\] started identity=([0-9a-f]+)\s+destination=", line)
             if m:
-                return m.group(1)
+                self._cached_identity_hex = m.group(1)
+                return self._cached_identity_hex
         pytest.fail("Couldn't find `[PY] started identity=…` in diag.log")
 
     @property
     def lxmf_delivery_hex(self) -> str:
         """Local LXMF delivery-destination hash hex (the `destination=…` half)."""
+        if self._cached_lxmf_delivery_hex is not None:
+            return self._cached_lxmf_delivery_hex
         for line in self._tail_diag(LOG_TAIL_LINES * 4):
             m = re.search(r"\[PY\] started identity=[0-9a-f]+\s+destination=([0-9a-f]+)", line)
             if m:
-                return m.group(1)
+                self._cached_lxmf_delivery_hex = m.group(1)
+                return self._cached_lxmf_delivery_hex
         pytest.fail("Couldn't find `destination=…` in diag.log")
 
     # ---- propagation-node helpers ----
@@ -437,16 +449,25 @@ def _bootstrap_paths(sim, sideband):
     print(f"[BOOT] iOS sim lxmf_delivery_hex={sim.lxmf_delivery_hex}", flush=True)
 
     # Sideband → iOS: kick announces on both sides, wait for the path to
-    # show up on each. We poll instead of sleeping a fixed amount so a
-    # warm-cache run starts the first test in < 1 s.
-    sideband._core.lxmf_destination.announce()
+    # show up on each. We poll AND periodically re-announce because the
+    # first announce from a just-booted SidebandCore can race RNS finishing
+    # its shared-instance handshake with rnsd, and a just-installed sim's
+    # rnsd-side queue isn't yet routing for that destination either.
     sim_hex = sim.lxmf_delivery_hex
     ios_dest = bytes.fromhex(sim_hex)
 
-    deadline = time.time() + 30.0
+    deadline = time.time() + 45.0
     sim_seen_sideband = False
     sideband_seen_sim = False
+    last_announce = 0.0
     while time.time() < deadline and not (sim_seen_sideband and sideband_seen_sim):
+        # Re-announce roughly every 6 s. Cheap on the wire (one packet per
+        # side) and gets us out of "announce raced the transport coming up"
+        # without exposing a fixed sleep + brittle 3-s wait.
+        if time.time() - last_announce > 6.0:
+            sideband._core.lxmf_destination.announce()
+            sim._open_url("lxma://test-announce?name=interop-test-sim")
+            last_announce = time.time()
         # sim → sideband path: sim's diag.log shows the Sideband announce.
         if not sim_seen_sideband:
             for line in reversed(sim._tail_diag(800)):

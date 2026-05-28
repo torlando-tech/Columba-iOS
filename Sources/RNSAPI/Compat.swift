@@ -2102,8 +2102,17 @@ public enum SignalQuality: String, Equatable, Sendable {
     case excellent, good, fair, poor, unknown
 }
 
-// MARK: - Location / Telemetry stubs (v1; full impl in v1.1)
+// MARK: - Location / Telemetry stubs (non-iOS only)
+//
+// The real `LocationSharingManager` lives in
+// `ColumbaApp/Services/LocationSharingManager.swift` and only compiles on
+// iOS (it needs CoreLocation + UIApplication.applicationState). This stub
+// exists so the few cross-platform call sites that hold an
+// `appServices.locationSharingManager?` reference still link on macOS /
+// tests-on-macOS. When iOS, the real class takes over by being declared
+// in the same module name space.
 
+#if !os(iOS)
 public final class LocationSharingManager: @unchecked Sendable {
     public var peerLocations: [Data: PeerLocation] = [:]
     public var activePeers: Set<Data> = []
@@ -2124,6 +2133,7 @@ public final class LocationSharingManager: @unchecked Sendable {
     public func stopAllSharing() async {}
     public func setBackgroundState(_ isBackground: Bool) {}
 }
+#endif
 
 public struct TelemetryPacket: Equatable, Sendable {
     public let timestamp: Date

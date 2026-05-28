@@ -282,7 +282,8 @@ struct ColumbaApp: App {
                     // (when `cease=1`) so the Tests/interop/ harness can pin
                     // the RnsTelemetry seam end-to-end against a Sideband
                     // reference peer without driving the location-sharing UI
-                    // (which is compile-gated behind COLUMBA_LOCATION_ENABLED).
+                    // (avoids the GPS permission prompt + timing dependence
+                    // on a real CLLocationManager fix).
                     let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
                     func q(_ n: String) -> String? {
                         components?.queryItems?.first(where: { $0.name == n })?.value
@@ -717,14 +718,11 @@ struct RootView: View {
             self.messageRepository = repo
 
             #if os(iOS)
-            // Initialize location sharing manager. The real impl (flag on) needs
-            // appServices to reach backend.telemetry; the Compat stub (flag off) is
-            // a no-arg no-op.
-            #if COLUMBA_LOCATION_ENABLED
+            // Initialize the location-sharing manager. iOS-only — the
+            // non-iOS Compat stub (RNSAPI/Compat.swift, `#if !os(iOS)`)
+            // takes over for cross-platform call sites. Needs `appServices`
+            // to reach `backend.telemetry` for sending the periodic updates.
             let locManager = LocationSharingManager(appServices: appServices)
-            #else
-            let locManager = LocationSharingManager()
-            #endif
             appServices.locationSharingManager = locManager
             let handler = IncomingMessageHandler(messageRepository: repo, database: db, locationSharingManager: locManager)
             #else

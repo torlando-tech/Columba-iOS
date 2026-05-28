@@ -1,4 +1,4 @@
-#if COLUMBA_LOCATION_ENABLED
+#if os(iOS)
 //
 //  LocationSharingManager.swift
 //  ColumbaApp
@@ -6,6 +6,10 @@
 //  Core location sharing service for Sideband-compatible telemetry exchange.
 //  Manages CLLocationManager for GPS, periodic sending to active peers,
 //  and tracking incoming peer locations for map display.
+//
+//  iOS-only (CoreLocation + UIApplication.applicationState). The non-iOS
+//  fallback lives in `RNSAPI/Compat.swift` as a no-op stub so the
+//  `appServices.locationSharingManager?` call sites compile cross-platform.
 //
 
 import Foundation
@@ -127,6 +131,12 @@ public final class LocationSharingManager: NSObject {
     /// Per-peer expiration date. nil value = indefinite.
     public private(set) var peerExpirations: [Data: Date?] = [:]
 
+    /// Latest CLLocationManager authorization status. Mirrored here (rather
+    /// than read via `locationManager.authorizationStatus` on demand) so
+    /// SwiftUI views observing this `@Observable` instance re-render on
+    /// `locationManagerDidChangeAuthorization` without polling.
+    public private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
+
     // MARK: - Private State
 
     private let logger = Logger(subsystem: "network.columba.Columba", category: "LocationSharing")
@@ -166,6 +176,21 @@ public final class LocationSharingManager: NSObject {
         self.appServices = appServices
         super.init()
         loadPersistedPeers()
+        // Seed the observable from the system's current state so the
+        // Settings card renders the right status immediately (before any
+        // delegate callback fires). The CLLocationManager init is cheap;
+        // creating it here just to read the status is acceptable.
+        self.authorizationStatus = locationManager.authorizationStatus
+    }
+
+    /// Trigger a `when-in-use` permission prompt if status is
+    /// `.notDetermined`, otherwise no-op (the user must change the
+    /// answer from the system Settings app). Settings UI calls this
+    /// directly so we don't have to start a sharing session just to
+    /// surface the prompt.
+    public func requestPermission() {
+        guard authorizationStatus == .notDetermined else { return }
+        locationManager.requestWhenInUseAuthorization()
     }
 
     // MARK: - Public API
@@ -541,6 +566,9 @@ extension LocationSharingManager: CLLocationManagerDelegate {
     public nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
             let status = manager.authorizationStatus
+            // Mirror the system status onto our @Observable property so
+            // SwiftUI views re-render the permission row without polling.
+            self.authorizationStatus = status
             switch status {
             case .authorizedWhenInUse, .authorizedAlways:
                 if isSharingWithAnyone {

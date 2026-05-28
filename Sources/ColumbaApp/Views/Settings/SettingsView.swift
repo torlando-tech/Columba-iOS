@@ -8,6 +8,10 @@
 
 import SwiftUI
 import RNSAPI
+#if os(iOS)
+import CoreLocation
+import UIKit
+#endif
 
 /// Main settings screen view.
 ///
@@ -111,6 +115,9 @@ struct SettingsView: View {
 
                         // Transport Mode (advanced)
                         transportModeCard(vm)
+
+                        // Network Backend (advanced) — pick the RNS engine.
+                        networkBackendCard(vm)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -375,6 +382,52 @@ struct SettingsView: View {
             Text("Toggling restarts Reticulum (~1-2s offline).")
                 .font(.caption2)
                 .foregroundStyle(Theme.textSecondary.opacity(0.7))
+        }
+    }
+
+    // MARK: - Network Backend Card
+
+    /// Advanced control selecting the RNS engine: embedded Python (default —
+    /// the reference RNS/LXMF stack via CPython) vs the native Swift
+    /// reticulum-swift/LXMF-swift port (experimental). Both are built into the
+    /// binary; `BackendFactory` reads the choice once at startup, so a switch
+    /// applies on the next app launch (the backend can't be hot-swapped live).
+    private func networkBackendCard(_ vm: SettingsViewModel) -> some View {
+        ExpandableSettingsCard(
+            icon: "cpu",
+            title: "Network Backend",
+            isExpanded: Binding(get: { vm.isBackendExpanded }, set: { vm.isBackendExpanded = $0 })
+        ) {
+            Text("Choose the Reticulum engine. Embedded Python runs the reference RNS/LXMF stack (default, battle-tested). Swift-native uses the pure-Swift reticulum-swift/LXMF-swift port (experimental).")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Picker("", selection: Binding(
+                get: { vm.useSwiftBackend },
+                set: { newValue in
+                    vm.useSwiftBackend = newValue
+                    vm.applyBackendSelection()
+                }
+            )) {
+                Text("Embedded Python").tag(false)
+                Text("Swift-native").tag(true)
+            }
+            .pickerStyle(.segmented)
+
+            if vm.backendChangePending {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                    Text("Relaunch Columba to apply the new backend.")
+                        .font(.caption2)
+                }
+                .foregroundStyle(Theme.warning)
+            } else {
+                Text("Switching takes effect after you relaunch Columba.")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
+            }
         }
     }
 
@@ -847,6 +900,10 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
+                #if os(iOS)
+                locationPermissionRow()
+                #endif
+
                 HStack {
                     Text("Location Precision")
                         .font(.subheadline)
@@ -888,6 +945,84 @@ struct SettingsView: View {
             }
         }
     }
+
+    #if os(iOS)
+    /// Mirror of Columba-Android's location-card permission row
+    /// (`LocationSharingCard.kt:155-211`): a single line showing the current
+    /// CLLocationManager authorization status colour-coded — primary when
+    /// `.authorizedAlways`, tertiary when `.authorizedWhenInUse`, error
+    /// when `.denied` / `.restricted`. Tapping triggers the in-app
+    /// `requestWhenInUseAuthorization()` system prompt when status is
+    /// `.notDetermined`, otherwise opens the system Settings deep link
+    /// (only path to flip the answer from `.denied` or to escalate to
+    /// `.authorizedAlways`). Reads `authorizationStatus` straight off the
+    /// `@Observable` LocationSharingManager so the row re-renders the
+    /// moment the user changes the answer in Settings and returns.
+    @ViewBuilder
+    private func locationPermissionRow() -> some View {
+        let status = appServices.locationSharingManager?.authorizationStatus ?? .notDetermined
+        let (title, subtitle, color) = locationStatusDisplay(status)
+        Button(action: { handleLocationPermissionTap(status: status) }) {
+            HStack(spacing: 10) {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("location_permission_row")
+    }
+
+    private func locationStatusDisplay(_ status: CLAuthorizationStatus) -> (String, String, Color) {
+        switch status {
+        case .authorizedAlways:
+            return ("Location: Always", "Tap to change in Settings", .green)
+        case .authorizedWhenInUse:
+            return ("Location: While Using App", "Tap to enable Always (for background sharing)", .orange)
+        case .denied:
+            return ("Location: Denied", "Tap to grant in Settings", .red)
+        case .restricted:
+            return ("Location: Restricted", "Restricted by parental controls / MDM", .red)
+        case .notDetermined:
+            return ("Location: Not Requested", "Tap to grant permission", Theme.textSecondary)
+        @unknown default:
+            return ("Location: Unknown", "Unrecognised authorization state", Theme.textSecondary)
+        }
+    }
+
+    private func handleLocationPermissionTap(status: CLAuthorizationStatus) {
+        switch status {
+        case .notDetermined:
+            // Trigger the system "Allow / Don't Allow" prompt directly. Any
+            // subsequent change flows back through
+            // locationManagerDidChangeAuthorization → @Observable refresh.
+            appServices.locationSharingManager?.requestPermission()
+        default:
+            // For every other state — denied, while-using (wants Always),
+            // always (wants to revoke) — the answer is only changeable
+            // through the system Settings app. iOS treats a second
+            // requestWhenInUseAuthorization() call as a no-op after the
+            // first decision, so we have to send the user out.
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        }
+    }
+    #endif
 
     // MARK: - Map Sources Card
 

@@ -790,8 +790,9 @@ public final class AppServices {
 
         // Listen for test-telemetry deep links — the Tests/interop/ harness
         // uses these to pin `RnsTelemetry.sendLocationTelemetry` /
-        // `sendTelemetryCease` on the active backend, both of which are
-        // unreachable from the UI on a build without COLUMBA_LOCATION_ENABLED.
+        // `sendTelemetryCease` on the active backend without driving the
+        // CLLocationManager / GPS permission flow that the production
+        // LocationSharingManager runs through.
         NotificationCenter.default.addObserver(
             forName: Notification.Name("ColumbaTestTelemetry"),
             object: nil,
