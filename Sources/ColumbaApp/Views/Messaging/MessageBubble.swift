@@ -77,6 +77,12 @@ struct MessageBubble: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: 250)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            // Stable handle for the Tests/interop/ harness:
+                            // `assertVisible: { id: "bubble_image" }` confirms an
+                            // inbound image actually rendered (vs the bubble
+                            // existing without an image).
+                            .accessibilityIdentifier("bubble_image")
+                            .accessibilityLabel("Image attachment")
                     }
 
                     // Text content (show if non-empty)
@@ -84,6 +90,11 @@ struct MessageBubble: View {
                         Text(message.content)
                             .font(.body)
                             .foregroundStyle(message.isFromMe ? .white : Theme.textPrimary)
+                            // The text is already findable via Maestro's
+                            // `text:` matcher; the identifier just lets the
+                            // harness disambiguate the bubble's text from
+                            // chrome that happens to contain the same string.
+                            .accessibilityIdentifier("bubble_text")
                     }
 
                     // File attachment chips
@@ -193,6 +204,13 @@ struct MessageBubble: View {
         .padding(.vertical, 6)
         .background(Color.white.opacity(0.1))
         .clipShape(Capsule())
+        // a11y for Tests/interop/ harness: pin "file attachment chip with
+        // exactly this filename rendered" — the chip's own Text(name) is
+        // also findable on its own, but tagging the whole capsule lets a
+        // future test count chips or query their size labels.
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("bubble_file_chip")
+        .accessibilityLabel("File: \(name)")
     }
 
     private static func formatFileSize(_ bytes: Int) -> String {

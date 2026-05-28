@@ -210,11 +210,12 @@ def test_file_ios_to_sideband(sim, sideband):
 
 
 def test_image_sideband_to_ios(sim, sideband):
-    """Sideband sends a PNG to iOS; the iOS-side persistence layer
-    (LXMFDatabase + MessageBubble.init(from record:)) must surface the
-    image bytes through `MessageRecord.packedLxmf` → `LxmfFieldCodec.unpack`
-    → `Message.imageData`. This pins the persistence-side fix from the
-    same change that landed this suite."""
+    """Sideband sends a PNG to iOS; the iOS-side persistence (LXMFDatabase
+    + MessageBubble.init(from record:)) must surface the image bytes
+    through `MessageRecord.packedLxmf` → `LxmfFieldCodec.unpack` →
+    `Message.imageData`, AND the SwiftUI message bubble must render the
+    image view. Pins both halves of the inbound stack — the prior
+    diag.log heuristic only proved the LXMRouter callback fired."""
     img = png_bytes()
     body = f"img-from-sideband-{int(time.time()*1000)}"
     assert sideband.send_image(
@@ -224,29 +225,17 @@ def test_image_sideband_to_ios(sim, sideband):
         image_format="png",
     ), "Sideband-side send_image returned False"
 
-    # Block until iOS's diag.log records the inbound delivery — that's our
-    # "the message reached LXMRouter, was persisted, and the UI was notified"
-    # signal. The Message object itself is in the SwiftUI view tree, not on
-    # disk, so for now this proxy assert is enough; a full UI assert would
-    # need a Maestro `assertVisible:` against an accessibility-identified
-    # bubble (TODO).
-    deadline = time.time() + 30.0
-    msg_hash = None
-    while time.time() < deadline:
-        for line in reversed(sim._tail_diag(400)):
-            # PythonRNSBackend emits `[PY] inbound source=…HEX content="…"` for
-            # every delivered LXMF message.
-            if "[PY] inbound source=" in line and body in line:
-                msg_hash = "found"
-                break
-        if msg_hash:
-            break
-        time.sleep(0.5)
-    assert msg_hash, f"iOS didn't log inbound for {body!r} within 30s"
+    # Wait for iOS to record the inbound delivery so the conversation row
+    # exists in Chats before Maestro tries to tap it. Sideband's send is
+    # async — `send_image` returns on enqueue.
+    _wait_for_diag_inbound(sim, content=body)
+
+    sim.assert_bubble_visible(content=body, has_image=True)
 
 
 def test_file_sideband_to_ios(sim, sideband):
-    """Sideband sends a small file; iOS records the inbound delivery."""
+    """Sideband sends a small file; iOS persists it AND the bubble renders
+    a file chip whose label carries the filename."""
     payload = file_bytes(b"reverse-file-interop\n")
     name = "from-sideband.txt"
     body = f"file-from-sideband-{int(time.time()*1000)}"
@@ -257,17 +246,21 @@ def test_file_sideband_to_ios(sim, sideband):
         data=payload,
     ), "Sideband-side send_file returned False"
 
-    deadline = time.time() + 30.0
-    found = False
+    _wait_for_diag_inbound(sim, content=body)
+
+    sim.assert_bubble_visible(content=body, has_file_name=name)
+
+
+def _wait_for_diag_inbound(sim, *, content: str, timeout: float = 30.0) -> None:
+    """Block until `[PY] inbound` for this content lands in diag.log so
+    the Chats list has the conversation row Maestro will tap on."""
+    deadline = time.time() + timeout
     while time.time() < deadline:
-        for line in reversed(sim._tail_diag(400)):
-            if "[PY] inbound source=" in line and body in line:
-                found = True
-                break
-        if found:
-            break
-        time.sleep(0.5)
-    assert found, f"iOS didn't log inbound for {body!r} within 30s"
+        for line in reversed(sim._tail_diag(800)):
+            if "[PY] inbound source=" in line and content in line:
+                return
+        time.sleep(0.4)
+    pytest.fail(f"iOS didn't record inbound for {content!r} within {timeout}s")
 
 
 # ─────────────────────────────────────────────────────────────────────────

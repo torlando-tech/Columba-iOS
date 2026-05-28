@@ -58,6 +58,15 @@ def _sh(cmd: list[str], *, check: bool = True, timeout: float = 60.0) -> str:
     return r.stdout
 
 
+def _yaml_escape(s: str) -> str:
+    """Escape a string for safe use inside a double-quoted YAML scalar.
+    Maestro reads the flow file line-by-line as YAML, so backslashes and
+    quotes in user content (e.g. a test body containing `"`) would break
+    the matcher silently. Tests typically use safe ASCII timestamps so
+    this rarely fires — defensive."""
+    return s.replace("\\", "\\\\").replace("\"", "\\\"")
+
+
 def _booted_udid() -> str:
     """Return the UDID of the currently booted iPhone simulator. Fails the
     test session if zero or more-than-one is booted."""
@@ -212,6 +221,82 @@ class Simulator:
             return []
         return data.decode("utf-8", errors="replace").splitlines()
 
+    # ---- UI assertions (Maestro) ----
+
+    def assert_bubble_visible(
+        self,
+        *,
+        peer_display_name: str = "Anonymous Peer",
+        content: Optional[str] = None,
+        has_image: bool = False,
+        has_file_name: Optional[str] = None,
+        timeout: float = 30.0,
+    ) -> None:
+        """Navigate Chats → tap the peer's conversation row → assert the
+        bubble's children are visible.
+
+        Pins the *render* half of the inbound path: a bubble with an empty
+        content, no image, and no file would still be persisted (and would
+        let the diag.log `[PY] inbound` proxy assertion pass), but this
+        catches a regression in `MessageBubble.init(from record:)` /
+        `LxmfFieldCodec.unpack(...)` / the SwiftUI rendering of attachment
+        payloads.
+
+        Requires the iOS Columba build to carry `.accessibilityIdentifier`
+        on the image (`bubble_image`) and file chip (`bubble_file_chip`)
+        — added in MessageBubble.swift for exactly this assertion.
+        """
+        # The flow stays inline because Maestro flows can't take params for
+        # `assertVisible` matchers; each test renders its own.
+        # `appId` + `launchApp:false` skips relaunch (DiagLog.clear() would
+        # otherwise wipe diag.log mid-test — see _open_url's notes).
+        lines = [
+            "appId: " + BUNDLE_ID,
+            "---",
+            # Stale notification-permission alert blocks the Chats tap.
+            # First-launch only, so optional.
+            "- tapOn: { text: \"Allow\", optional: true }",
+            "- tapOn: { text: \"Don't Allow\", optional: true }",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+            "- tapOn:",
+            "    text: \"Chats\"",
+            "    optional: true",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            f"- tapOn: \"{peer_display_name}\"",
+            "- waitForAnimationToEnd: { timeout: 2500 }",
+        ]
+        if content is not None:
+            lines += [
+                "- assertVisible:",
+                f"    text: \"{_yaml_escape(content)}\"",
+            ]
+        if has_image:
+            lines += [
+                "- assertVisible:",
+                "    id: \"bubble_image\"",
+            ]
+        if has_file_name is not None:
+            lines += [
+                "- assertVisible:",
+                f"    text: \"{_yaml_escape(has_file_name)}\"",
+            ]
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_assert_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        try:
+            # Long Maestro timeout so a slow inbound delivery doesn't
+            # surface as a Maestro CLI timeout instead of our assertion
+            # error (which carries more info).
+            _sh(["maestro", "--device", self.udid, "test", str(flow_path)], timeout=timeout + 30)
+        except subprocess.CalledProcessError as e:
+            pytest.fail(
+                f"assert_bubble_visible failed (peer={peer_display_name!r}, "
+                f"content={content!r}, has_image={has_image}, "
+                f"has_file_name={has_file_name!r}). Maestro stderr:\n"
+                f"{e.stderr or e.stdout}"
+            )
+        finally:
+            flow_path.unlink(missing_ok=True)
+
     @staticmethod
     def _parse_outcome(lines: list[str]) -> Optional[TestSendResult]:
         for line in lines:
@@ -298,22 +383,58 @@ def sideband():
 
 @pytest.fixture(scope="session", autouse=True)
 def _bootstrap_paths(sim, sideband):
-    """Force one Sideband re-announce + give the sim a moment to ingest it,
-    so the first test isn't paying for path-table cold-start latency.
+    """Cold-start the bidirectional path table before the first test.
+
+    Each direction needs the *other side* to know our identity:
+      * iOS → Sideband sends: iOS must have heard Sideband's announce
+        (so RNS.Identity.recall(sideband_hex) succeeds in
+        rns_bridge.send_opportunistic).
+      * Sideband → iOS sends: Sideband must have heard iOS's announce
+        (so SidebandCore.send_message can `RNS.Identity.recall(ios_hex)`).
+
+    Both halves are required before the first test; otherwise a
+    just-reinstalled sim hits "requesting-path" / send_image returns False.
     Marked autouse so test files don't have to remember this."""
+    import RNS  # type: ignore — sideband side; we hit RNS directly here
     print(f"[BOOT] Sideband identity_hex={sideband.identity_hex}", flush=True)
     print(f"[BOOT] iOS sim lxmf_delivery_hex={sim.lxmf_delivery_hex}", flush=True)
+
+    # Sideband → iOS: kick announces on both sides, wait for the path to
+    # show up on each. We poll instead of sleeping a fixed amount so a
+    # warm-cache run starts the first test in < 1 s.
     sideband._core.lxmf_destination.announce()
-    print("[BOOT] Sideband announce sent — waiting 6s for sim to ingest …", flush=True)
-    time.sleep(6.0)
-    # Verify the sim heard the Sideband announce, so a wait_for_tapped_message
-    # failure later doesn't get blamed on the wrong layer.
-    expect = sideband.identity_hex
-    for line in reversed(sim._tail_diag(800)):
-        if expect in line and "lxmf.delivery" in line:
-            print(f"[BOOT] sim heard Sideband: {line.strip()}", flush=True)
-            return
-    pytest.fail(
-        f"Sim never logged an inbound lxmf.delivery announce for {expect}. "
-        f"rnsd may not be bridging shared-instance ↔ TCPServer correctly."
-    )
+    sim_hex = sim.lxmf_delivery_hex
+    ios_dest = bytes.fromhex(sim_hex)
+
+    deadline = time.time() + 30.0
+    sim_seen_sideband = False
+    sideband_seen_sim = False
+    while time.time() < deadline and not (sim_seen_sideband and sideband_seen_sim):
+        # sim → sideband path: sim's diag.log shows the Sideband announce.
+        if not sim_seen_sideband:
+            for line in reversed(sim._tail_diag(800)):
+                if sideband.identity_hex in line and "lxmf.delivery" in line:
+                    sim_seen_sideband = True
+                    print(f"[BOOT] sim heard Sideband: {line.strip()}", flush=True)
+                    break
+        # sideband → sim path: Sideband can recall the iOS identity.
+        if not sideband_seen_sim:
+            ident = RNS.Identity.recall(ios_dest)
+            if ident is not None:
+                sideband_seen_sim = True
+                print(f"[BOOT] Sideband recalled iOS identity for {sim_hex[:12]}…",
+                      flush=True)
+        time.sleep(0.5)
+
+    if not sim_seen_sideband:
+        pytest.fail(
+            f"Sim never logged an inbound lxmf.delivery announce for "
+            f"{sideband.identity_hex}. rnsd may not be bridging "
+            f"shared-instance ↔ TCPServer correctly."
+        )
+    if not sideband_seen_sim:
+        pytest.fail(
+            f"Sideband couldn't recall the iOS sim's identity "
+            f"({sim_hex}). The sim may not be auto-announcing, or its "
+            f"announce isn't reaching rnsd's shared-instance side."
+        )
