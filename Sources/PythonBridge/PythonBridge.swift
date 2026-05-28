@@ -390,7 +390,12 @@ public final class PythonBridge: @unchecked Sendable {
         }
     }
 
-    public func sendOpportunistic(destHashHex: String, content: String, fieldsHex: String = "") async throws -> SendOutcome {
+    /// Send an LXMF message via the Python bridge. `method` selects LXMF's
+    /// desired-method (opportunistic / direct / propagated); the function name
+    /// stays `sendOpportunistic` historically because that was the only mode
+    /// when the Swift surface was first carved.
+    public func sendOpportunistic(destHashHex: String, content: String, fieldsHex: String = "",
+                                  method: String = "opportunistic") async throws -> SendOutcome {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 guard let module = self.module else { return .notStarted }
@@ -398,11 +403,12 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(3)!
+                let args = PyTuple_New(4)!
                 defer { Py_DecRef(args) }
                 PyTuple_SetItem(args, 0, PyUnicode_FromString(destHashHex)!)
                 PyTuple_SetItem(args, 1, PyUnicode_FromString(content)!)
                 PyTuple_SetItem(args, 2, PyUnicode_FromString(fieldsHex)!)
+                PyTuple_SetItem(args, 3, PyUnicode_FromString(method)!)
                 guard let result = PyObject_CallObject(fn, args) else {
                     throw BridgeError.pythonException(currentPythonException())
                 }

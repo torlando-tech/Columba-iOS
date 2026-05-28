@@ -96,7 +96,21 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
             replyToMessageHashHex: replyToMessageHashHex, replyQuotedContent: replyQuotedContent,
             extraFields: extraFields)
         let fieldsHex = fields.isEmpty ? "" : LxmfFieldCodec.pack(fields).toHex()
-        return Self.map(try await bridge.sendOpportunistic(destHashHex: destHashHex, content: content, fieldsHex: fieldsHex))
+        // Forward the typed delivery method so Python sets the right
+        // LXMessage.desired_method (opportunistic / direct / propagated).
+        // Until this landed, the Python backend silently downgraded every
+        // send to OPPORTUNISTIC (upstream LXMF still auto-falls-back to
+        // DIRECT for large payloads, but PROPAGATED was unreachable from
+        // the Python backend's surface).
+        let methodString: String
+        switch method {
+        case .direct: methodString = "direct"
+        case .propagated: methodString = "propagated"
+        default: methodString = "opportunistic"
+        }
+        return Self.map(try await bridge.sendOpportunistic(
+            destHashHex: destHashHex, content: content,
+            fieldsHex: fieldsHex, method: methodString))
     }
 
     @discardableResult

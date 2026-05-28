@@ -1078,11 +1078,24 @@ def persist() -> dict[str, Any]:
         return {"ok": True, "reason": "persisted"}
 
 
-def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "") -> dict[str, Any]:
-    """Send an opportunistic LXMF message. Returns a dict with 'ok' (bool)
-    and 'reason' (string) describing the outcome. If the destination's
-    identity isn't recallable yet (no announce / no path), kicks off a
-    `request_path` and returns ok=False reason='requesting-path'."""
+def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
+                       method: str = "opportunistic") -> dict[str, Any]:
+    """Send an LXMF message. Returns a dict with 'ok' (bool) and 'reason'
+    (string) describing the outcome. If the destination's identity isn't
+    recallable yet (no announce / no path), kicks off a `request_path` and
+    returns ok=False reason='requesting-path'.
+
+    `method` selects the LXMF desired-method on the outbound message:
+      - "opportunistic" (default): single encrypted packet, no link.
+        Upstream LXMF auto-falls-back to DIRECT when the encrypted payload
+        exceeds packet size (e.g. an image attachment).
+      - "direct": opens an RNS.Link for the transfer (link-based).
+      - "propagated": uploads to the configured propagation node; the
+        recipient downloads when it next syncs.
+
+    The function name is historical (was opportunistic-only); the bridge's
+    public Swift wrapper still uses `sendOpportunistic` for the same reason.
+    """
     with _lock:
         if not _state["started"]:
             return {"ok": False, "reason": "not-started"}
@@ -1118,13 +1131,23 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "") -
             except Exception:
                 fields = None
 
+        # Map the public method string onto LXMF's three desired-method codes.
+        # Anything unrecognised falls back to OPPORTUNISTIC so a typo at the
+        # Swift caller doesn't silently change wire semantics in unexpected
+        # ways (the typo + opportunistic-text combo is the lowest-risk fallback).
+        desired_method = {
+            "opportunistic": LXMF.LXMessage.OPPORTUNISTIC,
+            "direct": LXMF.LXMessage.DIRECT,
+            "propagated": LXMF.LXMessage.PROPAGATED,
+        }.get(method, LXMF.LXMessage.OPPORTUNISTIC)
+
         msg = LXMF.LXMessage(
             peer_dest,
             local_dest,
             content,
             title="",
             fields=fields,
-            desired_method=LXMF.LXMessage.OPPORTUNISTIC,
+            desired_method=desired_method,
         )
 
         # Surface delivery / failure proofs to Swift so the chat UI can flip a

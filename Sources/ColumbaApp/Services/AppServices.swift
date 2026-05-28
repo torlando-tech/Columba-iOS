@@ -724,7 +724,11 @@ public final class AppServices {
             DiagLog.log("[PY-POLL] task exiting (cancelled)")
         }
 
-        // Listen for test-send deep links (lxma://test-send?to=HEX&content=...).
+        // Listen for test-send deep links (lxma://test-send?to=HEX&content=…
+        // [&method=…][&image_hex=…&image_format=…][&file_hex=…&file_name=…]).
+        // Drives the full typed-LXMF send path the interop harness uses to
+        // exercise image / file attachments end-to-end against a Sideband
+        // peer (see Tests/interop/).
         NotificationCenter.default.addObserver(
             forName: Notification.Name("ColumbaTestSend"),
             object: nil,
@@ -733,14 +737,51 @@ public final class AppServices {
             guard let self else { return }
             guard let to = note.userInfo?["to"] as? String,
                   let content = note.userInfo?["content"] as? String else { return }
+            let method = (note.userInfo?["method"] as? String) ?? ""
+            let imageHex = (note.userInfo?["image_hex"] as? String) ?? ""
+            let imageFormat = (note.userInfo?["image_format"] as? String) ?? ""
+            let fileHex = (note.userInfo?["file_hex"] as? String) ?? ""
+            let fileName = (note.userInfo?["file_name"] as? String) ?? ""
+            // Resolve delivery method. `direct`/`propagated` ride a Link or
+            // a propagation node, respectively; everything else (including
+            // empty) goes opportunistic — matches LXDeliveryMethod's three
+            // wire-method choices.
+            let deliveryMethod: LXDeliveryMethod
+            switch method.lowercased() {
+            case "direct": deliveryMethod = .direct
+            case "propagated": deliveryMethod = .propagated
+            default: deliveryMethod = .opportunistic
+            }
+            // Hex → Data for the optional attachment payloads. Bad hex
+            // silently drops the field so a typo in the URL surfaces as a
+            // missing field in the inbound tap (loud) rather than a crash.
+            let imageData: Data? = (!imageHex.isEmpty && !imageFormat.isEmpty)
+                ? (try? imageHex.hexToData()) : nil
+            let fileAttachments: [RnsFileAttachment]?
+            if !fileHex.isEmpty && !fileName.isEmpty, let data = try? fileHex.hexToData() {
+                fileAttachments = [RnsFileAttachment(name: fileName, data: data)]
+            } else {
+                fileAttachments = nil
+            }
             Task { @MainActor in
                 guard let backend = self.backend else {
                     DiagLog.log("[TEST-SEND] no backend")
                     return
                 }
                 do {
-                    let outcome = try await backend.lxmf.sendLxmfMessage(destHashHex: to, content: content)
-                    DiagLog.log("[TEST-SEND] outcome=\(outcome)")
+                    let outcome = try await backend.lxmf.sendLxmfMessage(
+                        destHashHex: to,
+                        content: content,
+                        method: deliveryMethod,
+                        imageData: imageData,
+                        imageFormat: imageFormat.isEmpty ? nil : imageFormat,
+                        fileAttachments: fileAttachments,
+                        iconAppearance: nil,
+                        replyToMessageHashHex: nil,
+                        replyQuotedContent: nil,
+                        extraFields: nil
+                    )
+                    DiagLog.log("[TEST-SEND] outcome=\(outcome) method=\(deliveryMethod)")
                 } catch {
                     DiagLog.log("[TEST-SEND] error=\(error)")
                 }

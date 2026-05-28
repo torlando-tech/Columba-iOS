@@ -275,15 +275,42 @@ struct ColumbaApp: App {
                     return
                 }
                 if url.host == "test-send" {
+                    // lxma://test-send?to=HEX&content=…[&method=direct]
+                    //   [&image_hex=…&image_format=jpeg]
+                    //   [&file_hex=…&file_name=…]
+                    //
+                    // Bypasses the UI and hands typed send args straight to
+                    // `backend.lxmf.sendLxmfMessage(...)` so the
+                    // tests/interop/ harness can exercise the full wire path
+                    // (LXMF pack + RNS encrypt) without driving the picker
+                    // UI. Hex payloads keep the URL stable under iOS's deep-
+                    // link length cap for the typical interop fixture (PNG
+                    // ≤ a few KB → ≤ 10 KB hex, well under the limit).
                     let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
-                    let content = components?.queryItems?.first(where: { $0.name == "content" })?.value ?? ""
+                    func q(_ n: String) -> String? {
+                        components?.queryItems?.first(where: { $0.name == n })?.value
+                    }
+                    let to = q("to") ?? ""
+                    let content = q("content") ?? ""
+                    let method = q("method") ?? ""
+                    let imageHex = q("image_hex") ?? ""
+                    let imageFormat = q("image_format") ?? ""
+                    let fileHex = q("file_hex") ?? ""
+                    let fileName = q("file_name") ?? ""
                     logger.info("test-send to=\(to, privacy: .public) content=\(content, privacy: .public)")
-                    DiagLog.log("[TEST-SEND] to=\(to) content=\(content)")
+                    DiagLog.log("[TEST-SEND] to=\(to) method=\(method.isEmpty ? "opportunistic" : method) content=\"\(content)\" image=\(imageHex.isEmpty ? 0 : imageHex.count/2)B(\(imageFormat)) file=\(fileHex.isEmpty ? 0 : fileHex.count/2)B(\(fileName))")
                     NotificationCenter.default.post(
                         name: Notification.Name("ColumbaTestSend"),
                         object: nil,
-                        userInfo: ["to": to, "content": content]
+                        userInfo: [
+                            "to": to,
+                            "content": content,
+                            "method": method,
+                            "image_hex": imageHex,
+                            "image_format": imageFormat,
+                            "file_hex": fileHex,
+                            "file_name": fileName,
+                        ]
                     )
                     return
                 }

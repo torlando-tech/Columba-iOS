@@ -91,9 +91,23 @@ class SidebandPeer:
         self._taps = []
         original = self._core.message_router._LXMRouter__delivery_callback
         # `__delivery_callback` is name-mangled; expose via underscore prefix.
+        # On every tap we also emit a one-line stderr log so a pytest run
+        # with `-s` shows inbound state — invaluable when an assertion
+        # fails because the content didn't match (vs no message at all).
         def _wrapped(lxm):
             try:
                 self._taps.append(lxm)
+                try:
+                    import sys
+                    src = lxm.source_hash.hex() if lxm.source_hash else "?"
+                    msg = (lxm.hash.hex()[:16] + "…") if getattr(lxm, "hash", None) else "?"
+                    content = (lxm.content or b"").decode("utf-8", "replace")
+                    sig = getattr(lxm, "signature_validated", None)
+                    fields = sorted((lxm.fields or {}).keys())
+                    print(f"[sideband-tap] src={src} msg={msg} content={content!r} "
+                          f"sig={sig} fields={fields}", file=sys.stderr, flush=True)
+                except Exception:
+                    pass
             finally:
                 if original is not None:
                     return original(lxm)
@@ -103,6 +117,8 @@ class SidebandPeer:
         self,
         from_hex: str,
         field_id: Optional[int] = None,
+        content_match: Optional[str] = None,
+        baseline: Optional[int] = None,
         timeout: float = 30.0,
         poll: float = 0.25,
     ):
@@ -110,22 +126,43 @@ class SidebandPeer:
         the filter. Returns the raw LXMessage so callers can read
         `lxm.fields[FIELD_*]` directly — useful for fields Sideband's
         _db_save_lxm filters out (telemetry-only messages) or formats
-        non-standard (Telemeter-vs-JSON encoding mismatch)."""
+        non-standard (Telemeter-vs-JSON encoding mismatch).
+
+        Filtering precedence:
+          * `from_hex` (required): only match messages whose source_hash
+            equals this LXMF delivery destination.
+          * `field_id` (optional): require this LXMF FIELD_* key be present.
+          * `content_match` (optional): require the message's UTF-8 content
+            equal this string. Use when many tests share a sender and
+            you need to disambiguate the specific message the test sent.
+          * `baseline` (optional): only scan taps captured at index >=
+            this value. Defaults to **0** so a tap that landed *before*
+            this call started is still discoverable — the inbound RNS
+            stack frequently delivers a message before the test's
+            `wait_for_tapped_message` runs (the proof + LXMF callback
+            both fire on background threads). Pass a snapshot of
+            `len(peer._taps)` taken *before* the send when you need
+            strict "must arrive after this point" semantics."""
         from_bytes = bytes.fromhex(from_hex)
         deadline = time.time() + timeout
-        baseline = len(self._taps)
+        if baseline is None:
+            baseline = 0
         while time.time() < deadline:
             for lxm in self._taps[baseline:]:
                 if lxm.source_hash != from_bytes:
                     continue
                 if field_id is not None and field_id not in (lxm.fields or {}):
                     continue
+                if content_match is not None:
+                    actual = (lxm.content or b"").decode("utf-8", "replace")
+                    if actual != content_match:
+                        continue
                 return lxm
             time.sleep(poll)
         raise AssertionError(
             f"Sideband's inbound tap did not capture a matching "
             f"message within {timeout}s (from={from_hex}, "
-            f"field_id={field_id})"
+            f"field_id={field_id}, content_match={content_match!r})"
         )
 
     def start(self, ready_timeout: float = 30.0) -> None:
