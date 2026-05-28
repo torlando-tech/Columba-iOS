@@ -485,8 +485,65 @@ public struct IconAppearance: Codable, Equatable, Sendable {
         self.iconName = iconName; self.fgColor = foregroundColor; self.bgColor = backgroundColor
     }
 
-    public static func fromLXMFFieldValue(_ value: Any) -> IconAppearance? { nil }
-    public func toLXMFFieldValue() -> Data { Data() }
+    /// Encode for FIELD_ICON_APPEARANCE (0x04) — canonical Sideband / Android
+    /// wire form `[icon_name, fg_rgb_bytes(3), bg_rgb_bytes(3)]`. iOS stores
+    /// colors as 6-char lowercase RGB hex (matching `ProfileIcon.swift`'s
+    /// stored form, no `#` prefix); we decode them to 3 raw bytes so the wire
+    /// shape matches what Sideband/Android send. Returns `[Any]` so the LXMF
+    /// MessagePack encoders (both `LxmfFieldCodec` and `LXMFSwift`'s
+    /// `convertArrayToMsgpack`) emit a proper msgpack array of `[string,
+    /// binary, binary]` rather than wrapping the whole thing as binary.
+    ///
+    /// On malformed local hex the channel is filled with three zero bytes
+    /// rather than dropped — keeps the array shape valid so the receiver
+    /// renders the default identicon rather than failing to parse.
+    public func toLXMFFieldValue() -> [Any] {
+        let fgBytes = Self.hexRgbToData(fgColor) ?? Data([0, 0, 0])
+        let bgBytes = Self.hexRgbToData(bgColor) ?? Data([0, 0, 0])
+        return [iconName, fgBytes, bgBytes] as [Any]
+    }
+
+    /// Decode FIELD_ICON_APPEARANCE (0x04) into an `IconAppearance`.
+    ///
+    /// Accepts either `String` or UTF-8 `Data` for the icon name — peers
+    /// vary: Swift `String` survives msgpack as `.string` while LXMF-kt's
+    /// canonical form is `extension.toByteArray(Charsets.UTF_8)` which
+    /// arrives as `.binary`. Returns nil if the value isn't a 3-element
+    /// array, the name is empty, or either colour channel isn't a
+    /// 3-byte blob.
+    public static func fromLXMFFieldValue(_ value: Any) -> IconAppearance? {
+        guard let arr = value as? [Any], arr.count >= 3 else { return nil }
+        let name: String?
+        if let s = arr[0] as? String { name = s }
+        else if let d = arr[0] as? Data { name = String(data: d, encoding: .utf8) }
+        else { name = nil }
+        guard let iconName = name, !iconName.isEmpty else { return nil }
+        guard let fg = (arr[1] as? Data).flatMap(Self.dataToHexRgb),
+              let bg = (arr[2] as? Data).flatMap(Self.dataToHexRgb) else { return nil }
+        return IconAppearance(iconName: iconName, fgColor: fg, bgColor: bg)
+    }
+
+    /// Decode `"RRGGBB"` / `"#RRGGBB"` to 3 raw RGB bytes. Returns nil for any
+    /// other length so we don't silently truncate longer hex (e.g. `#RRGGBBAA`).
+    private static func hexRgbToData(_ hex: String) -> Data? {
+        var s = Substring(hex)
+        if s.hasPrefix("#") { s = s.dropFirst() }
+        guard s.count == 6 else { return nil }
+        var bytes = Data(); bytes.reserveCapacity(3)
+        for i in stride(from: 0, to: 6, by: 2) {
+            let start = s.index(s.startIndex, offsetBy: i)
+            let end = s.index(start, offsetBy: 2)
+            guard let b = UInt8(s[start..<end], radix: 16) else { return nil }
+            bytes.append(b)
+        }
+        return bytes
+    }
+
+    /// 3 RGB bytes → 6-char lowercase hex (`ProfileIcon`'s stored form).
+    private static func dataToHexRgb(_ data: Data) -> String? {
+        guard data.count == 3 else { return nil }
+        return data.map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 // MARK: - LXMessage
@@ -1036,6 +1093,18 @@ public final class LXMFDatabase: @unchecked Sendable {
             conversations[convHash] = conv
         }
 
+        // Persist `message.fields` so attachment payloads (FIELD_IMAGE 0x06,
+        // FIELD_FILE_ATTACHMENTS 0x05, FIELD_ICON_APPEARANCE 0x04, replies, …)
+        // survive a DB reload. `packedLxmf` is named for the full LXMF wire
+        // format historically, but `LXMessage.pack()`/`unpackFromBytes` are
+        // Compat stubs (they predate the field-path migration), so we now use
+        // it to carry just the MessagePack-encoded field map — the only piece
+        // the UI needs to reconstruct image/attachment bubbles. Empty Data when
+        // there are no fields, matching `LxmfFieldCodec.pack`'s empty-map
+        // convention so `unpack` returns nil cleanly on load.
+        let fieldsPacked: Data = (message.fields?.isEmpty == false)
+            ? LxmfFieldCodec.pack(message.fields!)
+            : Data()
         let record = MessageRecord(
             id: message.hash,
             conversationHash: convHash,
@@ -1045,7 +1114,11 @@ public final class LXMFDatabase: @unchecked Sendable {
             state: message.state.rawValue,
             messageId: message.hash,
             sourceHash: message.sourceHash,
-            method: message.method.rawValue
+            method: message.method.rawValue,
+            rssi: message.rssi,
+            snr: message.snr,
+            receivingInterface: message.receivingInterface,
+            packedLxmf: fieldsPacked
         )
         messagesById[message.hash] = record
         // Replace in-place if this hash was already cached (re-save), else
@@ -1292,6 +1365,14 @@ public struct MessageRecord: Identifiable, Equatable, Sendable, Codable {
     public var receivingInterface: String?
     public var replyToId: String?
     public var reactionsJson: String?
+    /// MessagePack-encoded LXMF field map (the `[UInt8: Any]` produced by
+    /// `LxmfFieldCodec.pack`). Carries attachment payloads — FIELD_IMAGE
+    /// (0x06) `[format, bytes]`, FIELD_FILE_ATTACHMENTS (0x05), the icon
+    /// appearance (0x04), reply hash (0x30), etc. — so they survive a DB
+    /// reload. Empty `Data()` when the message has no fields. Named
+    /// `packedLxmf` historically (the intent was the full LXMF wire) but the
+    /// Compat `LXMessage.pack()` / `unpackFromBytes` are stubs, so we carry
+    /// just the field map. Decode with `LxmfFieldCodec.unpack(...)`.
     public var packedLxmf: Data
 
     public enum Direction: String, Equatable, Sendable, Codable { case inbound, outbound }

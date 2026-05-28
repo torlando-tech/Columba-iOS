@@ -446,34 +446,45 @@ public struct Message: Identifiable, Equatable {
             self.reactions = []
         }
 
-        // Extract fields from packed wire format if available
-        if let lxMessage = try? LXMessage.unpackFromBytes(record.packedLxmf) {
-            // Re-extract content from unpacked message if DB column was empty
-            if self.content.isEmpty {
-                let unpacked = String(data: lxMessage.content, encoding: .utf8) ?? ""
-                if !unpacked.isEmpty {
-                    self.content = unpacked
-                }
-            }
-            // Extract image field (0x06)
-            if let imageField = lxMessage.fields?[LXMessage.FIELD_IMAGE] as? [Any],
+        // Extract attachment payloads from the persisted field map. Decoded
+        // directly via `LxmfFieldCodec.unpack` because `LXMessage.pack()` /
+        // `unpackFromBytes` are Compat stubs (returning empty Data / empty
+        // LXMessage) — so the previous `LXMessage.unpackFromBytes(...)` path
+        // *always* dropped the image/attachment fields on reload, even when
+        // they were on the wire. See `MessageRecord.packedLxmf` for the
+        // codec contract.
+        if let fields = LxmfFieldCodec.unpack(record.packedLxmf) {
+            // FIELD_IMAGE (0x06) = [format_string, image_bytes]
+            if let imageField = fields[LXMessage.FIELD_IMAGE] as? [Any],
                imageField.count >= 2,
-               let format = imageField[0] as? String,
                let data = imageField[1] as? Data {
-                self.imageData = data
-                self.imageFormat = format
-            } else if let rawField = lxMessage.fields?[LXMessage.FIELD_IMAGE] {
+                // Format arrives as String when peers send a Swift String
+                // (LxmfFieldCodec / LXMF-swift / Sideband-Python `image=[str,
+                // bytes]`) and as Data when peers send raw bytes (LXMF-kt's
+                // canonical `extension.toByteArray()`). Accept either so
+                // round-trips with every interop partner work.
+                let format: String?
+                if let s = imageField[0] as? String { format = s }
+                else if let d = imageField[0] as? Data { format = String(data: d, encoding: .utf8) }
+                else { format = nil }
+                if let format {
+                    self.imageData = data
+                    self.imageFormat = format
+                }
+            } else if let rawField = fields[LXMessage.FIELD_IMAGE] {
                 // Image field exists but failed extraction — log for diagnosis
                 logger.warning("Image field 0x06 present but extraction failed: type=\(String(describing: type(of: rawField))), value=\(String(describing: rawField).prefix(200))")
             }
-            // Extract file attachments field (0x05)
-            if let filesField = lxMessage.fields?[LXMessage.FIELD_FILE_ATTACHMENTS] as? [Any] {
+            // FIELD_FILE_ATTACHMENTS (0x05) = [[filename, data], …]
+            if let filesField = fields[LXMessage.FIELD_FILE_ATTACHMENTS] as? [Any] {
                 var atts: [FileAttachment] = []
                 for item in filesField {
-                    if let pair = item as? [Any],
-                       pair.count >= 2,
-                       let name = pair[0] as? String,
+                    if let pair = item as? [Any], pair.count >= 2,
                        let data = pair[1] as? Data {
+                        let name: String
+                        if let s = pair[0] as? String { name = s }
+                        else if let d = pair[0] as? Data { name = String(data: d, encoding: .utf8) ?? "" }
+                        else { continue }
                         atts.append(FileAttachment(name: name, data: data))
                     }
                 }
@@ -482,7 +493,7 @@ public struct Message: Identifiable, Equatable {
 
             // Fallback: extract reply_to from packed fields if DB column was nil
             if self.replyToId == nil,
-               let appData = lxMessage.fields?[LXMessage.FIELD_APP_DATA] as? [String: Any],
+               let appData = fields[LXMessage.FIELD_APP_DATA] as? [String: Any],
                let replyTo = appData["reply_to"] as? String {
                 self.replyToId = replyTo
             }
