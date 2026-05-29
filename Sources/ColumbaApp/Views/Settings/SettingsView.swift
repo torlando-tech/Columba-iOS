@@ -763,31 +763,81 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.textSecondary)
 
                 if vm.isAutoAnnounceEnabled {
-                    // Interval selector
+                    // Granular trigger toggles. All gated behind the master
+                    // above; turning all three off effectively suppresses
+                    // every automatic announce (manual still works).
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Announce Interval: \(vm.announceIntervalHours) hour\(vm.announceIntervalHours == 1 ? "" : "s")")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Theme.accentColor)
+                        Text("Triggers")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.textPrimary)
 
-                        // Preset chips
-                        HStack(spacing: 8) {
-                            ForEach([1, 3, 6, 12], id: \.self) { hours in
-                                Button {
-                                    vm.announceIntervalHours = hours
+                        autoAnnounceTriggerRow(
+                            title: "On interval",
+                            subtitle: "Periodic timer (configurable below)",
+                            isOn: Binding(
+                                get: { vm.autoAnnounceOnInterval },
+                                set: { newValue in
+                                    vm.autoAnnounceOnInterval = newValue
                                     vm.saveSettings()
                                     vm.syncAutoAnnounce()
-                                } label: {
-                                    Text("\(hours)h")
-                                        .font(.caption.weight(.medium))
-                                        .foregroundStyle(vm.announceIntervalHours == hours ? .white : Theme.textSecondary)
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 6)
-                                        .background(
-                                            vm.announceIntervalHours == hours
-                                                ? Theme.accentColor
-                                                : Theme.backgroundTertiary
-                                        )
-                                        .clipShape(Capsule())
+                                }
+                            )
+                        )
+
+                        autoAnnounceTriggerRow(
+                            title: "On interface (re)connect",
+                            subtitle: "When TCP / RNode interfaces reach connected",
+                            isOn: Binding(
+                                get: { vm.autoAnnounceOnTcpReconnect },
+                                set: { newValue in
+                                    vm.autoAnnounceOnTcpReconnect = newValue
+                                    vm.saveSettings()
+                                }
+                            )
+                        )
+
+                        autoAnnounceTriggerRow(
+                            title: "On peer spawned",
+                            subtitle: "When AutoInterface / BLE / Multipeer accepts a new peer",
+                            isOn: Binding(
+                                get: { vm.autoAnnounceOnPeerSpawned },
+                                set: { newValue in
+                                    vm.autoAnnounceOnPeerSpawned = newValue
+                                    vm.saveSettings()
+                                }
+                            )
+                        )
+                    }
+                    .padding(.vertical, 4)
+
+                    // Interval selector — only meaningful when the on-interval
+                    // trigger is on.
+                    if vm.autoAnnounceOnInterval {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Announce Interval: \(vm.announceIntervalHours) hour\(vm.announceIntervalHours == 1 ? "" : "s")")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Theme.accentColor)
+
+                            // Preset chips
+                            HStack(spacing: 8) {
+                                ForEach([1, 3, 6, 12], id: \.self) { hours in
+                                    Button {
+                                        vm.announceIntervalHours = hours
+                                        vm.saveSettings()
+                                        vm.syncAutoAnnounce()
+                                    } label: {
+                                        Text("\(hours)h")
+                                            .font(.caption.weight(.medium))
+                                            .foregroundStyle(vm.announceIntervalHours == hours ? .white : Theme.textSecondary)
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 6)
+                                            .background(
+                                                vm.announceIntervalHours == hours
+                                                    ? Theme.accentColor
+                                                    : Theme.backgroundTertiary
+                                            )
+                                            .clipShape(Capsule())
+                                    }
                                 }
                             }
                         }
@@ -881,6 +931,30 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    /// Single-row toggle for one auto-announce trigger.
+    @ViewBuilder
+    private func autoAnnounceTriggerRow(
+        title: String,
+        subtitle: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textPrimary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(Theme.accentColor)
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: - Location Sharing Card

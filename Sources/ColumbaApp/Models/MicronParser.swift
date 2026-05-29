@@ -14,6 +14,11 @@ public struct MicronParser {
         var literalLines: [String] = []
         var currentIndent = 0
         var currentAlignment: MicronAlignment = .left
+        // Formatting state persists across lines (matches python NomadNet's
+        // MicronParser, where `!/`*/`_/`Fxxx/`Bxxx are document-scoped until
+        // toggled off or reset). Without this the chat-room page's
+        // `F0ff`B52f preamble drops its colors before the ASCII art.
+        var currentStyle: MicronTextStyle = .plain
 
         // Parse headers from top of document
         while lineIndex < lines.count {
@@ -70,7 +75,8 @@ public struct MicronParser {
                 if content.isEmpty {
                     continue
                 }
-                let (spans, alignment, fields) = parseInline(content, currentStyle: .plain, currentAlignment: currentAlignment)
+                let (spans, alignment, fields, updatedStyle) = parseInline(content, currentStyle: currentStyle, currentAlignment: currentAlignment)
+                currentStyle = updatedStyle
                 if let alignment = alignment { currentAlignment = alignment }
                 elements.append(.heading(level: headingLevel, spans: spans, alignment: currentAlignment))
                 for field in fields { elements.append(.formField(field)) }
@@ -85,12 +91,16 @@ public struct MicronParser {
                 continue
             }
 
-            // Reset indent
+            // Reset indent — also resets formatting state to plain, matching
+            // python NomadNet's `<` semantics where the line restarts parsing
+            // from a default state.
             if firstChar == "<" {
                 currentIndent = 0
+                currentStyle = .plain
                 let rest = String(line.dropFirst())
                 if !rest.isEmpty {
-                    let (spans, alignment, fields) = parseInline(rest, currentStyle: .plain, currentAlignment: currentAlignment)
+                    let (spans, alignment, fields, updatedStyle) = parseInline(rest, currentStyle: currentStyle, currentAlignment: currentAlignment)
+                    currentStyle = updatedStyle
                     if let alignment = alignment { currentAlignment = alignment }
                     elements.append(.paragraph(spans: spans, alignment: currentAlignment, indentLevel: currentIndent))
                     for field in fields { elements.append(.formField(field)) }
@@ -114,7 +124,8 @@ public struct MicronParser {
             }
 
             // Regular paragraph — parse inline formatting
-            let (spans, alignment, fields) = parseInline(line, currentStyle: .plain, currentAlignment: currentAlignment)
+            let (spans, alignment, fields, updatedStyle) = parseInline(line, currentStyle: currentStyle, currentAlignment: currentAlignment)
+            currentStyle = updatedStyle
             if let alignment = alignment { currentAlignment = alignment }
             elements.append(.paragraph(spans: spans, alignment: currentAlignment, indentLevel: currentIndent))
             for field in fields { elements.append(.formField(field)) }
@@ -144,12 +155,14 @@ public struct MicronParser {
     // MARK: - Inline Parsing
 
     /// Parse inline formatting within a line of text.
-    /// Returns parsed spans, any alignment change detected, and any form fields found.
+    /// Returns parsed spans, any alignment change detected, any form fields found,
+    /// and the formatting style at the end of the line so callers can carry it
+    /// forward (matches python NomadNet's document-scoped formatting state).
     private static func parseInline(
         _ text: String,
         currentStyle: MicronTextStyle,
         currentAlignment: MicronAlignment
-    ) -> ([MicronSpan], MicronAlignment?, [MicronFormField]) {
+    ) -> ([MicronSpan], MicronAlignment?, [MicronFormField], MicronTextStyle) {
         var spans: [MicronSpan] = []
         var style = currentStyle
         var alignment: MicronAlignment? = nil
@@ -323,7 +336,7 @@ public struct MicronParser {
         }
 
         flushBuffer()
-        return (spans, alignment, formFields)
+        return (spans, alignment, formFields, style)
     }
 
     // MARK: - Form Field Parsing

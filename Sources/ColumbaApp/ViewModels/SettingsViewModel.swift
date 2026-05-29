@@ -225,6 +225,15 @@ public final class SettingsViewModel {
     public var manualAnnounceSuccess: Bool = false
     public var manualAnnounceError: String?
 
+    // Granular announce triggers (all gated under isAutoAnnounceEnabled).
+    // Default true — equivalent to "all triggers active" pre-introduction.
+    /// Fire an announce on the periodic interval timer.
+    public var autoAnnounceOnInterval: Bool = true
+    /// Fire an announce when a TCP / RNode / static interface (re)connects.
+    public var autoAnnounceOnTcpReconnect: Bool = true
+    /// Fire an announce when an AutoInterface / BLE / MPC peer is spawned.
+    public var autoAnnounceOnPeerSpawned: Bool = true
+
     // MARK: - Location Sharing Settings
 
     /// Live reflection of whether location is being shared with any peer.
@@ -376,7 +385,10 @@ public final class SettingsViewModel {
             "show_message_previews": true,
             "play_sounds": true,
             "vibrate": true,
-            "auto_announce_enabled": true
+            "auto_announce_enabled": true,
+            "auto_announce_on_interval": true,
+            "auto_announce_on_tcp_reconnect": true,
+            "auto_announce_on_peer_spawned": true
         ])
 
         blockUnknownSenders = defaults.bool(forKey: "block_unknown_senders")
@@ -393,6 +405,9 @@ public final class SettingsViewModel {
         notifyBleConnected = defaults.bool(forKey: "notify_ble_connected")
         notifyBleDisconnected = defaults.bool(forKey: "notify_ble_disconnected")
         isAutoAnnounceEnabled = defaults.bool(forKey: "auto_announce_enabled")
+        autoAnnounceOnInterval = defaults.bool(forKey: "auto_announce_on_interval")
+        autoAnnounceOnTcpReconnect = defaults.bool(forKey: "auto_announce_on_tcp_reconnect")
+        autoAnnounceOnPeerSpawned = defaults.bool(forKey: "auto_announce_on_peer_spawned")
         let storedInterval = defaults.integer(forKey: "announce_interval_hours")
         announceIntervalHours = storedInterval > 0 ? storedInterval : 3
         let lastTs = defaults.double(forKey: "last_announce_time")
@@ -419,6 +434,9 @@ public final class SettingsViewModel {
             playSounds = true
             vibrate = true
             isAutoAnnounceEnabled = true
+            autoAnnounceOnInterval = true
+            autoAnnounceOnTcpReconnect = true
+            autoAnnounceOnPeerSpawned = true
             announceIntervalHours = 3
             defaultSharingDuration = SharingDuration.oneHour.rawValue
             defaults.set(true, forKey: "settings_initialized")
@@ -444,6 +462,9 @@ public final class SettingsViewModel {
         defaults.set(notifyBleConnected, forKey: "notify_ble_connected")
         defaults.set(notifyBleDisconnected, forKey: "notify_ble_disconnected")
         defaults.set(isAutoAnnounceEnabled, forKey: "auto_announce_enabled")
+        defaults.set(autoAnnounceOnInterval, forKey: "auto_announce_on_interval")
+        defaults.set(autoAnnounceOnTcpReconnect, forKey: "auto_announce_on_tcp_reconnect")
+        defaults.set(autoAnnounceOnPeerSpawned, forKey: "auto_announce_on_peer_spawned")
         defaults.set(announceIntervalHours, forKey: "announce_interval_hours")
         SharedDefaults.suite.set(isTransportEnabled, forKey: "transport_enabled")
         defaults.set(isLocationSharingEnabled, forKey: "location_sharing_enabled")

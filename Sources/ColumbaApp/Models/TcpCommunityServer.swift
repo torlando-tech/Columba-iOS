@@ -26,24 +26,25 @@ struct TcpCommunityServer: Identifiable {
 extension TcpCommunityServer {
     /// Curated list of public Reticulum transport nodes.
     ///
-    /// Sourced from Android Columba's `TcpCommunityServers.kt`.
-    /// Bootstrap servers are preferred for first-time connections.
+    /// Sourced from Android Columba's `TcpCommunityServer.kt`. Keep this list
+    /// in sync with `app/src/main/java/network/columba/app/data/model/TcpCommunityServer.kt`.
+    /// Up-to-date community directories: directory.rns.recipes, rmap.world.
     static let servers: [TcpCommunityServer] = [
-        // Bootstrap servers
+        // Bootstrap-class servers (well-established, reliable nodes).
+        // Reticulum-Swift does not yet support the bootstrap interface mode,
+        // so the iOS UI surfaces these alongside other community servers.
         TcpCommunityServer(name: "Beleth RNS Hub", host: "rns.beleth.net", port: 4242, isBootstrap: true),
-        TcpCommunityServer(name: "Quad4 RNS", host: "rns.quad4.io", port: 4242, isBootstrap: true),
-        TcpCommunityServer(name: "FireZen Hub", host: "reticulum.firezen.xyz", port: 4242, isBootstrap: true),
+        TcpCommunityServer(name: "Quad4 TCP Node 1", host: "rns.quad4.io", port: 4242, isBootstrap: true),
+        TcpCommunityServer(name: "FireZen", host: "firezen.com", port: 4242, isBootstrap: true),
 
         // Community servers
-        TcpCommunityServer(name: "RNS Amsterdam", host: "amsterdam.connect.reticulum.network", port: 4965, isBootstrap: false),
-        TcpCommunityServer(name: "RNS BetweenTheBorders", host: "betweentheborders.com", port: 4242, isBootstrap: false),
-        TcpCommunityServer(name: "RNS Frankfurt", host: "frankfurt.connect.reticulum.network", port: 5377, isBootstrap: false),
-        TcpCommunityServer(name: "i2p Reticulum", host: "uxg5a4t3pnif7zoo43fkdrhgamlbfcovgsrzjakqab3pxjfqwdcq.b32.i2p", port: 5001, isBootstrap: false),
-        TcpCommunityServer(name: "Reticulum Ireland", host: "reticulum.liamcottle.net", port: 4242, isBootstrap: false),
-        TcpCommunityServer(name: "TheHub", host: "thehub.duckdns.org", port: 4242, isBootstrap: false),
-        TcpCommunityServer(name: "Kosciuszko", host: "kosciuszko.au.int.rns.directory", port: 9696, isBootstrap: false),
-        TcpCommunityServer(name: "Reticulum Ireland v2", host: "reticulum.liamcottle.net", port: 4343, isBootstrap: false),
-        TcpCommunityServer(name: "RNS Roaming", host: "roaming.int.rns.directory", port: 9697, isBootstrap: false),
+        TcpCommunityServer(name: "g00n.cloud Hub", host: "dfw.us.g00n.cloud", port: 6969, isBootstrap: false),
+        TcpCommunityServer(name: "noDNS1", host: "202.61.243.41", port: 4965, isBootstrap: false),
+        TcpCommunityServer(name: "noDNS2", host: "193.26.158.230", port: 4965, isBootstrap: false),
+        TcpCommunityServer(name: "NomadNode SEAsia TCP", host: "rns.jaykayenn.net", port: 4242, isBootstrap: false),
+        TcpCommunityServer(name: "0rbit-Net", host: "93.95.227.8", port: 49952, isBootstrap: false),
+        TcpCommunityServer(name: "Quad4 TCP Node 2", host: "rns2.quad4.io", port: 4242, isBootstrap: false),
+        TcpCommunityServer(name: "SparkN0de", host: "aspark.uber.space", port: 44860, isBootstrap: false),
     ]
 
     /// Default server for first-time connections.
