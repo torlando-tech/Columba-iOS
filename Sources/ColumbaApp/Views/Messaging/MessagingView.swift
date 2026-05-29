@@ -62,6 +62,7 @@ struct MessagingView: View {
     @State private var detailMessage: Message?
     @State private var deleteConfirmMessage: Message?
     @State private var showLocationConfirm = false
+    @State private var showCodecSheet = false
     @State private var emojiPickerTargetMessage: Message?
     @State private var reactionModeMessage: Message?
     @State private var isSavedContact: Bool = false
@@ -342,7 +343,28 @@ struct MessagingView: View {
             .presentationDetents([.height(340)])
             .presentationDragIndicator(.visible)
         }
-        // Voice / CallKit overlay removed in Phase 0 of the Python RNS migration.
+        // Codec picker → place the voice call. The active/outgoing call UI
+        // (VoiceCallScreen) is presented app-root in MainTabView off
+        // callManager.callState, so it survives navigating away from the chat.
+        .sheet(isPresented: $showCodecSheet) {
+            CodecSelectionSheet { profile in
+                showCodecSheet = false
+                #if os(iOS)
+                let dest = conversation.destinationHash
+                let name = conversation.peerName
+                Task { @MainActor in
+                    guard let cm = appServices.callManager else { return }
+                    guard let telHash = await appServices.telephonyHash(forPeerLxmfHash: dest) else {
+                        DiagLog.log("[CALL] no telephony path for \(dest.prefix(4).map { String(format: "%02x", $0) }.joined()) — peer not heard yet")
+                        return
+                    }
+                    cm.initiateCall(destinationHash: telHash, profile: profile, peerDisplayName: name)
+                }
+                #endif
+            }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(item: $detailMessage) { message in
             MessageDetailView(
                 message: message,
@@ -457,7 +479,16 @@ struct MessagingView: View {
     private var trailingToolbar: some View {
         HStack(spacing: 16) {
             #if os(iOS)
-            // Voice call button removed in Phase 0 of the Python RNS migration.
+            // Voice call — opens the codec picker, then places an LXST voice
+            // call to the peer's telephony destination (resolved from their
+            // identity). Restored after the Phase 0 migration removed it.
+            Button(action: { showCodecSheet = true }) {
+                Image(systemName: "phone.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .accessibilityIdentifier("voice_call_button")
+            .accessibilityLabel("Voice call")
 
             // Location sharing toggle
             Button(action: {
