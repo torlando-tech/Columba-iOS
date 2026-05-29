@@ -1,10 +1,16 @@
-#if COLUMBA_RNODE_ENABLED
+#if COLUMBA_BLE_ENABLED
 //
 //  RNodeConfigSheet.swift
 //  ColumbaApp
 //
 //  Configuration sheet for RNode LoRa radio interface.
 //  Provides BLE device selection, regional/modem presets, and manual radio parameter entry.
+//
+//  LEGACY: the live RNode setup flow is the multi-step RNodeWizardView
+//  (RNodeWizard/*), which is what selectInterfaceType(.rnode) presents. This
+//  single-sheet flow is unreferenced and depends on the COLUMBA_BLE_ENABLED-
+//  gated BLEDevicePickerSheet, so it's gated with that same flag rather than
+//  COLUMBA_RNODE_ENABLED (it would not compile in the RNode build).
 //
 
 import SwiftUI

@@ -15,6 +15,21 @@ import RNSAPI
 import CoreBluetooth
 import os
 
+/// KISS framing + the subset of RNode command bytes the wizard's BLE probe
+/// needs to verify a peripheral is an RNode. Values are the RNode/KISS
+/// protocol constants — source of truth is `app/rnode/IOSRNodeInterface.py`'s
+/// `KISS` class (and Android's `rnode_interface.py`), kept byte-identical so
+/// the detect handshake interoperates.
+private enum KISS {
+    static let FEND: UInt8 = 0xC0
+}
+
+private enum RNodeConstants {
+    static let CMD_DETECT: UInt8 = 0x08
+    static let DETECT_REQ: UInt8 = 0x73
+    static let DETECT_RESP: UInt8 = 0x46
+}
+
 /// Lightweight BLE scanner for the RNode configuration wizard.
 ///
 /// Unlike `BLETransport`, this class:

@@ -137,6 +137,7 @@
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
 		F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FD6A68A52A54D21FDB70324 /* RNSAPI */; };
+		F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
 		PNT001 /* PythonNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = PNT002 /* PythonNetworkTransport.swift */; };
 		PRC001 /* PythonRNodeCallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRC002 /* PythonRNodeCallbackBridge.swift */; };
 		SRB001 /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
@@ -182,6 +183,7 @@
 		86E428836698BA8A8973A92F /* CallManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
 		8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNSBackend.swift; sourceTree = "<group>"; };
 		8CBD293157E715F490613984 /* PyMessage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyMessage.swift; path = Python/Models/PyMessage.swift; sourceTree = "<group>"; };
+		9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DiscoveredDevice.swift; sourceTree = "<group>"; };
 		A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRuntime.swift; sourceTree = "<group>"; };
 		ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
 		B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
@@ -511,6 +513,7 @@
 				F07D /* MicronDocument.swift */,
 				F07E /* MicronParser.swift */,
 				ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */,
+				9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -1022,6 +1025,7 @@
 				PRC001 /* PythonRNodeCallbackBridge.swift in Sources */,
 				6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */,
 				238336F8024494A8B57F9419 /* CeaseTelemetry.swift in Sources */,
+				F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1103,7 +1107,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED $(inherited)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = "Debug-Swift";
@@ -1408,7 +1412,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED $(inherited)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
