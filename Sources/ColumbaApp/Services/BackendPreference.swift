@@ -41,10 +41,20 @@ enum BackendPreference {
     /// Falls back to the build-flag default until the user picks explicitly.
     static var isSwift: Bool {
         get {
+            #if COLUMBA_BACKEND_SWIFT
+            // Swift-only build: the embedded Python wheels are stripped at
+            // build time, so Python can't run. Force Swift regardless of any
+            // stored pref — a `useSwiftBackend=false` value can linger in the
+            // shared App Group suite from a prior standard build, and honoring
+            // it here would build PythonRNSBackend and hang on start(). The
+            // Settings toggle is also hidden on this build (see SettingsView).
+            return true
+            #else
             guard let stored = SharedDefaults.suite.object(forKey: key) as? Bool else {
                 return buildDefaultIsSwift
             }
             return stored
+            #endif
         }
         set { SharedDefaults.suite.set(newValue, forKey: key) }
     }

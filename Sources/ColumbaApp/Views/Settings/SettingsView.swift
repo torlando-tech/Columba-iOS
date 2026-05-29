@@ -117,7 +117,14 @@ struct SettingsView: View {
                         transportModeCard(vm)
 
                         // Network Backend (advanced) — pick the RNS engine.
+                        // Only meaningful when both engines are present. A
+                        // COLUMBA_BACKEND_SWIFT build strips the embedded Python
+                        // wheels (see the "Install Python stdlib" build phase),
+                        // so "Embedded Python" would be a guaranteed dead-end —
+                        // hide the control entirely on Swift-only builds.
+                        #if !COLUMBA_BACKEND_SWIFT
                         networkBackendCard(vm)
+                        #endif
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
