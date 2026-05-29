@@ -119,6 +119,7 @@
 		668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */; };
 		67079BBC2E8309A43DF576E5 /* app in Resources */ = {isa = PBXBuildFile; fileRef = D001472BC7DFD3CD7BF27F0C /* app */; };
 		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
+		6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
 		71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
 		779118E89F4D38BF960DB3D0 /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
 		7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */; };
@@ -291,6 +292,7 @@
 		F083 /* MicronRenderContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronRenderContainer.swift; sourceTree = "<group>"; };
 		F084 /* MonospaceLineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonospaceLineView.swift; sourceTree = "<group>"; };
 		F085 /* ZoomableScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomableScrollView.swift; sourceTree = "<group>"; };
+		FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackendPreference.swift; sourceTree = "<group>"; };
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
@@ -633,6 +635,7 @@
 				1F7375908681A4DF99F125C7 /* CallKitManager.swift */,
 				86E428836698BA8A8973A92F /* CallManager.swift */,
 				PNT002 /* PythonNetworkTransport.swift */,
+				FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -1014,6 +1017,7 @@
 				7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */,
 				0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */,
 				PRC001 /* PythonRNodeCallbackBridge.swift in Sources */,
+				6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
