@@ -335,11 +335,21 @@ class SidebandPeer:
         speed: float = 0.0,
         bearing: float = 0.0,
         accuracy: float = 1.0,
+        icon: Optional[tuple] = None,
     ) -> bool:
         """Send a canonical Sideband-format `FIELD_TELEMETRY` blob —
         msgpack-encoded `Telemeter` dict with `SID_TIME` + `SID_LOCATION`.
         Built from Sideband's `sense.py` Telemeter so the on-wire bytes
-        are byte-identical to what a real Sideband install would emit."""
+        are byte-identical to what a real Sideband install would emit.
+
+        `icon`, if given, is `(icon_name, fg_hex, bg_hex)` where the hex
+        strings are 6-char `RRGGBB`. It rides along as
+        `FIELD_ICON_APPEARANCE` (0x04) in the canonical Sideband/Android
+        wire form `[name, fg_rgb_bytes(3), bg_rgb_bytes(3)]` so the iOS
+        map marker renders the peer's MDI glyph + colours rather than the
+        initial-letter fallback. Lets the interop suite pin the inbound
+        FIELD_ICON_APPEARANCE → `PeerLocation.iconAppearance` → marker
+        path alongside the telemetry decode."""
         if self._core is None:
             raise RuntimeError("Sideband peer not started")
         # Use Sideband's own Telemeter — avoids drift from the canonical
@@ -361,10 +371,18 @@ class SidebandPeer:
             "last_update": int(time.time()),
         }
         packed = t.packed()
+        fields = {LXMF.FIELD_TELEMETRY: packed}
+        if icon is not None:
+            name, fg_hex, bg_hex = icon
+            fields[LXMF.FIELD_ICON_APPEARANCE] = [
+                name,
+                bytes.fromhex(fg_hex),
+                bytes.fromhex(bg_hex),
+            ]
         return self.send_with_fields(
             dest_hex,
             content="",
-            fields={LXMF.FIELD_TELEMETRY: packed},
+            fields=fields,
         )
 
     def _send(self, dest_hex: str, content: str, propagation: bool, **kw) -> bool:

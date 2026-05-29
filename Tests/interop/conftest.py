@@ -118,8 +118,13 @@ class Simulator:
         # cache the first successful read so a Maestro `launchApp` later
         # (which clears diag.log via AppServices.initialize → DiagLog.clear)
         # doesn't strand later property reads on a freshly-empty log.
+        # The propagation-node hex shares the same problem with extra
+        # urgency: lxmd announces every 5 minutes (announce_interval) so
+        # the per-launch log slice almost never carries a fresh sighting
+        # by the time `test_image_ios_to_sideband_propagated` runs.
         self._cached_identity_hex: Optional[str] = None
         self._cached_lxmf_delivery_hex: Optional[str] = None
+        self._cached_propagation_node_hex: Optional[str] = None
 
     # ---- identity / destinations ----
 
@@ -151,14 +156,28 @@ class Simulator:
 
     def auto_propagation_node_hex(self) -> Optional[str]:
         """First `lxmf.propagation` announce we've heard whose name is
-        non-empty (= a real propagation node, not a malformed announce)."""
+        non-empty (= a real propagation node, not a malformed announce).
+
+        Three resolution tiers, in order: cached value from an earlier
+        sighting; the `PROP_NODE_HEX` env var (already wired into the
+        Sideband peer above); diag.log scan. The env-var tier skips the
+        announce-window race entirely — lxmd's default
+        `announce_interval = 5` (minutes) is long enough that the
+        per-launch diag.log slice rarely catches one before this method
+        is called."""
+        if self._cached_propagation_node_hex is not None:
+            return self._cached_propagation_node_hex
+        if PROP_NODE_HEX:
+            self._cached_propagation_node_hex = PROP_NODE_HEX
+            return self._cached_propagation_node_hex
         for line in reversed(self._tail_diag(LOG_TAIL_LINES * 4)):
             m = re.search(
                 r"\[PY\] announce dest=([0-9a-f]+)\s+aspect=lxmf\.propagation\s+name=\"([^\"]*)\"",
                 line,
             )
             if m and m.group(2):  # non-empty name
-                return m.group(1)
+                self._cached_propagation_node_hex = m.group(1)
+                return self._cached_propagation_node_hex
         return None
 
     def set_propagation_node(self, node_hex: str, *, wait: float = 5.0) -> None:
@@ -346,6 +365,66 @@ class Simulator:
         finally:
             flow_path.unlink(missing_ok=True)
 
+    def assert_peer_pin_visible(self, *, timeout: float = 40.0) -> None:
+        """Navigate to the Map tab and assert a peer location pin rendered.
+
+        Pins the inbound-telemetry → map path for the Sideband→iOS
+        direction: `IncomingMessageHandler` decodes `FIELD_TELEMETRY` →
+        `LocationSharingManager.handleIncomingTelemetry` populates
+        `peerLocations` → `MapView` shows the `map_peer_count` badge and
+        `MapLibreMapView` draws the marker. `extendedWaitUntil` polls so
+        the async LXMF delivery doesn't surface as a flake, then a
+        screenshot captures the rendered marker.
+
+        Asserts *pin presence* via the pure-SwiftUI `map_peer_count`
+        badge. The MapLibre marker itself is drawn on a GL surface and
+        isn't in the accessibility tree, so the marker's icon/colour are
+        asserted separately off the `[LOC-RECV]` diag line (see
+        `test_location_sideband_to_ios`); the screenshot is the visual
+        record of the glyph.
+        """
+        wait_ms = int(timeout * 1000)
+        lines = [
+            "appId: " + BUNDLE_ID,
+            "---",
+            # Warm-foreground: bring Columba to the front WITHOUT restarting
+            # it. `peerLocations` lives only in memory, so a cold relaunch
+            # (the default `launchApp`, or `simctl launch` after terminate)
+            # would empty it and also fire AppServices.initialize →
+            # DiagLog.clear, wiping the [LOC-RECV] line. `stopApp: false`
+            # just activates the already-running process — verified to leave
+            # the [PY] started count and diag.log untouched. The app can end
+            # up backgrounded after the bootstrap fixture's `simctl openurl`
+            # announces, so don't assume it's already frontmost.
+            "- launchApp: { stopApp: false }",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            "- tapOn: { text: \"Allow\", optional: true }",
+            "- tapOn: { text: \"Don't Allow\", optional: true }",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+            "- tapOn:",
+            "    text: \"Map\"",
+            "    optional: true",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            # Poll until the inbound telemetry lands and the peer-count
+            # badge renders.
+            "- extendedWaitUntil:",
+            "    visible:",
+            "      id: \"map_peer_count\"",
+            f"    timeout: {wait_ms}",
+            "- takeScreenshot: { path: screenshots/loc-map }",
+        ]
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_map_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        try:
+            _sh(["maestro", "--device", self.udid, "test", str(flow_path)], timeout=timeout + 30)
+        except subprocess.CalledProcessError as e:
+            pytest.fail(
+                f"assert_peer_pin_visible failed. Maestro stderr:\n"
+                f"{e.stderr or e.stdout}"
+            )
+        finally:
+            flow_path.unlink(missing_ok=True)
+
     @staticmethod
     def _parse_outcome(lines: list[str]) -> Optional[TestSendResult]:
         for line in lines:
@@ -496,3 +575,88 @@ def _bootstrap_paths(sim, sideband):
             f"({sim_hex}). The sim may not be auto-announcing, or its "
             f"announce isn't reaching rnsd's shared-instance side."
         )
+
+
+@pytest.fixture
+def clean_location_state(sim):
+    """Reset Columba's location-sharing state before the test runs.
+
+    `LocationSharingManager` persists `activePeers` to `UserDefaults` so
+    a relaunch resumes sharing; without a reset, a test that drives the
+    chat-screen location toggle finds it already *on* from a prior test
+    that left state behind, and the first tap turns it OFF instead of
+    opening `LocationShareSheet`.
+
+    The reset dance: terminate Columba → `defaults delete
+    locationSharing_activePeers` → relaunch → wait for the app to come
+    up. Function-scoped and opt-in — the URL-bypass telemetry tests
+    (`test_send_telemetry` path) and the attachment round-trips don't
+    touch `activePeers` and shouldn't pay the ~8 s relaunch cost.
+
+    Closes the suite-order flake in
+    `test_chat_toggle_starts_periodic_sharing`. Any future test that
+    drives the chat-screen location toggle UI should request this too.
+
+    NOTE: relaunch also re-triggers `AppServices.initialize → DiagLog.clear`,
+    so anything earlier in the session that depends on the pre-relaunch
+    diag.log contents must have already cached its reads. `identity_hex`
+    and `lxmf_delivery_hex` on `Simulator` already do; new properties
+    that read diag.log should follow the same cache pattern.
+    """
+    subprocess.run(
+        ["xcrun", "simctl", "terminate", sim.udid, BUNDLE_ID],
+        capture_output=True,
+    )
+    # `LocationSharingManager` persists `activePeers` to
+    # `UserDefaults.standard`, which on the simulator is the APP SANDBOX
+    # CONTAINER plist:
+    #   <data_container>/Library/Preferences/<bundle>.plist
+    # NOT the booted-user global defaults domain that
+    # `xcrun simctl spawn <udid> defaults <bundle>` reads/writes. An
+    # earlier version of this reset deleted the key via `simctl spawn
+    # defaults delete` and "verified" with `defaults read` — but that
+    # domain never holds the key, so the delete was a silent no-op and
+    # the read always reported "does not exist" (a false success). The
+    # app kept loading the stale `activePeers` set from the container
+    # plist, leaving the chat toggle ON on ~50% of runs (the flake
+    # tracked whatever the previous test happened to leave behind, not
+    # any cfprefsd cache). Operate on the container plist directly.
+    data_dir = subprocess.run(
+        ["xcrun", "simctl", "get_app_container", sim.udid, BUNDLE_ID, "data"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    container_plist = os.path.join(
+        data_dir, "Library", "Preferences", f"{BUNDLE_ID}.plist"
+    )
+    # `plutil -remove` exits non-zero when the key is already absent —
+    # harmless, so don't check=True. The relaunched app then reads the
+    # key as nil and comes up with activePeers empty.
+    subprocess.run(
+        ["plutil", "-remove", "locationSharing_activePeers", container_plist],
+        capture_output=True,
+    )
+    # cfprefsd (the sim's user/501 daemon) may still hold the container's
+    # preferences cached from the just-terminated app process. Kick it
+    # AFTER editing the file on disk so it re-reads our edited plist
+    # rather than serving — or flushing back — the stale in-memory copy
+    # to the relaunched app. `killall` doesn't exist in the simulator
+    # userspace (it silently no-ops); `launchctl kickstart -k` is the
+    # working equivalent. user/501 is the only cfprefsd scope in the sim;
+    # the warning about preferred service-target syntax is harmless.
+    subprocess.run(
+        ["xcrun", "simctl", "spawn", sim.udid, "launchctl", "kickstart",
+         "-k", "user/501/com.apple.cfprefsd.xpc.daemon"],
+        capture_output=True,
+    )
+    # cfprefsd respawns under launchd within ~100ms; give it a beat
+    # before the app's NSUserDefaults connects.
+    time.sleep(0.5)
+    subprocess.run(
+        ["xcrun", "simctl", "launch", sim.udid, BUNDLE_ID],
+        check=True, capture_output=True,
+    )
+    # AppServices.initialize() runs on every launch and the Python
+    # backend's `[PY] started identity=…` log line lands ~6–8 s in on
+    # a warm sim. Match the original inline timing so behaviour is
+    # unchanged from the version that lived in the test body.
+    time.sleep(8.0)

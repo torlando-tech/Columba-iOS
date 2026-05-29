@@ -306,6 +306,16 @@ public final class LocationSharingManager: NSObject {
 
         let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
         logger.info("Updated peer \(hex) location: \(location.latitude), \(location.longitude)")
+        // Test-observable mirror of the decoded inbound telemetry. The map
+        // marker is rendered on MapLibre's GL surface and isn't reachable
+        // from the accessibility tree (so neither VoiceOver nor the interop
+        // suite can read its icon), so the Tests/interop location round-trip
+        // asserts the decoded icon + coordinates here while asserting pin
+        // *presence* via the SwiftUI `map_peer_count` badge. iconName is the
+        // MDI glyph name; fg/bg are 6-char RGB hex.
+        let iconDesc = resolvedIcon.map { "\($0.iconName) fg=\($0.fgColor) bg=\($0.bgColor)" }
+            ?? "- fg=- bg=-"
+        DiagLog.log("[LOC-RECV] peer=\(hex) lat=\(location.latitude) lon=\(location.longitude) icon=\(iconDesc)")
     }
 
     /// Update foreground/background state to adjust send interval.

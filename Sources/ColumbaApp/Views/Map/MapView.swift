@@ -62,6 +62,9 @@ struct MapView: View {
                             .clipShape(Capsule())
                             .padding(.trailing, 16)
                             .padding(.top, 60)
+                            // Pure-SwiftUI signal the interop suite can read even
+                            // if XCUITest can't reach the MapLibre annotation view.
+                            .accessibilityIdentifier("map_peer_count")
                     }
                 }
 

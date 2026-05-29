@@ -17,14 +17,16 @@ class (via `peer_sideband.SidebandPeer`) so the test payload is the
 exact bytes Sideband expects on the wire — pinning Columba's send
 shape against drift in the Sideband-canonical encoder.
 
-Receive-direction tests (Sideband→iOS) are deferred: the iOS
-`LocationSharingManager` that consumes inbound telemetry is gated
-behind `#if COLUMBA_LOCATION_ENABLED`, which isn't defined in any
-shipping build config yet. We can add the inbound assertion once
-the UI side comes off the compile gate.
+Receive direction (Sideband→iOS) is covered by
+`test_location_sideband_to_ios`: Sideband sends a location telemetry
+(plus a FIELD_ICON_APPEARANCE), iOS decodes it in
+`LocationSharingManager.handleIncomingTelemetry`, and a peer pin
+renders on the Map screen. (The old `#if COLUMBA_LOCATION_ENABLED`
+compile gate this used to be blocked on was removed on 2026-05-28.)
 """
 
 from __future__ import annotations
+import re
 import time
 
 import pytest
@@ -126,17 +128,14 @@ def test_location_with_custom_meta_ios_to_sideband(sim, sideband):
     assert bytes(meta_bytes) == meta
 
 
-# Currently flakes when run after other telemetry/attachment tests in the
-# same pytest session — passes reliably in isolation. The shared mutable
-# state across tests (sim's RNS path table + LXMF outbound queue + the
-# simulator's CLLocationManager fix latency) makes it sensitive to ordering.
-# Mitigations possible later: a clean-sim teardown fixture, or moving this
-# to a separate pytest invocation.
-#
-#     pytest test_telemetry.py::test_chat_toggle_starts_periodic_sharing -v -s
-#
-# is reliable; pytest -v on the whole directory will fail this one ~50% of runs.
-def test_chat_toggle_starts_periodic_sharing(sim, sideband, tmp_path_factory):
+# Used to flake in suite order (~50 % on `pytest -v`) when an earlier test
+# left `locationSharing_activePeers` populated — the chat-screen toggle
+# would already be *on*, so the first tap turned it off instead of opening
+# `LocationShareSheet`. The `clean_location_state` fixture (conftest.py)
+# now resets that UserDefaults key + relaunches the app before each run,
+# closing the flake. Any new test that drives the same toggle UI should
+# request `clean_location_state` too.
+def test_chat_toggle_starts_periodic_sharing(sim, sideband, clean_location_state, tmp_path_factory):
     """Drive the chat-screen location toggle (top-right) end-to-end:
     Maestro taps the toggle in MessagingView, picks a duration in
     LocationShareSheet, and asserts the LocationSharingManager fires
@@ -145,26 +144,6 @@ def test_chat_toggle_starts_periodic_sharing(sim, sideband, tmp_path_factory):
     Pins the UI path that ships in Columba — vs the `lxma://test-telemetry`
     URL handler tested above, which bypasses the picker / GPS-fix wait."""
     import subprocess
-    # 0. Drop any leftover location-sharing state from a previous run.
-    #    LocationSharingManager persists `activePeers` to UserDefaults so
-    #    a relaunch resumes sharing; without this, the toggle is already
-    #    *on* when the flow opens the chat, and the first tap turns it
-    #    off instead of opening LocationShareSheet.
-    subprocess.run(
-        ["xcrun", "simctl", "terminate", sim.udid, "network.columba.Columba"],
-        capture_output=True,
-    )
-    subprocess.run(
-        ["xcrun", "simctl", "spawn", sim.udid, "defaults", "delete",
-         "network.columba.Columba", "locationSharing_activePeers"],
-        capture_output=True,
-    )
-    subprocess.run(
-        ["xcrun", "simctl", "launch", sim.udid, "network.columba.Columba"],
-        check=True, capture_output=True,
-    )
-    # Wait for the relaunched app to come up before we start touching it.
-    time.sleep(8.0)
 
     # 1. Pre-grant location permission on the sim so the toggle doesn't
     #    block on the system Allow / Don't Allow dialog (the test would
@@ -264,3 +243,73 @@ def test_cease_ios_to_sideband(sim, sideband):
         f"cease meta payload didn't carry the expected JSON: {meta_str!r}"
     # Content should be empty on a cease.
     assert lxm.content == b"" or lxm.content is None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Receive direction — Sideband → iOS. Asserts a peer pin renders on the
+# Map screen (and carries the peer's MDI icon), pinning the inbound
+# FIELD_TELEMETRY + FIELD_ICON_APPEARANCE → LocationSharingManager →
+# MapLibre marker path.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _wait_for_loc_recv(sim, *, timeout: float = 30.0) -> str:
+    """Block until `LocationSharingManager.handleIncomingTelemetry` logs a
+    decoded inbound telemetry line (`[LOC-RECV] …`) to diag.log, and
+    return it. The line mirrors the decoded peer/lat/lon/icon because the
+    MapLibre marker itself isn't reachable from the accessibility tree."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for line in reversed(sim._tail_diag(800)):
+            if "[LOC-RECV]" in line:
+                return line
+        time.sleep(0.4)
+    pytest.fail(f"iOS never logged [LOC-RECV] for inbound telemetry within {timeout}s")
+
+
+def test_location_sideband_to_ios(sim, sideband):
+    """Sideband → iOS location telemetry with an icon appearance.
+
+    Sideband sends a Sideband-canonical Telemeter location plus a
+    FIELD_ICON_APPEARANCE (0x04) triple. iOS must:
+      1. decode FIELD_TELEMETRY in `handleIncomingTelemetry`, add the peer
+         to `LocationSharingManager.peerLocations`, and render a pin on
+         the Map screen — asserted via the `map_peer_count` badge (the
+         MapLibre marker is GL-drawn and not in the a11y tree), and
+      2. decode the FIELD_ICON_APPEARANCE into `PeerLocation.iconAppearance`
+         with the peer's MDI glyph + colours surviving the wire — asserted
+         off the `[LOC-RECV]` diag line, which mirrors what the marker
+         renders. The loc-map screenshot is the visual record of the glyph.
+
+    Coordinates and colours are arbitrary test data."""
+    expect_lat, expect_lon = 37.7749, -122.4194
+    icon_name, fg_hex, bg_hex = "map-marker", "ffffff", "e91e63"
+    assert sideband.send_location_telemetry(
+        dest_hex=sim.lxmf_delivery_hex,
+        lat=expect_lat,
+        lon=expect_lon,
+        accuracy=12.0,
+        icon=(icon_name, fg_hex, bg_hex),
+    ), "Sideband-side send_location_telemetry returned False"
+
+    # Decoded telemetry + icon round-trip (the part the GL marker can't
+    # expose). Capture first — it's logged on receipt regardless of UI
+    # state, so it's independent of the map-navigation step below.
+    line = _wait_for_loc_recv(sim)
+    m = re.search(
+        r"\[LOC-RECV\] peer=(\w+) lat=(-?[\d.]+) lon=(-?[\d.]+) "
+        r"icon=(\S+) fg=(\S+) bg=(\S+)",
+        line,
+    )
+    assert m, f"[LOC-RECV] line didn't parse: {line!r}"
+    peer, lat, lon, icon, fg, bg = m.groups()
+    assert peer == sideband.identity_hex[:len(peer)], \
+        f"telemetry attributed to {peer}, expected {sideband.identity_hex[:len(peer)]}"
+    assert abs(float(lat) - expect_lat) < 1e-4, f"lat drift: {lat}"
+    assert abs(float(lon) - expect_lon) < 1e-4, f"lon drift: {lon}"
+    assert icon == icon_name, f"icon name didn't round-trip: {icon!r}"
+    assert fg == fg_hex, f"fg colour didn't round-trip: {fg!r}"
+    assert bg == bg_hex, f"bg colour didn't round-trip: {bg!r}"
+
+    # Pin renders on the Map screen (proves peerLocations reached the UI).
+    sim.assert_peer_pin_visible()

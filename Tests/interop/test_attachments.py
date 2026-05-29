@@ -116,8 +116,14 @@ def test_image_ios_to_sideband_propagated(sim, sideband):
     up. Requires lxmd to be running and announcing as `lxmf.propagation`."""
     pn_hex = sim.auto_propagation_node_hex()
     if not pn_hex:
-        pytest.skip("No lxmf.propagation announce with a non-empty name "
-                    "seen on iOS — start lxmd with `node_name = …` set.")
+        pytest.skip(
+            "No lxmf.propagation announce with a non-empty name seen on "
+            "iOS. lxmd's announce_interval is 5 min and every Maestro "
+            "launchApp wipes diag.log, so the per-launch slice rarely "
+            "catches a sighting in suite order. Either start lxmd with "
+            "`node_name = …` set + run again, or pass the hex directly: "
+            "`PROP_NODE_HEX=<lxmd-hash> pytest …`."
+        )
 
     # iOS-side: explicitly wire the PN. PropagationNodeManager's auto-select
     # is best-effort and isn't guaranteed to fire before the first
@@ -207,6 +213,23 @@ def test_file_ios_to_sideband(sim, sideband):
 # the chat UI for the corresponding peer, by reading the iOS app's local
 # DB (LXMFDatabase) via the simulator's data container.
 # ─────────────────────────────────────────────────────────────────────────
+
+
+def test_text_sideband_to_ios(sim, sideband):
+    """Sideband sends a plain-text LXMF message; iOS persists it and the
+    chat bubble renders the text. Pins the inbound *text* path (LXMRouter
+    delivery → IncomingMessageHandler → LXMFDatabase → MessageBubble) for
+    the reverse direction — the forward half is `test_text_ios_to_sideband`.
+    Until now the reverse direction only had image + file coverage; plain
+    text was the gap."""
+    body = f"text-from-sideband-{int(time.time()*1000)}"
+    assert sideband.send_text(
+        dest_hex=sim.lxmf_delivery_hex,
+        content=body,
+    ), "Sideband-side send_text returned False"
+
+    _wait_for_diag_inbound(sim, content=body)
+    sim.assert_bubble_visible(content=body)
 
 
 def test_image_sideband_to_ios(sim, sideband):
