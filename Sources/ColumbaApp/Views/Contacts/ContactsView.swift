@@ -145,7 +145,12 @@ public struct ContactsView: View {
                         )
                     case .browseSite(let contact):
                         #if COLUMBA_NOMADNET_ENABLED
-                        if let backend = appServices.pythonBackend,
+                        // Any active backend can browse NomadNet — both
+                        // PythonRNSBackend and SwiftRNSBackend implement
+                        // `fetchNomadNetPage`, and the browser takes
+                        // `any RnsBackend`. Use the generic active backend, not
+                        // a Python-only downcast (which is nil on Swift).
+                        if let backend = appServices.backend,
                            let identity = appServices.identity {
                             NomadNetBrowserView(
                                 nodeHash: contact.identityHash,
@@ -157,7 +162,7 @@ public struct ContactsView: View {
                             ContentUnavailableView(
                                 "Browser Unavailable",
                                 systemImage: "globe.badge.chevron.backward",
-                                description: Text("The NomadNet browser requires an active Python backend.")
+                                description: Text("The NomadNet browser requires an active connection.")
                             )
                         }
                         #else
