@@ -270,7 +270,21 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
         let desc = error?.localizedDescription ?? "Unknown"
         diag("Failed to connect: \(desc)")
         connectingPeripheral = nil
-        onProbeResult?(.failed("Connection failed: \(desc)"))
+        // CBError.peerRemovedPairingInformation (code 14): this iPhone still holds
+        // a BLE bond for the RNode, but the device forgot its side (re-flashed /
+        // reset / bond table cleared). iOS does NOT re-show the pairing prompt in
+        // this state — it just fails the connect — and there is no API to drop the
+        // stale bond, so the user has to remove it in Settings. Surface that
+        // instead of the cryptic CoreBluetooth string.
+        if let cbErr = error as? CBError, cbErr.code == .peerRemovedPairingInformation {
+            let name = peripheral.name ?? "this RNode"
+            onProbeResult?(.failed(
+                "\(name) has a stale Bluetooth pairing on this iPhone. Open Settings ▸ Bluetooth, "
+                + "tap the ⓘ next to \(name), choose “Forget This Device”, then scan again."
+            ))
+        } else {
+            onProbeResult?(.failed("Connection failed: \(desc)"))
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
