@@ -1418,6 +1418,18 @@ public final class AppServices {
                     ble.state = newState
                     ble.online = status.online
                 }
+            case .rnode:
+                // The real RNode runs as the Python IOSRNodeInterface; the Swift
+                // RNodeInterface stub never reaches .connected on its own, so the
+                // Network Interfaces row sat at "disconnected" even while the
+                // backend reported the interface online. Mirror Python's state
+                // onto the stub the UI polls — same as Auto/BLE above. (Was
+                // missing here, hence the gap.)
+                if let rnode = self.rnodeInterface, rnode.state != newState {
+                    DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (RNode, rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    rnode.state = newState
+                    rnode.online = status.online
+                }
             default:
                 break
             }
