@@ -13,12 +13,15 @@
 //
 
 import Foundation
+import os
 import RNSAPI
 import ReticulumSwift
 import LXMFSwift
 
 @available(iOS 17.0, macOS 14.0, *)
 public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
+
+    private static let log = Logger(subsystem: "network.columba.Columba", category: "SwiftRNSBackend")
 
     // MARK: - Stack (reticulum-swift / LXMF-swift), module-qualified
 
@@ -129,6 +132,28 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         )
         self.telephonyDestination = tel
         await tp.registerDestination(tel)
+
+        // 6.5. Bring up the enabled interfaces on THIS backend's transport.
+        //
+        // The Python backend loads its interfaces from the RNS config file when
+        // `start()` runs `RNS.Reticulum(config_dir)`; the Swift backend has no
+        // such config file, so without this its transport would have zero
+        // interfaces and nothing would connect (the "connecting forever" bug —
+        // the legacy `AppServices.connectTCPInterface` startup path added them to
+        // a separate, pre-dual-backend reticulum-swift stack, never to this
+        // backend). Reuses the same per-type `buildAndAdd` that the hot-reload
+        // `addInterface(name:)` path uses, so startup and live edits share one
+        // path. Per-interface failures are non-fatal — one bad interface must not
+        // block the rest or the whole start.
+        for entity in InterfaceRepository().interfaces where entity.enabled {
+            let section = PythonConfigWriter.sectionName(for: entity)
+            do {
+                try await buildAndAdd(entity)
+                interfaceIds[section] = entity.id
+            } catch {
+                Self.log.error("start: interface \(section, privacy: .public) bring-up failed: \(String(describing: error), privacy: .public)")
+            }
+        }
 
         // 7. Start bridging received announces (path-table diff) onto events.
         startAnnouncePolling()
@@ -582,6 +607,9 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
     @discardableResult
     public func addInterface(name: String) async throws -> (ok: Bool, reason: String) {
         guard transport != nil, identity != nil else { return (false, "not started") }
+        // Idempotent: start() already brings up enabled interfaces, and the
+        // apply/hot-reload path may re-request one — don't add it twice.
+        if interfaceIds[name] != nil { return (true, "already added") }
         guard let entity = Self.entity(forSection: name) else {
             return (false, "no configured interface named \(name)")
         }

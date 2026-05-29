@@ -564,9 +564,9 @@ public final class AppServices {
         interfaces: [InterfaceEntity],
         displayName: String
     ) async {
-        DiagLog.log("[PY] startPythonBackend entered with \(interfaces.count) interfaces")
+        DiagLog.log("[RNS] backend start entered with \(interfaces.count) interfaces")
         if backend != nil {
-            DiagLog.log("[PY] already started")
+            DiagLog.log("[RNS] already started")
             return
         }
         // Cache the start args so restartPythonBackend() can re-invoke
@@ -582,7 +582,7 @@ public final class AppServices {
         try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
         let configDir = pyDir.path
         let identityFile = pyDir.appendingPathComponent("identity.bin").path
-        DiagLog.log("[PY] configDir=\(configDir)")
+        DiagLog.log("[RNS] configDir=\(configDir)")
 
         // Deploy iOS BLE custom interface files BEFORE Python boots so RNS's
         // external-interface loader can `exec()` them when reading config.
@@ -607,16 +607,16 @@ public final class AppServices {
         let configFile = pyDir.appendingPathComponent("config")
         do {
             try configText.write(to: configFile, atomically: true, encoding: .utf8)
-            DiagLog.log("[PY] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
+            DiagLog.log("[RNS] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
         } catch {
-            DiagLog.log("[PY] config write FAILED: \(error)")
+            DiagLog.log("[RNS] config write FAILED: \(error)")
         }
 
         let identityBytes = try? identity.exportPrivateKeys()
-        DiagLog.log("[PY] identityBytes=\(identityBytes?.count ?? -1)")
+        DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
 
         do {
-            DiagLog.log("[PY] calling backend.start()")
+            DiagLog.log("[RNS] calling backend.start()")
             let info = try await backend.start(
                 .init(
                     configDir: configDir,
@@ -625,10 +625,10 @@ public final class AppServices {
                     identityBytes: identityBytes
                 )
             )
-            DiagLog.log("[PY] started identity=\(info.identityHash) destination=\(info.destinationHash)")
+            DiagLog.log("[RNS] started identity=\(info.identityHash) destination=\(info.destinationHash)")
             logger.info("Python backend started — identity=\(info.identityHash, privacy: .public) destination=\(info.destinationHash, privacy: .public)")
         } catch {
-            DiagLog.log("[PY] start FAILED: \(error)")
+            DiagLog.log("[RNS] start FAILED: \(error)")
             logger.error("Python backend start failed: \(error.localizedDescription, privacy: .public)")
             self.backend = nil
             return
@@ -708,20 +708,20 @@ public final class AppServices {
         pythonStatusPollTask?.cancel()
         pythonStatusPollTask = Task { [weak self, backend] in
             var tick = 0
-            DiagLog.log("[PY-POLL] task started")
+            DiagLog.log("[RNS-POLL] task started")
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s
                 tick += 1
                 let snapshot = await backend.statusSnapshot()
                 if snapshot == nil {
-                    if tick % 5 == 0 { DiagLog.log("[PY-POLL] tick=\(tick) snapshot=nil") }
+                    if tick % 5 == 0 { DiagLog.log("[RNS-POLL] tick=\(tick) snapshot=nil") }
                     continue
                 }
                 guard let self else { return }
                 let entityById = await MainActor.run { self.pythonInterfaceEntities }
                 await self.applyPythonInterfaceStatus(snapshot: snapshot!, entityById: entityById)
             }
-            DiagLog.log("[PY-POLL] task exiting (cancelled)")
+            DiagLog.log("[RNS-POLL] task exiting (cancelled)")
         }
 
         // Listen for test-send deep links (lxma://test-send?to=HEX&content=…
@@ -1265,7 +1265,7 @@ public final class AppServices {
         // section_name change.
         let snapshotKey = snapshot.interfaces.map { "\($0.sectionName):\($0.online ? 1 : 0)" }.joined(separator: ",")
         if snapshotKey != lastInterfaceSnapshotKey {
-            DiagLog.log("[PY] interfaces=\(snapshotKey)")
+            DiagLog.log("[RNS] interfaces=\(snapshotKey)")
             lastInterfaceSnapshotKey = snapshotKey
         }
         // The config section name PythonConfigWriter wrote is the matching
@@ -1325,7 +1325,7 @@ public final class AppServices {
         // LAN / BLE peer discovery is actually firing.
         let auxKey = auxiliary.map(\.id).sorted().joined(separator: ",")
         if auxKey != lastAuxiliaryKey {
-            DiagLog.log("[PY] auxiliary interfaces (\(auxiliary.count)): \(auxKey)")
+            DiagLog.log("[RNS] auxiliary interfaces (\(auxiliary.count)): \(auxKey)")
             lastAuxiliaryKey = auxKey
         }
         for (entityId, status) in byEntity {
@@ -1333,7 +1333,7 @@ public final class AppServices {
             // TCP interfaces keyed by entity ID.
             if let iface = tcpInterfaces[entityId] {
                 if iface.state != newState {
-                    DiagLog.log("[PY] iface \(status.sectionName) -> \(newState) (rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (rx=\(status.rxBytes) tx=\(status.txBytes))")
                     iface.state = newState
                     iface.online = status.online
                 }
@@ -1347,13 +1347,13 @@ public final class AppServices {
             switch entity.config {
             case .autoInterface:
                 if let auto = self.autoInterface, auto.state != newState {
-                    DiagLog.log("[PY] iface \(status.sectionName) -> \(newState) (Auto, rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (Auto, rx=\(status.rxBytes) tx=\(status.txBytes))")
                     auto.state = newState
                     auto.online = status.online
                 }
             case .ble:
                 if let ble = self.bleInterface, ble.state != newState {
-                    DiagLog.log("[PY] iface \(status.sectionName) -> \(newState) (BLE, rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (BLE, rx=\(status.rxBytes) tx=\(status.txBytes))")
                     ble.state = newState
                     ble.online = status.online
                 }
@@ -1375,7 +1375,7 @@ public final class AppServices {
     /// ProgressView while `isApplyingChanges` is set).
     public func restartPythonBackend() async {
         guard let identity = pythonStartIdentity else {
-            DiagLog.log("[PY] restart skipped — backend was never started")
+            DiagLog.log("[RNS] restart skipped — backend was never started")
             return
         }
         // Rewrite the RNS config on disk so the new interface set is
@@ -1392,7 +1392,7 @@ public final class AppServices {
         _ = identity // pythonStartIdentity presence is the only precondition
         let fresh = InterfaceRepository().getEnabledInterfaces()
         writePythonConfig(interfaces: fresh)
-        DiagLog.log("[PY] restartPythonBackend: config written (\(fresh.count) interfaces); awaiting next app launch to apply")
+        DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); awaiting next app launch to apply")
         // Notify the UI so it can show a "relaunch Columba" prompt.
         NotificationCenter.default.post(
             name: Notification.Name("ColumbaRelaunchRequired"),
@@ -1447,7 +1447,7 @@ public final class AppServices {
     @discardableResult
     private func writePythonConfig(interfaces: [InterfaceEntity]) -> Bool {
         guard let pyDir = pythonConfigDirURL() else {
-            DiagLog.log("[PY] writePythonConfig skipped — no start identity")
+            DiagLog.log("[RNS] writePythonConfig skipped — no start identity")
             return false
         }
         let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
@@ -1455,10 +1455,10 @@ public final class AppServices {
         let configFile = pyDir.appendingPathComponent("config")
         do {
             try configText.write(to: configFile, atomically: true, encoding: .utf8)
-            DiagLog.log("[PY] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
+            DiagLog.log("[RNS] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
             return true
         } catch {
-            DiagLog.log("[PY] config write FAILED: \(error)")
+            DiagLog.log("[RNS] config write FAILED: \(error)")
             return false
         }
     }
@@ -1493,7 +1493,7 @@ public final class AppServices {
         writePythonConfig(interfaces: fresh)
 
         guard let backend = backend else {
-            DiagLog.log("[PY-HOT] no running backend — config written, applies on next launch")
+            DiagLog.log("[RNS-HOT] no running backend — config written, applies on next launch")
             pythonInterfaceEntities = freshById
             return
         }
@@ -1506,7 +1506,7 @@ public final class AppServices {
             return old != e
         }
 
-        DiagLog.log("[PY-HOT] applyInterfaceChanges: +\(added.count) -\(removed.count) ~\(changed.count)")
+        DiagLog.log("[RNS-HOT] applyInterfaceChanges: +\(added.count) -\(removed.count) ~\(changed.count)")
 
         // 2. Remove dropped interfaces, and the OLD form of edited ones.
         for entity in removed {
@@ -1535,9 +1535,9 @@ public final class AppServices {
         let section = PythonConfigWriter.sectionName(for: entity)
         do {
             let r = try await backend.addInterface(name: section)
-            DiagLog.log("[PY-HOT] add \(section): ok=\(r.ok) reason=\(r.reason)")
+            DiagLog.log("[RNS-HOT] add \(section): ok=\(r.ok) reason=\(r.reason)")
         } catch {
-            DiagLog.log("[PY-HOT] add \(section) error: \(error)")
+            DiagLog.log("[RNS-HOT] add \(section) error: \(error)")
         }
         await seedSwiftStub(for: entity)
     }
@@ -1549,9 +1549,9 @@ public final class AppServices {
         let section = PythonConfigWriter.sectionName(for: entity)
         do {
             let r = try await backend.removeInterface(name: section)
-            DiagLog.log("[PY-HOT] remove \(section): ok=\(r.ok) reason=\(r.reason)")
+            DiagLog.log("[RNS-HOT] remove \(section): ok=\(r.ok) reason=\(r.reason)")
         } catch {
-            DiagLog.log("[PY-HOT] remove \(section) error: \(error)")
+            DiagLog.log("[RNS-HOT] remove \(section) error: \(error)")
         }
         await teardownSwiftStub(for: entity)
     }
@@ -1690,7 +1690,7 @@ public final class AppServices {
     @discardableResult
     private func persistInboundFromPython(sourceHash: Data, content: String, title: String, fields: [UInt8: Any]?, timestamp: Date) async -> LXMessage? {
         guard let database = self.database else {
-            DiagLog.log("[PY] persistInbound: no database")
+            DiagLog.log("[RNS] persistInbound: no database")
             return nil
         }
         let repo = MessageRepository(database: database)
@@ -1711,7 +1711,7 @@ public final class AppServices {
                 isKnownContact = true
             }
             if !isKnownContact {
-                DiagLog.log("[PY] persistInbound BLOCKED source=\(sourceHashHex.prefix(8)) (block_unknown_senders enabled)")
+                DiagLog.log("[RNS] persistInbound BLOCKED source=\(sourceHashHex.prefix(8)) (block_unknown_senders enabled)")
                 return nil
             }
         }
@@ -1743,7 +1743,7 @@ public final class AppServices {
             message.state = .received
 
             try await repo.saveMessage(message)
-            DiagLog.log("[PY] persistInbound saved msg=\(messageHash.prefix(4).map { String(format: "%02x", $0) }.joined())")
+            DiagLog.log("[RNS] persistInbound saved msg=\(messageHash.prefix(4).map { String(format: "%02x", $0) }.joined())")
 
             // Fire the same notification IncomingMessageHandler would post
             // so ChatsViewModel / MessagingViewModel refresh.
@@ -1754,7 +1754,7 @@ public final class AppServices {
             )
             return message
         } catch {
-            DiagLog.log("[PY] persistInbound failed: \(error)")
+            DiagLog.log("[RNS] persistInbound failed: \(error)")
             return nil
         }
     }
@@ -1770,7 +1770,7 @@ public final class AppServices {
             // NodeDetailsView) can parse limits + stamp cost from it.
             let appData = Data(hexString: appDataHex) ?? Data()
             let displayName = AppDataParser.displayName(from: appData, aspect: aspect)
-            DiagLog.log("[PY] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\" hops=\(hops)")
+            DiagLog.log("[RNS] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\" hops=\(hops)")
 
             // Insert the announce into the Compat PathTable so the Contacts
             // tab's networkAnnounces list picks it up via the pathUpdates
@@ -1812,7 +1812,7 @@ public final class AppServices {
                 ]
             )
         case .inbound(let sourceHash, let content, let title, let fieldsPacked, let t):
-            DiagLog.log("[PY] inbound source=\(sourceHash) content=\"\(content)\" fields=\(fieldsPacked.count)B")
+            DiagLog.log("[RNS] inbound source=\(sourceHash) content=\"\(content)\" fields=\(fieldsPacked.count)B")
             guard let data = Data(hexString: sourceHash) else { return }
             let fields = fieldsPacked.isEmpty ? nil : LxmfFieldCodec.unpack(fieldsPacked)
             // Persist the base message (carrying its fields), then run side-channel
@@ -1835,10 +1835,10 @@ public final class AppServices {
                 ]
             )
         case .state(let value, _):
-            DiagLog.log("[PY] state \(value)")
+            DiagLog.log("[RNS] state \(value)")
             logger.info("Python state: \(value, privacy: .public)")
         case .delivery(let messageHash, let state, _):
-            DiagLog.log("[PY] delivery \(messageHash.prefix(16)) state=\(state)")
+            DiagLog.log("[RNS] delivery \(messageHash.prefix(16)) state=\(state)")
             guard let hashData = Data(hexString: messageHash) else { return }
             let newState: LXMessageState = (state == "delivered") ? .delivered : .failed
             if let database = self.database {
@@ -1855,7 +1855,7 @@ public final class AppServices {
                 ]
             )
         case .linkState(let linkId, let state, let reason, let inbound, _):
-            DiagLog.log("[PY] link \(linkId) state=\(state) inbound=\(inbound)\(reason.isEmpty ? "" : " reason=\(reason)")")
+            DiagLog.log("[RNS] link \(linkId) state=\(state) inbound=\(inbound)\(reason.isEmpty ? "" : " reason=\(reason)")")
             // Surface via NotificationCenter for any subscribers (debug
             // panels, smoke tests) that aren't on the Compat-Link path.
             NotificationCenter.default.post(
@@ -1891,7 +1891,7 @@ public final class AppServices {
             )
             Task { await self.dispatchLinkPacket(linkId: UInt64(linkId), data: data) }
         case .linkIdentified(let linkId, let identityHashHex, _):
-            DiagLog.log("[PY] link \(linkId) identified=\(identityHashHex.prefix(8))")
+            DiagLog.log("[RNS] link \(linkId) identified=\(identityHashHex.prefix(8))")
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonLinkIdentified"),
                 object: nil,

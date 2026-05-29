@@ -744,12 +744,17 @@ struct RootView: View {
                     if case .tcpClient(let config) = iface.config {
                         let entityId = iface.id
                         Task {
-                            DiagLog.log("[STARTUP] TCP connecting: \(config.targetHost):\(config.targetPort)")
+                            DiagLog.log("[STARTUP] TCP interface \(config.targetHost):\(config.targetPort) — registering")
                             do {
                                 try await services.connectTCPInterface(entityId: entityId, host: config.targetHost, port: config.targetPort)
-                                DiagLog.log("[STARTUP] TCP connected: \(entityId)")
+                                // NB: this only means the interface was added and a
+                                // connection was initiated — NOT that the socket is up.
+                                // The Swift backend's connect() is fire-and-forget; the
+                                // real connected/connecting state shows in the `[RNS] iface
+                                // … -> connected/connecting` poll lines.
+                                DiagLog.log("[STARTUP] TCP interface registered [\(entityId)] (connecting async — see [RNS] iface state)")
                             } catch {
-                                DiagLog.log("[STARTUP] TCP connect FAILED [\(entityId)]: \(error.localizedDescription)")
+                                DiagLog.log("[STARTUP] TCP interface add FAILED [\(entityId)]: \(error.localizedDescription)")
                             }
                         }
                     }
