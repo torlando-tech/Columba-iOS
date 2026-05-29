@@ -810,7 +810,12 @@ public final class AppServices {
                 }
                 do {
                     if cease {
-                        let outcome = try await backend.telemetry.sendTelemetryCease(destHashHex: to)
+                        // Same Android-shaped payload the UI path sends:
+                        // zeroed FIELD_TELEMETRY + msgpack {"cease":true}.
+                        let (packed, meta) = CeaseTelemetry.payload()
+                        let outcome = try await backend.telemetry.sendLocationTelemetry(
+                            destHashHex: to, packed: packed, customMeta: meta
+                        )
                         DiagLog.log("[TEST-TELEMETRY] cease outcome=\(outcome)")
                     } else {
                         guard let packed = try? packedHex.hexToData(), !packed.isEmpty else {

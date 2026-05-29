@@ -509,11 +509,16 @@ public final class LocationSharingManager: NSObject {
             return
         }
 
-        // Stop-sharing signal — FIELD_CUSTOM_META (0xFD) {"cease": true}, assembled
-        // by the backend via the neutral telemetry facet (Android Columba format).
+        // Stop-sharing signal in Android Columba's wire shape: a zeroed-location
+        // Telemeter blob (FIELD_TELEMETRY 0x02) + msgpack {"cease": true}
+        // (FIELD_CUSTOM_META 0xFD). Routed through the same sendLocationTelemetry
+        // path a normal update uses — Android's receive path requires the
+        // Telemeter body present before it reads the cease flag, and decodes the
+        // meta as msgpack (not JSON). See CeaseTelemetry.
         let destHex = peerHash.map { String(format: "%02x", $0) }.joined()
+        let (packed, meta) = CeaseTelemetry.payload()
         do {
-            _ = try await backend.telemetry.sendTelemetryCease(destHashHex: destHex)
+            _ = try await backend.telemetry.sendLocationTelemetry(destHashHex: destHex, packed: packed, customMeta: meta)
             logger.info("Sent cease signal to \(destHex.prefix(8))")
         } catch {
             logger.warning("Failed to send cease signal: \(error.localizedDescription)")

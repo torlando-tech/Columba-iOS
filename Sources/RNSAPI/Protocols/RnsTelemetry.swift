@@ -19,12 +19,13 @@ public protocol RnsTelemetry: AnyObject, Sendable {
     /// Send a single-shot location telemetry update to a peer. `packed` is the
     /// Sideband-`Telemeter`-packed payload (`FIELD_TELEMETRY` 0x02); `customMeta`
     /// is optional app-meta bytes carried in `FIELD_CUSTOM_META` (0xFD).
+    ///
+    /// A stop-sharing "cease" is not a separate method — it's this same call
+    /// with a zeroed-location Telemeter blob in `packed` and `customMeta` =
+    /// msgpack `{"cease": true}` (see `CeaseTelemetry`), matching Android
+    /// Columba's `sendCeaseMessage`.
     @discardableResult
     func sendLocationTelemetry(destHashHex: String, packed: Data, customMeta: Data?) async throws -> SendOutcome
-
-    /// Send a "stop sharing / cease" signal (`FIELD_CUSTOM_META` `{"cease":true}`).
-    @discardableResult
-    func sendTelemetryCease(destHashHex: String) async throws -> SendOutcome
 
     /// Act as a telemetry collector (accept/serve others' telemetry). Android parity.
     @discardableResult

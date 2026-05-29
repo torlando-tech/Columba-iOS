@@ -1,16 +1,17 @@
 """iOS-Columba ⇄ Sideband interop round-trips for LXMF location telemetry.
 
-Exercises `RnsTelemetry.sendLocationTelemetry` / `sendTelemetryCease` on
-the iOS Python backend (just un-stubbed from no-op to real wire path)
-against a Sideband reference peer:
+Exercises `RnsTelemetry.sendLocationTelemetry` on the iOS Python backend
+(including the cease path, which is just sendLocationTelemetry with a
+zeroed Telemeter body + cease meta) against a Sideband reference peer:
 
   * `test_location_ios_to_sideband` — iOS sends a packed Telemeter
     payload; Sideband decodes it back to lat/lon/timestamp.
   * `test_location_with_custom_meta_ios_to_sideband` — same, plus an
     `approxRadius` JSON in FIELD_CUSTOM_META so the receiver can read
     Columba-specific precision-coarsening metadata.
-  * `test_cease_ios_to_sideband` — iOS sends a cease signal; Sideband
-    sees the FIELD_CUSTOM_META = `{"cease": true}` payload.
+  * `test_cease_ios_to_sideband` — iOS sends a cease signal; the wire
+    carries a zeroed Telemeter (FIELD_TELEMETRY 0x02) + msgpack
+    `{"cease": true}` (FIELD_CUSTOM_META 0xFD), matching Android Columba.
 
 The Telemeter payload itself is built using Sideband's own `Telemeter`
 class (via `peer_sideband.SidebandPeer`) so the test payload is the
@@ -218,10 +219,15 @@ def test_chat_toggle_starts_periodic_sharing(sim, sideband, clean_location_state
 
 
 def test_cease_ios_to_sideband(sim, sideband):
-    """iOS → Sideband cease signal. The wire shape is an empty-content
-    message carrying FIELD_CUSTOM_META = `{"cease": true}` (UTF-8 JSON),
-    matching the convention IncomingMessageHandler enforces on iOS and
-    that Android Columba uses."""
+    """iOS → Sideband cease signal. The wire shape mirrors Android Columba's
+    sendCeaseMessage: an empty-content message carrying a zeroed-location
+    Telemeter blob (FIELD_TELEMETRY 0x02) PLUS Columba's FIELD_CUSTOM_META
+    (0xFD) = **msgpack** `{"cease": true}` (NOT JSON). Android's receive path
+    requires the Telemeter body present before it reads the cease flag, and
+    decodes the meta as msgpack — a JSON byte string is silently dropped
+    there, so both the format and the FIELD_TELEMETRY presence matter."""
+    from RNS.vendor import umsgpack  # RNS-bundled pure-python msgpack
+
     baseline = len(sideband._taps)
     outcome_line = sim.test_send_telemetry(
         to_hex=sideband.identity_hex,
@@ -236,11 +242,14 @@ def test_cease_ios_to_sideband(sim, sideband):
         baseline=baseline,
         timeout=30.0,
     )
+    # FIELD_CUSTOM_META is msgpack {"cease": true} (Android-canonical), not JSON.
     meta_bytes = lxm.fields[0xFD]
     assert isinstance(meta_bytes, (bytes, bytearray))
-    meta_str = bytes(meta_bytes).decode("utf-8", "replace")
-    assert "\"cease\"" in meta_str and "true" in meta_str.lower(), \
-        f"cease meta payload didn't carry the expected JSON: {meta_str!r}"
+    meta = umsgpack.unpackb(bytes(meta_bytes))
+    assert isinstance(meta, dict) and meta.get("cease") is True, \
+        f"cease meta wasn't msgpack {{cease: true}}: {meta!r}"
+    # Android bails unless a Telemeter body (FIELD_TELEMETRY 0x02) is present.
+    assert 0x02 in lxm.fields, "cease message missing FIELD_TELEMETRY (0x02)"
     # Content should be empty on a cease.
     assert lxm.content == b"" or lxm.content is None
 

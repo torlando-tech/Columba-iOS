@@ -184,25 +184,32 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             }
 
-            // Check for FIELD_COLUMBA_META (0x70) cease signal (Android Columba format)
+            // Check FIELD_CUSTOM_META (0xFD) for the Columba cease flag. The
+            // canonical wire form is msgpack `{"cease": true}` (matches Android
+            // Columba's TelemeterCodec); the UTF-8-JSON fallback covers older
+            // iOS peers that emitted `{"cease": true}` as raw JSON bytes.
             var isCeaseMessage = false
             if let fields = message.fields,
                let metaRaw = fields[LXMessage.FIELD_COLUMBA_META] {
                 // Field may arrive as Data (bytes) or String depending on msgpack unpacking
-                let metaStr: String?
+                let metaData: Data?
                 if let d = metaRaw as? Data {
-                    metaStr = String(data: d, encoding: .utf8)
+                    metaData = d
                 } else if let s = metaRaw as? String {
-                    metaStr = s
+                    metaData = s.data(using: .utf8)
                 } else {
-                    metaStr = nil
+                    metaData = nil
                 }
-                if let metaStr, metaStr.contains("\"cease\"") {
-                    isCeaseMessage = true
-                    #if os(iOS)
-                    await self.locationSharingManager?.handleIncomingCease(from: message.sourceHash)
-                    #endif
-                    self.logger.debug("Cease signal from \(sourceHashHex)")
+                if let metaData {
+                    let msgpackCease = ColumbaMetaCodec.unpack(metaData)?.cease == true
+                    let jsonCease = String(data: metaData, encoding: .utf8)?.contains("\"cease\"") == true
+                    if msgpackCease || jsonCease {
+                        isCeaseMessage = true
+                        #if os(iOS)
+                        await self.locationSharingManager?.handleIncomingCease(from: message.sourceHash)
+                        #endif
+                        self.logger.debug("Cease signal from \(sourceHashHex)")
+                    }
                 }
             }
 

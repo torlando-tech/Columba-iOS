@@ -166,20 +166,9 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         )
     }
 
-    @discardableResult
-    public func sendTelemetryCease(destHashHex: String) async throws -> SendOutcome {
-        // Sideband / Columba-Android convention: a cease signal is an
-        // empty-content message carrying FIELD_CUSTOM_META = `{"cease": true}`
-        // (UTF-8 JSON, not msgpack — matches `IncomingMessageHandler`'s
-        // `metaStr.contains("\"cease\"")` check).
-        let cease = Data(#"{"cease": true}"#.utf8)
-        return try await sendLxmfMessage(
-            destHashHex: destHashHex, content: "", method: .opportunistic,
-            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
-            replyToMessageHashHex: nil, replyQuotedContent: nil,
-            extraFields: [LxmfFields.FIELD_CUSTOM_META: cease]
-        )
-    }
+    // A "cease" (stop sharing) is just sendLocationTelemetry with a zeroed
+    // Telemeter body + msgpack {"cease":true} meta (see CeaseTelemetry) — no
+    // dedicated method, matching Android Columba's seam.
 
     // Collector-host responder — still unsupported. See capability hint above.
     public func setTelemetryCollectorMode(enabled: Bool) async -> Bool { false }

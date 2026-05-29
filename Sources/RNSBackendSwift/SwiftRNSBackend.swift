@@ -316,16 +316,9 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         )
     }
 
-    @discardableResult
-    public func sendTelemetryCease(destHashHex: String) async throws -> SendOutcome {
-        let cease = Data(#"{"cease": true}"#.utf8)
-        return try await sendLxmfMessage(
-            destHashHex: destHashHex, content: "", method: .opportunistic,
-            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
-            replyToMessageHashHex: nil, replyQuotedContent: nil,
-            extraFields: [LxmfFields.FIELD_CUSTOM_META: cease]
-        )
-    }
+    // A "cease" (stop sharing) is just sendLocationTelemetry with a zeroed
+    // Telemeter body + msgpack {"cease":true} meta (see CeaseTelemetry) — no
+    // dedicated method, matching Android Columba's seam.
 
     public func setTelemetryCollectorMode(enabled: Bool) async -> Bool { false }
     public func storeOwnTelemetry(packed: Data) async -> Bool { false }
