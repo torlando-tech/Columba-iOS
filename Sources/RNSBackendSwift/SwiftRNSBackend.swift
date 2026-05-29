@@ -458,8 +458,16 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         guard let transport else { return nil }
         let snaps = await transport.getInterfaceSnapshots()
         let ifaces = snaps.map { s in
-            StatusSnapshot.InterfaceStatus(
-                sectionName: s.id,
+            // Report the config *section name* (what AppServices matches against
+            // via PythonConfigWriter.sectionName), NOT the raw reticulum interface
+            // id. The reticulum id is the entity UUID (buildAndAdd uses it as the
+            // interface id), so reverse-map it through `interfaceIds`
+            // (section -> entity.id). Without this, AppServices.applyPythonInterfaceStatus
+            // never matches a Swift-backend interface to its entity, so the UI's
+            // connection badge stays "disconnected" even when the interface is up.
+            let section = interfaceIds.first(where: { $0.value == s.id })?.key ?? s.id
+            return StatusSnapshot.InterfaceStatus(
+                sectionName: section,
                 name: s.name,
                 online: s.state == .connected,
                 rxBytes: 0,   // reticulum-swift's InterfaceSnapshot exposes no byte counters
