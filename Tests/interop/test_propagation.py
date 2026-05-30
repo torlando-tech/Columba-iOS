@@ -70,15 +70,43 @@ def _sync_until_reachable(sim, node: str, *, deadline_s: float = 90.0) -> None:
     pytest.fail(f"propagation node {node} never became reachable (last={last})")
 
 
+def _peer_reach_node(node: str, *, deadline_s: float = 75.0) -> None:
+    """Make the Sideband peer able to UPLOAD to lxmd: it must have heard lxmd's
+    propagation announce (lxmd only announces every ~5 min), so request the path
+    and wait until the peer can recall lxmd's identity + has a path. Without this
+    the peer's PROPAGATED send has nowhere to go and lxmd never receives it."""
+    import RNS
+    node_bytes = bytes.fromhex(node)
+    deadline = time.time() + deadline_s
+    while time.time() < deadline:
+        if RNS.Transport.has_path(node_bytes) and RNS.Identity.recall(node_bytes) is not None:
+            print(f"[PROP] peer can reach lxmd {node[:8]} (recall ok)", flush=True)
+            return
+        try:
+            RNS.Transport.request_path(node_bytes)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(3)
+    pytest.fail(f"peer never heard lxmd's announce for {node} (cannot upload)")
+
+
 def test_propagation_sync_reports_received_count(sim, sideband):
     node = sim.auto_propagation_node_hex()
     if not node:
         pytest.skip("no propagation node heard; set PROP_NODE_HEX to lxmd's hash")
 
-    # Warm up: establish the path + drain any backlog.
-    _sync_until_reachable(sim, node)
+    # Step 3: both sides must hear lxmd's announce before they can use it.
+    _peer_reach_node(node)            # peer side (upload path)
+    # Step 4 (peer): (re)set the peer's outbound propagation node now that lxmd
+    # is reachable. The fixture set it in start() before the path existed (and
+    # swallows that failure), leaving the router's outbound_propagation_node
+    # unset → a PROPAGATED send would have nowhere to upload.
+    import RNS  # noqa: F401
+    sideband._core.set_active_propagation_node(bytes.fromhex(node))
+    time.sleep(2)
+    _sync_until_reachable(sim, node)  # sim side (sync path) + drain backlog
 
-    # Peer uploads a PROPAGATED message addressed to iOS's delivery dest.
+    # Step 5: peer uploads a PROPAGATED message addressed to iOS's delivery dest.
     # Use send_with_fields (forces desired_method=PROPAGATED) rather than
     # send_text, whose method-selection prefers DIRECT when a delivery path
     # exists — the bootstrap creates one, so a "propagated" send_text would be
@@ -86,7 +114,7 @@ def test_propagation_sync_reports_received_count(sim, sideband):
     content = f"prop-{int(time.time())}"
     assert sideband.send_with_fields(sim.lxmf_delivery_hex, content, {}, propagation=True), \
         "peer failed to enqueue the propagated message"
-    time.sleep(15)  # let the upload settle on the node
+    time.sleep(18)  # let the upload link to lxmd establish + transfer
 
     # Sync (retry past transient noPath); iOS should retrieve the queued
     # message and the result must report the real count, not a hardcoded 0.
