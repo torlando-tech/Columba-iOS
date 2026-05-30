@@ -94,7 +94,7 @@ enum PythonConfigWriter {
         switch iface.config {
         case .tcpClient(let cfg):
             lines.append("    type = TCPClientInterface")
-            lines.append("    target_host = \(cfg.targetHost)")
+            lines.append("    target_host = \(configValue(cfg.targetHost))")
             lines.append("    target_port = \(cfg.targetPort)")
             appendIFAC(networkName: cfg.networkName, passphrase: cfg.passphrase, to: &lines)
         case .tcpServer(let cfg):
@@ -104,7 +104,7 @@ enum PythonConfigWriter {
         case .autoInterface(let cfg):
             lines.append("    type = AutoInterface")
             if let group = cfg.groupId, !group.isEmpty {
-                lines.append("    group_id = \(group)")
+                lines.append("    group_id = \(configValue(group))")
             }
             lines.append("    discovery_scope = \(cfg.discoveryScope)")
             if let port = cfg.discoveryPort { lines.append("    discovery_port = \(port)") }
@@ -131,7 +131,7 @@ enum PythonConfigWriter {
             // the ported interface parses and upstream RNS's RNodeInterface
             // convention. iOS is BLE-only — no usb_* / port keys.
             lines.append("    type = IOSRNodeInterface")
-            lines.append("    target_device_name = \(cfg.deviceName)")
+            lines.append("    target_device_name = \(configValue(cfg.deviceName))")
             lines.append("    frequency = \(cfg.frequency)")
             lines.append("    bandwidth = \(cfg.bandwidth)")
             lines.append("    txpower = \(cfg.txPower)")
@@ -164,10 +164,10 @@ enum PythonConfigWriter {
 
     private static func appendIFAC(networkName: String?, passphrase: String?, to lines: inout [String]) {
         if let name = networkName, !name.isEmpty {
-            lines.append("    networkname = \(name)")
+            lines.append("    networkname = \(configValue(name))")
         }
         if let pass = passphrase, !pass.isEmpty {
-            lines.append("    passphrase = \(pass)")
+            lines.append("    passphrase = \(configValue(pass))")
         }
     }
 
@@ -183,5 +183,38 @@ enum PythonConfigWriter {
             else { out.append(ch) }
         }
         return out
+    }
+
+    /// Encode a user-supplied value so it survives a ConfigObj read round-trip.
+    /// RNS parses the config with RNS.vendor.configobj (list_values=True).
+    /// Unquoted, a `#` begins an inline comment — silently truncating the value
+    /// (e.g. a passphrase `s3cr#t` is read as `s3cr`, joining the network with
+    /// the wrong IFAC key) — a comma is parsed as a list, and a newline injects
+    /// arbitrary config lines. Mirror ConfigObj's own quoting (`_quote` /
+    /// `_get_single_quote` / `_get_triple_quote`, default settings): quote when
+    /// the value contains `#`, a comma, a quote char, or leading/trailing
+    /// whitespace, picking the quote the value lacks and falling back to triple
+    /// quotes when it contains both. CR/LF are stripped first — these fields are
+    /// single-line, so a newline can only be an injection attempt.
+    private static func configValue(_ raw: String) -> String {
+        let value = raw.replacingOccurrences(of: "\r", with: "")
+                       .replacingOccurrences(of: "\n", with: "")
+        if value.isEmpty { return "\"\"" }
+        let hasSingle = value.contains("'")
+        let hasDouble = value.contains("\"")
+        let edgeWS = value.first == " " || value.first == "\t"
+                  || value.last == " " || value.last == "\t"
+        guard value.contains("#") || value.contains(",")
+              || hasSingle || hasDouble || edgeWS else {
+            return value
+        }
+        if !(hasSingle && hasDouble) {
+            return hasDouble ? "'\(value)'" : "\"\(value)\""
+        }
+        // Both quote types present — ConfigObj requires triple quotes (prefer """).
+        if !value.contains("\"\"\"") { return "\"\"\"\(value)\"\"\"" }
+        if !value.contains("'''") { return "'''\(value)'''" }
+        // Pathological (both triple-quote sequences): drop """ so parsing stays safe.
+        return "\"\"\"\(value.replacingOccurrences(of: "\"\"\"", with: ""))\"\"\""
     }
 }

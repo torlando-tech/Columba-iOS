@@ -715,10 +715,10 @@ public final class AppServices {
 
         // Drain Python events into Columba's UI plumbing.
         pythonEventTask?.cancel()
-        let weakSelf = self
-        pythonEventTask = Task { [backend] in
+        pythonEventTask = Task { [weak self, backend] in
             for await event in backend.events {
-                await weakSelf.handlePythonEvent(event)
+                guard let self else { break }
+                await self.handlePythonEvent(event)
             }
         }
 
