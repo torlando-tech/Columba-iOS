@@ -1,0 +1,4 @@
+Python.xcframework lives in this directory. Fetch it with `support/fetch-python.sh`.
+The xcframework, the VERSIONS marker, and the upstream tarball are all gitignored
+because the xcframework is ~110 MB. The fetch script pins a specific release tag
+for reproducibility — see support/fetch-python.sh.

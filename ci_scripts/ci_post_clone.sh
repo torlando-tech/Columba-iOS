@@ -44,4 +44,17 @@ sed -i.bak -E \
     "$PBXPROJ"
 rm -f "${PBXPROJ}.bak"
 
+# Fetch Python wheels. The wheel dirs are gitignored (not committed), but the
+# "Install Python stdlib & process dylibs" build phase hard-requires them, so a
+# fresh CI clone must build them here. fetch-wheels.sh resolves RNS from the
+# fork branch (torlando-tech/Reticulum @ patches/columba-ios) plus the
+# cryptography/cffi binary wheels for iOS. Skipped if already present (local
+# incremental runs).
+if [ ! -d "$REPO_ROOT/wheels-iphoneos" ] || [ ! -d "$REPO_ROOT/wheels-iphonesimulator" ]; then
+    echo "Fetching Python wheels (RNS from fork branch + binary deps)..."
+    "$REPO_ROOT/support/fetch-wheels.sh"
+else
+    echo "Python wheels already present, skipping fetch."
+fi
+
 echo "done."
