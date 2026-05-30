@@ -348,8 +348,28 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         // carries the count of messages pulled this sync (receivedMessages is
         // incremented per message as they're retrieved). Read it after the
         // await rather than hardcoding 0, so the UI's "N new messages" is real.
-        try await router.syncFromPropagationNode()
+        //
+        // The router applies only per-request timeouts internally — it has no
+        // overall deadline, so a stalled link or a missing response would block
+        // the caller forever. Bound the whole sync by the caller's `timeout` by
+        // racing it against a sleep; whichever finishes first wins and the
+        // loser is cancelled.
+        let timedOut = try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                try await router.syncFromPropagationNode()
+                return false
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1_000_000_000))
+                return true
+            }
+            defer { group.cancelAll() }
+            return try await group.next() ?? false
+        }
         let received = await router.syncState.receivedMessages
+        if timedOut {
+            return PropagationSyncResult(ok: false, state: .transferFailed, receivedMessages: received, reason: "timeout")
+        }
         return PropagationSyncResult(ok: true, state: .complete, receivedMessages: received, reason: "")
     }
 
