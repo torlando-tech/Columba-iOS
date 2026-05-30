@@ -1352,6 +1352,17 @@ def reset_identity(identity_path: str) -> None:
                 _state["reticulum"].exit_handler()
         except Exception:
             pass
+        # Clear the RNS.Reticulum singleton + exit-handler flags so the start()
+        # this function's docstring requires can actually re-init. exit_handler()
+        # leaves _Reticulum__instance set, so a follow-on __init__ would raise
+        # "Attempt to reinitialise Reticulum, when it was already running" and the
+        # app could only recover via a process restart. Mirrors stop().
+        try:
+            RNS.Reticulum._Reticulum__instance = None
+            RNS.Reticulum._Reticulum__exit_handler_ran = False
+            RNS.Reticulum._Reticulum__interface_detach_ran = False
+        except Exception:
+            pass
         _state.update({
             "started": False,
             "reticulum": None,
