@@ -7,9 +7,8 @@
 //
 
 import Foundation
+import RNSAPI
 import Observation
-import LXMFSwift
-import ReticulumSwift
 
 // MARK: - Contact Type
 
@@ -47,10 +46,19 @@ public struct Contact: Identifiable, Sendable, Hashable {
     /// Returns "bluetooth" (MDI name) for BLE, SF Symbol names for others.
     public var interfaceIcon: String {
         guard let iface = interfaceId else { return "globe" }
-        if iface.hasPrefix("ble") { return "bluetooth" }
-        if iface.hasPrefix("rnode") { return "antenna.radiowaves.left.and.right" }
-        if iface.hasPrefix("auto") { return "wifi" }
-        if iface.hasPrefix("mpc") { return "apple.logo" }
+        let lower = iface.lowercased()
+        // Python-side interface names that get plumbed up here:
+        //  - User-defined sections: PythonConfigWriter.sanitize → "Hub-FFB1F1",
+        //    "Bluetooth_LE-77CFC2", "Auto_Discovery-7B59DD", etc.
+        //  - Dynamically-spawned children with `name=None`: str() form like
+        //    "AutoInterfacePeer[en0/fe80::xxxx]", "BLEPeerInterface[]".
+        // Both forms need recognizing (case-insensitive substring match).
+        if lower.contains("bluetooth") || lower.contains("ble")
+            || lower.contains("blepeer") { return "bluetooth" }
+        if lower.contains("rnode") { return "antenna.radiowaves.left.and.right" }
+        if lower.contains("autointerface") || lower.contains("auto_discovery")
+            || lower.contains("autointerfacepeer") { return "wifi" }
+        if lower.contains("multipeer") || lower.contains("mpc") { return "apple.logo" }
         return "globe" // tcp and others
     }
 
@@ -62,10 +70,12 @@ public struct Contact: Identifiable, Sendable, Hashable {
     /// Interface filter category for this contact.
     public var interfaceFilterType: InterfaceFilter {
         guard let iface = interfaceId else { return .tcp }
-        if iface.hasPrefix("ble") { return .ble }
-        if iface.hasPrefix("rnode") { return .rnode }
-        if iface.hasPrefix("auto") { return .wifi }
-        if iface.hasPrefix("mpc") { return .wifi }
+        let lower = iface.lowercased()
+        if lower.contains("bluetooth") || lower.contains("ble")
+            || lower.contains("blepeer") { return .ble }
+        if lower.contains("rnode") { return .rnode }
+        if lower.contains("autointerface") || lower.contains("auto_discovery") { return .wifi }
+        if lower.contains("multipeer") || lower.contains("mpc") { return .wifi }
         return .tcp
     }
 
@@ -180,7 +190,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.badgeType = .peer
         self.hopCount = 0
         self.signalStrength = 4
-        self.timestamp = Date(timeIntervalSince1970: record.lastMessageTimestamp)
+        self.timestamp = record.lastMessageTimestamp
         self.isOnline = true
         self.isFavorite = record.isFavorite != 0
         self.isPinned = record.isPinned != 0

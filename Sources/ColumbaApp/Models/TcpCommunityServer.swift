@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 
 /// A public Reticulum TCP transport node.
 struct TcpCommunityServer: Identifiable {

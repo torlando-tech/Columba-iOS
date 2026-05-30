@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import RNSAPI
 
 /// Shared UserDefaults backed by the App Group container.
 ///

@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import Observation
 
 /// Central theme state manager.

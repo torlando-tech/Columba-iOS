@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import ReticulumSwift
+import RNSAPI
 import os.log
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "InterfaceRepository")
@@ -280,86 +280,6 @@ public struct BLEConfig: Codable, Equatable, Sendable {
     }
 }
 
-// MARK: - RNode Config
-
-/// Configuration for RNode LoRa interface.
-///
-/// Stores BLE device name alongside all radio parameters needed
-/// for RNodeInterface. Use `toRadioConfig()` to convert to the
-/// transport-layer RadioConfig for RNodeInterface.configureRadio().
-public struct RNodeConfig: Codable, Equatable, Sendable {
-    /// BLE device name (e.g., "RNode_A9")
-    public var deviceName: String
-
-    /// Radio frequency in Hz (e.g., 915_000_000 for 915 MHz)
-    public var frequency: UInt32
-
-    /// Radio bandwidth in Hz (e.g., 125_000)
-    public var bandwidth: UInt32
-
-    /// TX power in dBm (2-22)
-    public var txPower: UInt8
-
-    /// LoRa spreading factor (7-12)
-    public var spreadingFactor: UInt8
-
-    /// LoRa coding rate (5-8)
-    public var codingRate: UInt8
-
-    /// Short-term airtime lock percentage (optional, 0-100%)
-    public var stAlock: Float?
-
-    /// Long-term airtime lock percentage (optional, 0-100%)
-    public var ltAlock: Float?
-
-    /// Convert to transport-layer RadioConfig for RNodeInterface.
-    public func toRadioConfig() -> RadioConfig {
-        RadioConfig(
-            frequency: frequency,
-            bandwidth: bandwidth,
-            txPower: txPower,
-            spreadingFactor: spreadingFactor,
-            codingRate: codingRate,
-            stAlock: stAlock,
-            ltAlock: ltAlock
-        )
-    }
-
-    /// Default RNode config for US 915 MHz ISM band.
-    public static var defaultUS915: RNodeConfig {
-        RNodeConfig(
-            deviceName: "",
-            frequency: 915_000_000,
-            bandwidth: 125_000,
-            txPower: 17,
-            spreadingFactor: 7,
-            codingRate: 5,
-            stAlock: nil,
-            ltAlock: nil
-        )
-    }
-
-    public init(
-        deviceName: String,
-        frequency: UInt32,
-        bandwidth: UInt32,
-        txPower: UInt8,
-        spreadingFactor: UInt8,
-        codingRate: UInt8,
-        stAlock: Float? = nil,
-        ltAlock: Float? = nil
-    ) {
-        self.deviceName = deviceName
-        self.frequency = frequency
-        self.bandwidth = bandwidth
-        self.txPower = txPower
-        self.spreadingFactor = spreadingFactor
-        self.codingRate = codingRate
-        self.stAlock = stAlock
-        self.ltAlock = ltAlock
-    }
-}
-
 // MARK: - Multipeer Config
 
 /// Configuration for Multipeer Connectivity interface.
@@ -372,37 +292,10 @@ public struct MultipeerConfig: Codable, Equatable, Sendable {
     }
 }
 
-// MARK: - Interface Mode
-
-/// Interface mode controlling announce propagation.
-/// Matches ReticulumSwift.InterfaceMode for consistency.
-public enum InterfaceMode: String, Codable, Sendable, Equatable, CaseIterable {
-    case full = "full"
-    case gateway = "gateway"
-    case accessPoint = "access_point"
-    case roaming = "roaming"
-    case boundary = "boundary"
-
-    public var displayName: String {
-        switch self {
-        case .full: return "Full"
-        case .gateway: return "Gateway"
-        case .accessPoint: return "Access Point"
-        case .roaming: return "Roaming"
-        case .boundary: return "Boundary"
-        }
-    }
-
-    public var description: String {
-        switch self {
-        case .full: return "All features enabled"
-        case .gateway: return "Path discovery for others"
-        case .accessPoint: return "Quiet unless active"
-        case .roaming: return "Mobile relative to others"
-        case .boundary: return "Links dissimilar segments"
-        }
-    }
-}
+// `RNodeConfig` + `InterfaceMode` are canonicalized in RNSAPI/Compat.swift.
+// They used to live here but moved into RNSAPI so LXSTSwift (and any other
+// SwiftPM consumer of RNSAPI) can see them; keeping a duplicate here caused
+// "is ambiguous for type lookup" errors in the Xcode build.
 
 // MARK: - Interface Status
 
@@ -468,7 +361,23 @@ public final class InterfaceRepository: @unchecked Sendable {
 
     public init(userDefaults: UserDefaults? = nil) {
         self.defaults = userDefaults ?? UserDefaults(suiteName: appGroupIdentifier) ?? .standard
+        migrateFromStandardDefaultsIfNeeded()
         loadInterfaces()
+    }
+
+    /// Migration shim: when the app-group entitlement first gets approved
+    /// and wired in, `UserDefaults(suiteName: appGroupIdentifier)` starts
+    /// returning a valid (but empty) defaults pointer. Before that, the
+    /// `?? .standard` fallback ran and all saved interfaces lived in the
+    /// app's regular UserDefaults under the same `storageKey`. Copy them
+    /// over once so users don't lose their config on the entitlement
+    /// rollout.
+    private func migrateFromStandardDefaultsIfNeeded() {
+        guard defaults !== UserDefaults.standard else { return }
+        guard defaults.data(forKey: storageKey) == nil else { return }
+        guard let standardData = UserDefaults.standard.data(forKey: storageKey) else { return }
+        defaults.set(standardData, forKey: storageKey)
+        logger.notice("Migrated interface store from standard UserDefaults to app group (\(standardData.count) bytes)")
     }
 
     // MARK: - CRUD Operations

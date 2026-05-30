@@ -11,6 +11,7 @@
 #if ENABLE_NETWORK_EXTENSION
 
 import Foundation
+import RNSAPI
 import os.log
 
 /// Reads queued frames from the Network Extension and injects them into transport.

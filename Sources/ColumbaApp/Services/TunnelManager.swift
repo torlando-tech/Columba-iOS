@@ -12,6 +12,7 @@
 #if ENABLE_NETWORK_EXTENSION
 
 import Foundation
+import RNSAPI
 import NetworkExtension
 import os.log
 

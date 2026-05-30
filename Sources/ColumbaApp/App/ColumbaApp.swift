@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-import LXMFSwift
+import RNSAPI
 import UserNotifications
 import BackgroundTasks
 import os
@@ -35,6 +35,16 @@ struct ColumbaApp: App {
     // MARK: - Init
 
     init() {
+        // Boot embedded CPython once, before anything else can touch it.
+        // PythonBridge / PythonRNSBackend depend on this; without it
+        // PyGILState_Ensure deadlocks.
+        switch PythonRuntime.shared.start() {
+        case .success(let version):
+            logger.info("Python runtime started: \(version, privacy: .public)")
+        case .failure(let err):
+            logger.error("Python runtime failed: \(err.localizedDescription, privacy: .public)")
+        }
+
         #if os(iOS)
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: "network.columba.Columba.sync",
@@ -65,6 +75,276 @@ struct ColumbaApp: App {
             .id(ThemeManager.shared.themeVersion)
             .onOpenURL { url in
                 guard url.scheme == "lxma" else { return }
+                // Test trigger: lxma://test-send?to=HEX&content=...
+                // bypasses the UI and directly invokes PythonRNSBackend.sendOpportunistic
+                // so external scripts can exercise the Python round-trip during the smoke test.
+                if url.host == "test-nomad-fetch" {
+                    // lxma://test-nomad-fetch?to=HEX&path=/page/index.mu
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+                    let path = components?.queryItems?.first(where: { $0.name == "path" })?.value ?? "/page/index.mu"
+                    DiagLog.log("[TEST-NOMAD] requested to=\(to) path=\(path)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestNomadFetch"),
+                        object: nil,
+                        userInfo: ["to": to, "path": path]
+                    )
+                    return
+                }
+                if url.host == "test-answer" {
+                    // lxma://test-answer — accept the currently-ringing
+                    // incoming call. Sim2 fires this in commit-5 smoke
+                    // tests to drive past RINGING → ESTABLISHED so audio
+                    // frames start flowing.
+                    DiagLog.log("[TEST-ANSWER] triggered")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestAnswer"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-call" {
+                    // lxma://test-call?to=HEX[&profile=quality-medium]
+                    // Places an outgoing LXST call through CallManager. The
+                    // peer must already be in the path table (sim-to-sim
+                    // smoke test: bring both sims up, wait for cross-announces,
+                    // then fire test-call from sim1 toward sim2's identity hash).
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+                    let profileRaw = components?.queryItems?.first(where: { $0.name == "profile" })?.value
+                    DiagLog.log("[TEST-CALL] to=\(to) profile=\(profileRaw ?? "default")")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestCall"),
+                        object: nil,
+                        userInfo: ["to": to, "profile": profileRaw ?? ""]
+                    )
+                    return
+                }
+                if url.host == "test-link-open" {
+                    // lxma://test-link-open?to=HEX&aspect=lxst.telephony
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+                    let aspect = components?.queryItems?.first(where: { $0.name == "aspect" })?.value ?? "lxst.telephony"
+                    DiagLog.log("[TEST-LINK] open to=\(to) aspect=\(aspect)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestLinkOpen"),
+                        object: nil,
+                        userInfo: ["to": to, "aspect": aspect]
+                    )
+                    return
+                }
+                if url.host == "test-inbound" {
+                    // lxma://test-inbound?from=HEX&content=... — synthesizes
+                    // a Python-style inbound event so we can exercise the
+                    // privacy filter (block_unknown_senders) without
+                    // requiring an actual peer.
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let from = components?.queryItems?.first(where: { $0.name == "from" })?.value ?? ""
+                    let content = components?.queryItems?.first(where: { $0.name == "content" })?.value ?? "synthetic"
+                    DiagLog.log("[TEST-INBOUND] from=\(from) content=\"\(content)\"")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestInbound"),
+                        object: nil,
+                        userInfo: ["from": from, "content": content]
+                    )
+                    return
+                }
+                if url.host == "test-identity-switch" {
+                    // lxma://test-identity-switch — creates a fresh identity
+                    // and switches to it via the full AppServices.switchIdentity
+                    // path so we can verify Python reboots with the new keys.
+                    DiagLog.log("[TEST-IDSWITCH] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestIdentitySwitch"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-prop-sync" {
+                    // lxma://test-prop-sync?node=HEX
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let node = components?.queryItems?.first(where: { $0.name == "node" })?.value ?? ""
+                    DiagLog.log("[TEST-PROP-SYNC] node=\(node)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestPropSync"),
+                        object: nil,
+                        userInfo: ["node": node]
+                    )
+                    return
+                }
+                if url.host == "test-announce" {
+                    // lxma://test-announce?name=...
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let name = components?.queryItems?.first(where: { $0.name == "name" })?.value ?? ""
+                    DiagLog.log("[TEST-ANNOUNCE] name=\"\(name)\"")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestAnnounce"),
+                        object: nil,
+                        userInfo: ["name": name]
+                    )
+                    return
+                }
+                if url.host == "test-restart" {
+                    DiagLog.log("[TEST-RESTART] requested via URL")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestRestart"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-ble-diagnose" {
+                    DiagLog.log("[TEST-BLE-DIAG] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEDiagnose"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-auto-diagnose" {
+                    DiagLog.log("[TEST-AUTO-DIAG] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestAutoDiagnose"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-path-table" {
+                    DiagLog.log("[TEST-PATH-TABLE] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestPathTable"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-ble-status" {
+                    DiagLog.log("[TEST-BLE-STATUS] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEStatus"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-ble-peer-list" {
+                    DiagLog.log("[TEST-BLE-PEER-LIST] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEPeerList"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-ble-scan" {
+                    // lxma://test-ble-scan?action=start|stop
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let action = components?.queryItems?.first(where: { $0.name == "action" })?.value ?? "start"
+                    DiagLog.log("[TEST-BLE-SCAN] action=\(action)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEScan"),
+                        object: nil,
+                        userInfo: ["action": action]
+                    )
+                    return
+                }
+                if url.host == "test-ble-advertise" {
+                    // lxma://test-ble-advertise?action=start|stop[&name=...]
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let action = components?.queryItems?.first(where: { $0.name == "action" })?.value ?? "start"
+                    let name = components?.queryItems?.first(where: { $0.name == "name" })?.value ?? ""
+                    DiagLog.log("[TEST-BLE-ADVERTISE] action=\(action) name=\(name)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLEAdvertise"),
+                        object: nil,
+                        userInfo: ["action": action, "name": name]
+                    )
+                    return
+                }
+                if url.host == "test-ble-callback-roundtrip" {
+                    // lxma://test-ble-callback-roundtrip[?value=N]
+                    // Phase 2 smoke test: registers a Python callable that
+                    // returns True iff the int arg is even, then invokes it
+                    // via the synchronous Swift→Python BLE callback path and
+                    // asserts the answer matches. Logs PASS/FAIL to DiagLog.
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let valueStr = components?.queryItems?.first(where: { $0.name == "value" })?.value ?? "4"
+                    let value = Int(valueStr) ?? 4
+                    DiagLog.log("[TEST-BLE-CB] value=\(value)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestBLECallback"),
+                        object: nil,
+                        userInfo: ["value": value]
+                    )
+                    return
+                }
+                if url.host == "test-telemetry" {
+                    // lxma://test-telemetry?to=HEX[&packed_hex=…&meta_hex=…|&cease=1]
+                    //
+                    // Drives `backend.telemetry.sendLocationTelemetry` (when
+                    // `packed_hex` is supplied) or `sendTelemetryCease`
+                    // (when `cease=1`) so the Tests/interop/ harness can pin
+                    // the RnsTelemetry seam end-to-end against a Sideband
+                    // reference peer without driving the location-sharing UI
+                    // (avoids the GPS permission prompt + timing dependence
+                    // on a real CLLocationManager fix).
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    func q(_ n: String) -> String? {
+                        components?.queryItems?.first(where: { $0.name == n })?.value
+                    }
+                    let to = q("to") ?? ""
+                    let packedHex = q("packed_hex") ?? ""
+                    let metaHex = q("meta_hex") ?? ""
+                    let cease = (q("cease") ?? "") == "1"
+                    DiagLog.log("[TEST-TELEMETRY] to=\(to) packed=\(packedHex.count/2)B meta=\(metaHex.count/2)B cease=\(cease)")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestTelemetry"),
+                        object: nil,
+                        userInfo: [
+                            "to": to,
+                            "packed_hex": packedHex,
+                            "meta_hex": metaHex,
+                            "cease": cease,
+                        ]
+                    )
+                    return
+                }
+                if url.host == "test-send" {
+                    // lxma://test-send?to=HEX&content=…[&method=direct]
+                    //   [&image_hex=…&image_format=jpeg]
+                    //   [&file_hex=…&file_name=…]
+                    //
+                    // Bypasses the UI and hands typed send args straight to
+                    // `backend.lxmf.sendLxmfMessage(...)` so the
+                    // tests/interop/ harness can exercise the full wire path
+                    // (LXMF pack + RNS encrypt) without driving the picker
+                    // UI. Hex payloads keep the URL stable under iOS's deep-
+                    // link length cap for the typical interop fixture (PNG
+                    // ≤ a few KB → ≤ 10 KB hex, well under the limit).
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    func q(_ n: String) -> String? {
+                        components?.queryItems?.first(where: { $0.name == n })?.value
+                    }
+                    let to = q("to") ?? ""
+                    let content = q("content") ?? ""
+                    let method = q("method") ?? ""
+                    let imageHex = q("image_hex") ?? ""
+                    let imageFormat = q("image_format") ?? ""
+                    let fileHex = q("file_hex") ?? ""
+                    let fileName = q("file_name") ?? ""
+                    logger.info("test-send to=\(to, privacy: .public) content=\(content, privacy: .public)")
+                    DiagLog.log("[TEST-SEND] to=\(to) method=\(method.isEmpty ? "opportunistic" : method) content=\"\(content)\" image=\(imageHex.isEmpty ? 0 : imageHex.count/2)B(\(imageFormat)) file=\(fileHex.isEmpty ? 0 : fileHex.count/2)B(\(fileName))")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestSend"),
+                        object: nil,
+                        userInfo: [
+                            "to": to,
+                            "content": content,
+                            "method": method,
+                            "image_hex": imageHex,
+                            "image_format": imageFormat,
+                            "file_hex": fileHex,
+                            "file_name": fileName,
+                        ]
+                    )
+                    return
+                }
                 pendingDeepLink = url.absoluteString
             }
         }
@@ -129,8 +409,6 @@ struct RootView: View {
     @State private var isInitialized = false
     @State private var identitySwitchTrigger = UUID()
     @State private var showOnboarding: Bool
-    @State private var showIncomingCall = false
-    @State private var showActiveCallFromIncoming = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
 
@@ -148,6 +426,7 @@ struct RootView: View {
     var body: some View {
         Group {
             if showOnboarding {
+                #if COLUMBA_ONBOARDING_ENABLED
                 OnboardingView(
                     identityManager: identityManager,
                     settingsRepository: settingsRepository,
@@ -156,6 +435,10 @@ struct RootView: View {
                         identitySwitchTrigger = UUID()
                     }
                 )
+                #else
+                // Onboarding flow disabled in this build — bypass straight to main UI.
+                Color.clear.onAppear { showOnboarding = false }
+                #endif
             } else if let error = initError {
                 errorView(error)
             } else if isInitialized,
@@ -177,54 +460,8 @@ struct RootView: View {
                         identitySwitchTrigger = UUID()
                     }
                 )
-                #if os(iOS)
-                .fullScreenCover(isPresented: $showIncomingCall) {
-                    if let cm = appServices.callManager {
-                        IncomingCallScreen(callManager: cm, onAnswer: {
-                            showIncomingCall = false
-                            showActiveCallFromIncoming = true
-                        })
-                    }
-                }
-                .fullScreenCover(isPresented: $showActiveCallFromIncoming) {
-                    if let cm = appServices.callManager {
-                        VoiceCallScreen(
-                            callManager: cm,
-                            peerName: cm.peerName ?? cm.peerHash ?? "Unknown",
-                            destinationHash: Data()
-                        )
-                    }
-                }
-                .onChange(of: appServices.callManager?.callState) { _, newState in
-                    guard let cm = appServices.callManager,
-                          let newState,
-                          cm.isIncoming else { return }
-                    switch newState {
-                    case .ringing:
-                        // Only present the incoming-call sheet once we know who's
-                        // calling. peerHash is populated in CallManager's ringing
-                        // callback (after LINKIDENTIFY arrives) right before the
-                        // state transitions to .ringing — so by this point peer
-                        // info is set. We deliberately do NOT trigger on
-                        // .connecting because that state is reached at link
-                        // establishment (before LINKIDENTIFY), when peerName and
-                        // peerHash are both nil — which would render as
-                        // "Unknown" until the identify signal arrives.
-                        guard cm.peerHash != nil || cm.peerName != nil else {
-                            // Defensive: if this fires, CallKit's lock-screen UI
-                            // is ringing but the in-app sheet is suppressed —
-                            // a callback-ordering regression in CallManager.
-                            logger.error("[CALL] Reached .ringing with both peerHash and peerName nil; in-app sheet suppressed but CallKit UI may still be ringing — regression in CallManager identify ordering")
-                            return
-                        }
-                        if !showIncomingCall {
-                            showIncomingCall = true
-                        }
-                    default:
-                        break
-                    }
-                }
-                #endif
+                // Voice / CallKit removed in the Python RNS migration (Phase 0).
+                // Will return in v2 once canonical Python LXST is ported to iOS audio.
             } else {
                 loadingView
             }
@@ -241,7 +478,8 @@ struct RootView: View {
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
+            let phaseValue = newPhase
+            if phaseValue == .active {
                 NotificationService.shared.clearBadge()
                 // Sync from propagation node when app becomes active,
                 // debounced to avoid rapid re-syncs on quick app switches
@@ -256,6 +494,10 @@ struct RootView: View {
             #if os(iOS)
             if newPhase == .background {
                 scheduleBackgroundSync()
+                // Flush RNS's path table + known destinations to disk now —
+                // iOS won't run RNS's clean-exit persist, so without this a
+                // cold start can't recall previously-heard peers.
+                appServices.persistRNSStateOnBackground()
             }
             appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
             #endif
@@ -399,10 +641,22 @@ struct RootView: View {
             DiagLog.log("[STARTUP] Step 1: migration check")
             await identityManager.migrateFromSingleIdentityIfNeeded(settingsRepository: settingsRepository)
 
-            // 2. Get active identity (created during onboarding)
+            // 2. Get active identity (created during onboarding, or auto-create
+            // one when onboarding is compile-guarded off — needed so the
+            // Python-RNS smoke test can run without UI taps).
             DiagLog.log("[STARTUP] Step 2: get active identity")
-            guard let active = await identityManager.getActiveIdentity() else {
+            let active: LocalIdentity
+            if let existing = await identityManager.getActiveIdentity() {
+                active = existing
+            } else {
+                #if COLUMBA_ONBOARDING_ENABLED
                 throw AppServicesError.identityNotInitialized
+                #else
+                DiagLog.log("[STARTUP] Step 2: no identity — auto-creating for smoke test")
+                let created = try await identityManager.createIdentity(displayName: "ColumbaSim")
+                let switched = try await identityManager.switchToIdentity(created.identityHash)
+                active = switched.0
+                #endif
             }
 
             // 3. Load identity keys from Keychain
@@ -412,10 +666,40 @@ struct RootView: View {
 
             // 4. Load interface configurations
             let interfaceRepo = InterfaceRepository()
+
+            // Smoke-test escape hatch: when `COLUMBA_TCP_HUB=host:port` is in
+            // the environment AND no interfaces are configured yet, inject a
+            // TCPClientInterface so a fresh-install build can join the
+            // shared hub without manual onboarding. Used by the sim↔iPhone
+            // audio-frame test where the iPhone has empty UserDefaults but
+            // needs to land on the same RNS network as the sim. The host
+            // address is environment-supplied (never committed in source).
+            if let hub = ProcessInfo.processInfo.environment["COLUMBA_TCP_HUB"],
+               !hub.isEmpty,
+               interfaceRepo.getEnabledInterfaces().isEmpty {
+                let parts = hub.split(separator: ":", maxSplits: 1).map(String.init)
+                if parts.count == 2, let port = UInt16(parts[1]) {
+                    DiagLog.log("[STARTUP] COLUMBA_TCP_HUB=\(parts[0]):\(port) — seeding TCP interface")
+                    interfaceRepo.addInterface(InterfaceEntity(
+                        name: "Hub",
+                        type: .tcpClient,
+                        config: .tcpClient(TCPClientConfig(targetHost: parts[0], targetPort: port))
+                    ))
+                    UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
+                    UserDefaults.standard.set(true, forKey: "settings_initialized")
+                } else {
+                    DiagLog.log("[STARTUP] COLUMBA_TCP_HUB malformed (\(hub)) — expected host:port")
+                }
+            }
+
             let enabledInterfaces = interfaceRepo.getEnabledInterfaces()
             DiagLog.log("[STARTUP] Step 4: \(enabledInterfaces.count) enabled interfaces")
 
-            // 5. Initialize AppServices with identity (TCP connected separately below)
+            // 5. Initialize AppServices with identity. The Python RNS stack
+            //    builds its config file from InterfaceRepository's enabled
+            //    interfaces (PythonConfigWriter); when the list is empty the
+            //    app comes up offline and the user adds an interface via
+            //    Settings → Manage Interfaces.
             DiagLog.log("[STARTUP] Step 5: initialize AppServices")
             try await appServices.initialize(
                 identity: identity,
@@ -434,7 +718,10 @@ struct RootView: View {
             self.messageRepository = repo
 
             #if os(iOS)
-            // Initialize location sharing manager
+            // Initialize the location-sharing manager. iOS-only — the
+            // non-iOS Compat stub (RNSAPI/Compat.swift, `#if !os(iOS)`)
+            // takes over for cross-platform call sites. Needs `appServices`
+            // to reach `backend.telemetry` for sending the periodic updates.
             let locManager = LocationSharingManager(appServices: appServices)
             appServices.locationSharingManager = locManager
             let handler = IncomingMessageHandler(messageRepository: repo, database: db, locationSharingManager: locManager)
@@ -457,12 +744,17 @@ struct RootView: View {
                     if case .tcpClient(let config) = iface.config {
                         let entityId = iface.id
                         Task {
-                            DiagLog.log("[STARTUP] TCP connecting: \(config.targetHost):\(config.targetPort)")
+                            DiagLog.log("[STARTUP] TCP interface \(config.targetHost):\(config.targetPort) — registering")
                             do {
                                 try await services.connectTCPInterface(entityId: entityId, host: config.targetHost, port: config.targetPort)
-                                DiagLog.log("[STARTUP] TCP connected: \(entityId)")
+                                // NB: this only means the interface was added and a
+                                // connection was initiated — NOT that the socket is up.
+                                // The Swift backend's connect() is fire-and-forget; the
+                                // real connected/connecting state shows in the `[RNS] iface
+                                // … -> connected/connecting` poll lines.
+                                DiagLog.log("[STARTUP] TCP interface registered [\(entityId)] (connecting async — see [RNS] iface state)")
                             } catch {
-                                DiagLog.log("[STARTUP] TCP connect FAILED [\(entityId)]: \(error.localizedDescription)")
+                                DiagLog.log("[STARTUP] TCP interface add FAILED [\(entityId)]: \(error.localizedDescription)")
                             }
                         }
                     }
@@ -528,6 +820,40 @@ struct RootView: View {
                     await services.propagationManager?.syncNow()
                 }
             }
+
+            #if os(iOS)
+            // Smoke-test escape hatch: `COLUMBA_AUTO_CALL_TO=<hex>` places an
+            // outgoing LXST call once the target destination shows up in the
+            // path table. Used in sim↔iPhone reverse-direction audio testing
+            // where the iPhone needs to be the caller and we can't push URL
+            // events to a real device (`simctl openurl` is simulator-only,
+            // `devicectl` has no URL-open subcommand). Polls the path table
+            // for up to 60s.
+            if let targetHex = ProcessInfo.processInfo.environment["COLUMBA_AUTO_CALL_TO"],
+               !targetHex.isEmpty,
+               let targetHash = try? targetHex.hexToData() {
+                let services = appServices
+                Task { @MainActor in
+                    DiagLog.log("[AUTO_CALL] waiting for \(targetHex.prefix(8)) in path table")
+                    var attempts = 0
+                    while attempts < 30 {
+                        if let pt = services.pathTable,
+                           await pt.lookup(destinationHash: targetHash) != nil {
+                            DiagLog.log("[AUTO_CALL] target found after \(attempts * 2)s — placing call")
+                            services.callManager?.initiateCall(
+                                destinationHash: targetHash,
+                                profile: .qualityMedium,
+                                peerDisplayName: nil
+                            )
+                            return
+                        }
+                        try? await Task.sleep(for: .seconds(2))
+                        attempts += 1
+                    }
+                    DiagLog.log("[AUTO_CALL] timed out waiting for \(targetHex.prefix(8))")
+                }
+            }
+            #endif
 
         } catch {
             DiagLog.log("[STARTUP] _initializeServicesOnce FAILED: \(error)")

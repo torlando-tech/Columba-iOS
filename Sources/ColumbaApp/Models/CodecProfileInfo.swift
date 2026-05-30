@@ -7,6 +7,7 @@
 //
 
 import LXSTSwift
+import RNSAPI
 
 /// Display information for a telephony profile.
 struct CodecProfileInfo: Identifiable {

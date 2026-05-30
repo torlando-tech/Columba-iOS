@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import RNSAPI
 
 // MARK: - Regional Parameters
 
