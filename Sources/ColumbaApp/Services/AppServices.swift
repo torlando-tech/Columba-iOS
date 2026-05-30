@@ -768,14 +768,13 @@ public final class AppServices {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s
                 tick += 1
-                let snapshot = await backend.statusSnapshot()
-                if snapshot == nil {
+                guard let snapshot = await backend.statusSnapshot() else {
                     if tick % 5 == 0 { DiagLog.log("[RNS-POLL] tick=\(tick) snapshot=nil") }
                     continue
                 }
                 guard let self else { return }
                 let entityById = await MainActor.run { self.pythonInterfaceEntities }
-                await self.applyPythonInterfaceStatus(snapshot: snapshot!, entityById: entityById)
+                await self.applyPythonInterfaceStatus(snapshot: snapshot, entityById: entityById)
             }
             DiagLog.log("[RNS-POLL] task exiting (cancelled)")
         }
@@ -1777,7 +1776,7 @@ public final class AppServices {
             let isKnownContact: Bool
             do {
                 let conversation = try await database.getConversation(hash: sourceHash)
-                isKnownContact = conversation != nil && conversation!.isFavorite != 0
+                isKnownContact = (conversation?.isFavorite ?? 0) != 0
             } catch {
                 // Fail open: surface the message if the DB check itself
                 // fails (better than silently dropping mail).
@@ -2934,6 +2933,17 @@ public final class AppServices {
 
         stateObserverTask?.cancel()
         stateObserverTask = nil
+
+        #if os(iOS)
+        // Stop call manager: ends any active CallKit call and tears down the
+        // Telephone actor + audio session. Nil it afterwards so a later
+        // initialize() (e.g. identity-change / "Apply & Restart") recreates a
+        // fresh instance — initialize() guards creation on `callManager == nil`,
+        // and CallManager.shutdown() guts the instance (telephone/callKitManager
+        // set to nil), so reusing it would leave telephony dead.
+        await callManager?.shutdown()
+        callManager = nil
+        #endif
 
         // Stop Python event drain and tear down the Python RNS stack
         pythonEventTask?.cancel()

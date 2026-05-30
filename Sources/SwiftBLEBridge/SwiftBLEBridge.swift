@@ -532,7 +532,7 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         let rssi = RSSI.intValue
         // Skip sentinel RSSIs (CB occasionally hands us 127 or -127 for
         // out-of-range / invalid samples).
-        guard rssi != 127, rssi != 0 else { return }
+        guard rssi != 127, rssi != -127, rssi != 0 else { return }
 
         // Cache the peripheral so `connect(address:)` can find it. iOS
         // deallocates peripherals without strong refs, so this is required.
