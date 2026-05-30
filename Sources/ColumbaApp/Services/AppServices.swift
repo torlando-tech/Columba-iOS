@@ -3390,6 +3390,9 @@ public final class AppServices {
         link.identifyHook = {
             try? await backendRef.linkIdentify(linkId: Int(linkIdRaw))
         }
+        link.closeHook = {
+            _ = try? await backendRef.linkTeardown(linkId: Int(linkIdRaw))
+        }
         activeLinksByLinkId[linkIdRaw] = link
         DiagLog.log("[TEL_BRIDGE] opened outbound link \(linkIdRaw) → \(destHex.prefix(8))")
         return link
@@ -3436,10 +3439,24 @@ public final class AppServices {
             link.identifyHook = {
                 try? await backendRef.linkIdentify(linkId: Int(linkId))
             }
+            link.closeHook = {
+                _ = try? await backendRef.linkTeardown(linkId: Int(linkId))
+            }
         }
         activeLinksByLinkId[linkId] = link
         let callbacks = Array(destinationLinkCallbacks.values)
 
+        // Python's inbound-link event carries only the linkId, not the
+        // destination hash, so we can't yet route to a single matching
+        // callback. Today only the lxst.telephony destination registers one,
+        // so the single-callback path is correct. If a second destination ever
+        // registers a link callback before the rns_bridge inbound event grows
+        // a destination-hash field, fanning every inbound link out to all of
+        // them would cross call state between destinations — surface that
+        // loudly here rather than corrupting silently.
+        if callbacks.count > 1 {
+            DiagLog.log("[TEL_BRIDGE] WARNING: \(callbacks.count) destination link callbacks registered, but the Python inbound-link event has no destination hash — cannot route link \(linkId) unambiguously (needs the rns_bridge destination-hash field; see PR1)")
+        }
         for callback in callbacks {
             await callback(link)
         }

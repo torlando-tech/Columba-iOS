@@ -349,6 +349,13 @@ public final class Link: @unchecked Sendable {
     /// identity and can apply its caller-allowed filter.
     public var identifyHook: (@Sendable () async throws -> Void)?
 
+    /// Hook installed by AppServices that tears the underlying Python RNS.Link
+    /// down via `PythonRNSBackend.linkTeardown(linkId:)`. `close()` only flips
+    /// local state; on a *local* hangup we must also tell Python to tear the
+    /// link down, otherwise the remote peer's RNS.Link lingers until its ~15s
+    /// keepalive timeout instead of closing promptly. nil until wired.
+    public var closeHook: (@Sendable () async -> Void)?
+
     /// Hooks installed by lxst-swift via `setCloseCallback` /
     /// `setIdentifyCallbacks` — invoked by AppServices when the corresponding
     /// Python events fire (link_state(closed) → closeCallback;
@@ -384,6 +391,17 @@ public final class Link: @unchecked Sendable {
         }
     }
     public func close() { state = .closed }
+
+    /// Local-hangup teardown: propagate the close to the Python RNS.Link (via
+    /// `closeHook` → `PythonRNSBackend.linkTeardown`) before flipping local
+    /// state. Use this instead of `close()` when *we* initiate the hangup so
+    /// the remote peer's link closes promptly rather than waiting for timeout.
+    /// Python-initiated closes go through AppServices.dispatchLinkClosed and
+    /// must NOT call this (the link is already torn down on the Python side).
+    public func teardown() async {
+        if let hook = closeHook { await hook() }
+        state = .closed
+    }
     public func request(_ path: String) {}
     public func request(_ path: String, data: Any? = nil, responseTimeout: TimeInterval? = nil) async throws -> RequestReceipt {
         RequestReceipt(linkIdentityHash: identityHash, path: path)

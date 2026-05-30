@@ -140,7 +140,10 @@ public actor PythonNetworkTransport: NetworkTransport {
         // as a spurious remote-close.
         await link.setCloseCallback(nil)
         if link.state.isEstablished {
-            link.close()
+            // Local hangup: tear the Python RNS.Link down (not just flip local
+            // state) so the remote peer's link closes promptly instead of
+            // waiting for its ~15s keepalive timeout.
+            await link.teardown()
         }
         activeLink = nil
     }
@@ -188,7 +191,9 @@ public actor PythonNetworkTransport: NetworkTransport {
         if activeLink != nil {
             logger.error("[PNT] Incoming link while a call is active — signalling BUSY")
             try? await link.sendBytes(LXSTWireFormat.packSignal(.busy))
-            link.close()
+            // Tear the Python RNS.Link down (mirrors LXST's `link.teardown()`)
+            // so the rejected caller's link closes now rather than on timeout.
+            await link.teardown()
             return
         }
         await wireLinkCallbacks(link, incoming: true)
