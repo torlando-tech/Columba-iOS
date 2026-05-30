@@ -339,10 +339,13 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         guard let router else {
             return PropagationSyncResult(ok: false, state: .noRouter, receivedMessages: 0, reason: "no router")
         }
-        // syncFromPropagationNode returns Void; the new-message count arrives via
-        // the delegate's didCompleteSyncWithNewMessages → BackendEvent stream.
+        // syncFromPropagationNode() returns Void, but the router's syncState
+        // carries the count of messages pulled this sync (receivedMessages is
+        // incremented per message as they're retrieved). Read it after the
+        // await rather than hardcoding 0, so the UI's "N new messages" is real.
         try await router.syncFromPropagationNode()
-        return PropagationSyncResult(ok: true, state: .complete, receivedMessages: 0, reason: "")
+        let received = await router.syncState.receivedMessages
+        return PropagationSyncResult(ok: true, state: .complete, receivedMessages: received, reason: "")
     }
 
     @discardableResult
