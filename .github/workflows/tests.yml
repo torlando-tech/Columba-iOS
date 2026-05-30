@@ -45,6 +45,17 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
+      # Resolve the local Swift packages (reticulum-swift / LXMF-swift / LXST-swift)
+      # once, up front. Without this the `xcodebuild test` action can intermittently
+      # fail to resolve LXMFSwift/ReticulumSwift for the ColumbaAppTests target even
+      # though the app build steps resolved them fine — a fresh-runner resolution
+      # race. One explicit resolve makes every later build/test step reuse it.
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project Columba.xcodeproj \
+            -scheme Columba
+
       - name: Find simulator
         id: sim
         run: |
