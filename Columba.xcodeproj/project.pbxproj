@@ -123,19 +123,25 @@
 		67079BBC2E8309A43DF576E5 /* app in Resources */ = {isa = PBXBuildFile; fileRef = D001472BC7DFD3CD7BF27F0C /* app */; };
 		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
 		6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
+		70AAF8700E0EA0145FCFD91A /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 5A96C992A1596F27B77B4A0D /* ReticulumSwift */; };
 		71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
+		739197480DF07C4B93C77994 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 386333D6C603BB0CF61DF1E5 /* RNSAPI */; };
 		779118E89F4D38BF960DB3D0 /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
 		7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */; };
 		8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
 		886AB689C7699471510BAF9A /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
 		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
+		907A1321D4B59F14BEB8D141 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = E6DCDE8045B5F6084796D6F5 /* MapLibre */; };
+		9D6F9CB51B43D47C1A2C4ECA /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 47A5990C393A1256D3BA43C2 /* LXMFSwift */; };
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		BKF001 /* BackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKF002 /* BackendFactory.swift */; };
 		C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
 		C91321B8E0BA9F487D5E1AC8 /* PyMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBD293157E715F490613984 /* PyMessage.swift */; };
 		D33B15C781E3C98A5CBD06F3 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F7375908681A4DF99F125C7 /* CallKitManager.swift */; };
+		D5CDAD584F3AA06E947A4192 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2B7982F6E67E3A5D62C7FFB6 /* LXSTSwift */; };
 		D85E5BBB51FACA138622FFFA /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4C54CECCAF0B117FB6C197 /* IncomingCallScreen.swift */; };
 		DE9220E1D4ABF9A4C2CBA761 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
+		DF9D93CC335F92579C951826 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 47A42B4F4E45AF098F12E6E0 /* SwiftBLEBridge */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
@@ -342,6 +348,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				907A1321D4B59F14BEB8D141 /* MapLibre in Frameworks */,
+				D5CDAD584F3AA06E947A4192 /* LXSTSwift in Frameworks */,
+				739197480DF07C4B93C77994 /* RNSAPI in Frameworks */,
+				DF9D93CC335F92579C951826 /* SwiftBLEBridge in Frameworks */,
+				70AAF8700E0EA0145FCFD91A /* ReticulumSwift in Frameworks */,
+				9D6F9CB51B43D47C1A2C4ECA /* LXMFSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -813,6 +825,14 @@
 				TTDEP /* PBXTargetDependency */,
 			);
 			name = ColumbaAppTests;
+			packageProductDependencies = (
+				E6DCDE8045B5F6084796D6F5 /* MapLibre */,
+				2B7982F6E67E3A5D62C7FFB6 /* LXSTSwift */,
+				386333D6C603BB0CF61DF1E5 /* RNSAPI */,
+				47A42B4F4E45AF098F12E6E0 /* SwiftBLEBridge */,
+				5A96C992A1596F27B77B4A0D /* ReticulumSwift */,
+				47A5990C393A1256D3BA43C2 /* LXMFSwift */,
+			);
 			productName = ColumbaAppTests;
 			productReference = TPROD /* ColumbaAppTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -1223,7 +1243,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1234,6 +1253,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
@@ -1328,7 +1348,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1339,6 +1358,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
@@ -1638,7 +1658,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1649,6 +1668,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
@@ -1659,7 +1679,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1670,6 +1689,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
@@ -1772,6 +1792,11 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = RNSAPI;
 		};
+		2B7982F6E67E3A5D62C7FFB6 /* LXSTSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
+			productName = LXSTSwift;
+		};
 		2F8EC8202FC732AB00235991 /* ReticulumSwift */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
@@ -1782,6 +1807,24 @@
 			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
 			productName = LXMFSwift;
 		};
+		386333D6C603BB0CF61DF1E5 /* RNSAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RNSAPI;
+		};
+		47A42B4F4E45AF098F12E6E0 /* SwiftBLEBridge */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwiftBLEBridge;
+		};
+		47A5990C393A1256D3BA43C2 /* LXMFSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
+			productName = LXMFSwift;
+		};
+		5A96C992A1596F27B77B4A0D /* ReticulumSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
+			productName = ReticulumSwift;
+		};
 		5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftBLEBridge;
@@ -1790,6 +1833,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
 			productName = LXSTSwift;
+		};
+		E6DCDE8045B5F6084796D6F5 /* MapLibre */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
+			productName = MapLibre;
 		};
 		P002 /* MapLibre */ = {
 			isa = XCSwiftPackageProductDependency;
