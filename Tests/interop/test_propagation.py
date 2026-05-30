@@ -134,28 +134,36 @@ def test_propagation_sync_reports_received_count(sim, sideband):
     )
 
 
+_CONCURRENCY_RE = re.compile(r"\[TEST-CONCURRENCY\] announce_ms=(\d+) ok=\w+ sync_ms=(\d+)")
+
+
 def test_propagation_sync_does_not_block_other_calls(sim):
-    # Sync against an unreachable node: the bug (Python serial-queue) would
-    # stall the bridge for the full 30s timeout; a healthy bridge lets a
-    # concurrent announce run within a few seconds.
+    # In-process concurrency probe (lxma://test-concurrency-probe): the app sets
+    # an unreachable propagation node, launches a propagationSync WITHOUT
+    # awaiting it, waits until it's mid-poll, then times how long a concurrent
+    # announce takes to complete. The bug (the Python bridge ran the blocking
+    # sync on its serial queue) stalls the announce for the sync's whole
+    # path-request window (~seconds); the fix (sync on a dedicated queue, the
+    # Python poll releasing the GIL between iterations) lets the announce return
+    # promptly. The whole thing is measured in-process, so — unlike firing two
+    # separate `lxma://` URLs — it carries no Maestro-dispatch latency, and the
+    # fixed vs buggy builds are cleanly separable (~100ms vs ~8s).
     before = sim.diag_log.stat().st_size if sim.diag_log.exists() else 0
-    t0 = time.time()
-    sim._open_url("lxma://test-prop-sync?node=ffffffffffffffffffffffffffffffff")
-    sim._open_url("lxma://test-announce")
+    sim._open_url("lxma://test-concurrency-probe")
 
-    announce_at = None
-    deadline = time.time() + 20.0
-    while time.time() < deadline:
+    announce_ms = sync_ms = None
+    deadline = time.time() + 45.0
+    while time.time() < deadline and announce_ms is None:
         for line in sim._read_diag_since(before):
-            if "[ANNOUNCE]" in line or "[AUTO_ANNOUNCE]" in line:
-                announce_at = time.time() - t0
+            m = _CONCURRENCY_RE.search(line)
+            if m:
+                announce_ms, sync_ms = int(m.group(1)), int(m.group(2))
                 break
-        if announce_at is not None:
-            break
-        time.sleep(0.5)
+        time.sleep(1.0)
 
-    assert announce_at is not None, "announce never executed within 20s of the sync"
-    assert announce_at < 10.0, (
-        f"announce executed {announce_at:.1f}s after the sync started — it stalled "
-        f"behind propagationSync's poll window (serial-queue blocking)"
+    assert announce_ms is not None, "concurrency probe never logged a result"
+    assert announce_ms < 3000, (
+        f"a concurrent announce took {announce_ms}ms while a propagationSync "
+        f"was in flight (sync_ms={sync_ms}) — it stalled behind the sync "
+        f"(serial-queue blocking)"
     )

@@ -1288,6 +1288,44 @@ public final class AppServices {
             }
         }
 
+        // lxma://test-concurrency-probe — verify a long-running propagationSync
+        // doesn't starve other bridge calls. Set an unreachable propagation
+        // node, launch a sync WITHOUT awaiting it, wait until it's mid-poll,
+        // then time how long a concurrent announce takes to complete. With the
+        // serial-queue bug the announce blocks for the sync's whole window
+        // (~seconds); fixed, it returns promptly (~hundreds of ms at most,
+        // bounded by the Python poll's GIL-release interval). The measurement
+        // is fully in-process so it carries no Maestro-dispatch latency.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaTestConcurrencyProbe"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard let backend = self.backend else {
+                    DiagLog.log("[TEST-CONCURRENCY] no backend")
+                    return
+                }
+                let unreachable = String(repeating: "f", count: 32)
+                _ = try? await backend.setPropagationNode(destHashHex: unreachable, stampCost: 0)
+                // Launch the sync but do NOT await it — it runs its full
+                // path-request window against the unreachable node.
+                let syncTask = Task { () -> Int in
+                    let s0 = Date()
+                    _ = try? await backend.propagationSync(timeout: 30.0)
+                    return Int(Date().timeIntervalSince(s0) * 1000)
+                }
+                // Let the sync enter its blocking poll before probing.
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                let aStart = Date()
+                let ok = (try? await backend.announce(displayName: "concurrency-probe")) ?? false
+                let announceMs = Int(Date().timeIntervalSince(aStart) * 1000)
+                let syncMs = await syncTask.value
+                DiagLog.log("[TEST-CONCURRENCY] announce_ms=\(announceMs) ok=\(ok) sync_ms=\(syncMs)")
+            }
+        }
+
         // lxma://test-nomad-fetch?to=HEX&path=/page/index.mu — calls
         // bridge.fetchNomadNetPage and logs the response.
         NotificationCenter.default.addObserver(

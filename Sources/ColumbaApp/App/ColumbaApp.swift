@@ -184,6 +184,19 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-concurrency-probe" {
+                    // lxma://test-concurrency-probe — launch a propagationSync
+                    // against an unreachable node, then time a concurrent
+                    // announce. Pins the bug where the Python bridge ran the
+                    // (blocking) sync on its serial queue, stalling every other
+                    // bridge call for the sync's whole window.
+                    DiagLog.log("[TEST-CONCURRENCY] requested")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestConcurrencyProbe"),
+                        object: nil
+                    )
+                    return
+                }
                 if url.host == "test-restart" {
                     DiagLog.log("[TEST-RESTART] requested via URL")
                     NotificationCenter.default.post(
