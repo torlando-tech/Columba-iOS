@@ -810,6 +810,35 @@ def announce_telephony(display_name: str = "") -> dict[str, Any]:
         return {"ok": True, "reason": "ok"}
 
 
+def _clear_transport_class_state() -> None:
+    """Drain the RNS.Transport class-level state that exit_handler() leaves
+    behind. RNS.Transport is a process-global: its destinations / interfaces /
+    path tables / announce handlers / identities persist across a Reticulum
+    exit_handler(), so a follow-on start() would raise "Attempt to register an
+    already registered destination" (Transport.register_destination) and reuse
+    stale interfaces/paths. BOTH stop() and reset_identity() must call this
+    before the next start() — keeping it in one place stops the two paths from
+    drifting (reset_identity previously omitted it and broke identity switch)."""
+    for _attr, _empty in (
+        ("destinations", []),
+        ("interfaces", []),
+        ("path_table", {}),
+        ("destination_table", {}),
+        ("announce_handlers", []),
+        ("identities", {}),
+    ):
+        try:
+            setattr(RNS.Transport, _attr, _empty)
+        except Exception:
+            pass
+    # exit_handler() sets RNS.loglevel = LOG_NONE; restore it so the next init's
+    # RNS.log() calls are visible again.
+    try:
+        RNS.loglevel = RNS.LOG_VERBOSE
+    except Exception:
+        pass
+
+
 def stop() -> None:
     with _lock:
         if not _state["started"]:
@@ -848,43 +877,9 @@ def stop() -> None:
         except Exception:
             pass
 
-        # RNS.Transport.destinations is a class-level list of every Destination
-        # ever registered with this Python process. exit_handler() doesn't drain
-        # it, so a subsequent register_delivery_identity() in a fresh LXMRouter
-        # raises "Attempt to register an already registered destination." Clear
-        # the list (and the cohort of Transport class-level state we wrote to
-        # during this run) so the next start sees a clean slate.
-        try:
-            RNS.Transport.destinations = []
-        except Exception:
-            pass
-        try:
-            RNS.Transport.interfaces = []
-        except Exception:
-            pass
-        try:
-            RNS.Transport.path_table = {}
-        except Exception:
-            pass
-        try:
-            RNS.Transport.destination_table = {}
-        except Exception:
-            pass
-        try:
-            RNS.Transport.announce_handlers = []
-        except Exception:
-            pass
-        try:
-            RNS.Transport.identities = {}
-        except Exception:
-            pass
-
-        # Restore log level (exit_handler sets RNS.loglevel = LOG_NONE) so the
-        # next init's RNS.log() calls are visible again.
-        try:
-            RNS.loglevel = RNS.LOG_VERBOSE
-        except Exception:
-            pass
+        # Drain the Transport class-level state exit_handler() leaves behind so
+        # the next start() sees a clean slate (shared with reset_identity).
+        _clear_transport_class_state()
 
         # Tear down any open RNS.Links and forget the telephony
         # destination so a subsequent start() doesn't trip on stale
@@ -1388,6 +1383,12 @@ def reset_identity(identity_path: str) -> None:
             RNS.Reticulum._Reticulum__interface_detach_ran = False
         except Exception:
             pass
+        # Drain RNS.Transport's process-global class state too — exit_handler()
+        # leaves destinations/interfaces/path tables populated, so the start()
+        # this function's docstring requires would otherwise raise "Attempt to
+        # register an already registered destination" and only a process restart
+        # could recover. Same teardown stop() does.
+        _clear_transport_class_state()
         # Tear down open RNS.Links and forget the telephony destination so a
         # subsequent start() doesn't trip on stale callbacks (mirrors stop()).
         for _lid, _link in list(_links.items()):
