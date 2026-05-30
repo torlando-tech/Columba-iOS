@@ -229,7 +229,12 @@ public final class PythonBridge: @unchecked Sendable {
         timeout: TimeInterval = 30.0,
         formFields: [String: String]? = nil
     ) async throws -> NomadNetFetchResult {
-        try await runOnQueue { [self] in
+        // Runs on `blockingQueue`, not the main serial `queue`: the Python
+        // fetch blocks up to `timeout` inside link_ready/response_ready waits,
+        // and on the shared queue that would stall drainEvents + every other
+        // bridge call for the duration — the same starvation propagationSync
+        // avoids.
+        try await runOnQueue(on: blockingQueue) { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 guard let module = self.module else {
                     return NomadNetFetchResult(ok: false, status: .notStarted, data: Data(), contentType: "")
