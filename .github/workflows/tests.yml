@@ -12,7 +12,11 @@ concurrency:
 
 jobs:
   test:
-    runs-on: macos-15
+    # macos-26 carries Xcode 26.x, which the embedded-Python (Columba) scheme
+    # needs — the Python.framework clang module map fails to resolve under
+    # Xcode 16.x ("module 'Python' … not defined in any loaded module map"),
+    # which is what devs build with locally (26.x). See the Select Xcode step.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +36,11 @@ jobs:
 
       - name: Select Xcode
         run: |
-          XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          echo "Available Xcodes:"; ls -d /Applications/Xcode_*.app 2>/dev/null || true
+          # Pick the newest Xcode on the runner (was pinned to 16.x, which can't
+          # build the Python scheme — see runs-on comment). Version-sort so 26.x
+          # wins over 16.x regardless of exact point release.
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
           echo "Using $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
