@@ -29,6 +29,7 @@ compile gate this used to be blocked on was removed on 2026-05-28.)
 from __future__ import annotations
 import re
 import time
+from pathlib import Path
 
 import pytest
 
@@ -167,7 +168,7 @@ def test_chat_toggle_starts_periodic_sharing(sim, sideband, clean_location_state
     baseline = len(sideband._taps)
 
     # 3. Drive the Maestro flow: nav → tap location toggle → pick "15 min".
-    flow_path = "/Users/tyler/repos/Columba-iOS/Tests/interop/flows/share_location_chat_toggle.yaml"
+    flow_path = str(Path(__file__).parent / "flows" / "share_location_chat_toggle.yaml")
     r = subprocess.run(
         ["maestro", "--device", sim.udid, "test", flow_path,
          "-e", "PEER_DISPLAY=Anonymous Peer", "-e", "DURATION=15 min"],
