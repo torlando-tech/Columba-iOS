@@ -67,7 +67,12 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         )
         let mapped = LocalInfo(identityHash: info.identityHash, destinationHash: info.destinationHash)
         self.localInfo = mapped
-        _ = self.events  // ensure drain loop running even with no subscriber
+        _ = self.events       // lazy-init the stream + continuation on first start
+        // Restart the drain loop after a prior stop() cancelled eventDrainTask:
+        // the lazy `events` initializer only runs once, so on a stop/start cycle
+        // (identity switch, reconnect) it would otherwise never re-run and no
+        // Python events would reach the host. No-ops if already running.
+        startDrainLoop()
         return mapped
     }
 

@@ -37,6 +37,11 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
     /// Int→Link registry backing the Python-shaped `RnsTelephony` link API
     /// (the protocol uses Int linkIds; reticulum-swift uses `Link` actors).
     private var links: [Int: ReticulumSwift.Link] = [:]
+    /// The fire-and-forget Task draining each link's `stateUpdates`, keyed by
+    /// linkId. Tracked so it can be cancelled on linkTeardown/stop — otherwise
+    /// it keeps a strong capture of the (kept-open) eventContinuation and yields
+    /// stale linkState events into the next session after a restart.
+    private var linkStateTasks: [Int: Task<Void, Never>] = [:]
     private var nextLinkId: Int = 1
 
     /// Section-name → reticulum interface id, backing the Python-shaped
@@ -177,6 +182,11 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         pathTable = nil
         deliveryDestination = nil
         telephonyDestination = nil
+        // Cancel the per-link stateUpdates drain tasks before dropping the
+        // links — otherwise they outlive stop() and keep yielding stale
+        // linkState events into the (deliberately kept-open) continuation.
+        linkStateTasks.values.forEach { $0.cancel() }
+        linkStateTasks.removeAll()
         links.removeAll()
         localInfo = nil
     }
@@ -433,7 +443,7 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         await link.setPacketCallback { data, _ in
             cont.yield(.linkPacket(linkId: linkId, data: data, t: Date()))
         }
-        Task {
+        linkStateTasks[linkId] = Task {
             for await st in await link.stateUpdates {
                 let (s, r) = Self.linkStateString(st)
                 cont.yield(.linkState(linkId: linkId, state: s, reason: r, inbound: false, t: Date()))
@@ -458,6 +468,7 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
 
     @discardableResult
     public func linkTeardown(linkId: Int) async throws -> Bool {
+        linkStateTasks.removeValue(forKey: linkId)?.cancel()
         guard let link = links.removeValue(forKey: linkId) else { return false }
         await link.close(reason: .initiatorClosed)
         return true
