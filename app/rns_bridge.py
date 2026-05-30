@@ -885,11 +885,12 @@ def stop() -> None:
         # destination so a subsequent start() doesn't trip on stale
         # callbacks pointing at a freed RNS.Transport.
         global _telephony_destination
-        for lid, link in list(_links.items()):
-            try:
-                link.teardown()
-            except Exception:
-                pass
+        # Snapshot the links and clear the dict INSIDE the lock, then tear them
+        # down OUTSIDE it (below). link.teardown() can fire _on_closed
+        # synchronously once exit_handler() has stopped the transport threads,
+        # and _on_closed does `with _lock: _links.pop(...)` — holding the
+        # non-reentrant _lock across teardown() would deadlock the bridge.
+        links_to_teardown = list(_links.values())
         _links.clear()
         _telephony_destination = None
 
@@ -909,6 +910,14 @@ def stop() -> None:
             "telephony_destination": None,
         })
         _put("state", value="disconnected")
+
+    # Outside the lock: tear down the snapshotted links so a synchronous
+    # _on_closed (which re-acquires _lock) can't deadlock.
+    for link in links_to_teardown:
+        try:
+            link.teardown()
+        except Exception:
+            pass
 
 
 def add_interface(name: str) -> dict[str, Any]:
@@ -1389,13 +1398,10 @@ def reset_identity(identity_path: str) -> None:
         # register an already registered destination" and only a process restart
         # could recover. Same teardown stop() does.
         _clear_transport_class_state()
-        # Tear down open RNS.Links and forget the telephony destination so a
-        # subsequent start() doesn't trip on stale callbacks (mirrors stop()).
-        for _lid, _link in list(_links.items()):
-            try:
-                _link.teardown()
-            except Exception:
-                pass
+        # Snapshot the links + clear inside the lock; tear them down OUTSIDE it
+        # (below) so a synchronous _on_closed — which re-acquires the
+        # non-reentrant _lock — can't deadlock the bridge (mirrors stop()).
+        links_to_teardown = list(_links.values())
         _links.clear()
         _telephony_destination = None
         _state.update({
@@ -1406,6 +1412,12 @@ def reset_identity(identity_path: str) -> None:
             "destination": None,
             "handler": None,
         })
+    # Outside the lock: tear down the snapshotted links.
+    for _link in links_to_teardown:
+        try:
+            _link.teardown()
+        except Exception:
+            pass
     try:
         if os.path.isfile(identity_path):
             os.remove(identity_path)
