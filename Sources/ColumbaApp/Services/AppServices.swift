@@ -177,6 +177,13 @@ public final class AppServices {
     /// messages) into Columba's existing UI plumbing.
     private var pythonEventTask: Task<Void, Never>?
 
+    /// Tokens for the block-based NotificationCenter observers registered by
+    /// `startPythonBackend()` (the lxma://test-* deep-link harness). Held so
+    /// `shutdown()` can remove them — otherwise each restart cycle
+    /// (identity-change / "Apply & Restart") would stack another set and fire
+    /// every handler N times. Register via `addPythonObserver(_:_:)`.
+    private var pythonNotificationObservers: [any NSObjectProtocol] = []
+
     /// Identity used to start the Python backend. Cached so the
     /// "Apply & Restart" flow can re-boot Python after the user edits
     /// interfaces, without making AppServices re-derive it.
@@ -604,6 +611,22 @@ public final class AppServices {
 
     // MARK: - Python backend
 
+    /// Register a block-based NotificationCenter observer and retain its token
+    /// in `pythonNotificationObservers` so `shutdown()` can remove it. Use this
+    /// for every observer added by `startPythonBackend()` — keeping the tokens
+    /// is what lets a restart cycle tear the old observers down instead of
+    /// stacking duplicates.
+    private func addPythonObserver(
+        _ name: String,
+        _ block: @escaping @Sendable (Notification) -> Void
+    ) {
+        pythonNotificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: Notification.Name(name), object: nil, queue: .main, using: block
+            )
+        )
+    }
+
     /// Boot the embedded Python RNS stack and hook `LXMRouter.sendHook` so
     /// outbound LXMF sends go through Python. Spawns a Task that drains
     /// Python events and feeds them into Columba's path table / inbound
@@ -784,11 +807,7 @@ public final class AppServices {
         // Drives the full typed-LXMF send path the interop harness uses to
         // exercise image / file attachments end-to-end against a Sideband
         // peer (see Tests/interop/).
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestSend"),
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
+        addPythonObserver("ColumbaTestSend") { [weak self] note in
             guard let self else { return }
             guard let to = note.userInfo?["to"] as? String,
                   let content = note.userInfo?["content"] as? String else { return }
@@ -848,11 +867,7 @@ public final class AppServices {
         // `sendTelemetryCease` on the active backend without driving the
         // CLLocationManager / GPS permission flow that the production
         // LocationSharingManager runs through.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestTelemetry"),
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
+        addPythonObserver("ColumbaTestTelemetry") { [weak self] note in
             guard let self else { return }
             guard let to = note.userInfo?["to"] as? String else { return }
             let packedHex = (note.userInfo?["packed_hex"] as? String) ?? ""
@@ -891,11 +906,7 @@ public final class AppServices {
 
         // Listen for test-restart deep link (lxma://test-restart) so
         // smoke tests can exercise the Apply & Restart path without UI.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestRestart"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
+        addPythonObserver("ColumbaTestRestart") { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 DiagLog.log("[TEST-RESTART] invoking restartPythonBackend")
@@ -907,11 +918,7 @@ public final class AppServices {
         // Phase 4 smoke test: direct CB manager state probe. Bypasses the
         // Python driver so we can isolate Swift-side CB readiness from
         // Python wiring during early-bring-up debugging.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestBLEStatus"),
-            object: nil,
-            queue: .main
-        ) { _ in
+        addPythonObserver("ColumbaTestBLEStatus") { _ in
             #if canImport(CoreBluetooth)
             let bridge = SwiftBLEBridge.shared
             let isStarted = bridge.isStarted
@@ -926,11 +933,7 @@ public final class AppServices {
         // namespace RNS uses, surface any exception to DiagLog. Helps when
         // panic_on_interface_error=no silently swallows external-iface
         // load errors so the row shows "disconnected" with no signal.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestBLEDiagnose"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
+        addPythonObserver("ColumbaTestBLEDiagnose") { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 guard let backend = self.pythonBackend else {
@@ -951,11 +954,7 @@ public final class AppServices {
 
         // Dump path-table entries so we can see what the Node Details
         // "Interface Heard" card would render without taking a screenshot.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestPathTable"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
+        addPythonObserver("ColumbaTestPathTable") { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 guard let backend = self.pythonBackend else {
@@ -974,11 +973,7 @@ public final class AppServices {
         // Diagnose AutoInterface peer discovery: introspect the live
         // AutoInterface Python object so we can see whether multicast
         // join succeeded, what interfaces are bound, peer count, etc.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestAutoDiagnose"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
+        addPythonObserver("ColumbaTestAutoDiagnose") { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 guard let backend = self.pythonBackend else {
@@ -995,11 +990,7 @@ public final class AppServices {
         }
 
         // Phase 6 smoke test: dump current connection details (Android parity).
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestBLEPeerList"),
-            object: nil,
-            queue: .main
-        ) { _ in
+        addPythonObserver("ColumbaTestBLEPeerList") { _ in
             #if canImport(CoreBluetooth)
             let details = SwiftBLEBridge.shared.getConnectionDetails()
             DiagLog.log("[TEST-BLE-PEER-LIST] count=\(details.count)")
@@ -1015,11 +1006,7 @@ public final class AppServices {
         // Phase 4 smoke test: direct CB scan toggle. Drives SwiftBLEBridge
         // without going through Python, so we can validate scan start/stop
         // works before plugging in the BLEDriverInterface contract.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestBLEScan"),
-            object: nil,
-            queue: .main
-        ) { note in
+        addPythonObserver("ColumbaTestBLEScan") { note in
             #if canImport(CoreBluetooth)
             let action = (note.userInfo?["action"] as? String) ?? "start"
             let bridge = SwiftBLEBridge.shared
@@ -1045,11 +1032,7 @@ public final class AppServices {
         }
 
         // Phase 4 smoke test: direct CB advertise toggle.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestBLEAdvertise"),
-            object: nil,
-            queue: .main
-        ) { note in
+        addPythonObserver("ColumbaTestBLEAdvertise") { note in
             #if canImport(CoreBluetooth)
             let action = (note.userInfo?["action"] as? String) ?? "start"
             let name = (note.userInfo?["name"] as? String) ?? ""
@@ -1079,11 +1062,7 @@ public final class AppServices {
         // True iff its int arg is even, then invokes it through the
         // synchronous bool-return BLE callback path. PASS iff Swift
         // gets back the expected bool for both even and odd inputs.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestBLECallback"),
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
+        addPythonObserver("ColumbaTestBLECallback") { [weak self] note in
             guard let self else { return }
             let value = (note.userInfo?["value"] as? Int) ?? 4
             Task { @MainActor in
@@ -1106,11 +1085,7 @@ public final class AppServices {
         }
 
         // lxma://test-answer — accept the currently-ringing call.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestAnswer"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
+        addPythonObserver("ColumbaTestAnswer") { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 #if os(iOS)
@@ -1127,11 +1102,7 @@ public final class AppServices {
         // lxma://test-call?to=HEX[&profile=...] — exercise the full call
         // pipeline: CallManager.initiateCall → Telephone.call →
         // Compat.Link.sendBytes → PythonRNSBackend.linkSend.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestCall"),
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
+        addPythonObserver("ColumbaTestCall") { [weak self] note in
             guard let self else { return }
             let to = (note.userInfo?["to"] as? String) ?? ""
             let profileRaw = (note.userInfo?["profile"] as? String) ?? ""
@@ -1163,11 +1134,7 @@ public final class AppServices {
         // RNS.Link bridge by opening an outbound Link to a destination.
         // Logs the link_id + waits for link_state events to surface via
         // NotificationCenter. For commit-1 smoke testing.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestLinkOpen"),
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
+        addPythonObserver("ColumbaTestLinkOpen") { [weak self] note in
             guard let self else { return }
             let to = (note.userInfo?["to"] as? String) ?? ""
             let aspect = (note.userInfo?["aspect"] as? String) ?? "lxst.telephony"
@@ -1188,11 +1155,7 @@ public final class AppServices {
         // lxma://test-inbound?from=HEX&content=... — synthesize an inbound
         // event so the privacy filter (block_unknown_senders) can be
         // verified without needing a working peer.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestInbound"),
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
+        addPythonObserver("ColumbaTestInbound") { [weak self] note in
             guard let self else { return }
             let fromHex = (note.userInfo?["from"] as? String) ?? ""
             let content = (note.userInfo?["content"] as? String) ?? "synthetic"
@@ -1216,11 +1179,7 @@ public final class AppServices {
         // AppServices.switchIdentity. Logs the destination hash before
         // and after so we can verify Python actually rebooted with the
         // new keys.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestIdentitySwitch"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
+        addPythonObserver("ColumbaTestIdentitySwitch") { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 let manager = IdentityManager()
@@ -1244,11 +1203,7 @@ public final class AppServices {
 
         // lxma://test-prop-sync?node=HEX — set propagation node, kick a sync,
         // log the outcome.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestPropSync"),
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
+        addPythonObserver("ColumbaTestPropSync") { [weak self] note in
             guard let self else { return }
             let node = (note.userInfo?["node"] as? String) ?? ""
             Task { @MainActor in
@@ -1270,11 +1225,7 @@ public final class AppServices {
         // lxma://test-announce?name=... — calls sendAllAnnounces with the
         // given display name (both the LXMF delivery + LXST telephony
         // destinations), logs the outcome.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestAnnounce"),
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
+        addPythonObserver("ColumbaTestAnnounce") { [weak self] note in
             guard let self else { return }
             let name = (note.userInfo?["name"] as? String) ?? ""
             Task { @MainActor in
@@ -1289,11 +1240,7 @@ public final class AppServices {
 
         // lxma://test-nomad-fetch?to=HEX&path=/page/index.mu — calls
         // bridge.fetchNomadNetPage and logs the response.
-        NotificationCenter.default.addObserver(
-            forName: Notification.Name("ColumbaTestNomadFetch"),
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
+        addPythonObserver("ColumbaTestNomadFetch") { [weak self] note in
             guard let self else { return }
             guard let to = note.userInfo?["to"] as? String,
                   let path = note.userInfo?["path"] as? String else { return }
@@ -2950,6 +2897,13 @@ public final class AppServices {
         pythonEventTask = nil
         pythonStatusPollTask?.cancel()
         pythonStatusPollTask = nil
+        // Remove the test-deeplink NotificationCenter observers registered in
+        // startPythonBackend(); without this they'd accumulate across restart
+        // cycles and fire each handler once per past start.
+        for token in pythonNotificationObservers {
+            NotificationCenter.default.removeObserver(token)
+        }
+        pythonNotificationObservers.removeAll()
         if let backend = backend {
             await backend.stop()
             self.backend = nil
