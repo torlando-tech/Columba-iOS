@@ -22,6 +22,14 @@ jobs:
           git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
           git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
 
+      # The Python-backend (`Columba`) scheme links Python.xcframework + the
+      # bundled wheels; without these the build phase that copies them fails.
+      # Fetch them before any xcodebuild step (pinned deps → reproducible).
+      - name: Fetch Python framework + wheels
+        run: |
+          support/fetch-python.sh
+          support/fetch-wheels.sh
+
       - name: Select Xcode
         run: |
           XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
