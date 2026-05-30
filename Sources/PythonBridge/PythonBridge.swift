@@ -228,14 +228,18 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(4)!
+                guard let args = PyTuple_New(4) else { throw BridgeError.marshallingFailure("PyTuple_New") }
                 defer { Py_DecRef(args) }
-                PyTuple_SetItem(args, 0, PyUnicode_FromString(destHashHex)!)
-                PyTuple_SetItem(args, 1, PyUnicode_FromString(path)!)
+                guard let nnDest = PyUnicode_FromString(destHashHex),
+                      let nnPath = PyUnicode_FromString(path) else {
+                    throw BridgeError.marshallingFailure("PyUnicode_FromString")
+                }
+                PyTuple_SetItem(args, 0, nnDest)
+                PyTuple_SetItem(args, 1, nnPath)
                 PyTuple_SetItem(args, 2, PyFloat_FromDouble(timeout))
 
                 if let fields = formFields, !fields.isEmpty {
-                    let dict = PyDict_New()!
+                    guard let dict = PyDict_New() else { throw BridgeError.marshallingFailure("PyDict_New") }
                     for (k, v) in fields {
                         let pyk = PyUnicode_FromString(k)
                         let pyv = PyUnicode_FromString(v)
@@ -309,10 +313,14 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(2)!
+                guard let args = PyTuple_New(2) else { throw BridgeError.marshallingFailure("PyTuple_New") }
                 defer { Py_DecRef(args) }
-                PyTuple_SetItem(args, 0, PyUnicode_FromString(destHashHex)!)
-                PyTuple_SetItem(args, 1, PyLong_FromLongLong(Int64(stampCost))!)
+                guard let pnDest = PyUnicode_FromString(destHashHex),
+                      let pnCost = PyLong_FromLongLong(Int64(stampCost)) else {
+                    throw BridgeError.marshallingFailure("PyUnicode/PyLong")
+                }
+                PyTuple_SetItem(args, 0, pnDest)
+                PyTuple_SetItem(args, 1, pnCost)
                 guard let result = PyObject_CallObject(fn, args) else {
                     throw BridgeError.pythonException(currentPythonException())
                 }
@@ -403,12 +411,18 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(4)!
+                guard let args = PyTuple_New(4) else { throw BridgeError.marshallingFailure("PyTuple_New") }
                 defer { Py_DecRef(args) }
-                PyTuple_SetItem(args, 0, PyUnicode_FromString(destHashHex)!)
-                PyTuple_SetItem(args, 1, PyUnicode_FromString(content)!)
-                PyTuple_SetItem(args, 2, PyUnicode_FromString(fieldsHex)!)
-                PyTuple_SetItem(args, 3, PyUnicode_FromString(method)!)
+                guard let soDest = PyUnicode_FromString(destHashHex),
+                      let soContent = PyUnicode_FromString(content),
+                      let soFields = PyUnicode_FromString(fieldsHex),
+                      let soMethod = PyUnicode_FromString(method) else {
+                    throw BridgeError.marshallingFailure("PyUnicode_FromString")
+                }
+                PyTuple_SetItem(args, 0, soDest)
+                PyTuple_SetItem(args, 1, soContent)
+                PyTuple_SetItem(args, 2, soFields)
+                PyTuple_SetItem(args, 3, soMethod)
                 guard let result = PyObject_CallObject(fn, args) else {
                     throw BridgeError.pythonException(currentPythonException())
                 }
@@ -448,9 +462,12 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(1)!
+                guard let args = PyTuple_New(1) else { throw BridgeError.marshallingFailure("PyTuple_New") }
                 defer { Py_DecRef(args) }
-                PyTuple_SetItem(args, 0, PyUnicode_FromString(name)!) // steals ref
+                guard let aiName = PyUnicode_FromString(name) else {
+                    throw BridgeError.marshallingFailure("PyUnicode_FromString")
+                }
+                PyTuple_SetItem(args, 0, aiName) // steals ref
                 guard let result = PyObject_CallObject(fn, args) else {
                     throw BridgeError.pythonException(currentPythonException())
                 }
@@ -775,10 +792,14 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(2)!
+                guard let args = PyTuple_New(2) else { throw BridgeError.marshallingFailure("PyTuple_New") }
                 defer { Py_DecRef(args) }
-                PyTuple_SetItem(args, 0, PyUnicode_FromString(destHashHex)!)
-                PyTuple_SetItem(args, 1, PyUnicode_FromString(aspect)!)
+                guard let olDest = PyUnicode_FromString(destHashHex),
+                      let olAspect = PyUnicode_FromString(aspect) else {
+                    throw BridgeError.marshallingFailure("PyUnicode_FromString")
+                }
+                PyTuple_SetItem(args, 0, olDest)
+                PyTuple_SetItem(args, 1, olAspect)
                 guard let result = PyObject_CallObject(fn, args) else {
                     throw BridgeError.pythonException(currentPythonException())
                 }
@@ -800,10 +821,11 @@ public final class PythonBridge: @unchecked Sendable {
                 guard let module = self.module else { return false }
                 guard let fn = PyObject_GetAttrString(module, "link_send") else { return false }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(2)!
+                guard let args = PyTuple_New(2) else { return false }
                 defer { Py_DecRef(args) }
+                guard let lsHex = PyUnicode_FromString(hex) else { return false }
                 PyTuple_SetItem(args, 0, PyLong_FromLongLong(Int64(linkId)))
-                PyTuple_SetItem(args, 1, PyUnicode_FromString(hex)!)
+                PyTuple_SetItem(args, 1, lsHex)
                 guard let result = PyObject_CallObject(fn, args) else { return false }
                 defer { Py_DecRef(result) }
                 return pyBoolFromDict(result, key: "ok") ?? false
@@ -819,7 +841,7 @@ public final class PythonBridge: @unchecked Sendable {
                 guard let module = self.module else { return false }
                 guard let fn = PyObject_GetAttrString(module, "link_identify") else { return false }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(1)!
+                guard let args = PyTuple_New(1) else { return false }
                 defer { Py_DecRef(args) }
                 PyTuple_SetItem(args, 0, PyLong_FromLongLong(Int64(linkId)))
                 guard let result = PyObject_CallObject(fn, args) else { return false }
@@ -837,7 +859,7 @@ public final class PythonBridge: @unchecked Sendable {
                 guard let module = self.module else { return false }
                 guard let fn = PyObject_GetAttrString(module, "link_teardown") else { return false }
                 defer { Py_DecRef(fn) }
-                let args = PyTuple_New(1)!
+                guard let args = PyTuple_New(1) else { return false }
                 defer { Py_DecRef(args) }
                 PyTuple_SetItem(args, 0, PyLong_FromLongLong(Int64(linkId)))
                 guard let result = PyObject_CallObject(fn, args) else { return false }
