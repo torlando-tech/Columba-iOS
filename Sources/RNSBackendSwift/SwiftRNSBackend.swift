@@ -166,7 +166,12 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
     public func stop() async {
         announcePoller?.cancel()
         announcePoller = nil
-        eventContinuation.finish()
+        // Do NOT finish the continuation here: the stream is created once in
+        // init and must survive stop/start cycles (backend restart, identity
+        // switch). Finishing it permanently terminates the AsyncStream, so a
+        // later start() on the same instance would silently drop every event.
+        // PythonRNSBackend keeps its continuation open across stop() for the
+        // same reason.
         router = nil
         transport = nil
         pathTable = nil

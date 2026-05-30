@@ -542,13 +542,21 @@ def _propagation_state_name(val: Any) -> str:
 
 _links: dict[int, Any] = {}        # link_id -> RNS.Link
 _next_link_id_counter = 0
+# Dedicated lock for the counter, NOT the shared `_lock`: _alloc_link_id is
+# called from both the bridge thread (outbound links) and RNS callback threads
+# (inbound link-established), and some callers already hold `_lock`, so reusing
+# it here would deadlock (threading.Lock is non-reentrant).
+_link_id_lock = threading.Lock()
 _telephony_destination: Any = None  # RNS.Destination for lxst.telephony aspect
 
 
 def _alloc_link_id() -> int:
     global _next_link_id_counter
-    _next_link_id_counter += 1
-    return _next_link_id_counter
+    # `+= 1` is a read-modify-write — without a lock two threads can read the
+    # same value and hand out duplicate ids that overwrite live _links entries.
+    with _link_id_lock:
+        _next_link_id_counter += 1
+        return _next_link_id_counter
 
 
 def _wire_link_callbacks(link: Any, link_id: int) -> None:
