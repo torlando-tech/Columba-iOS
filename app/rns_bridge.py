@@ -1261,13 +1261,6 @@ def fetch_nomadnet_page(
         response_ready.set()
 
     link = RNS.Link(peer_dest, established_callback=_on_link_established, closed_callback=_on_link_closed)
-    # We need to identify on the link so the remote knows who we are; nomadnet's
-    # node app expects it for stateful pages.
-    try:
-        if _state["identity"] is not None:
-            link.identify(_state["identity"])
-    except Exception:
-        pass
 
     if not link_ready.wait(timeout=min(20.0, timeout)):
         try:
@@ -1275,6 +1268,16 @@ def fetch_nomadnet_page(
         except Exception:
             pass
         return {"ok": False, "status": "link-failed", "data": b"", "content_type": ""}
+
+    # Identify on the link AFTER it reaches ACTIVE (link_ready) — link.identify
+    # sends an encrypted identity-proof packet that a PENDING link cannot send,
+    # so identifying before the wait silently no-ops. The remote needs this;
+    # nomadnet's node app expects it for stateful pages.
+    try:
+        if _state["identity"] is not None:
+            link.identify(_state["identity"])
+    except Exception:
+        pass
 
     # Pack form fields as msgpack when present (Reticulum/LXMF convention).
     request_data: Any = None
@@ -1346,7 +1349,17 @@ def fetch_nomadnet_page(
 def reset_identity(identity_path: str) -> None:
     """Delete identity bytes on disk and tear down state. Caller must call
     start() again after this. Safe to call when not started."""
+    global _telephony_destination
     with _lock:
+        # Tear down the router first (stops its LXMRouter background threads),
+        # then Reticulum — same order as stop(). Without the router teardown a
+        # follow-on start() spins up a second LXMRouter pointing at the same
+        # lxmf-storage SQLite, and the two threads race over the database.
+        try:
+            if _state["router"] is not None:
+                _state["router"].exit_handler()
+        except Exception:
+            pass
         try:
             if _state["reticulum"] is not None:
                 _state["reticulum"].exit_handler()
@@ -1363,6 +1376,15 @@ def reset_identity(identity_path: str) -> None:
             RNS.Reticulum._Reticulum__interface_detach_ran = False
         except Exception:
             pass
+        # Tear down open RNS.Links and forget the telephony destination so a
+        # subsequent start() doesn't trip on stale callbacks (mirrors stop()).
+        for _lid, _link in list(_links.items()):
+            try:
+                _link.teardown()
+            except Exception:
+                pass
+        _links.clear()
+        _telephony_destination = None
         _state.update({
             "started": False,
             "reticulum": None,
