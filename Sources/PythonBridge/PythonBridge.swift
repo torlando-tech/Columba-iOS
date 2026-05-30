@@ -83,6 +83,16 @@ public final class PythonBridge: @unchecked Sendable {
     }
 
     private let queue = DispatchQueue(label: "network.columba.python", qos: .userInitiated)
+    /// Dedicated queue for long-blocking poll-style Python calls (e.g.
+    /// `propagationSync`, which blocks up to its timeout). Running these on the
+    /// main `queue` would starve every other bridge call for the whole timeout,
+    /// since `queue` is serial. The blocking Python poll releases the GIL
+    /// between iterations (`time.sleep`), so short calls on `queue` acquire the
+    /// GIL and run promptly while a sync is in flight. Two queues into CPython
+    /// is safe: `withGIL` (PyGILState_Ensure/Release) serializes all Python
+    /// access regardless of thread — the same pattern the BLE callback path
+    /// already relies on.
+    private let blockingQueue = DispatchQueue(label: "network.columba.python.blocking", qos: .userInitiated)
     private var module: UnsafeMutablePointer<PyObject>?
 
     public init() {}
@@ -331,8 +341,12 @@ public final class PythonBridge: @unchecked Sendable {
     }
 
     /// Block until LXMF propagation-node sync completes or times out.
+    ///
+    /// Runs on `blockingQueue`, not the main serial `queue`: the underlying
+    /// Python poll blocks up to `timeout`, and on the shared queue that would
+    /// stall every other bridge call (announce, send, …) for the duration.
     public func propagationSync(timeout: TimeInterval = 60.0) async throws -> PropagationSyncResult {
-        try await runOnQueue { [self] in
+        try await runOnQueue(on: blockingQueue) { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 guard let module = self.module else {
                     return PropagationSyncResult(ok: false, state: .notStarted, receivedMessages: 0, reason: "not-started")
@@ -643,9 +657,12 @@ public final class PythonBridge: @unchecked Sendable {
 
     // MARK: - Private
 
-    private func runOnQueue<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+    private func runOnQueue<T: Sendable>(
+        on targetQueue: DispatchQueue? = nil,
+        _ body: @escaping @Sendable () throws -> T
+    ) async throws -> T {
         try await withCheckedThrowingContinuation { cont in
-            queue.async {
+            (targetQueue ?? queue).async {
                 do { cont.resume(returning: try body()) }
                 catch { cont.resume(throwing: error) }
             }
