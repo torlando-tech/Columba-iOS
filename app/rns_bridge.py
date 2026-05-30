@@ -477,12 +477,6 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
         try:
             state_val = getattr(router, "propagation_transfer_state", None)
             last_seen_state = state_val
-            terminal = {
-                getattr(LXMF.LXMRouter, "PR_COMPLETE", 5),
-                getattr(LXMF.LXMRouter, "PR_NO_PATH", 6),
-                getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", 7),
-                getattr(LXMF.LXMRouter, "PR_LINK_ESTABLISHED", 99),  # placeholder if absent
-            }
             # Only PR_COMPLETE / PR_NO_PATH / PR_TRANSFER_FAILED are
             # truly terminal — link-established is intermediate.
             real_terminal = {

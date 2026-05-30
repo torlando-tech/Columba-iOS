@@ -62,10 +62,14 @@ else
     LXMF_SPEC="git+https://github.com/torlando-tech/LXMF.git@${LXMF_BRANCH}"
 fi
 PYSERIAL_SPEC="pyserial>=3.5"
-# ble-reticulum is not on PyPI; install from the local checkout if present,
-# otherwise from Torlando's GitHub. Pure-Python, zero runtime deps.
-BLE_RETICULUM_LOCAL="$HOME/repos/ble-reticulum"
-if [ -d "$BLE_RETICULUM_LOCAL" ]; then
+# ble-reticulum is not on PyPI; install from GitHub unless an explicit local
+# checkout is requested via env-var (mirrors LXMF_LOCAL / RETICULUM_LOCAL). A
+# local checkout is NEVER picked up implicitly — that made builds depend on
+# whatever branch happened to be checked out on the dev's machine.
+#   BLE_RETICULUM_LOCAL=~/repos/ble-reticulum support/fetch-wheels.sh
+# Pure-Python, zero runtime deps.
+if [ -n "${BLE_RETICULUM_LOCAL:-}" ]; then
+    echo "==> BLE_RETICULUM_LOCAL set — using local ble-reticulum checkout: $BLE_RETICULUM_LOCAL"
     BLE_RETICULUM_SPEC="$BLE_RETICULUM_LOCAL"
 else
     BLE_RETICULUM_SPEC="git+https://github.com/torlando-tech/ble-reticulum.git"
@@ -101,8 +105,9 @@ install_pure_python() {
         "$@"
 }
 
-# cffi is needed because cryptography 47.0.0.dev1 still uses cffi for some bindings.
-# pin to cffi 2.0.0 (matching cp313 wheel availability on BeeWare).
+# cffi is needed because cryptography $CRYPTO_VERSION still depends on cffi for
+# parts of its OpenSSL bindings. Pin cffi 2.0.0 (matching cp313 wheel
+# availability on BeeWare).
 BINARY_WHEELS=(
     "cryptography==$CRYPTO_VERSION"
     "cffi==2.0.0"
