@@ -1,4 +1,6 @@
+#if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
+import RNSAPI
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -234,4 +236,5 @@ private struct UIMonospaceLine: UIViewRepresentable {
     }
 }
 
+#endif
 #endif

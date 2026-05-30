@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  OnboardingView.swift
 //  ColumbaApp
@@ -7,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 @available(iOS 17.0, macOS 14.0, *)
 struct OnboardingView: View {
@@ -144,3 +146,4 @@ struct OnboardingView: View {
         }
     }
 }
+#endif

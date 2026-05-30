@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-import LXMFSwift
+import RNSAPI
 
 /// Main tab-based navigation container.
 ///
@@ -37,6 +37,10 @@ struct MainTabView: View {
     /// trigger the wizard. Set once by `onAppear` so the persisted flag can be
     /// cleared atomically and subsequent re-appearances don't re-route the user.
     @State private var shouldOpenRNodeWizard: Bool = false
+    /// App-root voice-call covers, driven off callManager.callState so a call's
+    /// UI shows from any tab and survives navigating away from the chat.
+    @State private var showActiveCall = false
+    @State private var showIncomingCall = false
 
     // MARK: - Body
 
@@ -117,5 +121,43 @@ struct MainTabView: View {
             }
         }
         #endif
+        // Reading callState/isIncoming in these onChange `of:` values registers
+        // them as @Observable dependencies, so body re-evaluates and the covers
+        // react when a call rings / connects / ends.
+        .onChange(of: appServices.callManager?.callState) { _, _ in refreshCallPresentation() }
+        .onChange(of: appServices.callManager?.isIncoming) { _, _ in refreshCallPresentation() }
+        #if os(iOS)
+        // Incoming call (pre-answer): in-app answer/decline, alongside CallKit.
+        .fullScreenCover(isPresented: $showIncomingCall) {
+            if let cm = appServices.callManager {
+                IncomingCallScreen(callManager: cm, onAnswer: {})
+            }
+        }
+        // Active / outgoing call: the in-app call UI for the call's duration.
+        .fullScreenCover(isPresented: $showActiveCall) {
+            if let cm = appServices.callManager {
+                VoiceCallScreen(
+                    callManager: cm,
+                    peerName: cm.peerName ?? "Unknown",
+                    destinationHash: cm.peerHash.flatMap { try? $0.hexToData() } ?? Data()
+                )
+            }
+        }
+        #endif
+    }
+
+    /// Recompute which voice-call cover should show from callManager state:
+    /// IncomingCallScreen while an incoming call rings (pre-answer),
+    /// VoiceCallScreen for everything else non-idle (outgoing + answered +
+    /// the brief "ended" state).
+    private func refreshCallPresentation() {
+        guard let cm = appServices.callManager else {
+            showActiveCall = false
+            showIncomingCall = false
+            return
+        }
+        let incomingRinging = (cm.callState == .ringing && cm.isIncoming)
+        showIncomingCall = incomingRinging
+        showActiveCall = (cm.callState != .idle && !incomingRinging)
     }
 }

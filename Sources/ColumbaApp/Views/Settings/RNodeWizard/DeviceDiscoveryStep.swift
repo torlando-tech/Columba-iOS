@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  DeviceDiscoveryStep.swift
 //  ColumbaApp
@@ -8,8 +9,8 @@
 
 #if canImport(CoreBluetooth)
 import SwiftUI
+import RNSAPI
 import CoreBluetooth
-import ReticulumSwift
 
 /// Step 1: Scan for and select an RNode BLE device.
 @available(iOS 17.0, macOS 14.0, *)
@@ -107,12 +108,15 @@ struct DeviceDiscoveryStep: View {
 
             // Pairing error
             if let error = pairingError {
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(Theme.error)
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(Theme.error)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity)
@@ -337,10 +341,15 @@ struct DeviceDiscoveryStep: View {
             ))
             lastUpdateTime[peripheralId] = now
         }
-        // Don't re-sort while a probe is in progress — avoids devices swapping
-        // positions mid-pairing when two devices have similar RSSI.
-        if pairingDeviceName == nil {
-            discoveredDevices.sort { $0.rssi > $1.rssi }
+        // Stable ordering by name (tie-break on peripheral id), NOT by RSSI.
+        // Sorting by RSSI made rows jump every signal update — with two RNodes
+        // nearby at similar strength they alternated positions, so you couldn't
+        // reliably tap one. Name order is deterministic and never reorders as
+        // signal fluctuates; the per-row RSSI bars still update live.
+        discoveredDevices.sort {
+            $0.name == $1.name
+                ? $0.peripheralId.uuidString < $1.peripheralId.uuidString
+                : $0.name < $1.name
         }
     }
 
@@ -468,4 +477,5 @@ struct DeviceDiscoveryStep: View {
     }
 }
 
+#endif
 #endif

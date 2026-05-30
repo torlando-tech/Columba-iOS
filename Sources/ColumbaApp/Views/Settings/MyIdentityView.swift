@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import CoreImage.CIFilterBuiltins
 
 #if canImport(UIKit)

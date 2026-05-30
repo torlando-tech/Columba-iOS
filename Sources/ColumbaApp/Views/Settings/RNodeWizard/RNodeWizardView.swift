@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  RNodeWizardView.swift
 //  ColumbaApp
@@ -7,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// 5-step RNode configuration wizard.
 ///
@@ -158,3 +160,4 @@ struct RNodeWizardView: View {
         viewModel.saveInterface()
     }
 }
+#endif

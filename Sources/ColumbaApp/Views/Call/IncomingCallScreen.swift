@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Full-screen incoming call interface with answer and decline options.
 @available(iOS 17.0, macOS 14.0, *)

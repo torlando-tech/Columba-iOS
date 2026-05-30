@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -167,6 +168,12 @@ struct MessageInputBar: View {
                     }
                     .buttonStyle(ScaleButtonStyle())
                     .disabled(!canSend)
+                    // Stable identifiers so the Maestro interop harness
+                    // (tests/interop/flows/) can target this button without
+                    // resorting to brittle point-percent taps. Label
+                    // doubles as VoiceOver narration ("Send message").
+                    .accessibilityIdentifier("send_message_button")
+                    .accessibilityLabel("Send message")
                 }
             }
             .padding(.horizontal, 12)

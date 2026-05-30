@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import LXSTSwift
 
 /// Audio quality profile picker presented before starting a call.

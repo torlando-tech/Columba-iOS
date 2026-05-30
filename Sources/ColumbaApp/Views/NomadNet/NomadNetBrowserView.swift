@@ -1,17 +1,17 @@
+#if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
-import ReticulumSwift
+import RNSAPI
 
 /// Main browser view for browsing NomadNet node pages.
 @available(iOS 17.0, macOS 14.0, *)
 struct NomadNetBrowserView: View {
     @State private var viewModel: NomadNetBrowserViewModel
 
-    init(nodeHash: Data, nodeName: String?, transport: ReticulumTransport, pathTable: PathTable, identity: Identity) {
+    init(nodeHash: Data, nodeName: String?, backend: any RnsBackend, identity: Identity) {
         _viewModel = State(initialValue: NomadNetBrowserViewModel(
             nodeHash: nodeHash,
             nodeName: nodeName,
-            transport: transport,
-            pathTable: pathTable,
+            backend: backend,
             identity: identity
         ))
     }
@@ -169,3 +169,4 @@ struct NomadNetBrowserView: View {
         }
     }
 }
+#endif

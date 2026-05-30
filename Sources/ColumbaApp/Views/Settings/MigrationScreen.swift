@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  MigrationScreen.swift
 //  ColumbaApp
@@ -7,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import UniformTypeIdentifiers
 
 @available(iOS 17.0, macOS 14.0, *)
@@ -626,3 +628,4 @@ struct ColumbaBackupDocument: FileDocument {
         FileWrapper(regularFileWithContents: data)
     }
 }
+#endif

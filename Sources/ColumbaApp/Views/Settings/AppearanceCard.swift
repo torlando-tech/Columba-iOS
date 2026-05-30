@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Appearance settings card with color scheme, presets, and custom themes.
 @available(iOS 17.0, macOS 14.0, *)

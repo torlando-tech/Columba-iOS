@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI  // InterfaceMode lives in RNSAPI on this branch.
 
 // MARK: - Wizard Container
 

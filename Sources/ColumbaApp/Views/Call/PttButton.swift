@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Large circular push-to-talk button with press/release detection.
 @available(iOS 17.0, macOS 14.0, *)

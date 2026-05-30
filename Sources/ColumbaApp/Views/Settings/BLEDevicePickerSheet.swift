@@ -1,35 +1,23 @@
+#if COLUMBA_BLE_ENABLED
 //
 //  BLEDevicePickerSheet.swift
 //  ColumbaApp
 //
 //  BLE device scanner and picker for RNode configuration.
 //  Displays discovered RNode peripherals with RSSI signal strength.
+//  (DiscoveredDevice now lives in Models/DiscoveredDevice.swift so the
+//  RNode wizard's DeviceDiscoveryStep can share it without dragging this
+//  whole COLUMBA_BLE_ENABLED-gated picker in.)
 //
 
 #if canImport(CoreBluetooth)
 import SwiftUI
+import RNSAPI
 import CoreBluetooth
-import ReticulumSwift
 
 // MARK: - Discovered Device
 
-/// A discovered BLE peripheral with metadata.
-struct DiscoveredDevice: Identifiable {
-    /// Unique identifier for SwiftUI list deduplication.
-    let id = UUID()
-
-    /// Peripheral identifier (used for deduplication).
-    let peripheralId: UUID
-
-    /// Peripheral name.
-    let name: String
-
-    /// Received signal strength indicator (dBm).
-    var rssi: Int
-
-    /// Last discovery timestamp.
-    var lastSeen: Date
-}
+// `DiscoveredDevice` moved to Models/DiscoveredDevice.swift (shared, ungated).
 
 // MARK: - BLE Device Picker Sheet
 
@@ -351,4 +339,5 @@ struct BLEDevicePickerSheet: View {
     }
 }
 
+#endif
 #endif

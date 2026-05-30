@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Main screen for managing network interfaces.
 ///
@@ -83,21 +84,27 @@ struct InterfaceManagementScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if viewModel.hasPendingChanges {
+                if viewModel.hasPendingChanges || viewModel.isApplyingChanges {
                     Button {
                         Task {
                             await viewModel.applyChanges()
                         }
                     } label: {
                         if viewModel.isApplyingChanges {
-                            ProgressView()
-                                .tint(.white)
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .tint(Theme.accentColor)
+                                Text("Applying…")
+                                    .foregroundStyle(Theme.accentColor)
+                            }
                         } else {
                             Text("Apply")
                                 .fontWeight(.semibold)
+                                .foregroundStyle(Theme.accentColor)
                         }
                     }
                     .disabled(viewModel.isApplyingChanges)
+                    .accessibilityHint("Applies pending interface changes to the running network")
                 }
             }
         }
@@ -425,10 +432,11 @@ struct InterfaceTypeSelector: View {
                         highlighted: true
                     )
 
-                    typeOption(
-                        type: .multipeer,
-                        highlighted: true
-                    )
+                    // .multipeer is intentionally NOT offered: its Swift bridge
+                    // isn't wired yet (PythonConfigWriter emits a disabled
+                    // placeholder), so creating one is a silent dead-end. Re-add
+                    // this option when the MultipeerConnectivity transport lands
+                    // (separate effort — see rnode_interface_port_plan.md).
                 }
                 .padding(16)
             }

@@ -8,6 +8,7 @@
 
 #if os(iOS)
 import SwiftUI
+import RNSAPI
 import AVFoundation
 
 /// Callback with parsed destination hash and public key from scanned QR code.

@@ -7,11 +7,10 @@
 //
 
 import SwiftUI
+import RNSAPI
 import PhotosUI
 import UniformTypeIdentifiers
-import LXMFSwift
 #if os(iOS)
-import LXSTSwift
 #endif
 import os.log
 #if canImport(UIKit)
@@ -51,7 +50,6 @@ struct MessagingView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var attachedImage: UIImage?
     @State private var attachedFiles: [FileAttachment] = []
-    @State private var showCodecPicker = false
     @State private var showQualityPicker = false
     @State private var pendingRawImage: UIImage?
     @State private var selectedImagePreset: SettingsViewModel.ImageQualityPreset = .high
@@ -61,10 +59,10 @@ struct MessagingView: View {
     /// `onChange(of: messages.last?.id)` and only scroll when already
     /// near the bottom.
     @State private var didInitialScroll = false
-    @State private var showCallScreen = false
     @State private var detailMessage: Message?
     @State private var deleteConfirmMessage: Message?
     @State private var showLocationConfirm = false
+    @State private var showCodecSheet = false
     @State private var emojiPickerTargetMessage: Message?
     @State private var reactionModeMessage: Message?
     @State private var isSavedContact: Bool = false
@@ -345,27 +343,28 @@ struct MessagingView: View {
             .presentationDetents([.height(340)])
             .presentationDragIndicator(.visible)
         }
-        #if os(iOS)
-        .sheet(isPresented: $showCodecPicker) {
+        // Codec picker → place the voice call. The active/outgoing call UI
+        // (VoiceCallScreen) is presented app-root in MainTabView off
+        // callManager.callState, so it survives navigating away from the chat.
+        .sheet(isPresented: $showCodecSheet) {
             CodecSelectionSheet { profile in
-                showCallScreen = true
-                appServices.callManager?.initiateCall(
-                    destinationHash: conversation.destinationHash,
-                    profile: profile,
-                    peerDisplayName: conversation.displayName
-                )
+                showCodecSheet = false
+                #if os(iOS)
+                let dest = conversation.destinationHash
+                let name = conversation.peerName
+                Task { @MainActor in
+                    guard let cm = appServices.callManager else { return }
+                    guard let telHash = await appServices.telephonyHash(forPeerLxmfHash: dest) else {
+                        DiagLog.log("[CALL] no telephony path for \(dest.prefix(4).map { String(format: "%02x", $0) }.joined()) — peer not heard yet")
+                        return
+                    }
+                    cm.initiateCall(destinationHash: telHash, profile: profile, peerDisplayName: name)
+                }
+                #endif
             }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
         }
-        .fullScreenCover(isPresented: $showCallScreen) {
-            if let cm = appServices.callManager {
-                VoiceCallScreen(
-                    callManager: cm,
-                    peerName: conversation.peerName,
-                    destinationHash: conversation.destinationHash
-                )
-            }
-        }
-        #endif
         .sheet(item: $detailMessage) { message in
             MessageDetailView(
                 message: message,
@@ -480,14 +479,16 @@ struct MessagingView: View {
     private var trailingToolbar: some View {
         HStack(spacing: 16) {
             #if os(iOS)
-            // Voice call button
-            if appServices.callManager != nil {
-                Button(action: { showCodecPicker = true }) {
-                    Image(systemName: "phone.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Theme.textPrimary)
-                }
+            // Voice call — opens the codec picker, then places an LXST voice
+            // call to the peer's telephony destination (resolved from their
+            // identity). Restored after the Phase 0 migration removed it.
+            Button(action: { showCodecSheet = true }) {
+                Image(systemName: "phone.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.textPrimary)
             }
+            .accessibilityIdentifier("voice_call_button")
+            .accessibilityLabel("Voice call")
 
             // Location sharing toggle
             Button(action: {
@@ -502,6 +503,11 @@ struct MessagingView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(isSharingLocation ? .green : Theme.textPrimary)
             }
+            // Stable handle for the Tests/interop/ harness so Maestro can
+            // toggle sharing without point-percent taps. The accessibility
+            // label flips so VoiceOver narrates the current intent of a tap.
+            .accessibilityIdentifier("location_share_toggle")
+            .accessibilityLabel(isSharingLocation ? "Stop sharing location" : "Share my location")
             #endif
 
             // More options menu

@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import RNSAPI
 
 /// MDI icon name-to-codepoint registry.
 ///

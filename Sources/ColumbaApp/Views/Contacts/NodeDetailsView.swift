@@ -7,8 +7,7 @@
 //
 
 import SwiftUI
-import LXMFSwift
-import ReticulumSwift
+import RNSAPI
 
 /// Node details screen showing identity info and a primary action.
 ///

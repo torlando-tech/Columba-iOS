@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  ReviewConfigStep.swift
 //  ColumbaApp
@@ -7,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Step 5: Review configuration and save the RNode interface.
 @available(iOS 17.0, macOS 14.0, *)
@@ -227,3 +229,4 @@ struct ReviewConfigStep: View {
         }
     }
 }
+#endif

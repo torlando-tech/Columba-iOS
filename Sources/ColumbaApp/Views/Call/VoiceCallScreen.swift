@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Full-screen voice call interface for active and outgoing calls.
 @available(iOS 17.0, macOS 14.0, *)

@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-import ReticulumSwift
+import RNSAPI
 
 // MARK: - Network Status View
 
@@ -368,8 +368,10 @@ struct NetworkStatusView: View {
             return "arrow.clockwise.circle"
         case .reconnecting:
             return "exclamationmark.triangle.fill"
-        case .disconnected:
+        case .disconnected, .notConnected:
             return "xmark.circle"
+        case .connectionFailed, .sendFailed, .invalidConfig:
+            return "exclamationmark.octagon.fill"
         }
     }
 
@@ -381,7 +383,9 @@ struct NetworkStatusView: View {
             return Theme.warning
         case .reconnecting:
             return Theme.warning
-        case .disconnected:
+        case .disconnected, .notConnected:
+            return Theme.error
+        case .connectionFailed, .sendFailed, .invalidConfig:
             return Theme.error
         }
     }
@@ -392,6 +396,10 @@ struct NetworkStatusView: View {
         case .connecting: return "Connecting"
         case .reconnecting(let attempt): return "Retry #\(attempt)"
         case .disconnected: return "Offline"
+        case .notConnected: return "Not connected"
+        case .connectionFailed(let why): return "Failed: \(why)"
+        case .sendFailed(let why): return "Send failed: \(why)"
+        case .invalidConfig(let why): return "Invalid: \(why)"
         }
     }
 }

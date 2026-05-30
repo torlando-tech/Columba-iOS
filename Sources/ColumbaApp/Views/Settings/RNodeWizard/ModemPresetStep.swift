@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  ModemPresetStep.swift
 //  ColumbaApp
@@ -7,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Step 3: Select a modem preset for speed/range tradeoff.
 @available(iOS 17.0, macOS 14.0, *)
@@ -128,3 +130,4 @@ struct ModemPresetStep: View {
         .frame(width: 28, height: 24, alignment: .bottom)
     }
 }
+#endif

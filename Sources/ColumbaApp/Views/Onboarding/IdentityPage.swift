@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  IdentityPage.swift
 //  ColumbaApp
@@ -6,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 @available(iOS 17.0, macOS 14.0, *)
 struct IdentityPage: View {
@@ -92,3 +94,4 @@ struct IdentityPage: View {
         .onTapGesture { isNameFocused = false }
     }
 }
+#endif

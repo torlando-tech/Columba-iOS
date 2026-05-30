@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Displays a profile icon (MDI) with foreground/background colors,
 /// falling back to Identicon when no icon is set.

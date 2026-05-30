@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  ConnectivityPage.swift
 //  ColumbaApp
@@ -6,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import CoreBluetooth
 import Network
 
@@ -358,3 +360,4 @@ private class LocalNetworkPermissionProbe {
         browser?.start(queue: .main)
     }
 }
+#endif
