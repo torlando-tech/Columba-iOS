@@ -209,7 +209,16 @@ public actor PythonNetworkTransport: NetworkTransport {
 
     private func deliverClosed(_ reason: TeardownReason) async {
         activeLink = nil
-        let mapped: TransportCloseReason = (reason == .destinationClosed) ? .remoteClosed : .linkFailed
+        // A clean remote hangup arrives as initiator_closed on inbound calls
+        // (the caller initiated the RNS link) and destination_closed on
+        // outbound calls (the callee is the destination); both should surface
+        // as a normal "Call ended". Only genuine failures (timeout / network)
+        // map to .linkFailed, which drives LXST's error state instead.
+        let mapped: TransportCloseReason
+        switch reason {
+        case .destinationClosed, .initiatorClosed: mapped = .remoteClosed
+        default:                                    mapped = .linkFailed
+        }
         await closedHandler?(mapped)
     }
 

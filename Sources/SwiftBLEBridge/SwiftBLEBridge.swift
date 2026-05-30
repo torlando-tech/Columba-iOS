@@ -772,8 +772,10 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
         }
         let address = peripheral.identifier.uuidString
         let value = RSSI.intValue
-        // CB sometimes returns 127 / 0 as sentinels; ignore those samples.
-        guard value != 127, value != 0 else { return }
+        // CB sometimes returns 127 / -127 / 0 as sentinels; ignore those
+        // samples (matches the scan-path filter in didDiscover) so a sentinel
+        // doesn't overwrite a good RSSI that getConnectionDetails() surfaces.
+        guard value != 127, value != -127, value != 0 else { return }
         gattClients[address]?.rssi = value
     }
 }
