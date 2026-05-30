@@ -647,9 +647,13 @@ def open_link(dest_hash_hex: str, aspect: str = "lxst.telephony") -> dict[str, A
         return {"ok": False, "link_id": 0, "reason": f"link-init-failed: {e}"}
 
     link_id = _alloc_link_id()
-    _wire_link_callbacks(link, link_id)
+    # Register the link in _links BEFORE wiring callbacks: _on_closed pops
+    # _links[link_id], so if the link closes fast (route rejection / quick
+    # timeout) before the entry exists, the pop misses and we'd later insert a
+    # permanently-zombie entry. Same ordering the inbound path uses.
     with _lock:
         _links[link_id] = link
+    _wire_link_callbacks(link, link_id)
     _put("link_state", link_id=link_id, state="establishing")
     return {"ok": True, "link_id": link_id, "reason": "ok"}
 
