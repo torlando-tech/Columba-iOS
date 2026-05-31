@@ -140,15 +140,15 @@ class Simulator:
 
     @property
     def identity_hex(self) -> str:
-        """Local RNS identity hash hex (the `[PY] started identity=…` line)."""
+        """Local RNS identity hash hex (the `[RNS] started identity=…` line)."""
         if self._cached_identity_hex is not None:
             return self._cached_identity_hex
         for line in self._tail_diag(LOG_TAIL_LINES * 4):
-            m = re.search(r"\[PY\] started identity=([0-9a-f]+)\s+destination=", line)
+            m = re.search(r"\[RNS\] started identity=([0-9a-f]+)\s+destination=", line)
             if m:
                 self._cached_identity_hex = m.group(1)
                 return self._cached_identity_hex
-        pytest.fail("Couldn't find `[PY] started identity=…` in diag.log")
+        pytest.fail("Couldn't find `[RNS] started identity=…` in diag.log")
 
     @property
     def lxmf_delivery_hex(self) -> str:
@@ -156,7 +156,7 @@ class Simulator:
         if self._cached_lxmf_delivery_hex is not None:
             return self._cached_lxmf_delivery_hex
         for line in self._tail_diag(LOG_TAIL_LINES * 4):
-            m = re.search(r"\[PY\] started identity=[0-9a-f]+\s+destination=([0-9a-f]+)", line)
+            m = re.search(r"\[RNS\] started identity=[0-9a-f]+\s+destination=([0-9a-f]+)", line)
             if m:
                 self._cached_lxmf_delivery_hex = m.group(1)
                 return self._cached_lxmf_delivery_hex
@@ -182,7 +182,7 @@ class Simulator:
             return self._cached_propagation_node_hex
         for line in reversed(self._tail_diag(LOG_TAIL_LINES * 4)):
             m = re.search(
-                r"\[PY\] announce dest=([0-9a-f]+)\s+aspect=lxmf\.propagation\s+name=\"([^\"]*)\"",
+                r"\[RNS\] announce dest=([0-9a-f]+)\s+aspect=lxmf\.propagation\s+name=\"([^\"]*)\"",
                 line,
             )
             if m and m.group(2):  # non-empty name
@@ -324,7 +324,7 @@ class Simulator:
 
         Pins the *render* half of the inbound path: a bubble with an empty
         content, no image, and no file would still be persisted (and would
-        let the diag.log `[PY] inbound` proxy assertion pass), but this
+        let the diag.log `[RNS] inbound` proxy assertion pass), but this
         catches a regression in `MessageBubble.init(from record:)` /
         `LxmfFieldCodec.unpack(...)` / the SwiftUI rendering of attachment
         payloads.
@@ -412,7 +412,7 @@ class Simulator:
             # would empty it and also fire AppServices.initialize →
             # DiagLog.clear, wiping the [LOC-RECV] line. `stopApp: false`
             # just activates the already-running process — verified to leave
-            # the [PY] started count and diag.log untouched. The app can end
+            # the [RNS] started count and diag.log untouched. The app can end
             # up backgrounded after the bootstrap fixture's `simctl openurl`
             # announces, so don't assume it's already frontmost.
             "- launchApp: { stopApp: false }",
@@ -676,7 +676,7 @@ def clean_location_state(sim):
     )
     # AppServices.initialize() runs on every launch: it clears diag.log
     # (DiagLog.clear) very early, then the Python backend logs
-    # `[PY] started identity=…` ~6–8 s in on a warm sim and longer on a cold
+    # `[RNS] started identity=…` ~6–8 s in on a warm sim and longer on a cold
     # sim / slow CI runner. Poll for that readiness line instead of a flat
     # 8 s sleep — a fixed sleep that under-shoots hands control to the test
     # before the `lxma://` deep-link handler is registered, so the
@@ -684,7 +684,7 @@ def clean_location_state(sim):
     # `wait_for_tapped_message` with no hint the app simply wasn't ready.
     # Gate on the clear first (current size drops below the pre-launch log,
     # with a short fallback since the clear is a truncate at init start) so we
-    # don't match the *previous* session's `[PY] started` line still on disk.
+    # don't match the *previous* session's `[RNS] started` line still on disk.
     pre_size = sim.diag_log.stat().st_size if sim.diag_log.exists() else 0
     cleared = pre_size == 0
     clear_fallback = time.time() + 3.0
@@ -694,13 +694,13 @@ def clean_location_state(sim):
         if not cleared and (size < pre_size or time.time() > clear_fallback):
             cleared = True
         if cleared and any(
-            "[PY] started identity=" in line for line in sim._tail_diag(LOG_TAIL_LINES)
+            "[RNS] started identity=" in line for line in sim._tail_diag(LOG_TAIL_LINES)
         ):
             break
         time.sleep(0.5)
     else:
         pytest.fail(
-            "Columba did not log `[PY] started identity=…` within 45 s of "
+            "Columba did not log `[RNS] started identity=…` within 45 s of "
             "relaunch — AppServices.initialize is stuck or slower than expected, "
             "so the location-toggle deep link would no-op against an unready app."
         )
