@@ -60,11 +60,20 @@ def _sh(cmd: list[str], *, check: bool = True, timeout: float = 60.0) -> str:
 
 def _yaml_escape(s: str) -> str:
     """Escape a string for safe use inside a double-quoted YAML scalar.
-    Maestro reads the flow file line-by-line as YAML, so backslashes and
-    quotes in user content (e.g. a test body containing `"`) would break
-    the matcher silently. Tests typically use safe ASCII timestamps so
-    this rarely fires — defensive."""
-    return s.replace("\\", "\\\\").replace("\"", "\\\"")
+    Maestro reads the flow file line-by-line as YAML, so backslashes, quotes,
+    or control characters in user content would break the matcher silently —
+    a newline in particular splits the scalar into two YAML entries. Tests
+    typically use safe ASCII timestamps so this rarely fires — defensive.
+    Backslash is escaped first so the sequences we introduce below aren't
+    double-escaped."""
+    return (
+        s.replace("\\", "\\\\")
+         .replace("\"", "\\\"")
+         .replace("\n", "\\n")
+         .replace("\r", "\\r")
+         .replace("\t", "\\t")
+         .replace("\0", "\\0")
+    )
 
 
 def _booted_udid() -> str:
