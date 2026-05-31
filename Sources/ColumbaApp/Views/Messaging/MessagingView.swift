@@ -66,6 +66,9 @@ struct MessagingView: View {
     @State private var emojiPickerTargetMessage: Message?
     @State private var reactionModeMessage: Message?
     @State private var isSavedContact: Bool = false
+    /// Set when a voice call can't be placed (no telephony path to the peer)
+    /// so the user gets feedback instead of the codec sheet silently dismissing.
+    @State private var callUnavailableMessage: String?
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -356,6 +359,7 @@ struct MessagingView: View {
                     guard let cm = appServices.callManager else { return }
                     guard let telHash = await appServices.telephonyHash(forPeerLxmfHash: dest) else {
                         DiagLog.log("[CALL] no telephony path for \(dest.prefix(4).map { String(format: "%02x", $0) }.joined()) — peer not heard yet")
+                        callUnavailableMessage = "\(name ?? "This contact") hasn't been seen on the network recently, so a voice call can't be placed yet. Try again once they're online."
                         return
                     }
                     cm.initiateCall(destinationHash: telHash, profile: profile, peerDisplayName: name)
@@ -389,6 +393,14 @@ struct MessagingView: View {
             }
         } message: {
             Text("This message will be permanently deleted from this device.")
+        }
+        .alert("Call Unavailable", isPresented: Binding(
+            get: { callUnavailableMessage != nil },
+            set: { if !$0 { callUnavailableMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { callUnavailableMessage = nil }
+        } message: {
+            Text(callUnavailableMessage ?? "")
         }
         #if os(iOS)
         .sheet(isPresented: $showLocationConfirm) {
