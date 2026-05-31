@@ -34,6 +34,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import pytest
 
@@ -220,13 +221,17 @@ class Simulator:
         """Drive `lxma://test-send?…` via Maestro (so the iOS "Open in
         Columba?" prompt is dismissed) and block until the next
         [TEST-SEND] outcome lands in diag.log."""
-        params = [f"to={to_hex}", f"content={content}", f"method={method}"]
+        # Percent-encode the free-text params (content / image_format / file_name)
+        # so a value with & = # or spaces can't split the query string or corrupt
+        # a key/value slot on the iOS handler side. to_hex / *_hex are hex and
+        # method is a fixed enum, so they're already URL-safe.
+        params = [f"to={to_hex}", f"content={quote(content, safe='')}", f"method={method}"]
         if image_bytes is not None and image_format:
             params.append(f"image_hex={image_bytes.hex()}")
-            params.append(f"image_format={image_format}")
+            params.append(f"image_format={quote(image_format, safe='')}")
         if file_bytes is not None and file_name:
             params.append(f"file_hex={file_bytes.hex()}")
-            params.append(f"file_name={file_name}")
+            params.append(f"file_name={quote(file_name, safe='')}")
         url = "lxma://test-send?" + "&".join(params)
 
         # Snapshot file position so we only scan lines written AFTER the

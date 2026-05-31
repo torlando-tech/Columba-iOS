@@ -67,12 +67,9 @@ env:
 - takeScreenshot:
     path: screenshots/04-chat-empty
 
-# Tap the input field by its placeholder, type, then tap the send arrow.
-# The arrow is a SwiftUI Image button with no text label, sitting at the
-# right edge of the input bar (approx 90% across, ~85% down on a stock iPhone
-# 17 sim before the keyboard collapses). Tapping by point is brittle but
-# works until we add an `.accessibilityIdentifier("send_button")` on the
-# button itself — TODO once we own the harness.
+# Tap the input field by its placeholder, type the body, then tap the send
+# button by its accessibility identifier (send_message_button, set on the
+# button in MessageInputBar) — stable, no brittle tap-by-point.
 - tapOn:
     text: "Type a message.*"
 - inputText: ${TEXT}

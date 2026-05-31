@@ -148,6 +148,11 @@ struct MainTabView: View {
                         destinationHash: cm.peerHash.flatMap { try? $0.hexToData() } ?? Data()
                     )
                 }
+            } else {
+                // callManager went nil between setting the cover and this body
+                // (refreshCallPresentation clears it via onChange a tick later);
+                // self-dismiss now so we never flash an empty full-screen view.
+                Color.clear.onAppear { activeCallCover = nil }
             }
         }
         #endif
