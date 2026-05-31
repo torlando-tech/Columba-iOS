@@ -349,7 +349,7 @@ class Simulator:
             "    text: \"Chats\"",
             "    optional: true",
             "- waitForAnimationToEnd: { timeout: 2000 }",
-            f"- tapOn: \"{peer_display_name}\"",
+            f"- tapOn: \"{_yaml_escape(peer_display_name)}\"",
             "- waitForAnimationToEnd: { timeout: 2500 }",
         ]
         if content is not None:
