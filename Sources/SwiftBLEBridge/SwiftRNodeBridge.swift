@@ -125,6 +125,14 @@ public final class SwiftRNodeBridge: NSObject, @unchecked Sendable {
             if let p = peripheral { central?.cancelPeripheralConnection(p) }
             teardownLinkLocked(notify: false)
             peripheral = nil
+            // Clear the invoker inside the serialized block: didUpdateValueFor
+            // notifications CoreBluetooth already queued on `queue` are
+            // delivered after this block, and their guard only matches the
+            // static TX-char UUID (no isLinkUp check), so they would otherwise
+            // fire .onData into Python's mid-teardown IOSRNodeInterface and
+            // corrupt KISS decoder state. Mirrors SwiftBLEBridge.stop();
+            // re-installed on the next start.
+            callbackInvoker = nil
         }
     }
 
