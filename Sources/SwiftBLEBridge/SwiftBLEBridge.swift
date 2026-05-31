@@ -388,19 +388,19 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             }
             // Peripheral role: notify on TX char to the specific subscriber.
             if let peer = self.gattServerPeers[address],
-               let txChar = self.serverTxChar,
-               let pm = self.peripheralManager {
-                let ok = pm.updateValue(data, for: txChar, onSubscribedCentrals: [peer.central])
-                if !ok {
-                    // Backpressure — queue and drain on peripheralManagerIsReady.
-                    // Bounded so a stuck/vanished subscriber can't grow it
-                    // unbounded; drop the frame (and warn) when full.
-                    if peer.pendingNotifies.count < maxPendingNotifies {
-                        peer.pendingNotifies.append(data)
-                    } else {
-                        emitError("warning", "pendingNotifies full (\(maxPendingNotifies)) for \(address); dropping frame")
-                    }
+               self.serverTxChar != nil,
+               self.peripheralManager != nil {
+                // Always enqueue then drain in FIFO order. Sending a new frame
+                // directly while pendingNotifies is non-empty would jump it
+                // ahead of frames already queued behind backpressure — the peer
+                // would receive fragments out of order. Bounded so a stuck or
+                // vanished subscriber can't grow the queue without limit.
+                if peer.pendingNotifies.count < maxPendingNotifies {
+                    peer.pendingNotifies.append(data)
+                } else {
+                    emitError("warning", "pendingNotifies full (\(maxPendingNotifies)) for \(address); dropping frame")
                 }
+                self.drainPeerNotifiesLocked(peer)
                 return
             }
             self.emitError("warning", "send: no client / no server peer for \(address)")
@@ -415,6 +415,17 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
         let p = client.peripheral
         while !client.pendingWrites.isEmpty, p.canSendWriteWithoutResponse {
             p.writeValue(client.pendingWrites.removeFirst(), for: rx, type: .withoutResponse)
+        }
+    }
+
+    /// Drain a peripheral-role peer's queued notifies in FIFO order while the
+    /// (manager-global) transmit queue accepts them. Called on `queue` from
+    /// send() and peripheralManagerIsReady.
+    private func drainPeerNotifiesLocked(_ peer: BleGattServerPeer) {
+        guard let pm = peripheralManager, let tx = serverTxChar else { return }
+        while let next = peer.pendingNotifies.first {
+            guard pm.updateValue(next, for: tx, onSubscribedCentrals: [peer.central]) else { break }
+            peer.pendingNotifies.removeFirst()
         }
     }
 
@@ -984,18 +995,11 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
     public func peripheralManagerIsReady(
         toUpdateSubscribers peripheral: CBPeripheralManager
     ) {
-        // Drain queued notifies that hit backpressure earlier. updateValue's
-        // transmit queue is global to the peripheral manager, so a `false`
-        // means waiting for the next ready callback — but `break` (not
-        // `return`) so one peer's backpressure or per-central failure doesn't
-        // strand the remaining peers' queued frames.
-        guard let tx = serverTxChar else { return }
+        // Transmit queue freed up — drain each peer's queued notifies in FIFO
+        // order via the shared helper. Per-peer (not a global `return`) so one
+        // peer's backpressure doesn't strand the others' queued frames.
         for (_, peer) in gattServerPeers {
-            while let next = peer.pendingNotifies.first {
-                let ok = peripheral.updateValue(next, for: tx, onSubscribedCentrals: [peer.central])
-                if !ok { break }  // this peer backpressured/failed — move to the next
-                peer.pendingNotifies.removeFirst()
-            }
+            drainPeerNotifiesLocked(peer)
         }
     }
 }
