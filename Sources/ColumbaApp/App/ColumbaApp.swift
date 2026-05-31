@@ -75,6 +75,15 @@ struct ColumbaApp: App {
             .id(ThemeManager.shared.themeVersion)
             .onOpenURL { url in
                 guard url.scheme == "lxma" else { return }
+                #if DEBUG
+                // Test-only deep links — DEBUG builds ONLY. In a release build
+                // these would be remote-control backdoors: a crafted
+                // lxma://test-call / test-send / test-identity-switch URL could
+                // place a call, send a message as the user, or wipe the active
+                // identity with no interaction beyond opening the URL. The
+                // interop test harness runs DEBUG builds, so it keeps them; the
+                // production lxma:// deep-link fall-through (pendingDeepLink,
+                // below) stays outside this guard.
                 // Test trigger: lxma://test-send?to=HEX&content=...
                 // bypasses the UI and directly invokes PythonRNSBackend.sendOpportunistic
                 // so external scripts can exercise the Python round-trip during the smoke test.
@@ -345,6 +354,7 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                #endif
                 pendingDeepLink = url.absoluteString
             }
         }
