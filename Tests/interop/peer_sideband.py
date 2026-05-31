@@ -257,12 +257,23 @@ class SidebandPeer:
         if self._core is not None:
             # SidebandCore has a `cleanup()`-ish method? — looking at the
             # source it's `__exit_handler` registered via atexit. Calling
-            # it manually here is safe and ensures DB flushes.
-            try:
-                self._core._exit_handler()
-            except Exception:  # noqa: BLE001
-                # Sideband logs its own teardown errors; suppress here.
-                pass
+            # it manually here is safe and ensures DB flushes. Guard the
+            # private name explicitly (like _attach_inbound_tap does for
+            # __delivery_callback) so a Sideband rename surfaces loudly
+            # instead of silently leaking RNS threads between sessions.
+            if hasattr(self._core, "_exit_handler"):
+                try:
+                    self._core._exit_handler()
+                except Exception:  # noqa: BLE001
+                    # Sideband logs its own teardown errors; suppress here.
+                    pass
+            else:
+                print(
+                    "[peer_sideband] WARNING: SidebandCore._exit_handler is gone "
+                    "— Sideband may have renamed it; RNS threads can leak between "
+                    "sessions. Update peer_sideband.stop().",
+                    flush=True,
+                )
             self._core = None
         if self._owns_config_dir and os.path.isdir(self.config_dir):
             shutil.rmtree(self.config_dir, ignore_errors=True)

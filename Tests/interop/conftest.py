@@ -674,8 +674,33 @@ def clean_location_state(sim):
         ["xcrun", "simctl", "launch", sim.udid, BUNDLE_ID],
         check=True, capture_output=True,
     )
-    # AppServices.initialize() runs on every launch and the Python
-    # backend's `[PY] started identity=…` log line lands ~6–8 s in on
-    # a warm sim. Match the original inline timing so behaviour is
-    # unchanged from the version that lived in the test body.
-    time.sleep(8.0)
+    # AppServices.initialize() runs on every launch: it clears diag.log
+    # (DiagLog.clear) very early, then the Python backend logs
+    # `[PY] started identity=…` ~6–8 s in on a warm sim and longer on a cold
+    # sim / slow CI runner. Poll for that readiness line instead of a flat
+    # 8 s sleep — a fixed sleep that under-shoots hands control to the test
+    # before the `lxma://` deep-link handler is registered, so the
+    # location-toggle tap silently no-ops and the test times out later at
+    # `wait_for_tapped_message` with no hint the app simply wasn't ready.
+    # Gate on the clear first (current size drops below the pre-launch log,
+    # with a short fallback since the clear is a truncate at init start) so we
+    # don't match the *previous* session's `[PY] started` line still on disk.
+    pre_size = sim.diag_log.stat().st_size if sim.diag_log.exists() else 0
+    cleared = pre_size == 0
+    clear_fallback = time.time() + 3.0
+    deadline = time.time() + 45.0
+    while time.time() < deadline:
+        size = sim.diag_log.stat().st_size if sim.diag_log.exists() else 0
+        if not cleared and (size < pre_size or time.time() > clear_fallback):
+            cleared = True
+        if cleared and any(
+            "[PY] started identity=" in line for line in sim._tail_diag(LOG_TAIL_LINES)
+        ):
+            break
+        time.sleep(0.5)
+    else:
+        pytest.fail(
+            "Columba did not log `[PY] started identity=…` within 45 s of "
+            "relaunch — AppServices.initialize is stuck or slower than expected, "
+            "so the location-toggle deep link would no-op against an unready app."
+        )
