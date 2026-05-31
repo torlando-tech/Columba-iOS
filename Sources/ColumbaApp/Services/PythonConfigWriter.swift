@@ -94,7 +94,7 @@ enum PythonConfigWriter {
         switch iface.config {
         case .tcpClient(let cfg):
             lines.append("    type = TCPClientInterface")
-            lines.append("    target_host = \(configValue(cfg.targetHost))")
+            appendValue("target_host", cfg.targetHost, to: &lines)
             lines.append("    target_port = \(cfg.targetPort)")
             appendIFAC(networkName: cfg.networkName, passphrase: cfg.passphrase, to: &lines)
         case .tcpServer(let cfg):
@@ -104,7 +104,7 @@ enum PythonConfigWriter {
         case .autoInterface(let cfg):
             lines.append("    type = AutoInterface")
             if let group = cfg.groupId, !group.isEmpty {
-                lines.append("    group_id = \(configValue(group))")
+                appendValue("group_id", group, to: &lines)
             }
             lines.append("    discovery_scope = \(cfg.discoveryScope)")
             if let port = cfg.discoveryPort { lines.append("    discovery_port = \(port)") }
@@ -131,7 +131,7 @@ enum PythonConfigWriter {
             // the ported interface parses and upstream RNS's RNodeInterface
             // convention. iOS is BLE-only — no usb_* / port keys.
             lines.append("    type = IOSRNodeInterface")
-            lines.append("    target_device_name = \(configValue(cfg.deviceName))")
+            appendValue("target_device_name", cfg.deviceName, to: &lines)
             lines.append("    frequency = \(cfg.frequency)")
             lines.append("    bandwidth = \(cfg.bandwidth)")
             lines.append("    txpower = \(cfg.txPower)")
@@ -164,10 +164,10 @@ enum PythonConfigWriter {
 
     private static func appendIFAC(networkName: String?, passphrase: String?, to lines: inout [String]) {
         if let name = networkName, !name.isEmpty {
-            lines.append("    networkname = \(configValue(name))")
+            appendValue("networkname", name, to: &lines)
         }
         if let pass = passphrase, !pass.isEmpty {
-            lines.append("    passphrase = \(configValue(pass))")
+            appendValue("passphrase", pass, to: &lines)
         }
     }
 
@@ -196,7 +196,7 @@ enum PythonConfigWriter {
     /// whitespace, picking the quote the value lacks and falling back to triple
     /// quotes when it contains both. CR/LF are stripped first — these fields are
     /// single-line, so a newline can only be an injection attempt.
-    private static func configValue(_ raw: String) -> String {
+    private static func configValue(_ raw: String) -> String? {
         let value = raw.replacingOccurrences(of: "\r", with: "")
                        .replacingOccurrences(of: "\n", with: "")
         if value.isEmpty { return "\"\"" }
@@ -214,7 +214,22 @@ enum PythonConfigWriter {
         // Both quote types present — ConfigObj requires triple quotes (prefer """).
         if !value.contains("\"\"\"") { return "\"\"\"\(value)\"\"\"" }
         if !value.contains("'''") { return "'''\(value)'''" }
-        // Pathological (both triple-quote sequences): drop """ so parsing stays safe.
-        return "\"\"\"\(value.replacingOccurrences(of: "\"\"\"", with: ""))\"\"\""
+        // Pathological: the value contains both """ and ''', so ConfigObj can't
+        // quote it on any delimiter. Return nil so the caller omits the field
+        // rather than silently corrupting it — a mangled IFAC passphrase would
+        // otherwise join the network with the wrong key. (Absurdly rare; a
+        // missing field fails the connection loudly instead.)
+        return nil
+    }
+
+    /// Append `key = <ConfigObj-encoded value>` for a user-supplied value, or —
+    /// when the value can't be safely encoded — a visible omission comment
+    /// instead of a silently-corrupted value.
+    private static func appendValue(_ key: String, _ raw: String, to lines: inout [String]) {
+        if let encoded = configValue(raw) {
+            lines.append("    \(key) = \(encoded)")
+        } else {
+            lines.append("    # \(key) omitted — value cannot be encoded for ConfigObj")
+        }
     }
 }

@@ -105,6 +105,13 @@ public actor PythonNetworkTransport: NetworkTransport {
         )
         let pathFound = await transport.awaitPath(for: callDest.hash, timeout: 10.0)
         logger.error("[PNT] path to telephony dest found=\(pathFound, privacy: .public)")
+        guard pathFound else {
+            // No path after the timeout — the peer is unreachable, so an
+            // RNS.Link can't establish anyway. Abort now rather than fall
+            // through to a doomed initiateLink that just times out again.
+            logger.error("[PNT] no path to telephony dest — aborting outbound call")
+            return false
+        }
 
         do {
             let link = try await transport.initiateLink(to: callDest, identity: identity)
