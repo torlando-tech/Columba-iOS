@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  MigrationData.swift
 //  ColumbaApp
@@ -7,6 +8,7 @@
 //
 
 import Foundation
+import RNSAPI
 
 /// Top-level migration bundle matching Android's MigrationBundle format.
 ///
@@ -251,3 +253,4 @@ struct ImportResult {
     let interfacesImported: Int
     let settingsImported: Int
 }
+#endif

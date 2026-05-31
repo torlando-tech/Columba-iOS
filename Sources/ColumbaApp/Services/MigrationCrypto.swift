@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  MigrationCrypto.swift
 //  ColumbaApp
@@ -9,6 +10,7 @@
 //
 
 import Foundation
+import RNSAPI
 import CryptoKit
 import CommonCrypto
 
@@ -212,3 +214,4 @@ enum MigrationCrypto {
         return derivedKey
     }
 }
+#endif

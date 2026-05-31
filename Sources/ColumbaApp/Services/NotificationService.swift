@@ -7,8 +7,8 @@
 //
 
 import Foundation
+import RNSAPI
 import UserNotifications
-import LXMFSwift
 
 /// Manages local push notifications for incoming messages.
 ///

@@ -1,3 +1,4 @@
+#if os(iOS)
 //
 //  LocationSharingManager.swift
 //  ColumbaApp
@@ -6,11 +7,15 @@
 //  Manages CLLocationManager for GPS, periodic sending to active peers,
 //  and tracking incoming peer locations for map display.
 //
+//  iOS-only (CoreLocation + UIApplication.applicationState). The non-iOS
+//  fallback lives in `RNSAPI/Compat.swift` as a no-op stub so the
+//  `appServices.locationSharingManager?` call sites compile cross-platform.
+//
 
 import Foundation
-import CoreLocation
+import RNSAPI
 import LXMFSwift
-import ReticulumSwift
+import CoreLocation
 import os.log
 #if canImport(UIKit)
 import UIKit
@@ -48,7 +53,7 @@ public struct PeerLocation: Identifiable, Equatable {
     public var lastUpdate: Date
 
     /// Icon appearance from LXMF Field 0x04 (MDI icon + colors).
-    public var iconAppearance: IconAppearance?
+    public var iconAppearance: RNSAPI.IconAppearance?
 
     /// True if older than 5 minutes.
     public var isStale: Bool {
@@ -126,6 +131,12 @@ public final class LocationSharingManager: NSObject {
     /// Per-peer expiration date. nil value = indefinite.
     public private(set) var peerExpirations: [Data: Date?] = [:]
 
+    /// Latest CLLocationManager authorization status. Mirrored here (rather
+    /// than read via `locationManager.authorizationStatus` on demand) so
+    /// SwiftUI views observing this `@Observable` instance re-render on
+    /// `locationManagerDidChangeAuthorization` without polling.
+    public private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
+
     // MARK: - Private State
 
     private let logger = Logger(subsystem: "network.columba.Columba", category: "LocationSharing")
@@ -165,6 +176,21 @@ public final class LocationSharingManager: NSObject {
         self.appServices = appServices
         super.init()
         loadPersistedPeers()
+        // Seed the observable from the system's current state so the
+        // Settings card renders the right status immediately (before any
+        // delegate callback fires). The CLLocationManager init is cheap;
+        // creating it here just to read the status is acceptable.
+        self.authorizationStatus = locationManager.authorizationStatus
+    }
+
+    /// Trigger a `when-in-use` permission prompt if status is
+    /// `.notDetermined`, otherwise no-op (the user must change the
+    /// answer from the system Settings app). Settings UI calls this
+    /// directly so we don't have to start a sharing session just to
+    /// surface the prompt.
+    public func requestPermission() {
+        guard authorizationStatus == .notDetermined else { return }
+        locationManager.requestWhenInUseAuthorization()
     }
 
     // MARK: - Public API
@@ -254,8 +280,11 @@ public final class LocationSharingManager: NSObject {
         logger.info("Peer \(hex) ceased location sharing (COLUMBA_META)")
     }
 
-    public func handleIncomingTelemetry(from peerHash: Data, packet: TelemetryPacket, displayName: String?, iconAppearance: IconAppearance? = nil) {
-        guard let location = packet.location else { return }
+    public func handleIncomingTelemetry(from peerHash: Data, packet: RNSAPI.TelemetryPacket, displayName: String?, iconAppearance: RNSAPI.IconAppearance? = nil) {
+        // `packet.payload` holds the raw FIELD_TELEMETRY bytes (IncomingMessageHandler
+        // wraps them in the Compat TelemetryPacket); decode with LXMF-swift's
+        // Sideband-compatible Telemeter codec to get the structured location.
+        guard let location = LXMFSwift.TelemetryPacket.decode(from: packet.payload)?.location else { return }
 
         // Preserve existing icon if new message doesn't include one
         let resolvedIcon = iconAppearance ?? peerLocations[peerHash]?.iconAppearance
@@ -277,6 +306,16 @@ public final class LocationSharingManager: NSObject {
 
         let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
         logger.info("Updated peer \(hex) location: \(location.latitude), \(location.longitude)")
+        // Test-observable mirror of the decoded inbound telemetry. The map
+        // marker is rendered on MapLibre's GL surface and isn't reachable
+        // from the accessibility tree (so neither VoiceOver nor the interop
+        // suite can read its icon), so the Tests/interop location round-trip
+        // asserts the decoded icon + coordinates here while asserting pin
+        // *presence* via the SwiftUI `map_peer_count` badge. iconName is the
+        // MDI glyph name; fg/bg are 6-char RGB hex.
+        let iconDesc = resolvedIcon.map { "\($0.iconName) fg=\($0.fgColor) bg=\($0.bgColor)" }
+            ?? "- fg=- bg=-"
+        DiagLog.log("[LOC-RECV] peer=\(hex) lat=\(location.latitude) lon=\(location.longitude) icon=\(iconDesc)")
     }
 
     /// Update foreground/background state to adjust send interval.
@@ -397,8 +436,7 @@ public final class LocationSharingManager: NSObject {
 
     private func sendLocationUpdateToPeer(_ peerHash: Data) async {
         guard let appServices = appServices,
-              let identity = appServices.identity,
-              let router = appServices.router else {
+              let backend = appServices.backend else {
             return
         }
 
@@ -432,8 +470,8 @@ public final class LocationSharingManager: NSObject {
             radiusMeters: precisionRadius
         )
 
-        // Build telemetry packet
-        let telemetry = LocationTelemetry(
+        // Build the Sideband-compatible telemetry packet (LXMF-swift Telemeter codec).
+        let telemetry = LXMFSwift.LocationTelemetry(
             latitude: finalLat,
             longitude: finalLng,
             altitude: location.altitude,
@@ -442,35 +480,24 @@ public final class LocationSharingManager: NSObject {
             accuracy: precisionRadius > 0 ? Double(precisionRadius) : location.horizontalAccuracy,
             lastUpdate: Int(location.timestamp.timeIntervalSince1970)
         )
-
-        let packet = TelemetryPacket(
+        let packet = LXMFSwift.TelemetryPacket(
             timestamp: Int(Date().timeIntervalSince1970),
             location: telemetry
         )
+        let telemetryData = packet.encode()  // FIELD_TELEMETRY (0x02) payload bytes
 
-        // Encode telemetry as FIELD_TELEMETRY bytes
-        let telemetryData = packet.encode()
-
-        // Build and send LXMF message with telemetry field
-        var fields: [UInt8: Any] = [:]
-        fields[LXMessage.FIELD_TELEMETRY] = telemetryData
-
-        var lxMessage = LXMessage(
-            destinationHash: peerHash,
-            sourceIdentity: identity,
-            content: Data(),  // No text content for telemetry-only messages
-            title: Data(),
-            fields: fields,
-            desiredMethod: .opportunistic
-        )
-
+        // Send via the neutral telemetry facet — the backend assembles the LXMF
+        // message (Swift implements it; Python is capability-gated → unsupported).
+        let destHex = peerHash.map { String(format: "%02x", $0) }.joined()
         do {
-            try await router.handleOutbound(&lxMessage)
-            lastSentLocation = location
-            lastSentTime = Date()
-
-            let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
-            logger.info("Sent location to \(hex): \(telemetry.latitude), \(telemetry.longitude)")
+            let outcome = try await backend.telemetry.sendLocationTelemetry(destHashHex: destHex, packed: telemetryData, customMeta: nil)
+            if case .queued = outcome {
+                lastSentLocation = location
+                lastSentTime = Date()
+                logger.info("Sent location to \(destHex.prefix(8)): \(telemetry.latitude), \(telemetry.longitude)")
+            } else {
+                logger.info("Telemetry send not queued (\(String(describing: outcome))) — backend may not support telemetry")
+            }
         } catch {
             logger.warning("Failed to send location: \(error.localizedDescription)")
         }
@@ -478,29 +505,21 @@ public final class LocationSharingManager: NSObject {
 
     private func sendCeaseSignal(to peerHash: Data) async {
         guard let appServices = appServices,
-              let identity = appServices.identity,
-              let router = appServices.router else {
+              let backend = appServices.backend else {
             return
         }
 
-        // Match Android Columba format: FIELD_COLUMBA_META (0x70) with JSON {"cease": true}
-        let ceaseJSON = "{\"cease\": true}"
-        var fields: [UInt8: Any] = [:]
-        fields[LXMessage.FIELD_COLUMBA_META] = ceaseJSON.data(using: .utf8)!
-
-        var lxMessage = LXMessage(
-            destinationHash: peerHash,
-            sourceIdentity: identity,
-            content: Data(),
-            title: Data(),
-            fields: fields,
-            desiredMethod: .opportunistic
-        )
-
+        // Stop-sharing signal in Android Columba's wire shape: a zeroed-location
+        // Telemeter blob (FIELD_TELEMETRY 0x02) + msgpack {"cease": true}
+        // (FIELD_CUSTOM_META 0xFD). Routed through the same sendLocationTelemetry
+        // path a normal update uses — Android's receive path requires the
+        // Telemeter body present before it reads the cease flag, and decodes the
+        // meta as msgpack (not JSON). See CeaseTelemetry.
+        let destHex = peerHash.map { String(format: "%02x", $0) }.joined()
+        let (packed, meta) = CeaseTelemetry.payload()
         do {
-            try await router.handleOutbound(&lxMessage)
-            let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
-            logger.info("Sent cease signal to \(hex)")
+            _ = try await backend.telemetry.sendLocationTelemetry(destHashHex: destHex, packed: packed, customMeta: meta)
+            logger.info("Sent cease signal to \(destHex.prefix(8))")
         } catch {
             logger.warning("Failed to send cease signal: \(error.localizedDescription)")
         }
@@ -562,6 +581,9 @@ extension LocationSharingManager: CLLocationManagerDelegate {
     public nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
             let status = manager.authorizationStatus
+            // Mirror the system status onto our @Observable property so
+            // SwiftUI views re-render the permission row without polling.
+            self.authorizationStatus = status
             switch status {
             case .authorizedWhenInUse, .authorizedAlways:
                 if isSharingWithAnyone {
@@ -586,3 +608,4 @@ extension LocationSharingManager: CLLocationManagerDelegate {
     }
 }
 
+#endif

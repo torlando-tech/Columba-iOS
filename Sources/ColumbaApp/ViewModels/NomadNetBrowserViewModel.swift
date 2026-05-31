@@ -1,6 +1,7 @@
+#if COLUMBA_NOMADNET_ENABLED
 import Foundation
+import RNSAPI
 import SwiftUI
-import ReticulumSwift
 
 /// Rendering mode for NomadNet pages.
 public enum NomadNetRenderingMode: String, Sendable, CaseIterable {
@@ -109,15 +110,13 @@ public final class NomadNetBrowserViewModel {
     public init(
         nodeHash: Data,
         nodeName: String?,
-        transport: ReticulumTransport,
-        pathTable: PathTable,
+        backend: any RnsBackend,
         identity: Identity
     ) {
         self.currentNodeHash = nodeHash
         self.currentNodeName = nodeName
         self.browserService = NomadNetBrowserService(
-            transport: transport,
-            pathTable: pathTable,
+            backend: backend,
             identity: identity
         )
     }
@@ -445,3 +444,4 @@ public final class NomadNetBrowserViewModel {
     }
 }
 
+#endif

@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  MigrationViewModel.swift
 //  ColumbaApp
@@ -7,6 +8,7 @@
 //
 
 import Foundation
+import RNSAPI
 import SwiftUI
 import os.log
 
@@ -222,3 +224,4 @@ extension ImportResult: Equatable {
         lhs.identitiesImported == rhs.identitiesImported
     }
 }
+#endif

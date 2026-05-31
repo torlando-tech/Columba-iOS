@@ -8,7 +8,9 @@
 
 import Foundation
 import SwiftUI
-import ReticulumSwift
+import RNSAPI  // InterfaceMode / InterfaceEntity / InterfaceConfig live in RNSAPI on
+              // this branch (they were app-module types on main). Not ReticulumSwift,
+              // whose own InterfaceMode collided with RNSAPI's after the merge.
 
 // MARK: - Wizard Step
 

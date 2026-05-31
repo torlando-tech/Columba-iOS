@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import LXMFSwift
+import RNSAPI
 
 /// Actor for thread-safe message database operations.
 ///

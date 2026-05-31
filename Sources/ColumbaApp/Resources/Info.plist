@@ -25,6 +25,10 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Columba uses the local network for peer-to-peer communication with nearby Reticulum devices.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Columba shares your location with contacts you explicitly choose, so they can see where you are during an active sharing session.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Columba keeps sharing your location with the contacts you chose even when the app is in the background, so a sharing session you started doesn't silently stop. You can stop sharing at any time from the conversation or from Settings.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>materialdesignicons.ttf</string>
@@ -41,7 +45,6 @@
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 		<string>location</string>
-		<string>voip</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

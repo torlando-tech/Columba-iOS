@@ -10,5 +10,19 @@
 	<array>
 		<string>packet-tunnel-provider</string>
 	</array>
+	<!-- Multicast Networking — iOS 14+ requires Apple approval for this
+	     to be embedded in the signed provisioning profile, requested at:
+	         https://developer.apple.com/contact/request/networking-multicast
+	     Apple's restriction is on its NW* networking APIs; RNS.AutoInterface
+	     uses BSD sockets through Python (setsockopt + IPV6_JOIN_GROUP +
+	     sendto), which historically work without the entitlement on iOS.
+	     Disabled for now to keep the debug-build signing path clean — flip
+	     back on after Apple grants approval if multicast packets stop
+	     reaching peers in foreground.
+
+	<key>com.apple.developer.networking.multicast</key>
+	<true/>
+	-->
+
 </dict>
 </plist>

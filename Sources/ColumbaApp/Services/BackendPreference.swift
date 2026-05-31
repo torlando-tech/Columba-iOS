@@ -1,0 +1,61 @@
+//
+//  BackendPreference.swift
+//  ColumbaApp
+//
+//  Runtime selection of the active RNS backend.
+//
+
+import Foundation
+
+/// Persisted choice of which RNS engine `BackendFactory.make()` constructs:
+/// the embedded-Python reference stack (`PythonRNSBackend`) or the native
+/// Swift reticulum-swift/LXMF-swift port (`SwiftRNSBackend`). Both are compiled
+/// and linked into every build, so this is a pure runtime switch — the
+/// Settings → Advanced → Network Backend control writes it, `BackendFactory`
+/// reads it at stack-init time.
+///
+/// The switch takes effect on the **next app launch**: the backend is built
+/// exactly once during `AppServices.initialize`, and neither the embedded
+/// CPython interpreter (a process-global singleton) nor the Swift RNS stack
+/// can be torn down and rebuilt in place reliably on iOS — the same constraint
+/// that makes `restartPythonBackend()` defer to relaunch rather than restart
+/// the interpreter live.
+///
+/// Stored in the App Group suite (`SharedDefaults`) so it survives relaunch and
+/// is visible to the Network Extension, mirroring `transport_enabled`.
+enum BackendPreference {
+    private static let key = "useSwiftBackend"
+
+    /// Default when the user has never chosen explicitly. The `Columba-Swift`
+    /// scheme (`COLUMBA_BACKEND_SWIFT`) starts on the Swift backend; the stock
+    /// scheme starts on embedded Python.
+    static var buildDefaultIsSwift: Bool {
+        #if COLUMBA_BACKEND_SWIFT
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Whether the native Swift backend is selected (vs embedded Python).
+    /// Falls back to the build-flag default until the user picks explicitly.
+    static var isSwift: Bool {
+        get {
+            #if COLUMBA_BACKEND_SWIFT
+            // Swift-only build: the embedded Python wheels are stripped at
+            // build time, so Python can't run. Force Swift regardless of any
+            // stored pref — a `useSwiftBackend=false` value can linger in the
+            // shared App Group suite from a prior standard build, and honoring
+            // it here would build PythonRNSBackend and hang on start(). The
+            // Settings toggle is also hidden on this build (see SettingsView).
+            return true
+            #else
+            guard let stored = SharedDefaults.suite.object(forKey: key) as? Bool else {
+                return buildDefaultIsSwift
+            }
+            return stored
+            #endif
+        }
+        set { SharedDefaults.suite.set(newValue, forKey: key) }
+    }
+}

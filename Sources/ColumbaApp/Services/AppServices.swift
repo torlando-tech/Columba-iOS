@@ -10,11 +10,15 @@
 //
 
 import Foundation
-import LXMFSwift
-#if os(iOS)
+import RNSAPI
 import LXSTSwift
+import SwiftBLEBridge
+import CryptoKit
+#if canImport(UIKit)
+import UIKit
 #endif
-import ReticulumSwift
+#if os(iOS)
+#endif
 import os.log
 
 /// Simple file logger for diagnostics when idevicesyslog isn't available (WiFi-only device).
@@ -143,10 +147,93 @@ public final class AppServices {
     #if os(iOS)
     /// Location sharing manager for telemetry exchange with peers.
     public var locationSharingManager: LocationSharingManager?
-
-    /// Call manager for LXST voice call UI integration.
-    public var callManager: CallManager?
     #endif
+    #if os(iOS)
+    /// Voice call manager — handles the LXST telephony destination
+    /// registration, outgoing-call signaling, and inbound-link routing.
+    /// Restored in commit 3 of the lxst-wiring batch, now talking through
+    /// the Compat-layer Link bridge that AppServices wires here in
+    /// configureTransportCallbacks.
+    public private(set) var callManager: CallManager?
+    #endif
+
+    /// Python-backed Reticulum + LXMF stack. Created lazily on first
+    /// `initialize(...)` and torn down on `shutdown()`. The Compat-layer
+    /// `LXMRouter` and `ReticulumTransport` stubs delegate real work
+    /// (announce listening, opportunistic LXMF send/receive) through this.
+    public private(set) var backend: (any RnsBackend)?
+
+    /// The bound backend downcast to the Python impl — for Python-only wiring
+    /// (BLE/RNode callback bridges, diagnose_* deeplinks). nil when a non-Python
+    /// backend is active; those paths are then correctly skipped.
+    public var pythonBackend: PythonRNSBackend? { backend as? PythonRNSBackend }
+
+    /// What the active backend supports — drives UI capability gating. `.unknown`
+    /// (everything unsupported) until a backend is bound; re-evaluated via
+    /// @Observable through `backend` when the backend changes.
+    public var capabilities: BackendCapabilities { backend?.capabilities ?? .unknown }
+
+    /// Background task that drains Python events (announces, inbound
+    /// messages) into Columba's existing UI plumbing.
+    private var pythonEventTask: Task<Void, Never>?
+
+    /// Tokens for the block-based NotificationCenter observers registered by
+    /// `startPythonBackend()` (the lxma://test-* deep-link harness). Held so
+    /// `shutdown()` can remove them — otherwise each restart cycle
+    /// (identity-change / "Apply & Restart") would stack another set and fire
+    /// every handler N times. Register via `addPythonObserver(_:_:)`.
+    private var pythonNotificationObservers: [any NSObjectProtocol] = []
+
+    /// Identity used to start the Python backend. Cached so the
+    /// "Apply & Restart" flow can re-boot Python after the user edits
+    /// interfaces, without making AppServices re-derive it.
+    private var pythonStartIdentity: Identity?
+
+    /// Display name passed to the Python backend on start. Cached for
+    /// the restart path (same reason as pythonStartIdentity).
+    private var pythonStartDisplayName: String = ""
+
+    /// The interface entities currently live in the Python RNS stack, keyed by
+    /// entity id. Seeded when the backend starts and updated incrementally by
+    /// `applyInterfaceChanges()` as interfaces are hot-added / hot-removed.
+    /// The status poll matches Python-reported sections against this set, so
+    /// it must always reflect what's actually attached to Transport (not the
+    /// launch-time snapshot — that was the source of the stale-status bug).
+    private var pythonInterfaceEntities: [String: InterfaceEntity] = [:]
+
+/// Periodic poller that mirrors Python's RNS.Transport interface state
+    /// into the Compat TCPInterface stubs so the existing
+    /// NetworkStatusView / InterfaceManagementScreen show correct
+    /// connected/disconnected badges. Cancelled in `shutdown()`.
+    private var pythonStatusPollTask: Task<Void, Never>?
+
+    /// Last interface snapshot key we logged, so the poll only logs
+    /// changes (not every 2s tick).
+    private var lastInterfaceSnapshotKey: String = ""
+
+    /// Same idea for the python-derived auxiliary list (peer interfaces
+    /// like AutoInterfacePeer / BLEPeer that Python spawned dynamically).
+    /// Init to sentinel so the first observation always logs (even if the
+    /// count is 0 — that's useful too: "no peers discovered yet").
+    private var lastAuxiliaryKey: String = "<uninitialized>"
+
+    // MARK: - Telephony link bridge state
+    //
+    // Maps the Python RNS.Link IDs (bridge-allocated UInt64) to the Compat
+    // Link objects that lxst-swift's Telephone state machine + CallManager
+    // expect to talk to. Populated when Python emits a
+    // link_state(state=established) event, drained when it emits a
+    // link_state(state=closed) event.
+
+    /// Active Compat Links keyed by Python's bridge linkId.
+    private var activeLinksByLinkId: [UInt64: Link] = [:]
+
+    /// Inbound-link callbacks registered by CallManager via
+    /// transport.registerDestinationLinkCallback(for: telephonyDestHash).
+    /// AppServices invokes these when an inbound link establishes on a
+    /// matching destination. AppServices is @MainActor — all reads/writes
+    /// happen on the main actor, no extra lock needed.
+    private var destinationLinkCallbacks: [Data: @Sendable (Link) async -> Void] = [:]
 
     #if ENABLE_NETWORK_EXTENSION
     /// Network Extension tunnel manager.
@@ -509,7 +596,1328 @@ public final class AppServices {
         self.autoAnnounceManager = announceManager
         announceManager.start()
 
+        // 12. Start Python RNS backend. The Compat-layer LXMRouter / Transport
+        //     are stubs; the real network I/O happens through PythonBridge.
+        await startPythonBackend(
+            identity: newIdentity,
+            identityHashHex: newIdentity.hexHash,
+            router: newRouter,
+            interfaces: InterfaceRepository().getEnabledInterfaces(),
+            displayName: ""
+        )
+
         logger.info("Initialization complete")
+    }
+
+    // MARK: - Python backend
+
+    /// Register a block-based NotificationCenter observer and retain its token
+    /// in `pythonNotificationObservers` so `shutdown()` can remove it. Use this
+    /// for every observer added by `startPythonBackend()` — keeping the tokens
+    /// is what lets a restart cycle tear the old observers down instead of
+    /// stacking duplicates.
+    private func addPythonObserver(
+        _ name: String,
+        _ block: @escaping @Sendable (Notification) -> Void
+    ) {
+        pythonNotificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: Notification.Name(name), object: nil, queue: .main, using: block
+            )
+        )
+    }
+
+    /// Boot the embedded Python RNS stack and hook `LXMRouter.sendHook` so
+    /// outbound LXMF sends go through Python. Spawns a Task that drains
+    /// Python events and feeds them into Columba's path table / inbound
+    /// message handler. Idempotent — does nothing if already started.
+    ///
+    /// The RNS config file is written from `interfaces` (the user's enabled
+    /// `InterfaceEntity` records from `InterfaceRepository`). No host/port
+    /// is hardcoded — if `interfaces` is empty the app starts offline and
+    /// the user adds an interface in Settings → Manage Interfaces.
+    private func startPythonBackend(
+        identity: Identity,
+        identityHashHex: String,
+        router: LXMRouter,
+        interfaces: [InterfaceEntity],
+        displayName: String
+    ) async {
+        DiagLog.log("[RNS] backend start entered with \(interfaces.count) interfaces")
+        if backend != nil {
+            DiagLog.log("[RNS] already started")
+            return
+        }
+        // Cache the start args so restartPythonBackend() can re-invoke
+        // this method after the user applies interface changes.
+        self.pythonStartIdentity = identity
+        self.pythonStartDisplayName = displayName
+
+        let backend = BackendFactory.make()
+        self.backend = backend
+
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
+        let configDir = pyDir.path
+        let identityFile = pyDir.appendingPathComponent("identity.bin").path
+        DiagLog.log("[RNS] configDir=\(configDir)")
+
+        // Deploy iOS BLE custom interface files BEFORE Python boots so RNS's
+        // external-interface loader can `exec()` them when reading config.
+        // Always copied (regardless of whether BLE is enabled in the
+        // current config) so a later restart with BLE-enabled config finds
+        // them without an extra deployment step.
+        deployIOSBLEPythonFilesIfPossible(configDir: pyDir)
+        // Likewise deploy the RNode (LoRa) custom interface so RNS can load a
+        // `type = IOSRNodeInterface` section if the config has one. Always
+        // copied — cheap, and a later RNode-enabled restart then needs no extra
+        // deploy step (mirrors the BLE case).
+        deployIOSRNodePythonFilesIfPossible(configDir: pyDir)
+
+        // Generate the RNS config from user-saved interface entities. The
+        // file lands at `<configDir>/config` where Python's
+        // `RNS.Reticulum(config_dir)` will pick it up. Transport mode is
+        // read from the App Group UserDefaults (toggled in
+        // Settings → Advanced → Transport Mode); changing it requires
+        // tapping Apply & Restart on the same screen.
+        let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
+        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled)
+        let configFile = pyDir.appendingPathComponent("config")
+        do {
+            try configText.write(to: configFile, atomically: true, encoding: .utf8)
+            DiagLog.log("[RNS] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
+        } catch {
+            DiagLog.log("[RNS] config write FAILED: \(error)")
+        }
+
+        let identityBytes = try? identity.exportPrivateKeys()
+        DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
+
+        do {
+            DiagLog.log("[RNS] calling backend.start()")
+            let info = try await backend.start(
+                .init(
+                    configDir: configDir,
+                    identityPath: identityFile,
+                    displayName: displayName,
+                    identityBytes: identityBytes
+                )
+            )
+            DiagLog.log("[RNS] started identity=\(info.identityHash) destination=\(info.destinationHash)")
+            logger.info("Python backend started — identity=\(info.identityHash, privacy: .public) destination=\(info.destinationHash, privacy: .public)")
+        } catch {
+            DiagLog.log("[RNS] start FAILED: \(error)")
+            logger.error("Python backend start failed: \(error.localizedDescription, privacy: .public)")
+            self.backend = nil
+            return
+        }
+
+        // Install the Swift→Python RNode callback bridge. Unlike BLE (which has
+        // an explicit startBLEInterface()), an RNode interface is instantiated
+        // by RNS's config loader, whose _RNodeBLEBridge registers callbacks via
+        // rns_bridge as soon as it loads — so the invoker must already be in
+        // place. Cheap to install unconditionally: it only stores a ref; the
+        // CBCentralManager isn't created until Python calls columba_rnode_start.
+        #if canImport(CoreBluetooth)
+        if let py = backend as? PythonRNSBackend {
+            SwiftRNodeBridge.shared.setCallbackInvoker(
+                PythonRNodeCallbackBridge(pythonBridge: py.pythonBridge)
+            )
+            DiagLog.log("[RNODE] PythonRNodeCallbackBridge installed")
+        }
+        #endif
+
+        // Outbound LXMF now goes directly through `backend.lxmf.sendLxmfMessage`
+        // (MessagingViewModel + RnsLxmf) with TYPED fields, so the old Compat
+        // router sendHook — which forwarded content only and dropped every field —
+        // is retired. The Compat LXMRouter remains solely as the inbound delegate
+        // holder (IncomingMessageHandler, wired in ColumbaApp); fully retiring it
+        // would require the LXMRouterDelegate protocol to drop its router param
+        // (a separate, lower-value cleanup).
+
+        // Drain Python events into Columba's UI plumbing.
+        pythonEventTask?.cancel()
+        pythonEventTask = Task { [weak self, backend] in
+            for await event in backend.events {
+                guard let self else { break }
+                await self.handlePythonEvent(event)
+            }
+        }
+
+        // Seed Compat TCPInterface stubs for each enabled InterfaceEntity so
+        // the InterfaceManagement UI has something to render against. Their
+        // state starts `.connecting`; the periodic status poll below flips
+        // each one to `.connected` / `.disconnected` based on what Python's
+        // RNS.Transport reports.
+        for entity in interfaces where entity.type == .tcpClient || entity.type == .tcpServer {
+            if tcpInterfaces[entity.id] == nil {
+                let host: String
+                let port: UInt16
+                switch entity.config {
+                case .tcpClient(let cfg): host = cfg.targetHost; port = cfg.targetPort
+                case .tcpServer(let cfg): host = cfg.listenIp; port = cfg.listenPort
+                default: host = ""; port = 0
+                }
+                let config = InterfaceConfig(
+                    id: entity.id,
+                    name: entity.name,
+                    type: entity.type == .tcpClient ? .tcp : .tcp,
+                    enabled: entity.enabled,
+                    mode: .full,
+                    host: host,
+                    port: port
+                )
+                if let iface = try? TCPInterface(config: config) {
+                    iface.state = .connecting
+                    tcpInterfaces[entity.id] = iface
+                }
+            }
+        }
+
+        // Seed the live-interface set the status poll matches against. Kept
+        // current by applyInterfaceChanges() on every hot-add / hot-remove —
+        // the poll reads this each tick (NOT a value captured here) so a
+        // mid-session interface change is reflected without a relaunch.
+        self.pythonInterfaceEntities = Dictionary(uniqueKeysWithValues: interfaces.map { ($0.id, $0) })
+
+        // Periodic status poll: mirror Python's view of interface state into
+        // the Compat TCPInterface stubs so the existing NetworkStatusView /
+        // InterfaceManagementScreen show online / offline accurately.
+        pythonStatusPollTask?.cancel()
+        pythonStatusPollTask = Task { [weak self, backend] in
+            var tick = 0
+            DiagLog.log("[RNS-POLL] task started")
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s
+                tick += 1
+                guard let snapshot = await backend.statusSnapshot() else {
+                    if tick % 5 == 0 { DiagLog.log("[RNS-POLL] tick=\(tick) snapshot=nil") }
+                    continue
+                }
+                guard let self else { return }
+                let entityById = await MainActor.run { self.pythonInterfaceEntities }
+                await self.applyPythonInterfaceStatus(snapshot: snapshot, entityById: entityById)
+            }
+            DiagLog.log("[RNS-POLL] task exiting (cancelled)")
+        }
+
+        // Listen for test-send deep links (lxma://test-send?to=HEX&content=…
+        // [&method=…][&image_hex=…&image_format=…][&file_hex=…&file_name=…]).
+        // Drives the full typed-LXMF send path the interop harness uses to
+        // exercise image / file attachments end-to-end against a Sideband
+        // peer (see Tests/interop/).
+        addPythonObserver("ColumbaTestSend") { [weak self] note in
+            guard let self else { return }
+            guard let to = note.userInfo?["to"] as? String,
+                  let content = note.userInfo?["content"] as? String else { return }
+            let method = (note.userInfo?["method"] as? String) ?? ""
+            let imageHex = (note.userInfo?["image_hex"] as? String) ?? ""
+            let imageFormat = (note.userInfo?["image_format"] as? String) ?? ""
+            let fileHex = (note.userInfo?["file_hex"] as? String) ?? ""
+            let fileName = (note.userInfo?["file_name"] as? String) ?? ""
+            // Resolve delivery method. `direct`/`propagated` ride a Link or
+            // a propagation node, respectively; everything else (including
+            // empty) goes opportunistic — matches LXDeliveryMethod's three
+            // wire-method choices.
+            let deliveryMethod: LXDeliveryMethod
+            switch method.lowercased() {
+            case "direct": deliveryMethod = .direct
+            case "propagated": deliveryMethod = .propagated
+            default: deliveryMethod = .opportunistic
+            }
+            // Hex → Data for the optional attachment payloads. Bad hex
+            // silently drops the field so a typo in the URL surfaces as a
+            // missing field in the inbound tap (loud) rather than a crash.
+            let imageData: Data? = (!imageHex.isEmpty && !imageFormat.isEmpty)
+                ? (try? imageHex.hexToData()) : nil
+            let fileAttachments: [RnsFileAttachment]?
+            if !fileHex.isEmpty && !fileName.isEmpty, let data = try? fileHex.hexToData() {
+                fileAttachments = [RnsFileAttachment(name: fileName, data: data)]
+            } else {
+                fileAttachments = nil
+            }
+            Task { @MainActor in
+                guard let backend = self.backend else {
+                    DiagLog.log("[TEST-SEND] no backend")
+                    return
+                }
+                do {
+                    let outcome = try await backend.lxmf.sendLxmfMessage(
+                        destHashHex: to,
+                        content: content,
+                        method: deliveryMethod,
+                        imageData: imageData,
+                        imageFormat: imageFormat.isEmpty ? nil : imageFormat,
+                        fileAttachments: fileAttachments,
+                        iconAppearance: nil,
+                        replyToMessageHashHex: nil,
+                        replyQuotedContent: nil,
+                        extraFields: nil
+                    )
+                    DiagLog.log("[TEST-SEND] outcome=\(outcome) method=\(deliveryMethod)")
+                } catch {
+                    DiagLog.log("[TEST-SEND] error=\(error)")
+                }
+            }
+        }
+
+        // Listen for test-telemetry deep links — the Tests/interop/ harness
+        // uses these to pin `RnsTelemetry.sendLocationTelemetry` /
+        // `sendTelemetryCease` on the active backend without driving the
+        // CLLocationManager / GPS permission flow that the production
+        // LocationSharingManager runs through.
+        addPythonObserver("ColumbaTestTelemetry") { [weak self] note in
+            guard let self else { return }
+            guard let to = note.userInfo?["to"] as? String else { return }
+            let packedHex = (note.userInfo?["packed_hex"] as? String) ?? ""
+            let metaHex = (note.userInfo?["meta_hex"] as? String) ?? ""
+            let cease = (note.userInfo?["cease"] as? Bool) ?? false
+            Task { @MainActor in
+                guard let backend = self.backend else {
+                    DiagLog.log("[TEST-TELEMETRY] no backend")
+                    return
+                }
+                do {
+                    if cease {
+                        // Same Android-shaped payload the UI path sends:
+                        // zeroed FIELD_TELEMETRY + msgpack {"cease":true}.
+                        let (packed, meta) = CeaseTelemetry.payload()
+                        let outcome = try await backend.telemetry.sendLocationTelemetry(
+                            destHashHex: to, packed: packed, customMeta: meta
+                        )
+                        DiagLog.log("[TEST-TELEMETRY] cease outcome=\(outcome)")
+                    } else {
+                        guard let packed = try? packedHex.hexToData(), !packed.isEmpty else {
+                            DiagLog.log("[TEST-TELEMETRY] packed_hex missing or invalid")
+                            return
+                        }
+                        let meta = (try? metaHex.hexToData()).flatMap { $0.isEmpty ? nil : $0 }
+                        let outcome = try await backend.telemetry.sendLocationTelemetry(
+                            destHashHex: to, packed: packed, customMeta: meta
+                        )
+                        DiagLog.log("[TEST-TELEMETRY] send outcome=\(outcome)")
+                    }
+                } catch {
+                    DiagLog.log("[TEST-TELEMETRY] error=\(error)")
+                }
+            }
+        }
+
+        // Listen for test-restart deep link (lxma://test-restart) so
+        // smoke tests can exercise the Apply & Restart path without UI.
+        addPythonObserver("ColumbaTestRestart") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                DiagLog.log("[TEST-RESTART] invoking restartPythonBackend")
+                await self.restartPythonBackend()
+                DiagLog.log("[TEST-RESTART] done")
+            }
+        }
+
+        // Phase 4 smoke test: direct CB manager state probe. Bypasses the
+        // Python driver so we can isolate Swift-side CB readiness from
+        // Python wiring during early-bring-up debugging.
+        addPythonObserver("ColumbaTestBLEStatus") { _ in
+            #if canImport(CoreBluetooth)
+            let bridge = SwiftBLEBridge.shared
+            let isStarted = bridge.isStarted
+            let connected = bridge.getConnectedPeers()
+            DiagLog.log("[TEST-BLE-STATUS] started=\(isStarted) connected_peers=\(connected.count)")
+            #else
+            DiagLog.log("[TEST-BLE-STATUS] CoreBluetooth unavailable")
+            #endif
+        }
+
+        // Diagnose IOSBLEInterface load: exec the file in the same fresh
+        // namespace RNS uses, surface any exception to DiagLog. Helps when
+        // panic_on_interface_error=no silently swallows external-iface
+        // load errors so the row shows "disconnected" with no signal.
+        addPythonObserver("ColumbaTestBLEDiagnose") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-BLE-DIAG] no backend")
+                    return
+                }
+                let result = await backend.pythonBridge.callModuleFunctionReturningString(
+                    name: "diagnose_ios_ble_interface"
+                ) ?? "(call returned nil)"
+                // Multi-line tracebacks would get truncated by NSLog
+                // formatting if logged as a single line; split and log
+                // each line for readability.
+                for line in result.split(separator: "\n", omittingEmptySubsequences: false) {
+                    DiagLog.log("[TEST-BLE-DIAG] \(line)")
+                }
+            }
+        }
+
+        // Dump path-table entries so we can see what the Node Details
+        // "Interface Heard" card would render without taking a screenshot.
+        addPythonObserver("ColumbaTestPathTable") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-PATH-TABLE] no backend")
+                    return
+                }
+                let result = await backend.pythonBridge.callModuleFunctionReturningString(
+                    name: "diagnose_path_table"
+                ) ?? "(call returned nil)"
+                for line in result.split(separator: "\n", omittingEmptySubsequences: false) {
+                    DiagLog.log("[TEST-PATH-TABLE] \(line)")
+                }
+            }
+        }
+
+        // Diagnose AutoInterface peer discovery: introspect the live
+        // AutoInterface Python object so we can see whether multicast
+        // join succeeded, what interfaces are bound, peer count, etc.
+        addPythonObserver("ColumbaTestAutoDiagnose") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-AUTO-DIAG] no backend")
+                    return
+                }
+                let result = await backend.pythonBridge.callModuleFunctionReturningString(
+                    name: "diagnose_auto_interface"
+                ) ?? "(call returned nil)"
+                for line in result.split(separator: "\n", omittingEmptySubsequences: false) {
+                    DiagLog.log("[TEST-AUTO-DIAG] \(line)")
+                }
+            }
+        }
+
+        // Phase 6 smoke test: dump current connection details (Android parity).
+        addPythonObserver("ColumbaTestBLEPeerList") { _ in
+            #if canImport(CoreBluetooth)
+            let details = SwiftBLEBridge.shared.getConnectionDetails()
+            DiagLog.log("[TEST-BLE-PEER-LIST] count=\(details.count)")
+            for d in details {
+                let idPrefix = d.identityHashHex.map { String($0.prefix(8)) } ?? "<no-id>"
+                DiagLog.log("[TEST-BLE-PEER-LIST]   addr=\(d.address.prefix(8)) role=\(d.role.rawValue) mtu=\(d.mtu) id=\(idPrefix) rssi=\(d.rssi.map(String.init) ?? "?")")
+            }
+            #else
+            DiagLog.log("[TEST-BLE-PEER-LIST] CoreBluetooth unavailable")
+            #endif
+        }
+
+        // Phase 4 smoke test: direct CB scan toggle. Drives SwiftBLEBridge
+        // without going through Python, so we can validate scan start/stop
+        // works before plugging in the BLEDriverInterface contract.
+        addPythonObserver("ColumbaTestBLEScan") { note in
+            #if canImport(CoreBluetooth)
+            let action = (note.userInfo?["action"] as? String) ?? "start"
+            let bridge = SwiftBLEBridge.shared
+            // Lazy-start the bridge so the CB managers exist when we call.
+            if !bridge.isStarted {
+                bridge.start(
+                    serviceUuid: BleConstants.serviceUuid,
+                    rxCharUuid: BleConstants.rxCharUuid,
+                    txCharUuid: BleConstants.txCharUuid,
+                    identityCharUuid: BleConstants.identityCharUuid
+                )
+            }
+            if action == "stop" {
+                bridge.stopScanning()
+                DiagLog.log("[TEST-BLE-SCAN] stopScanning called")
+            } else {
+                bridge.startScanning()
+                DiagLog.log("[TEST-BLE-SCAN] startScanning called")
+            }
+            #else
+            DiagLog.log("[TEST-BLE-SCAN] CoreBluetooth unavailable")
+            #endif
+        }
+
+        // Phase 4 smoke test: direct CB advertise toggle.
+        addPythonObserver("ColumbaTestBLEAdvertise") { note in
+            #if canImport(CoreBluetooth)
+            let action = (note.userInfo?["action"] as? String) ?? "start"
+            let name = (note.userInfo?["name"] as? String) ?? ""
+            let bridge = SwiftBLEBridge.shared
+            if !bridge.isStarted {
+                bridge.start(
+                    serviceUuid: BleConstants.serviceUuid,
+                    rxCharUuid: BleConstants.rxCharUuid,
+                    txCharUuid: BleConstants.txCharUuid,
+                    identityCharUuid: BleConstants.identityCharUuid
+                )
+            }
+            if action == "stop" {
+                bridge.stopAdvertising()
+                DiagLog.log("[TEST-BLE-ADVERTISE] stopAdvertising called")
+            } else {
+                bridge.startAdvertising(deviceName: name.isEmpty ? nil : name)
+                DiagLog.log("[TEST-BLE-ADVERTISE] startAdvertising name=\"\(name)\"")
+            }
+            #else
+            DiagLog.log("[TEST-BLE-ADVERTISE] CoreBluetooth unavailable")
+            #endif
+        }
+
+        // Phase 2 smoke test: Swift→Python BLE callback round-trip.
+        // Installs `_test_roundtrip` Python callback that returns
+        // True iff its int arg is even, then invokes it through the
+        // synchronous bool-return BLE callback path. PASS iff Swift
+        // gets back the expected bool for both even and odd inputs.
+        addPythonObserver("ColumbaTestBLECallback") { [weak self] note in
+            guard let self else { return }
+            let value = (note.userInfo?["value"] as? Int) ?? 4
+            Task { @MainActor in
+                guard let backend = self.pythonBackend else {
+                    DiagLog.log("[TEST-BLE-CB] FAIL: no backend")
+                    return
+                }
+                let installed = await backend.installBLETestRoundtripCallback()
+                guard installed else {
+                    DiagLog.log("[TEST-BLE-CB] FAIL: callback install failed")
+                    return
+                }
+                let evenResult = backend.invokeBLETestRoundtrip(value: value)
+                let oddResult = backend.invokeBLETestRoundtrip(value: value + 1)
+                let evenExpected = value % 2 == 0
+                let oddExpected = (value + 1) % 2 == 0
+                let pass = evenResult == evenExpected && oddResult == oddExpected
+                DiagLog.log("[TEST-BLE-CB] value=\(value) even=\(evenResult) odd=\(oddResult) \(pass ? "PASS" : "FAIL")")
+            }
+        }
+
+        // lxma://test-answer — accept the currently-ringing call.
+        addPythonObserver("ColumbaTestAnswer") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                #if os(iOS)
+                guard let callManager = self.callManager else {
+                    DiagLog.log("[TEST-ANSWER] no callManager")
+                    return
+                }
+                DiagLog.log("[TEST-ANSWER] calling answerCall()")
+                callManager.answerCall()
+                #endif
+            }
+        }
+
+        // lxma://test-call?to=HEX[&profile=...] — exercise the full call
+        // pipeline: CallManager.initiateCall → Telephone.call →
+        // Compat.Link.sendBytes → PythonRNSBackend.linkSend.
+        addPythonObserver("ColumbaTestCall") { [weak self] note in
+            guard let self else { return }
+            let to = (note.userInfo?["to"] as? String) ?? ""
+            let profileRaw = (note.userInfo?["profile"] as? String) ?? ""
+            Task { @MainActor in
+                #if os(iOS)
+                guard let callManager = self.callManager else {
+                    DiagLog.log("[TEST-CALL] no callManager")
+                    return
+                }
+                guard let destHash = try? to.hexToData() else {
+                    DiagLog.log("[TEST-CALL] bad to= hex")
+                    return
+                }
+                // Pick profile: default to qualityMedium if not specified or
+                // unrecognized; parse rawValue if present.
+                var profile: TelephonyProfile = .qualityMedium
+                if !profileRaw.isEmpty, let parsed = TelephonyProfile.allCases.first(where: { "\($0)" == profileRaw }) {
+                    profile = parsed
+                }
+                DiagLog.log("[TEST-CALL] initiating to=\(destHash.toHex().prefix(8)) profile=\(profile)")
+                callManager.initiateCall(destinationHash: destHash, profile: profile, peerDisplayName: nil)
+                #else
+                DiagLog.log("[TEST-CALL] CallManager only available on iOS")
+                #endif
+            }
+        }
+
+        // lxma://test-link-open?to=HEX&aspect=lxst.telephony — exercise the
+        // RNS.Link bridge by opening an outbound Link to a destination.
+        // Logs the link_id + waits for link_state events to surface via
+        // NotificationCenter. For commit-1 smoke testing.
+        addPythonObserver("ColumbaTestLinkOpen") { [weak self] note in
+            guard let self else { return }
+            let to = (note.userInfo?["to"] as? String) ?? ""
+            let aspect = (note.userInfo?["aspect"] as? String) ?? "lxst.telephony"
+            Task { @MainActor in
+                guard let backend = self.backend else {
+                    DiagLog.log("[TEST-LINK] no backend")
+                    return
+                }
+                do {
+                    let res = try await backend.openLink(destHashHex: to, aspect: aspect)
+                    DiagLog.log("[TEST-LINK] open ok=\(res.ok) linkId=\(res.linkId) reason=\(res.reason)")
+                } catch {
+                    DiagLog.log("[TEST-LINK] open error=\(error)")
+                }
+            }
+        }
+
+        // lxma://test-inbound?from=HEX&content=... — synthesize an inbound
+        // event so the privacy filter (block_unknown_senders) can be
+        // verified without needing a working peer.
+        addPythonObserver("ColumbaTestInbound") { [weak self] note in
+            guard let self else { return }
+            let fromHex = (note.userInfo?["from"] as? String) ?? ""
+            let content = (note.userInfo?["content"] as? String) ?? "synthetic"
+            guard let from = Data(hexString: fromHex) else {
+                DiagLog.log("[TEST-INBOUND] bad hex")
+                return
+            }
+            Task { @MainActor in
+                await self.persistInboundFromPython(
+                    sourceHash: from,
+                    content: content,
+                    title: "",
+                    fields: nil,
+                    timestamp: Date()
+                )
+            }
+        }
+
+        // lxma://test-identity-switch — exercise the multi-identity swap
+        // path: create a fresh identity in IdentityManager and call
+        // AppServices.switchIdentity. Logs the destination hash before
+        // and after so we can verify Python actually rebooted with the
+        // new keys.
+        addPythonObserver("ColumbaTestIdentitySwitch") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                let manager = IdentityManager()
+                let before = self.backend?.localInfo?.destinationHash ?? "nil"
+                DiagLog.log("[TEST-IDSWITCH] before destination=\(before)")
+                do {
+                    let created = try await manager.createIdentity(displayName: "SwitchTarget")
+                    let (localId, identity) = try await manager.switchToIdentity(created.identityHash)
+                    try await self.switchIdentity(
+                        to: identity,
+                        identityHash: localId.identityHash,
+                        tcpServerAddress: ""
+                    )
+                    let after = self.backend?.localInfo?.destinationHash ?? "nil"
+                    DiagLog.log("[TEST-IDSWITCH] after destination=\(after) (changed=\(before != after))")
+                } catch {
+                    DiagLog.log("[TEST-IDSWITCH] error=\(error)")
+                }
+            }
+        }
+
+        // lxma://test-prop-sync?node=HEX — set propagation node, kick a sync,
+        // log the outcome.
+        addPythonObserver("ColumbaTestPropSync") { [weak self] note in
+            guard let self else { return }
+            let node = (note.userInfo?["node"] as? String) ?? ""
+            Task { @MainActor in
+                guard let backend = self.backend else {
+                    DiagLog.log("[TEST-PROP-SYNC] no backend")
+                    return
+                }
+                do {
+                    _ = try await backend.setPropagationNode(destHashHex: node, stampCost: 0)
+                    DiagLog.log("[TEST-PROP-SYNC] set node, starting sync")
+                    let r = try await backend.propagationSync(timeout: 30.0)
+                    DiagLog.log("[TEST-PROP-SYNC] result ok=\(r.ok) state=\(r.state.rawValue) received=\(r.receivedMessages) reason=\(r.reason)")
+                } catch {
+                    DiagLog.log("[TEST-PROP-SYNC] error=\(error)")
+                }
+            }
+        }
+
+        // lxma://test-announce?name=... — calls sendAllAnnounces with the
+        // given display name (both the LXMF delivery + LXST telephony
+        // destinations), logs the outcome.
+        addPythonObserver("ColumbaTestAnnounce") { [weak self] note in
+            guard let self else { return }
+            let name = (note.userInfo?["name"] as? String) ?? ""
+            Task { @MainActor in
+                do {
+                    try await self.sendAllAnnounces(displayName: name)
+                    DiagLog.log("[TEST-ANNOUNCE] sendAllAnnounces returned OK")
+                } catch {
+                    DiagLog.log("[TEST-ANNOUNCE] sendAllAnnounces failed: \(error)")
+                }
+            }
+        }
+
+        // lxma://test-nomad-fetch?to=HEX&path=/page/index.mu — calls
+        // bridge.fetchNomadNetPage and logs the response.
+        addPythonObserver("ColumbaTestNomadFetch") { [weak self] note in
+            guard let self else { return }
+            guard let to = note.userInfo?["to"] as? String,
+                  let path = note.userInfo?["path"] as? String else { return }
+            Task { @MainActor in
+                guard let backend = self.backend else {
+                    DiagLog.log("[TEST-NOMAD] no backend")
+                    return
+                }
+                do {
+                    let res = try await backend.fetchNomadNetPage(destHashHex: to, path: path)
+                    let preview = String(data: res.data.prefix(120), encoding: .utf8) ?? "(non-utf8 \(res.data.count) bytes)"
+                    DiagLog.log("[TEST-NOMAD] result ok=\(res.ok) status=\(res.status.rawValue) bytes=\(res.data.count) preview=\(preview)")
+                } catch {
+                    DiagLog.log("[TEST-NOMAD] error=\(error)")
+                }
+            }
+        }
+    }
+
+    /// Look up the matching Python interface for each user `InterfaceEntity`
+    /// and update the Compat TCPInterface stub's `state` to reflect the
+    /// `online` flag RNS.Transport reports.
+    private func applyPythonInterfaceStatus(
+        snapshot: StatusSnapshot,
+        entityById: [String: InterfaceEntity]
+    ) async {
+        // Log every interface Python reports so we can see AutoInterface /
+        // RNode / etc. that don't have Compat stubs yet. One-shot per
+        // section_name change.
+        let snapshotKey = snapshot.interfaces.map { "\($0.sectionName):\($0.online ? 1 : 0)" }.joined(separator: ",")
+        if snapshotKey != lastInterfaceSnapshotKey {
+            DiagLog.log("[RNS] interfaces=\(snapshotKey)")
+            lastInterfaceSnapshotKey = snapshotKey
+        }
+        // The config section name PythonConfigWriter wrote is the matching
+        // key — it's stable across the bridge and unique per entity.
+        var byEntity: [String: StatusSnapshot.InterfaceStatus] = [:]
+        var matchedSectionNames: Set<String> = []
+        for status in snapshot.interfaces {
+            for (entityId, entity) in entityById {
+                let expected = expectedSectionName(for: entity)
+                if status.sectionName == expected {
+                    byEntity[entityId] = status
+                    matchedSectionNames.insert(status.sectionName)
+                }
+            }
+        }
+        // Auxiliary: any Python interface that didn't match an entity is a
+        // dynamically-spawned peer (AutoInterfacePeer / BLEPeer / etc.).
+        // Push these into the Transport so NetworkStatusView can render them.
+        // Python AutoInterfacePeer's `name` is the class name; the `name`
+        // field of the status dict is `str(iface)` which gives us the
+        // friendly "AutoInterfacePeer[en0/fe80::xxxx]" — peel out the
+        // peer address from there for the row subtitle.
+        var auxiliary: [InterfaceSnapshot] = []
+        for status in snapshot.interfaces where !matchedSectionNames.contains(status.sectionName) {
+            // Skip user-defined sections we just couldn't match for some
+            // reason (rename race, etc.) — only emit synthetic rows for
+            // peer-style names.
+            let isAutoPeer = status.name.hasPrefix("AutoInterfacePeer")
+            let isBlePeer = status.name.hasPrefix("BLEPeerInterface") || status.name.hasPrefix("BLEPeer")
+            guard isAutoPeer || isBlePeer else { continue }
+            let typeLabel = isAutoPeer ? "AutoInterfacePeer" : "BLEPeer"
+            // Peel out the bracketed addr — "AutoInterfacePeer[en0/fe80::1]"
+            // gives "en0/fe80::1".
+            let peerAddress: String? = {
+                guard let open = status.name.firstIndex(of: "["),
+                      let close = status.name.lastIndex(of: "]"),
+                      open < close else { return nil }
+                return String(status.name[status.name.index(after: open)..<close])
+            }()
+            auxiliary.append(InterfaceSnapshot(
+                id: "py-aux:\(status.sectionName.isEmpty ? status.name : status.sectionName)",
+                name: status.name,
+                online: status.online,
+                typeLabel: typeLabel,
+                type: isAutoPeer ? .autoInterface : .ble,
+                state: status.online ? .connected : .disconnected,
+                isAutoInterfacePeer: isAutoPeer,
+                isBLEPeerInterface: isBlePeer,
+                peerAddress: peerAddress,
+                lastErrorDescription: nil
+            ))
+        }
+        if let transport = transport {
+            transport.setPythonAuxiliarySnapshots(auxiliary)
+        }
+        // One-shot log of auxiliary count changes so we can see whether
+        // LAN / BLE peer discovery is actually firing.
+        let auxKey = auxiliary.map(\.id).sorted().joined(separator: ",")
+        if auxKey != lastAuxiliaryKey {
+            DiagLog.log("[RNS] auxiliary interfaces (\(auxiliary.count)): \(auxKey)")
+            lastAuxiliaryKey = auxKey
+        }
+        for (entityId, status) in byEntity {
+            let newState: InterfaceState = status.online ? .connected : .disconnected
+            // TCP interfaces keyed by entity ID.
+            if let iface = tcpInterfaces[entityId] {
+                if iface.state != newState {
+                    DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    iface.state = newState
+                    iface.online = status.online
+                }
+                continue
+            }
+            // Auto + BLE interfaces are singletons on AppServices, keyed by
+            // entity type rather than ID. Match the corresponding entity and
+            // mirror Python's reported state onto the Swift stub so the UI
+            // can render an accurate "connected/disconnected" badge.
+            guard let entity = entityById[entityId] else { continue }
+            switch entity.config {
+            case .autoInterface:
+                if let auto = self.autoInterface, auto.state != newState {
+                    DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (Auto, rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    auto.state = newState
+                    auto.online = status.online
+                }
+            case .ble:
+                if let ble = self.bleInterface, ble.state != newState {
+                    DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (BLE, rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    ble.state = newState
+                    ble.online = status.online
+                }
+            case .rnode:
+                // The real RNode runs as the Python IOSRNodeInterface; the Swift
+                // RNodeInterface stub never reaches .connected on its own, so the
+                // Network Interfaces row sat at "disconnected" even while the
+                // backend reported the interface online. Mirror Python's state
+                // onto the stub the UI polls — same as Auto/BLE above. (Was
+                // missing here, hence the gap.)
+                if let rnode = self.rnodeInterface, rnode.state != newState {
+                    DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (RNode, rx=\(status.rxBytes) tx=\(status.txBytes))")
+                    rnode.state = newState
+                    rnode.online = status.online
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    /// Stop the running Python RNS stack, regenerate the RNS config file
+    /// from `InterfaceRepository.getEnabledInterfaces()`, and start a fresh
+    /// instance. Called from the InterfaceManagementScreen's "Apply &
+    /// Restart" button after the user adds, edits, toggles, or removes an
+    /// interface. RNS has no hot-reload — the only way to pick up a new
+    /// `[interfaces]` section is a full Reticulum re-init.
+    ///
+    /// Causes a ~1-2s connectivity outage. Caller should reflect the
+    /// transition in the UI (the Apply button already shows a
+    /// ProgressView while `isApplyingChanges` is set).
+    public func restartPythonBackend() async {
+        guard let identity = pythonStartIdentity else {
+            DiagLog.log("[RNS] restart skipped — backend was never started")
+            return
+        }
+        // Rewrite the RNS config on disk so the new interface set is
+        // captured. The actual Python-side restart is DELIBERATELY skipped
+        // — in-place restart of the embedded interpreter is flaky on iOS
+        // (Reticulum is a class-level singleton, AutoInterface holds
+        // multicast socket threads that don't tear down deterministically,
+        // and the embedded Python aborts ~130ms into the second
+        // `Reticulum.__init__` when the previous instance's threads still
+        // hold the multicast bind). RNS has no hot-reload of [interfaces]
+        // anyway, so the right model is: write the config, tell the user
+        // to relaunch Columba. The full app launch on the next start gets
+        // a clean Python + clean RNS singleton.
+        _ = identity // pythonStartIdentity presence is the only precondition
+        let fresh = InterfaceRepository().getEnabledInterfaces()
+        writePythonConfig(interfaces: fresh)
+        DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); awaiting next app launch to apply")
+        // Notify the UI so it can show a "relaunch Columba" prompt.
+        NotificationCenter.default.post(
+            name: Notification.Name("ColumbaRelaunchRequired"),
+            object: nil
+        )
+    }
+
+    /// Force the Python RNS stack to flush its path table + known destinations
+    /// to disk. RNS only persists on a 12h timer / clean exit, and iOS suspends
+    /// the app without a clean exit — so we call this when the app backgrounds,
+    /// otherwise RNS's `destination_table` / `known_destinations` are rarely
+    /// written and a cold start can't recall previously-heard peers.
+    ///
+    /// Wrapped in a UIKit background task so the file writes have a chance to
+    /// finish before iOS suspends us.
+    @MainActor
+    public func persistRNSStateOnBackground() {
+        guard let backend = backend else { return }
+        #if canImport(UIKit)
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "rns-persist") {
+            if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
+        }
+        Task {
+            _ = await backend.persist()
+            await MainActor.run {
+                if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
+            }
+        }
+        #else
+        Task { _ = await backend.persist() }
+        #endif
+    }
+
+    /// Directory holding the running Python instance's RNS config, derived from
+    /// the identity the backend was started with. Returns nil if the backend
+    /// was never started (no cached identity). Creates the directory if needed.
+    private func pythonConfigDirURL() -> URL? {
+        guard let identity = pythonStartIdentity else { return nil }
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let pyDir = appSupport.appendingPathComponent("Columba/python-\(identity.hexHash)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
+        return pyDir
+    }
+
+    /// Write the RNS config file from the given interface set. This is the
+    /// durability backstop: it keeps `<configDir>/config` authoritative so a
+    /// cold launch (or the transport-mode full restart) reflects the current
+    /// interfaces. It is NOT how live changes take effect — `add_interface` /
+    /// `remove_interface` reads this file but the running stack is reconfigured
+    /// by `applyInterfaceChanges()`.
+    @discardableResult
+    private func writePythonConfig(interfaces: [InterfaceEntity]) -> Bool {
+        guard let pyDir = pythonConfigDirURL() else {
+            DiagLog.log("[RNS] writePythonConfig skipped — no start identity")
+            return false
+        }
+        let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
+        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled)
+        let configFile = pyDir.appendingPathComponent("config")
+        do {
+            try configText.write(to: configFile, atomically: true, encoding: .utf8)
+            DiagLog.log("[RNS] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
+            return true
+        } catch {
+            DiagLog.log("[RNS] config write FAILED: \(error)")
+            return false
+        }
+    }
+
+    /// Apply pending interface changes to the *running* RNS stack with no
+    /// restart and no app relaunch.
+    ///
+    /// RNS attaches/detaches interfaces on a live `Transport` (the same
+    /// primitive its 1.x interface-discovery autoconnect uses). We diff the
+    /// just-saved enabled set against what's currently live
+    /// (`pythonInterfaceEntities`) and:
+    ///   1. rewrite the config file (durability for the next cold launch),
+    ///   2. hot-remove dropped interfaces (and the old form of edited ones),
+    ///   3. hot-add new interfaces (and the new form of edited ones),
+    ///   4. seed/tear down the Swift-side status mirrors so the UI badges
+    ///      track reality immediately,
+    ///   5. update `pythonInterfaceEntities` so the status poll matches the
+    ///      new set.
+    ///
+    /// Edited interfaces are handled as remove-then-add: `add_interface` reads
+    /// the freshly-written config section, so changed host/port/etc. take
+    /// effect. Caveat: removing an AutoInterface is not a clean teardown
+    /// upstream (its `detach()` leaves multicast sockets bound until process
+    /// exit), so re-adding the same AutoInterface mid-session may collide —
+    /// TCP is unaffected.
+    @MainActor
+    public func applyInterfaceChanges() async {
+        let fresh = InterfaceRepository().getEnabledInterfaces()
+        let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
+
+        // 1. Durability — always persist, even if there's no live backend.
+        writePythonConfig(interfaces: fresh)
+
+        guard let backend = backend else {
+            DiagLog.log("[RNS-HOT] no running backend — config written, applies on next launch")
+            pythonInterfaceEntities = freshById
+            return
+        }
+
+        let live = pythonInterfaceEntities
+        let removed = live.values.filter { freshById[$0.id] == nil }
+        let added = fresh.filter { live[$0.id] == nil }
+        let changed = fresh.filter { e in
+            guard let old = live[e.id] else { return false }
+            return old != e
+        }
+
+        DiagLog.log("[RNS-HOT] applyInterfaceChanges: +\(added.count) -\(removed.count) ~\(changed.count)")
+
+        // 2. Remove dropped interfaces, and the OLD form of edited ones.
+        for entity in removed {
+            await hotRemoveInterface(entity, backend: backend)
+        }
+        for entity in changed {
+            if let old = live[entity.id] {
+                await hotRemoveInterface(old, backend: backend)
+            }
+        }
+
+        // 3. Add new interfaces, and the NEW form of edited ones.
+        for entity in added + changed {
+            await hotAddInterface(entity, backend: backend)
+        }
+
+        // 5. Keep the status-poll's matching set in sync with what's live.
+        pythonInterfaceEntities = freshById
+    }
+
+    /// Hot-add one interface to the running Python stack and seed its Swift
+    /// status mirror. Assumes the config file already contains the section
+    /// (callers run `writePythonConfig` first).
+    @MainActor
+    private func hotAddInterface(_ entity: InterfaceEntity, backend: any RnsBackend) async {
+        let section = PythonConfigWriter.sectionName(for: entity)
+        do {
+            let r = try await backend.addInterface(name: section)
+            DiagLog.log("[RNS-HOT] add \(section): ok=\(r.ok) reason=\(r.reason)")
+        } catch {
+            DiagLog.log("[RNS-HOT] add \(section) error: \(error)")
+        }
+        await seedSwiftStub(for: entity)
+    }
+
+    /// Hot-remove one interface from the running Python stack and tear down its
+    /// Swift status mirror.
+    @MainActor
+    private func hotRemoveInterface(_ entity: InterfaceEntity, backend: any RnsBackend) async {
+        let section = PythonConfigWriter.sectionName(for: entity)
+        do {
+            let r = try await backend.removeInterface(name: section)
+            DiagLog.log("[RNS-HOT] remove \(section): ok=\(r.ok) reason=\(r.reason)")
+        } catch {
+            DiagLog.log("[RNS-HOT] remove \(section) error: \(error)")
+        }
+        await teardownSwiftStub(for: entity)
+    }
+
+    /// Create the Swift-side status mirror for a freshly hot-added interface so
+    /// NetworkStatusView / Manage Interfaces / the Settings card can render it.
+    /// TCP interfaces get a Compat stub (state starts `.connecting`; the status
+    /// poll flips it based on Python's view). Auto/BLE/RNode reuse the existing
+    /// start* singletons, matching what the launch path (ColumbaApp Step 7) does.
+    @MainActor
+    private func seedSwiftStub(for entity: InterfaceEntity) async {
+        switch entity.config {
+        case .tcpClient(let cfg):
+            if tcpInterfaces[entity.id] == nil {
+                let config = InterfaceConfig(
+                    id: entity.id, name: entity.name, type: .tcp,
+                    enabled: true, mode: .full, host: cfg.targetHost, port: cfg.targetPort
+                )
+                if let iface = try? TCPInterface(config: config) {
+                    iface.state = .connecting
+                    tcpInterfaces[entity.id] = iface
+                }
+            }
+        case .tcpServer(let cfg):
+            if tcpInterfaces[entity.id] == nil {
+                let config = InterfaceConfig(
+                    id: entity.id, name: entity.name, type: .tcp,
+                    enabled: true, mode: .full, host: cfg.listenIp, port: cfg.listenPort
+                )
+                if let iface = try? TCPInterface(config: config) {
+                    iface.state = .connecting
+                    tcpInterfaces[entity.id] = iface
+                }
+            }
+        case .autoInterface(let cfg):
+            try? await startAutoInterface(groupId: cfg.groupId ?? "reticulum")
+        case .ble:
+            #if canImport(CoreBluetooth)
+            try? await startBLEInterface()
+            #endif
+        case .rnode(let cfg):
+            try? await startRNodeInterface(config: cfg, name: entity.name)
+        case .multipeer:
+            break // Multipeer status mirror not wired for hot-add yet.
+        }
+    }
+
+    /// Tear down the Swift-side status mirror for a hot-removed interface so the
+    /// UI stops showing it as connected. This is what fixes the stale
+    /// "Bluetooth connected" card after disabling BLE.
+    @MainActor
+    private func teardownSwiftStub(for entity: InterfaceEntity) async {
+        switch entity.config {
+        case .tcpClient, .tcpServer:
+            if let iface = tcpInterfaces[entity.id] {
+                await iface.disconnect()
+                await transport?.removeInterface(id: entity.id)
+                tcpInterfaces.removeValue(forKey: entity.id)
+            }
+        case .autoInterface:
+            await stopAutoInterface()
+        case .ble:
+            #if canImport(CoreBluetooth)
+            await stopBLEInterface()
+            #endif
+        case .rnode:
+            await stopRNodeInterface()
+        case .multipeer:
+            break
+        }
+    }
+
+    /// Re-instantiate the Swift-side interface singletons / stubs for each
+    /// enabled `InterfaceEntity` after a Python restart. Idempotent (each
+    /// start*Interface method early-exits if already up).
+    private func respawnSwiftInterfaceStubs(enabled: [InterfaceEntity]) async {
+        for entity in enabled {
+            switch entity.config {
+            case .tcpClient(let config):
+                let entityId = entity.id
+                do {
+                    try await connectTCPInterface(entityId: entityId, host: config.targetHost, port: config.targetPort)
+                    DiagLog.log("[RESPAWN] TCP \(entityId) connected")
+                } catch {
+                    DiagLog.log("[RESPAWN] TCP \(entityId) failed: \(error)")
+                }
+            case .autoInterface(let config):
+                let groupId = config.groupId ?? "reticulum"
+                do {
+                    try await startAutoInterface(groupId: groupId)
+                    DiagLog.log("[RESPAWN] AutoInterface started groupId=\(groupId)")
+                } catch {
+                    DiagLog.log("[RESPAWN] AutoInterface failed: \(error)")
+                }
+            case .ble:
+                #if canImport(CoreBluetooth)
+                do {
+                    try await startBLEInterface()
+                    DiagLog.log("[RESPAWN] BLEInterface started")
+                } catch {
+                    DiagLog.log("[RESPAWN] BLEInterface failed: \(error)")
+                }
+                #endif
+            case .tcpServer, .rnode, .multipeer:
+                // tcpServer + RNode + Multipeer aren't auto-started on
+                // restart yet (no parity with ColumbaApp.swift initial
+                // startup); add when those flows are formalized.
+                break
+            }
+        }
+    }
+
+    /// Recompute the config-section name PythonConfigWriter would have
+    /// written for an entity, so we can match Python interface objects back
+    /// to entities by section_name.
+    private func expectedSectionName(for entity: InterfaceEntity) -> String {
+        // Delegate to the single source of truth used by the config writer and
+        // the hot-add / hot-remove path, so status matching can never drift
+        // from the section names actually written to the RNS config.
+        PythonConfigWriter.sectionName(for: entity)
+    }
+
+    /// Save a Python-delivered inbound LXMF message to the repository and
+    /// notify the chats UI. Mirrors the work IncomingMessageHandler does
+    /// on receipt but is invoked directly because Python is what surfaced
+    /// the message — there's no Swift LXMRouter callback to hook.
+    ///
+    /// Honors the `block_unknown_senders` privacy toggle (Settings →
+    /// Privacy): when enabled, drops the inbound message unless the
+    /// sender is a known + favorited contact. This must live here
+    /// because we bypass IncomingMessageHandler — Python's delivery
+    /// callback feeds straight into this method.
+    /// Persist an inbound message + return it (with its fields) so the caller can
+    /// run side-channel handling (reactions/replies/telemetry/icon/cease) through
+    /// IncomingMessageHandler. Returns nil if blocked or persistence failed.
+    @discardableResult
+    private func persistInboundFromPython(sourceHash: Data, content: String, title: String, fields: [UInt8: Any]?, timestamp: Date) async -> LXMessage? {
+        guard let database = self.database else {
+            DiagLog.log("[RNS] persistInbound: no database")
+            return nil
+        }
+        let repo = MessageRepository(database: database)
+        let sourceHashHex = sourceHash.map { String(format: "%02x", $0) }.joined()
+
+        // Privacy: block_unknown_senders drops messages from anyone the
+        // user hasn't explicitly favorited (matches the existing
+        // IncomingMessageHandler check — favorite is the "this is a
+        // real contact, not a random announce hop" signal).
+        if UserDefaults.standard.bool(forKey: "block_unknown_senders") {
+            let isKnownContact: Bool
+            do {
+                let conversation = try await database.getConversation(hash: sourceHash)
+                isKnownContact = (conversation?.isFavorite ?? 0) != 0
+            } catch {
+                // Fail open: surface the message if the DB check itself
+                // fails (better than silently dropping mail).
+                isKnownContact = true
+            }
+            if !isKnownContact {
+                DiagLog.log("[RNS] persistInbound BLOCKED source=\(sourceHashHex.prefix(8)) (block_unknown_senders enabled)")
+                return nil
+            }
+        }
+
+        let displayName = "Peer \(sourceHashHex.prefix(8))"
+
+        do {
+            try await repo.ensureConversation(sourceHash, displayName: displayName)
+
+            // Build a synthetic LXMessage so saveMessage can persist it.
+            // Hash is the SHA-256 of (sourceHashHex || content || timestamp)
+            // truncated to 32 bytes — enough to dedupe; the Python side
+            // doesn't expose the canonical message hash through the event.
+            let hashInput = (sourceHashHex + content + "\(timestamp.timeIntervalSince1970)").data(using: .utf8) ?? Data()
+            let messageHash = Data(SHA256.hash(data: hashInput))
+
+            let message = LXMessage(
+                destinationHash: sourceHash,
+                sourceIdentity: nil,
+                content: content.data(using: .utf8) ?? Data(),
+                title: title.data(using: .utf8) ?? Data(),
+                fields: fields,
+                desiredMethod: .opportunistic
+            )
+            message.sourceHash = sourceHash
+            message.hash = messageHash
+            message.incoming = true
+            message.timestamp = timestamp.timeIntervalSince1970
+            message.state = .received
+
+            try await repo.saveMessage(message)
+            DiagLog.log("[RNS] persistInbound saved msg=\(messageHash.prefix(4).map { String(format: "%02x", $0) }.joined())")
+
+            // Fire the same notification IncomingMessageHandler would post
+            // so ChatsViewModel / MessagingViewModel refresh.
+            NotificationCenter.default.post(
+                name: IncomingMessageHandler.messageReceivedNotification,
+                object: nil,
+                userInfo: ["sourceHash": sourceHash]
+            )
+            return message
+        } catch {
+            DiagLog.log("[RNS] persistInbound failed: \(error)")
+            return nil
+        }
+    }
+
+    private func handlePythonEvent(_ event: BackendEvent) async {
+        switch event {
+        case .announce(let destHash, let appDataHex, let aspect, let publicKeysHex, let interfaceName, let hops, let t):
+            guard let data = Data(hexString: destHash) else { return }
+            // The bridge forwards raw app_data; decode the display name here
+            // (aspect-specific layout knowledge lives in AppDataParser, not the
+            // bridge). `appData` is also stashed on the PathEntry so the
+            // propagation-node subsystem (PropagationNodeManager / relay badge /
+            // NodeDetailsView) can parse limits + stamp cost from it.
+            let appData = Data(hexString: appDataHex) ?? Data()
+            let displayName = AppDataParser.displayName(from: appData, aspect: aspect)
+            DiagLog.log("[RNS] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\" hops=\(hops)")
+
+            // Insert the announce into the Compat PathTable so the Contacts
+            // tab's networkAnnounces list picks it up via the pathUpdates
+            // AsyncStream subscription in ContactsViewModel.
+            if let pathTable = self.pathTable {
+                let publicKeys = Data(hexString: publicKeysHex) ?? Data()
+                // Python tells us the receiving-interface section name —
+                // e.g. "Hub-FFB1F1" / "Bluetooth_LE-77CFC2" / "AutoInterfacePeer".
+                // Fall back to the "python-rns" sentinel only when Python
+                // couldn't determine an iface (shouldn't happen post-fix).
+                let ifaceId = interfaceName.isEmpty ? "python-rns" : interfaceName
+                let entry = PathEntry(
+                    destinationHash: data,
+                    displayName: displayName,
+                    nextHop: data,
+                    hopCount: hops,
+                    lastSeen: t,
+                    publicKeys: publicKeys,
+                    interfaceId: ifaceId,
+                    appData: appData.isEmpty ? nil : appData,
+                    expires: t.addingTimeInterval(7 * 86400),
+                    timestamp: t,
+                    detectedAspect: aspect,
+                    isLXMFPropagationNode: aspect == "lxmf.propagation",
+                    isLXSTTelephony: aspect == "lxst.telephony",
+                    isKnownDestination: true
+                )
+                await pathTable.insert(entry)
+            }
+
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonAnnounce"),
+                object: nil,
+                userInfo: [
+                    "destinationHash": data,
+                    "displayName": displayName,
+                    "aspect": aspect,
+                    "timestamp": t,
+                ]
+            )
+        case .inbound(let sourceHash, let content, let title, let fieldsPacked, let t):
+            DiagLog.log("[RNS] inbound source=\(sourceHash) content=\"\(content)\" fields=\(fieldsPacked.count)B")
+            guard let data = Data(hexString: sourceHash) else { return }
+            let fields = fieldsPacked.isEmpty ? nil : LxmfFieldCodec.unpack(fieldsPacked)
+            // Persist the base message (carrying its fields), then run side-channel
+            // handling (reactions / replies / telemetry / icon / cease) through
+            // IncomingMessageHandler — the router.delegate, wired in ColumbaApp.
+            // Same path for both backends (Python sends empty fields until its
+            // bridge plumbing lands; the Swift backend populates them now).
+            if let saved = await persistInboundFromPython(sourceHash: data, content: content, title: title, fields: fields, timestamp: t),
+               fields != nil, let router = self.router {
+                router.delegate?.router(router, didReceiveMessage: saved)
+            }
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonInbound"),
+                object: nil,
+                userInfo: [
+                    "sourceHash": data,
+                    "content": content,
+                    "title": title,
+                    "timestamp": t,
+                ]
+            )
+        case .state(let value, _):
+            DiagLog.log("[RNS] state \(value)")
+            logger.info("Python state: \(value, privacy: .public)")
+        case .delivery(let messageHash, let state, _):
+            DiagLog.log("[RNS] delivery \(messageHash.prefix(16)) state=\(state)")
+            guard let hashData = Data(hexString: messageHash) else { return }
+            let newState: LXMessageState = (state == "delivered") ? .delivered : .failed
+            if let database = self.database {
+                try? database.updateMessageState(id: hashData, state: newState)
+            }
+            // Notify the open chat so it can flip the bubble's indicator
+            // (double-check for delivered / failed) without a full reload.
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonDelivery"),
+                object: nil,
+                userInfo: [
+                    "messageHash": hashData,
+                    "state": state,
+                ]
+            )
+        case .linkState(let linkId, let state, let reason, let inbound, _):
+            DiagLog.log("[RNS] link \(linkId) state=\(state) inbound=\(inbound)\(reason.isEmpty ? "" : " reason=\(reason)")")
+            // Surface via NotificationCenter for any subscribers (debug
+            // panels, smoke tests) that aren't on the Compat-Link path.
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonLinkState"),
+                object: nil,
+                userInfo: [
+                    "linkId": linkId,
+                    "state": state,
+                    "reason": reason,
+                    "inbound": inbound,
+                ]
+            )
+            // Dispatch to the Compat Link object. lxst-swift's Telephone
+            // state machine + CallManager talk to Compat Links exclusively.
+            let id = UInt64(linkId)
+            switch state {
+            case "established":
+                if inbound {
+                    await self.dispatchInboundLink(linkId: id)
+                } else {
+                    await self.dispatchOutboundLinkEstablished(linkId: id)
+                }
+            case "closed":
+                await self.dispatchLinkClosed(linkId: id, reason: reason)
+            default:
+                break  // "establishing" et al — purely informational
+            }
+        case .linkPacket(let linkId, let data, _):
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonLinkPacket"),
+                object: nil,
+                userInfo: ["linkId": linkId, "data": data]
+            )
+            await self.dispatchLinkPacket(linkId: UInt64(linkId), data: data)
+        case .linkIdentified(let linkId, let identityHashHex, _):
+            DiagLog.log("[RNS] link \(linkId) identified=\(identityHashHex.prefix(8))")
+            NotificationCenter.default.post(
+                name: Notification.Name("ColumbaPythonLinkIdentified"),
+                object: nil,
+                userInfo: ["linkId": linkId, "identityHashHex": identityHashHex]
+            )
+            await self.dispatchLinkIdentified(linkId: UInt64(linkId), identityHashHex: identityHashHex)
+        }
     }
 
     /// Initialize all LXMF components with an externally-provided identity.
@@ -568,18 +1976,11 @@ public final class AppServices {
         await newRouter.setRatchetManager(newDestination.ratchetManager)
 
         #if os(iOS)
-        // 7b. Initialize call manager BEFORE interfaces so that autoAnnounce()
-        //     (triggered by onInterfaceAdded) can send the telephony announce.
         DiagLog.log("[INIT2] Step 7b: creating CallManager")
         let cm = CallManager()
         await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
         self.callManager = cm
         DiagLog.log("[INIT2] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
-        // Verify telephony destination is registered with transport
-        if let telDest = cm.telephonyDestination {
-            let isRegistered = await newTransport.isDestinationRegistered(telDest.hash)
-            DiagLog.log("[INIT2] telephony dest registered in transport: \(isRegistered)")
-        }
         #endif
 
         // 8. Parse server address and create TCP interface
@@ -691,6 +2092,15 @@ public final class AppServices {
         }
         await tunnel.load()
         #endif
+
+        // Start Python RNS backend on the multi-identity path too.
+        await startPythonBackend(
+            identity: identity,
+            identityHashHex: identityHash,
+            router: newRouter,
+            interfaces: InterfaceRepository().getEnabledInterfaces(),
+            displayName: ""
+        )
 
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
@@ -961,18 +2371,26 @@ public final class AppServices {
 
     #if canImport(CoreBluetooth)
     /// Start the BLE interface for Bluetooth peer-to-peer networking.
+    ///
+    /// Phase 3 flow:
+    ///   1. Copy `IOSBLEInterface.py` + `IOSBLEDriver.py` from `<bundle>/app/ble/`
+    ///      to `<configDir>/interfaces/` so RNS's external-interface loader can
+    ///      `exec()` them when reading config.
+    ///   2. Install `PythonBLECallbackBridge` as `SwiftBLEBridge.shared`'s
+    ///      callback invoker so events fire through to Python's callback
+    ///      registry.
+    ///   3. Notify Python via `set_ble_bridge` that BLE is enabled. (Phase 3
+    ///      passes a placeholder; the C-ABI shims in `BleNativeBindings.swift`
+    ///      are how `IOSBLEDriver` actually calls into Swift.)
+    ///   4. Update Compat-layer BLEInterface stub for the UI.
     public func startBLEInterface() async throws {
         logger.info("[BLE_DIAG] startBLEInterface() called")
 
-        // Stop existing BLE interface if running
         if bleInterface != nil {
             await stopBLEInterface()
-            // Give CoreBluetooth time to release the old CBCentralManager/CBPeripheralManager
-            // before creating new ones. Without this, the new managers can see "resetting" state.
             try? await Task.sleep(for: .milliseconds(500))
         }
 
-        // Ensure base stack exists
         if transport == nil {
             logger.info("[BLE_DIAG] No transport, initializing base stack")
             try await initializeBaseStack()
@@ -986,6 +2404,20 @@ public final class AppServices {
         let identityHash = identity.hash
         logger.info("[BLE_DIAG] Identity hash: \(identityHash.map { String(format: "%02x", $0) }.joined().prefix(16), privacy: .public)")
 
+        // 1. Files deployed eagerly during startPythonBackend — see
+        //    deployIOSBLEPythonFilesIfPossible. No-op here.
+
+        // 2. Wire Swift→Python callback bridge.
+        if let backend = pythonBackend {
+            let invoker = PythonBLECallbackBridge(pythonBridge: backend.pythonBridge)
+            SwiftBLEBridge.shared.setCallbackInvoker(invoker)
+            SwiftBLEBridge.shared.setIdentity(identityHash)
+            DiagLog.log("[BLE_DIAG] PythonBLECallbackBridge installed; identity set (\(identityHash.prefix(8).map { String(format: "%02x", $0) }.joined()))")
+        } else {
+            DiagLog.log("[BLE_DIAG] WARNING: no pythonBackend yet — bridge invoker not installed")
+        }
+
+        // 3. Update the Compat BLEInterface stub so UI binding has a target.
         let config = InterfaceConfig(
             id: "ble0",
             name: "Bluetooth LE",
@@ -995,13 +2427,98 @@ public final class AppServices {
             host: "",
             port: 0
         )
-
         let driver = CoreBluetoothBLEDriver(identityHash: identityHash)
         let newBLEInterface = BLEInterface(config: config, driver: driver, transportIdentity: identityHash)
         self.bleInterface = newBLEInterface
 
         try await transport.addBLEInterface(newBLEInterface)
         logger.info("[BLE_DIAG] BLEInterface started successfully")
+    }
+
+    /// Copy `IOSBLEInterface.py` and `IOSBLEDriver.py` from `<bundle>/app/ble/`
+    /// to `<configDir>/interfaces/` so RNS's external-interface loader can find
+    /// them when reading config. Idempotent — overwrites on each call so
+    /// build-time updates ship without manual cleanup.
+    ///
+    /// Called eagerly during `startPythonBackend` (before `backend.start()`)
+    /// so the files are in place whether or not the current config has BLE
+    /// enabled. A subsequent restart with BLE-enabled config then works
+    /// without a separate deploy step.
+    private func deployIOSBLEPythonFilesIfPossible(configDir: URL) {
+        let fm = FileManager.default
+        guard let bundleAppDir = Bundle.main.url(forResource: "app", withExtension: nil) else {
+            DiagLog.log("[BLE_DIAG] app/ bundle resource missing — skipping deploy")
+            return
+        }
+        let srcDir = bundleAppDir.appendingPathComponent("ble", isDirectory: true)
+        guard fm.fileExists(atPath: srcDir.path) else {
+            DiagLog.log("[BLE_DIAG] app/ble/ missing in bundle at \(srcDir.path) — skipping deploy")
+            return
+        }
+
+        let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
+        do {
+            try fm.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
+        } catch {
+            DiagLog.log("[BLE_DIAG] failed to create interfaces dir: \(error)")
+            return
+        }
+
+        for name in ["IOSBLEInterface.py", "IOSBLEDriver.py"] {
+            let src = srcDir.appendingPathComponent(name)
+            let dst = interfacesDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: dst.path) {
+                try? fm.removeItem(at: dst)
+            }
+            do {
+                try fm.copyItem(at: src, to: dst)
+                DiagLog.log("[BLE_DIAG] Deployed \(name) to \(dst.path)")
+            } catch {
+                DiagLog.log("[BLE_DIAG] Failed to copy \(name): \(error)")
+            }
+        }
+    }
+
+    /// Copy `IOSRNodeInterface.py` from `<bundle>/app/rnode/` to
+    /// `<configDir>/interfaces/` so RNS's external-interface loader can `exec()`
+    /// it for a `type = IOSRNodeInterface` config section. Idempotent —
+    /// overwrites each call so build-time updates ship without manual cleanup.
+    /// Called eagerly during `startPythonBackend` (before `backend.start()`),
+    /// regardless of whether the current config has an RNode interface, so a
+    /// later RNode-enabled restart finds the file. Mirror of the BLE deploy.
+    private func deployIOSRNodePythonFilesIfPossible(configDir: URL) {
+        let fm = FileManager.default
+        guard let bundleAppDir = Bundle.main.url(forResource: "app", withExtension: nil) else {
+            DiagLog.log("[RNODE] app/ bundle resource missing — skipping deploy")
+            return
+        }
+        let srcDir = bundleAppDir.appendingPathComponent("rnode", isDirectory: true)
+        guard fm.fileExists(atPath: srcDir.path) else {
+            DiagLog.log("[RNODE] app/rnode/ missing in bundle at \(srcDir.path) — skipping deploy")
+            return
+        }
+
+        let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
+        do {
+            try fm.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
+        } catch {
+            DiagLog.log("[RNODE] failed to create interfaces dir: \(error)")
+            return
+        }
+
+        for name in ["IOSRNodeInterface.py"] {
+            let src = srcDir.appendingPathComponent(name)
+            let dst = interfacesDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: dst.path) {
+                try? fm.removeItem(at: dst)
+            }
+            do {
+                try fm.copyItem(at: src, to: dst)
+                DiagLog.log("[RNODE] Deployed \(name) to \(dst.path)")
+            } catch {
+                DiagLog.log("[RNODE] Failed to copy \(name): \(error)")
+            }
+        }
     }
 
     /// Stop the BLE interface.
@@ -1011,6 +2528,11 @@ public final class AppServices {
         if let transport = transport {
             await transport.removeInterface(id: ble.id)
         }
+        // Tear down the Swift bridge so a subsequent start gets a clean
+        // CBCentralManager / CBPeripheralManager pair. stop() now clears the
+        // callbackInvoker inside its serialized queue block (to drop post-stop
+        // disconnect callbacks), so no separate setCallbackInvoker(nil) here.
+        SwiftBLEBridge.shared.stop()
         bleInterface = nil
         logger.info("BLEInterface stopped")
     }
@@ -1119,6 +2641,33 @@ public final class AppServices {
         logger.info("RNodeInterface stopped")
     }
 
+    /// Resolve a peer's LXST **telephony** destination hash from their LXMF
+    /// delivery hash, so the conversation/contact UI can place a voice call.
+    ///
+    /// A peer's telephony destination is a different hash than their LXMF
+    /// delivery destination, but both derive from the same identity. Recall the
+    /// identity from the path table (it carries the public keys learned from
+    /// the peer's announce) and derive `<identity>.lxst.telephony` — the same
+    /// construction CallManager uses for our own telephony destination. Returns
+    /// nil when we have no path/identity for the peer yet (they haven't been
+    /// heard, so they can't be called).
+    public func telephonyHash(forPeerLxmfHash lxmfHash: Data) async -> Data? {
+        guard let pathTable,
+              let entry = await pathTable.lookup(destinationHash: lxmfHash),
+              !entry.publicKeys.isEmpty,
+              let identity = try? Identity(publicKeyBytes: entry.publicKeys) else {
+            return nil
+        }
+        let telephony = Destination(
+            identity: identity,
+            appName: "lxst",
+            aspects: ["telephony"],
+            type: .single,
+            direction: .out
+        )
+        return telephony.hash
+    }
+
     /// Initialize the base stack (identity, transport, router) without a TCP interface.
     ///
     /// Used when starting only AutoInterface without a TCP server.
@@ -1206,11 +2755,9 @@ public final class AppServices {
         }
 
         #if os(iOS)
-        // Init call manager if needed (must be before interfaces so autoAnnounce
-        // can send telephony announce when onInterfaceAdded fires)
-        if callManager == nil, let transport = transport, let pt = pathTable, let db = database {
+        if callManager == nil, let identity = self.identity, let transport = self.transport, let pt = pathTable, let db = database {
             let cm = CallManager()
-            await cm.initialize(identity: existingIdentity, transport: transport, pathTable: pt, database: db)
+            await cm.initialize(identity: identity, transport: transport, pathTable: pt, database: db)
             self.callManager = cm
         }
         #endif
@@ -1227,15 +2774,95 @@ public final class AppServices {
 
     #if canImport(CoreBluetooth)
     /// Get snapshot of all BLE peer connection info for UI display.
+    ///
+    /// The actual peer state lives in `SwiftBLEBridge.shared` — that's the
+    /// process-wide CoreBluetooth singleton our Python `IOSBLEDriver` calls
+    /// into via ctypes. Compat's `BLEInterface.getConnectionInfos()` was a
+    /// `[]` stub, which is why BLEConnectionsView showed nothing even when
+    /// a peer was visible in Network Status. Map the bridge's
+    /// `BleConnectionDetails` → `BLEConnectionInfo` here so the dedicated
+    /// connections screen renders real peers.
     public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
-        guard let ble = bleInterface else { return [] }
-        return await ble.getConnectionInfos()
+        guard bleInterface != nil else { return [] }
+        let details = SwiftBLEBridge.shared.getConnectionDetails()
+        // Group by identity. When a peer is connected via BOTH central
+        // and peripheral roles (each direction opens its own GATT link),
+        // we get two entries with the same identity hash. Pick the
+        // peripheral entry when present (typically the established path
+        // with higher MTU), but BORROW the RSSI from the central entry
+        // since CB doesn't expose central-side RSSI to a peripheral.
+        var rep: [String: BleConnectionDetails] = [:]
+        var rssiByIdentity: [String: Int] = [:]
+        var earliestConnectedAt: [String: Date] = [:]
+        for d in details {
+            guard let id = d.identityHashHex else { continue }
+            if let r = d.rssi { rssiByIdentity[id] = r }
+            // Earliest connectedAt of all the GATT paths to this peer —
+            // closer to "when we first established with them".
+            if let existing = earliestConnectedAt[id] {
+                earliestConnectedAt[id] = min(existing, d.connectedAt)
+            } else {
+                earliestConnectedAt[id] = d.connectedAt
+            }
+            if let existing = rep[id] {
+                if d.role == .peripheral && existing.role != .peripheral {
+                    rep[id] = d
+                } else if d.mtu > existing.mtu {
+                    rep[id] = d
+                }
+            } else {
+                rep[id] = d
+            }
+        }
+        let now = Date()
+        return rep.values.map { d in
+            let idHex = d.identityHashHex ?? d.address
+            let displayName = d.identityHashHex.map { String($0.prefix(8)) }
+            // Merge: prefer the picked entry's RSSI, else the borrowed
+            // central-side value, else nil.
+            let rssi = d.rssi ?? d.identityHashHex.flatMap { rssiByIdentity[$0] }
+            let startedAt = d.identityHashHex.flatMap { earliestConnectedAt[$0] } ?? d.connectedAt
+            return BLEConnectionInfo(
+                identityHex: idHex,
+                identityHash: idHex,
+                displayName: displayName,
+                rssi: rssi,
+                connected: true,
+                lastSeen: d.lastActivity,
+                lastActivity: d.lastActivity,
+                connectionType: d.role.rawValue,
+                connectionDuration: max(0, now.timeIntervalSince(startedAt)),
+                isOutgoing: d.role == .central,
+                mtu: d.mtu,
+                bytesSent: 0,
+                bytesReceived: 0,
+                packetsSent: 0,
+                packetsReceived: 0,
+                signalQuality: signalQuality(forRssi: rssi)
+            )
+        }
+    }
+
+    /// Map RSSI dBm to a coarse signal-quality bucket. Thresholds borrowed
+    /// from the existing BLEDevicePickerSheet indicator (60/75/90 dBm steps).
+    private func signalQuality(forRssi rssi: Int?) -> SignalQuality {
+        guard let rssi else { return .unknown }
+        let absRssi = abs(rssi)
+        if absRssi < 60 { return .excellent }
+        if absRssi < 75 { return .good }
+        if absRssi < 90 { return .fair }
+        return .poor
     }
 
     /// Disconnect a specific BLE peer.
     public func disconnectBLEPeer(identityHex: String) async {
-        guard let ble = bleInterface else { return }
-        await ble.disconnectPeer(identityHex: identityHex)
+        // Resolve identity → address via the bridge; if found, ask the
+        // bridge to drop the GATT connection. The Compat stub's
+        // disconnectPeer was a no-op, so this is the path that actually
+        // closes the link.
+        if let address = SwiftBLEBridge.shared.getPeerAddress(identityHashHex: identityHex) {
+            SwiftBLEBridge.shared.disconnect(address: address)
+        }
     }
 
     /// Whether BLE interface is currently active.
@@ -1256,9 +2883,46 @@ public final class AppServices {
         stateObserverTask = nil
 
         #if os(iOS)
-        // Stop call manager
+        // Stop call manager: ends any active CallKit call and tears down the
+        // Telephone actor + audio session. Nil it afterwards so a later
+        // initialize() (e.g. identity-change / "Apply & Restart") recreates a
+        // fresh instance — initialize() guards creation on `callManager == nil`,
+        // and CallManager.shutdown() guts the instance (telephone/callKitManager
+        // set to nil), so reusing it would leave telephony dead.
         await callManager?.shutdown()
+        callManager = nil
         #endif
+
+        // Stop Python event drain and tear down the Python RNS stack
+        pythonEventTask?.cancel()
+        pythonEventTask = nil
+        pythonStatusPollTask?.cancel()
+        pythonStatusPollTask = nil
+        // Remove the test-deeplink NotificationCenter observers registered in
+        // startPythonBackend(); without this they'd accumulate across restart
+        // cycles and fire each handler once per past start.
+        for token in pythonNotificationObservers {
+            NotificationCenter.default.removeObserver(token)
+        }
+        pythonNotificationObservers.removeAll()
+        // Drop stale Compat Link records. Python assigns link IDs sequentially
+        // from 0 on each fresh backend, so without this a post-restart inbound
+        // link (id 0, 1, …) would collide with a dead entry and dispatchInbound
+        // Link would fire the established callback on the stale link instead of
+        // creating a new one — silently dropping the first call(s) after a
+        // restart cycle.
+        activeLinksByLinkId.removeAll()
+        // Clear the rest of the per-backend session state so an identity-change
+        // restart starts clean: stale destination-link callbacks (keyed by the
+        // old identity's telephony hash) would otherwise linger and get fanned
+        // an inbound link alongside the new one, and the interface-status map
+        // would mismatch the freshly-attached interfaces.
+        destinationLinkCallbacks.removeAll()
+        pythonInterfaceEntities.removeAll()
+        if let backend = backend {
+            await backend.stop()
+            self.backend = nil
+        }
 
         // Stop auto-announce manager
         autoAnnounceManager?.stop()
@@ -1517,34 +3181,21 @@ public final class AppServices {
     /// - Parameter displayName: Display name to broadcast (e.g., "User's Mac")
     /// - Throws: AppServicesError if transport or destination not initialized
     public func sendAnnounce(displayName: String) async throws {
-        logger.info("Sending announce with display name: \(displayName)")
+        logger.info("Sending announce with display name: \(displayName, privacy: .public)")
 
-        guard let transport = transport else {
+        // Python owns the network layer now — route the announce through
+        // rns_bridge.announce(display_name), which updates the LXMF
+        // delivery destination's app_data and calls .announce() under
+        // the embedded CPython. The pre-Python-RNS path (Compat
+        // Announce.buildPacket → transport.send) was a no-op stub.
+        guard let backend = backend else {
             throw AppServicesError.transportNotConnected
         }
-
-        guard let destination = deliveryDestination else {
-            throw AppServicesError.identityNotInitialized
+        let ok = try await backend.announce(displayName: displayName)
+        if !ok {
+            throw AppServicesError.transportNotConnected
         }
-
-        // Set the display name as app data on the destination
-        destination.appData = displayName.data(using: .utf8)
-
-        // Rotate ratchet if interval elapsed, and include in announce
-        var ratchetPub: Data? = nil
-        if let mgr = destination.ratchetManager {
-            await mgr.rotateIfNeeded()
-            ratchetPub = await mgr.currentRatchetPublicBytes()
-        }
-
-        // Create and build the announce packet
-        let announce = Announce(destination: destination, ratchet: ratchetPub)
-        let packet = try announce.buildPacket()
-
-        // Send the announce via transport
-        try await transport.send(packet: packet)
-
-        logger.info("Announce sent successfully for destination: \(destination.hexHash)")
+        DiagLog.log("[ANNOUNCE] sent via Python (name=\"\(displayName)\")")
     }
 
     /// Send both the LXMF delivery announce and the LXST telephony announce.
@@ -1568,51 +3219,19 @@ public final class AppServices {
         }
 
         #if os(iOS)
-        do {
-            try await sendTelephonyAnnounce(displayName: displayName)
-        } catch {
-            DiagLog.log("[ANNOUNCE] Telephony announce failed: \(error.localizedDescription)")
-            if firstError == nil { firstError = error }
+        if let backend = backend {
+            do {
+                let ok = try await backend.announceTelephony(displayName: displayName)
+                DiagLog.log("[ANNOUNCE] Telephony announce \(ok ? "sent" : "skipped")")
+            } catch {
+                DiagLog.log("[ANNOUNCE] Telephony announce failed: \(error.localizedDescription)")
+                if firstError == nil { firstError = error }
+            }
         }
         #endif
 
         if let firstError { throw firstError }
     }
-
-    #if os(iOS)
-    /// Send an announce for the LXST telephony destination.
-    ///
-    /// This broadcasts the device's telephony endpoint to the network, allowing
-    /// remote peers to discover our LXST destination hash and initiate voice calls.
-    /// The display name is included as application data.
-    ///
-    /// - Parameter displayName: Display name to broadcast
-    /// - Throws: AppServicesError if transport or call manager not initialized
-    private func sendTelephonyAnnounce(displayName: String) async throws {
-        guard let transport = transport else {
-            DiagLog.log("[TELEPHONY_ANNOUNCE] Skipped: transport not connected")
-            throw AppServicesError.transportNotConnected
-        }
-
-        guard let destination = callManager?.telephonyDestination else {
-            DiagLog.log("[TELEPHONY_ANNOUNCE] Skipped: CallManager not initialized (callManager=\(callManager == nil ? "nil" : "exists"))")
-            return
-        }
-
-        // Set the display name as app data on the telephony destination
-        destination.appData = displayName.data(using: .utf8)
-        DiagLog.log("[TELEPHONY_ANNOUNCE] Sending for dest \(destination.hexHash), fullName=\(destination.fullName)")
-
-        // Build and send the announce packet (no ratchet for telephony)
-        let announce = Announce(destination: destination)
-        let packet = try announce.buildPacket()
-        let packetHex = packet.encode().prefix(32).map { String(format: "%02x", $0) }.joined()
-        DiagLog.log("[TELEPHONY_ANNOUNCE] Packet first 32 bytes: \(packetHex)")
-        try await transport.send(packet: packet)
-
-        DiagLog.log("[TELEPHONY_ANNOUNCE] Sent for dest \(destination.hexHash)")
-    }
-    #endif
 
     /// Wire transport callbacks that need app-layer context.
     ///
@@ -1686,6 +3305,170 @@ public final class AppServices {
         await transport.setOnDiagnostic { msg in
             DiagLog.log(msg)
         }
+
+        // ──── Telephony link bridge hooks ────
+        //
+        // Wires the Compat-layer transport calls that CallManager + the
+        // lxst-swift Telephone make against PythonRNSBackend. Python owns
+        // the actual RNS.Link cryptography + path discovery; Swift owns the
+        // call state machine + audio. The hooks are @Sendable so they hop
+        // back to the main actor before touching AppServices state.
+
+        transport.registerDestinationLinkCallbackHook = { [weak self] destHash, callback in
+            Task { @MainActor [weak self] in
+                self?.registerDestinationLinkCallbackOnMain(destHash: destHash, callback: callback)
+            }
+        }
+
+        transport.initiateLinkHook = { [weak self] destination, _ in
+            guard let self else { throw AppServicesError.transportNotConnected }
+            return try await self.openOutboundLink(to: destination)
+        }
+    }
+
+    /// Hop-to-main-actor wrapper for the registerDestinationLinkCallback hook.
+    private func registerDestinationLinkCallbackOnMain(
+        destHash: Data,
+        callback: @escaping @Sendable (Link) async -> Void
+    ) {
+        destinationLinkCallbacks[destHash] = callback
+        DiagLog.log("[TEL_BRIDGE] registered dest-link callback for \(destHash.prefix(4).map { String(format: "%02x", $0) }.joined())")
+    }
+
+    /// Open an outbound Compat Link by asking PythonRNSBackend to open the
+    /// underlying RNS.Link, then wrap it with a Swift-side Link that
+    /// forwards bytes through the bridge. AppServices-isolated so the
+    /// initiateLinkHook stays @Sendable-safe.
+    private func openOutboundLink(to destination: Destination) async throws -> Link {
+        guard let backend = self.backend else {
+            throw AppServicesError.transportNotConnected
+        }
+        let destHex = destination.hash.toHex()
+        let aspect = ([destination.appName] + destination.aspects).joined(separator: ".")
+        let result = try await backend.openLink(destHashHex: destHex, aspect: aspect)
+        guard result.ok else {
+            throw AppServicesError.transportNotConnected
+        }
+        let linkIdRaw = UInt64(result.linkId)
+        let link = Link(identityHash: destination.identity?.hash ?? Data())
+        link.linkId = linkIdRaw
+        let backendRef = backend
+        link.sendBytesHook = { data in
+            _ = try? await backendRef.linkSend(linkId: Int(linkIdRaw), data: data)
+        }
+        link.identifyHook = {
+            try? await backendRef.linkIdentify(linkId: Int(linkIdRaw))
+        }
+        link.closeHook = {
+            _ = try? await backendRef.linkTeardown(linkId: Int(linkIdRaw))
+        }
+        activeLinksByLinkId[linkIdRaw] = link
+        DiagLog.log("[TEL_BRIDGE] opened outbound link \(linkIdRaw) → \(destHex.prefix(8))")
+        return link
+    }
+
+    /// Map a Python link_state(closed, reason=...) value to the
+    /// TeardownReason enum lxst-swift's Telephone understands. Python emits
+    /// `RNS.Link.teardown_reason` directly — that's an int (0/1/2) so the
+    /// bridge stringifies it before crossing. Earlier code only matched the
+    /// English names, so normal hangups were silently logged as
+    /// `.networkFailure`. Mirrors `RNS.Link.TIMEOUT` (0), `INITIATOR_CLOSED`
+    /// (1), `DESTINATION_CLOSED` (2) in Reticulum/Link.py.
+    private func teardownReason(from raw: String) -> TeardownReason {
+        switch raw {
+        case "0", "timeout":                            return .timeout
+        case "1", "initiator_closed", "local_closed":   return .initiatorClosed
+        case "2", "destination_closed", "remote_closed": return .destinationClosed
+        default:                                         return .networkFailure
+        }
+    }
+
+    /// Construct (or refresh) a Compat Link for an inbound Python link.
+    ///
+    /// Python's `_on_inbound_link` only fires for the `lxst.telephony`
+    /// destination today, so this maps that event onto every registered
+    /// destination-link callback. When the rns_bridge starts carrying
+    /// other inbound aspects, the Python event will need to carry a
+    /// destination-hash field and the dispatch should switch to a single
+    /// targeted callback lookup.
+    private func dispatchInboundLink(linkId: UInt64) async {
+        if let existing = activeLinksByLinkId[linkId] {
+            existing.state = .established
+            await existing.establishedCallback?(existing)
+            return
+        }
+        let link = Link(identityHash: Data())
+        link.linkId = linkId
+        link.state = .established
+        if let backend = self.backend {
+            let backendRef = backend
+            link.sendBytesHook = { data in
+                _ = try? await backendRef.linkSend(linkId: Int(linkId), data: data)
+            }
+            link.identifyHook = {
+                try? await backendRef.linkIdentify(linkId: Int(linkId))
+            }
+            link.closeHook = {
+                _ = try? await backendRef.linkTeardown(linkId: Int(linkId))
+            }
+        }
+        activeLinksByLinkId[linkId] = link
+        let callbacks = Array(destinationLinkCallbacks.values)
+
+        // Python's inbound-link event carries only the linkId, not the
+        // destination hash, so we can't yet route to a single matching
+        // callback. Today only the lxst.telephony destination registers one,
+        // so the single-callback path is correct. If a second destination ever
+        // registers a link callback before the rns_bridge inbound event grows
+        // a destination-hash field, fanning every inbound link out to all of
+        // them would cross call state between destinations — surface that
+        // loudly here rather than corrupting silently.
+        if callbacks.count > 1 {
+            DiagLog.log("[TEL_BRIDGE] WARNING: \(callbacks.count) destination link callbacks registered, but the Python inbound-link event has no destination hash — cannot route link \(linkId) unambiguously (needs the rns_bridge destination-hash field; see PR1)")
+        }
+        for callback in callbacks {
+            await callback(link)
+        }
+        await link.establishedCallback?(link)
+    }
+
+    /// Fire the establishedCallback when Python confirms an outbound link
+    /// finished its LRRTT handshake.
+    private func dispatchOutboundLinkEstablished(linkId: UInt64) async {
+        guard let link = activeLinksByLinkId[linkId] else { return }
+        link.state = .established
+        await link.establishedCallback?(link)
+    }
+
+    /// Drop a Compat Link record when Python tells us the link tore down.
+    private func dispatchLinkClosed(linkId: UInt64, reason: String) async {
+        let link = activeLinksByLinkId.removeValue(forKey: linkId)
+        guard let link else { return }
+        link.state = .closed
+        await link.closeCallback?(teardownReason(from: reason))
+    }
+
+    /// Forward an inbound Python link_packet → Compat Link.packetCallback.
+    private func dispatchLinkPacket(linkId: UInt64, data: Data) async {
+        guard let link = activeLinksByLinkId[linkId] else { return }
+        await link.packetCallback?(data, Packet(payload: data))
+    }
+
+    /// Forward Python link_identified → Compat Link.identifyCallbacks.
+    private func dispatchLinkIdentified(linkId: UInt64, identityHashHex: String) async {
+        guard let link = activeLinksByLinkId[linkId] else { return }
+        // Build a stub Identity carrying just the remote hash so the
+        // Telephone's caller-allowed check can compare bytes. The remote's
+        // full public keys land in the path table separately when an
+        // announce comes through; the Telephone state machine doesn't
+        // need them for the allow-list check.
+        guard let remoteHash = try? identityHashHex.hexToData() else { return }
+        let remoteIdentity = Identity(
+            hash: remoteHash,
+            publicKeys: Data(),
+            privateKeyBytes: nil
+        )
+        await link.identifyCallbacks?.remoteIdentified(remoteIdentity)
     }
 
     /// Timestamp of the last successful auto-announce (debounce duplicate triggers).

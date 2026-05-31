@@ -7,9 +7,8 @@
 //
 
 import Foundation
+import RNSAPI
 import Observation
-import LXMFSwift
-import ReticulumSwift
 import os.log
 
 // MARK: - Propagation Node Model
@@ -206,8 +205,20 @@ public final class PropagationNodeManager {
             selectedNodeDeliveryHash = nil
         }
 
-        // Wire to router (awaited directly, not fire-and-forget)
+        // Wire to Python LXMRouter via the embedded backend. Compat
+        // LXMRouter.setOutboundPropagationNode used to set a local var
+        // only — Python's LXMF.LXMRouter.set_outbound_propagation_node
+        // is what actually affects delivery.
         let stampCost = node?.info.stampCost ?? 0
+        if let backend = appServices?.pythonBackend {
+            do {
+                _ = try await backend.setPropagationNode(destHashHex: hash.toHex(), stampCost: stampCost)
+            } catch {
+                logger.error("setPropagationNode failed: \(error.localizedDescription)")
+            }
+        }
+        // Keep the Compat-layer var in sync so any UI that still reads
+        // router.outboundPropagationNode shows the right value.
         await appServices?.router?.setOutboundPropagationNode(hash)
         await appServices?.router?.setPropagationStampCost(stampCost)
 
@@ -221,6 +232,13 @@ public final class PropagationNodeManager {
         selectedNodeDeliveryHash = nil
         selectedNodeName = nil
 
+        if let backend = appServices?.pythonBackend {
+            do {
+                _ = try await backend.setPropagationNode(destHashHex: "", stampCost: 0)
+            } catch {
+                logger.error("clear propagation node failed: \(error.localizedDescription)")
+            }
+        }
         await appServices?.router?.setOutboundPropagationNode(nil)
         await appServices?.router?.setPropagationStampCost(0)
 
@@ -234,10 +252,10 @@ public final class PropagationNodeManager {
     ///
     /// If no propagation node is selected yet, auto-selects the best available node first.
     public func syncNow() async {
-        guard let router = appServices?.router else {
-            logger.error("[SYNC] Router not available")
+        guard let backend = appServices?.pythonBackend else {
+            logger.error("[SYNC] Python backend not available")
             syncState.state = .linkFailed
-            syncState.errorDescription = "Router not available"
+            syncState.errorDescription = "Backend not available"
             return
         }
 
@@ -263,16 +281,40 @@ public final class PropagationNodeManager {
 
         let nodeHex = nodeHash.prefix(8).map { String(format: "%02x", $0) }.joined()
         logger.info("[SYNC] Starting sync from propagation node \(nodeHex)")
+        syncState.state = .linking
+        syncState.errorDescription = nil
 
         do {
-            try await router.syncFromPropagationNode()
-            syncState = await router.syncState
-            lastSyncTime = syncState.lastSync
-            logger.info("[SYNC] Sync complete. newMessages=\(self.syncState.receivedMessages)")
+            let result = try await backend.propagationSync(timeout: 60.0)
+            syncState.state = Self.mapPythonState(result.state)
+            syncState.receivedMessages = result.receivedMessages
+            syncState.errorDescription = result.ok ? nil : result.reason
+            if result.ok {
+                syncState.lastSync = Date()
+                lastSyncTime = syncState.lastSync
+            }
+            logger.info("[SYNC] Sync \(result.ok ? "complete" : "failed"). state=\(result.state.rawValue) newMessages=\(result.receivedMessages)")
         } catch {
             syncState.state = .transferFailed
             syncState.errorDescription = error.localizedDescription
             logger.error("[SYNC] Sync failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Translate Python LXMRouter PR_* state names to Compat
+    /// PropagationTransferState cases. (Subset mapped; non-terminal
+    /// intermediate states collapse to .transferring for UI purposes.)
+    private static func mapPythonState(_ state: PropagationSyncResult.State) -> PropagationTransferState.State {
+        switch state {
+        case .complete: return .complete
+        case .noPath: return .noPath
+        case .transferFailed: return .transferFailed
+        case .pathRequested, .linkEstablishing, .linkEstablished:
+            return .linking
+        case .requestSent, .receiving, .responseReceived:
+            return .transferring
+        case .idle, .noRouter, .notStarted, .noNode, .unknown:
+            return .idle
         }
     }
 

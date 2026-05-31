@@ -7,8 +7,8 @@
 //
 
 import Foundation
+import RNSAPI
 import SwiftUI
-import ReticulumSwift
 
 // MARK: - Interface Info
 

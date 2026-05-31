@@ -7,9 +7,8 @@
 //
 
 import Foundation
+import RNSAPI
 import Observation
-import LXMFSwift
-import ReticulumSwift
 
 // MARK: - Conversation Model
 
@@ -73,7 +72,7 @@ public struct Conversation: Identifiable, Equatable, Hashable {
         self.id = record.destinationHash.map { String(format: "%02x", $0) }.joined()
         self.destinationHash = record.destinationHash
         self.displayName = record.displayName
-        self.lastMessageTimestamp = Date(timeIntervalSince1970: record.lastMessageTimestamp)
+        self.lastMessageTimestamp = record.lastMessageTimestamp
         self.lastMessagePreview = record.lastMessagePreview
         self.unreadCount = record.unreadCount
         self.isFavorite = record.isFavorite != 0
@@ -194,17 +193,17 @@ public final class ChatsViewModel {
         do {
             let records = try await repository.fetchConversations()
             var convos = records
-                .filter { $0.lastMessagePreview != nil }
+                .filter { !$0.lastMessagePreview.isEmpty }
                 .map { Conversation(from: $0) }
 
             // Backfill display names from path table for conversations that have none
             if let pathTable {
                 for i in convos.indices where convos[i].displayName == nil {
                     if let entry = await pathTable.lookup(destinationHash: convos[i].destinationHash),
-                       let name = entry.displayName, !name.isEmpty {
-                        convos[i].displayName = name
+                       !entry.displayName.isEmpty {
+                        convos[i].displayName = entry.displayName
                         // Persist so we don't need to look up again
-                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: name)
+                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: entry.displayName)
                     }
                 }
             }
@@ -225,16 +224,16 @@ public final class ChatsViewModel {
         do {
             let records = try await repository.fetchConversations()
             var convos = records
-                .filter { $0.lastMessagePreview != nil }
+                .filter { !$0.lastMessagePreview.isEmpty }
                 .map { Conversation(from: $0) }
 
             // Backfill display names from path table for conversations that have none
             if let pathTable {
                 for i in convos.indices where convos[i].displayName == nil {
                     if let entry = await pathTable.lookup(destinationHash: convos[i].destinationHash),
-                       let name = entry.displayName, !name.isEmpty {
-                        convos[i].displayName = name
-                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: name)
+                       !entry.displayName.isEmpty {
+                        convos[i].displayName = entry.displayName
+                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: entry.displayName)
                     }
                 }
             }

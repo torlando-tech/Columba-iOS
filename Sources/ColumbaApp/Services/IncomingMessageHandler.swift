@@ -7,8 +7,7 @@
 //
 
 import Foundation
-import LXMFSwift
-import ReticulumSwift
+import RNSAPI
 import UserNotifications
 import os.log
 
@@ -91,36 +90,58 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
         // Save to database asynchronously, then notify
         Task {
-            // Check for FIELD_APP_DATA (0x10) — reactions and replies
+            // Reaction — canonical FIELD_REACTION (0x40) = {0x00: targetHashBytes,
+            // 0x01: emojiUTF8}; the reacting user is the inbound source hash (not
+            // on the wire). Merges into the target message; the empty reaction
+            // frame itself is deleted by handleIncomingReaction.
+            if let reaction = message.fields?[LxmfFields.FIELD_REACTION] as? [UInt8: Any],
+               let toData = reaction[LxmfFields.REACTION_TO] as? Data,
+               let emojiData = reaction[LxmfFields.REACTION_CONTENT] as? Data,
+               let emoji = String(data: emojiData, encoding: .utf8) {
+                let reactionTo = toData.map { String(format: "%02x", $0) }.joined()
+                let senderHex = sourceHash.map { String(format: "%02x", $0) }.joined()
+                self.logger.info("Reaction \(emoji) (0x40) from \(senderHex.prefix(8)) to \(reactionTo.prefix(8))")
+                await self.handleIncomingReaction(
+                    targetMessageHex: reactionTo, emoji: emoji,
+                    senderHex: senderHex, reactionMessageHash: message.hash
+                )
+                NotificationCenter.default.post(
+                    name: IncomingMessageHandler.messageReceivedNotification,
+                    object: nil, userInfo: ["sourceHash": sourceHash]
+                )
+                return
+            }
+
+            // Legacy reaction / reply on FIELD_APP_DATA (0x10) — un-upgraded peers.
             if let appData = message.fields?[LXMessage.FIELD_APP_DATA] as? [String: Any] {
-                // Handle reaction messages: merge into target, delete reaction message from DB
                 if let reactionTo = appData["reaction_to"] as? String,
                    let emoji = appData["emoji"] as? String,
                    let sender = appData["sender"] as? String {
-                    self.logger.info("Reaction \(emoji) from \(sender.prefix(8)) to \(reactionTo.prefix(8))")
+                    self.logger.info("Reaction \(emoji) (0x10 legacy) from \(sender.prefix(8)) to \(reactionTo.prefix(8))")
                     await self.handleIncomingReaction(
-                        targetMessageHex: reactionTo,
-                        emoji: emoji,
-                        senderHex: sender,
-                        reactionMessageHash: message.hash
+                        targetMessageHex: reactionTo, emoji: emoji,
+                        senderHex: sender, reactionMessageHash: message.hash
                     )
-                    // Post notification so open conversation reloads with updated reactions
                     NotificationCenter.default.post(
                         name: IncomingMessageHandler.messageReceivedNotification,
-                        object: nil,
-                        userInfo: ["sourceHash": sourceHash]
+                        object: nil, userInfo: ["sourceHash": sourceHash]
                     )
-                    return  // Skip normal message processing
+                    return
                 }
-
-                // Handle reply messages: update reply_to_id column
                 if let replyTo = appData["reply_to"] as? String {
-                    self.logger.info("Reply to \(replyTo.prefix(8))")
-                    do {
-                        try await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
-                    } catch {
-                        self.logger.error("Failed to update reply_to_id: \(error.localizedDescription)")
-                    }
+                    self.logger.info("Reply (0x10 legacy) to \(replyTo.prefix(8))")
+                    try? await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
+                }
+            }
+
+            // Reply — canonical FIELD_REPLY_HASH (0x30) = raw target-hash bytes.
+            if let replyHashData = message.fields?[LxmfFields.FIELD_REPLY_HASH] as? Data {
+                let replyTo = replyHashData.map { String(format: "%02x", $0) }.joined()
+                self.logger.info("Reply (0x30) to \(replyTo.prefix(8))")
+                do {
+                    try await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
+                } catch {
+                    self.logger.error("Failed to update reply_to_id (0x30): \(error.localizedDescription)")
                 }
             }
 
@@ -158,30 +179,37 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
             // Look up sender display name from path table (announce data) and update conversation
             if let pathTable = self.pathTable {
                 if let entry = await pathTable.lookup(destinationHash: sourceHash),
-                   let name = entry.displayName, !name.isEmpty {
-                    try? await self.messageRepository.ensureConversation(sourceHash, displayName: name)
+                   !entry.displayName.isEmpty {
+                    try? await self.messageRepository.ensureConversation(sourceHash, displayName: entry.displayName)
                 }
             }
 
-            // Check for FIELD_COLUMBA_META (0x70) cease signal (Android Columba format)
+            // Check FIELD_CUSTOM_META (0xFD) for the Columba cease flag. The
+            // canonical wire form is msgpack `{"cease": true}` (matches Android
+            // Columba's TelemeterCodec); the UTF-8-JSON fallback covers older
+            // iOS peers that emitted `{"cease": true}` as raw JSON bytes.
             var isCeaseMessage = false
             if let fields = message.fields,
                let metaRaw = fields[LXMessage.FIELD_COLUMBA_META] {
                 // Field may arrive as Data (bytes) or String depending on msgpack unpacking
-                let metaStr: String?
+                let metaData: Data?
                 if let d = metaRaw as? Data {
-                    metaStr = String(data: d, encoding: .utf8)
+                    metaData = d
                 } else if let s = metaRaw as? String {
-                    metaStr = s
+                    metaData = s.data(using: .utf8)
                 } else {
-                    metaStr = nil
+                    metaData = nil
                 }
-                if let metaStr, metaStr.contains("\"cease\"") {
-                    isCeaseMessage = true
-                    #if os(iOS)
-                    self.locationSharingManager?.handleIncomingCease(from: message.sourceHash)
-                    #endif
-                    self.logger.debug("Cease signal from \(sourceHashHex)")
+                if let metaData {
+                    let msgpackCease = ColumbaMetaCodec.unpack(metaData)?.cease == true
+                    let jsonCease = String(data: metaData, encoding: .utf8)?.contains("\"cease\"") == true
+                    if msgpackCease || jsonCease {
+                        isCeaseMessage = true
+                        #if os(iOS)
+                        await self.locationSharingManager?.handleIncomingCease(from: message.sourceHash)
+                        #endif
+                        self.logger.debug("Cease signal from \(sourceHashHex)")
+                    }
                 }
             }
 

@@ -7,9 +7,8 @@
 //
 
 import SwiftUI
+import RNSAPI
 import Observation
-import LXMFSwift
-import ReticulumSwift
 import os.log
 
 /// ViewModel for the messaging screen.
@@ -54,6 +53,7 @@ public final class MessagingViewModel {
 
     /// Observation token for incoming message notifications.
     private var notificationTask: Any?
+    private var deliveryTask: Any?
 
     // MARK: - Initialization
 
@@ -90,10 +90,31 @@ public final class MessagingViewModel {
                 await self.loadMessages()
             }
         }
+
+        // Listen for delivery / failure proofs (double-check indicator). The DB
+        // row is already updated by AppServices; we just flip the in-memory
+        // bubble in place so the open chat reflects it without a full reload.
+        deliveryTask = NotificationCenter.default.addObserver(
+            forName: Notification.Name("ColumbaPythonDelivery"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let hashData = notification.userInfo?["messageHash"] as? Data,
+                  let state = notification.userInfo?["state"] as? String else { return }
+            let hashHex = hashData.map { String(format: "%02x", $0) }.joined()
+            Task { @MainActor in
+                guard let index = self.messages.firstIndex(where: { $0.id == hashHex }) else { return }
+                self.messages[index].deliveryStatus = (state == "delivered") ? .delivered : .failed
+            }
+        }
     }
 
     deinit {
         if let token = notificationTask {
+            NotificationCenter.default.removeObserver(token)
+        }
+        if let token = deliveryTask {
             NotificationCenter.default.removeObserver(token)
         }
     }
@@ -171,6 +192,10 @@ public final class MessagingViewModel {
         }
     }
 
+    /// Thrown when the backend rejects a send pre-flight (bad hash / not started)
+    /// so the existing catch path (retry-via-relay, then failed status) runs.
+    private enum SendError: Error { case notQueued }
+
     /// Send a text-only message (convenience wrapper).
     @MainActor
     public func sendMessage(text: String) async -> Bool {
@@ -204,8 +229,8 @@ public final class MessagingViewModel {
             return false
         }
 
-        guard let router = appServices.router else {
-            errorMessage = "Router not initialized"
+        guard let backend = appServices.backend else {
+            errorMessage = "Backend not initialized"
             return false
         }
 
@@ -216,11 +241,11 @@ public final class MessagingViewModel {
         let settingsMethod = await settingsRepository.getDefaultDeliveryMethod()
         let fallbackForLargeMessages: LXDeliveryMethod = (settingsMethod == "propagated") ? .propagated : .direct
 
-        // Build fields with icon appearance if set
+        // Resolve icon once — passed to the typed backend send below and also
+        // stashed in the local Compat.LXMessage fields for persistence/display.
+        let icon = await settingsRepository.getIconAppearance()
         var fields: [UInt8: Any] = [:]
-        if let icon = await settingsRepository.getIconAppearance() {
-            fields[IconAppearance.fieldKey] = icon.toLXMFFieldValue()
-        }
+        if let icon { fields[IconAppearance.fieldKey] = icon.toLXMFFieldValue() }
 
         // Add image field (FIELD_IMAGE = 0x06): [format_string, binary_data]
         if let imageData, let imageFormat {
@@ -238,7 +263,7 @@ public final class MessagingViewModel {
         }
 
         // Create outbound LXMF message — always opportunistic first
-        var lxMessage = LXMessage(
+        let lxMessage = LXMessage(
             destinationHash: conversationHash,
             sourceIdentity: identity,
             content: trimmedText.data(using: .utf8) ?? Data(),
@@ -281,8 +306,23 @@ public final class MessagingViewModel {
         }
 
         do {
-            // Send via router (router saves to DB internally via Task.detached)
-            try await router.handleOutbound(&lxMessage)
+            // Send through the neutral LXMF facet with TYPED fields (image /
+            // attachments / icon) — the backend builds the canonical LXMF field
+            // map + routes, and returns the real message hash. (Replaces the old
+            // Compat router + sendHook path, which dropped all fields on the
+            // wire.) Nothing persists the outbound message to the local DB, so
+            // we save explicitly below once `lxMessage.hash` is stamped.
+            let outcome = try await backend.lxmf.sendLxmfMessage(
+                destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
+                content: trimmedText, method: .opportunistic,
+                imageData: imageData, imageFormat: imageFormat,
+                fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
+                iconAppearance: icon,
+                replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
+            guard case .queued(let sentHashHex) = outcome, let sentHash = Data(hexString: sentHashHex) else {
+                throw SendError.notQueued
+            }
+            lxMessage.hash = sentHash
 
             // Replace optimistic message with real one (using actual hash from pack)
             let realId = lxMessage.hash.map { String(format: "%02x", $0) }.joined()
@@ -303,6 +343,13 @@ public final class MessagingViewModel {
                 }
             }
 
+            // Persist so a subsequent loadMessages() doesn't wipe it.
+            do {
+                try await repository.saveMessage(lxMessage)
+            } catch {
+                logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
+            }
+
             return true
         } catch {
             // Retry via relay if enabled
@@ -318,7 +365,7 @@ public final class MessagingViewModel {
                 }
 
                 // Create new message with propagated method
-                var retryMessage = LXMessage(
+                let retryMessage = LXMessage(
                     destinationHash: conversationHash,
                     sourceIdentity: identity,
                     content: trimmedText.data(using: .utf8) ?? Data(),
@@ -328,8 +375,18 @@ public final class MessagingViewModel {
                 )
 
                 do {
-                    // Router saves to DB internally
-                    try await router.handleOutbound(&retryMessage)
+                    // Relay retry through the neutral facet (propagated method).
+                    let retryOutcome = try await backend.lxmf.sendLxmfMessage(
+                        destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
+                        content: trimmedText, method: .propagated,
+                        imageData: imageData, imageFormat: imageFormat,
+                        fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
+                        iconAppearance: icon,
+                        replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
+                    guard case .queued(let retryHashHex) = retryOutcome, let retryHash = Data(hexString: retryHashHex) else {
+                        throw SendError.notQueued
+                    }
+                    retryMessage.hash = retryHash
                     let realId = retryMessage.hash.map { String(format: "%02x", $0) }.joined()
                     if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                         withAnimation(.easeInOut(duration: 0.2)) {
@@ -346,6 +403,11 @@ public final class MessagingViewModel {
                                 replyToPreview: replyPreview
                             )
                         }
+                    }
+                    do {
+                        try await repository.saveMessage(retryMessage)
+                    } catch {
+                        logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                     }
                     return true
                 } catch {
@@ -432,7 +494,7 @@ public final class MessagingViewModel {
     @MainActor
     public func sendReaction(targetMessageId: String, targetMessageHash: Data?, emoji: String) async {
         guard let hash = targetMessageHash else { return }
-        guard let identity = appServices.identity, let router = appServices.router else { return }
+        guard let backend = appServices.backend else { return }
 
         let localHashHex = appServices.localIdentityHash.map { String(format: "%02x", $0) }.joined()
 
@@ -476,25 +538,15 @@ public final class MessagingViewModel {
             }
         }
 
-        // Send reaction LXMF message (empty content)
-        var fields: [UInt8: Any] = [:]
-        fields[LXMessage.FIELD_APP_DATA] = [
-            "reaction_to": targetMessageId,
-            "emoji": emoji,
-            "sender": localHashHex
-        ] as [String: Any]
-
-        var lxMessage = LXMessage(
-            destinationHash: conversationHash,
-            sourceIdentity: identity,
-            content: Data(),
-            title: Data(),
-            fields: fields,
-            desiredMethod: .opportunistic
-        )
-
+        // Send via the canonical FIELD_REACTION (0x40): the backend builds the
+        // {0x00: targetHashBytes, 0x01: emojiUTF8} dict on an empty-content
+        // message; the reacting user is derived from the source hash on receive
+        // (not on the wire). Replaces the legacy 0x10 {reaction_to,emoji,sender}.
         do {
-            try await router.handleOutbound(&lxMessage)
+            try await backend.lxmf.sendReaction(
+                destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
+                targetMessageHashHex: targetMessageId,
+                emoji: emoji)
         } catch {
             logger.error("Failed to send reaction: \(error.localizedDescription)")
         }
