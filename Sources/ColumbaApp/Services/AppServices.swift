@@ -2911,6 +2911,13 @@ public final class AppServices {
         // creating a new one — silently dropping the first call(s) after a
         // restart cycle.
         activeLinksByLinkId.removeAll()
+        // Clear the rest of the per-backend session state so an identity-change
+        // restart starts clean: stale destination-link callbacks (keyed by the
+        // old identity's telephony hash) would otherwise linger and get fanned
+        // an inbound link alongside the new one, and the interface-status map
+        // would mismatch the freshly-attached interfaces.
+        destinationLinkCallbacks.removeAll()
+        pythonInterfaceEntities.removeAll()
         if let backend = backend {
             await backend.stop()
             self.backend = nil
