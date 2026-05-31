@@ -429,6 +429,18 @@ public final class CallManager {
             // Already running — restart capture in case session changed
             manager.handleAudioSessionActivated()
         }
+
+        // Outgoing ringback may have been requested before CallKit activated
+        // the audio session: handleCallerIdentified -> startRingback ->
+        // ensureToneOutput returns nil while the session is inactive, so
+        // ringbackActive stays false and the caller hears silence. Now that
+        // the session is live, start it. startRingback() re-guards on
+        // !isIncoming/!ringbackActive, and we gate on .ringing so we never
+        // (re)start a tone after the call has connected or ended.
+        if !isIncoming, callState == .ringing, !ringbackActive {
+            DiagLog.log("[AUDIO] Session active while outgoing call ringing — starting deferred ringback")
+            startRingback()
+        }
     }
 
     /// Called by CallKitManager when the provider is reset (e.g., system
