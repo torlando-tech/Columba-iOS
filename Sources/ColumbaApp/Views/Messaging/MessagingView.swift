@@ -482,13 +482,18 @@ struct MessagingView: View {
             // Voice call — opens the codec picker, then places an LXST voice
             // call to the peer's telephony destination (resolved from their
             // identity). Restored after the Phase 0 migration removed it.
-            Button(action: { showCodecSheet = true }) {
-                Image(systemName: "phone.fill")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Theme.textPrimary)
+            // Only shown when a CallManager exists (telephony wired); otherwise
+            // the codec sheet would open and then silently no-op on the nil
+            // callManager guard, giving the user no feedback.
+            if appServices.callManager != nil {
+                Button(action: { showCodecSheet = true }) {
+                    Image(systemName: "phone.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Theme.textPrimary)
+                }
+                .accessibilityIdentifier("voice_call_button")
+                .accessibilityLabel("Voice call")
             }
-            .accessibilityIdentifier("voice_call_button")
-            .accessibilityLabel("Voice call")
 
             // Location sharing toggle
             Button(action: {
