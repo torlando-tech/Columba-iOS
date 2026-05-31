@@ -6,6 +6,7 @@ xcuserdata/
 *.dSYM
 timeline.xctimeline
 playground.xcworkspace
+build/
 
 # Swift Package Manager
 .build/
@@ -27,3 +28,16 @@ package-lock.json
 
 # Local Xcode signing overrides
 Config/LocalSigning.xcconfig
+
+# Embedded Python (fetched by support/fetch-python.sh — too large for git)
+Frameworks/Python.xcframework/
+Frameworks/Python-3.13-iOS-support.*.tar.gz
+Frameworks/VERSIONS
+
+# iOS Python wheels (fetched by support/fetch-wheels.sh)
+wheels-iphoneos/
+wheels-iphonesimulator/
+
+# Python build artifacts
+__pycache__/
+*.pyc

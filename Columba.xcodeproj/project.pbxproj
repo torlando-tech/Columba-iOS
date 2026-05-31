@@ -3,14 +3,10 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
-		T001 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT01 /* AudioRingBufferTests.swift */; };
-		T002 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT02 /* AudioManagerConfigChangeTests.swift */; };
-		T004 /* CallManagerCallKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT04 /* CallManagerCallKitTests.swift */; };
-		T005 /* MapStyleURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT05 /* MapStyleURLTests.swift */; };
 		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* ColumbaApp.swift */; };
 		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
 		003 /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* ChatsViewModel.swift */; };
@@ -33,7 +29,7 @@
 		020 /* IdenticonGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F020 /* IdenticonGenerator.swift */; };
 		021 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* MapView.swift */; platformFilter = ios; };
 		022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022 /* Assets.xcassets */; };
-		023 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P001 /* LXMFSwift */; };
+		0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */; };
 		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
 		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
 		026 /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsRepository.swift */; };
@@ -44,18 +40,15 @@
 		031 /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031 /* InterfaceManagementScreen.swift */; };
 		032 /* NodeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F032 /* NodeDetailsView.swift */; };
 		033 /* PropagationNodeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F033 /* PropagationNodeManager.swift */; };
+		03328BB5F0687E3918A9387D /* CodecSelectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */; };
 		034 /* NetworkStatusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F034 /* NetworkStatusViewModel.swift */; };
 		035 /* NetworkStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F035 /* NetworkStatusView.swift */; };
 		036 /* MaterialDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F036 /* MaterialDesignIcons.swift */; };
 		037 /* ProfileIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F037 /* ProfileIcon.swift */; };
 		038 /* IconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F038 /* IconPickerView.swift */; };
 		039 /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039 /* materialdesignicons.ttf */; };
-		FNT1 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FNT1F /* JetBrainsMono-Regular.ttf */; };
-		FNT2 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FNT2F /* JetBrainsMono-Bold.ttf */; };
 		040 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F040 /* NotificationService.swift */; };
 		041 /* AutoAnnounceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041 /* AutoAnnounceManager.swift */; };
-		041P /* AutoAnnouncePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041P /* AutoAnnouncePolicy.swift */; };
-		041R /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041R /* PeerChildInterfaceRegistry.swift */; };
 		042 /* LocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F042 /* LocalIdentity.swift */; };
 		043 /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043 /* IdentityManager.swift */; };
 		044 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044 /* IdentityManagerView.swift */; };
@@ -95,16 +88,6 @@
 		065B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065 /* ThemeManager.swift */; };
 		066B /* AppearanceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F066 /* AppearanceCard.swift */; };
 		067B /* CustomThemeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F067 /* CustomThemeEditorView.swift */; };
-		068B /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F068 /* CallManager.swift */; platformFilter = ios; };
-		069B /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = F069 /* CodecProfileInfo.swift */; platformFilter = ios; };
-		06AB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06A /* CallControlButton.swift */; platformFilter = ios; };
-		06BB /* CodecSelectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06B /* CodecSelectionSheet.swift */; platformFilter = ios; };
-		06CB /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06C /* IncomingCallScreen.swift */; platformFilter = ios; };
-		06DB /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06D /* PttButton.swift */; platformFilter = ios; };
-		06EB /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06E /* VoiceCallScreen.swift */; platformFilter = ios; };
-		06F0 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06F /* CallKitManager.swift */; platformFilter = ios; };
-		06FB /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = P003 /* LXSTSwift */; };
-		0700 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070 /* AudioManager.swift */; platformFilter = ios; };
 		071B /* BLEConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F071 /* BLEConnectionsView.swift */; };
 		072B /* RNodeProbeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F072 /* RNodeProbeScanner.swift */; };
 		073 /* MessageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F073 /* MessageDetailView.swift */; };
@@ -123,15 +106,46 @@
 		082B /* MicronRenderContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F083 /* MicronRenderContainer.swift */; };
 		083B /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		084B /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
-		086B /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F086 /* TCPClientWizardViewModel.swift */; };
-		087B /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F087 /* TCPClientWizard.swift */; };
-		T006 /* TCPClientWizardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT06 /* TCPClientWizardViewModelTests.swift */; };
-		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
-		TAA0 /* AutoAnnouncePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FTAA /* AutoAnnouncePolicyTests.swift */; };
-		TPCR /* PeerChildInterfaceRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FTPC /* PeerChildInterfaceRegistryTests.swift */; };
-		2F3D64B12F7227E100049252 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = P004 /* ReticulumSwift */; };
+		13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */; };
+		238336F8024494A8B57F9419 /* CeaseTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF48C97880B30682DC35613C /* CeaseTelemetry.swift */; };
+		2F8EC8212FC732AB00235991 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8202FC732AB00235991 /* ReticulumSwift */; };
+		2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8222FC732AF00235991 /* LXMFSwift */; };
+		3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
+		4758210ABE17DE6E3BE0B3F6 /* AutoAnnouncePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F87296BB580791A95C977B6 /* AutoAnnouncePolicy.swift */; };
+		4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */; };
+		5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A49337EFC55C10979AEB702B /* LXSTSwift */; };
+		557D530BBEDAEBE9A6A0BE41 /* PyConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D8CBCF7E546028A043E1C7 /* PyConversation.swift */; };
+		55F3BF7D600C32E07B7B8C26 /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EBCA636D502CF4367E32C7 /* TCPClientWizard.swift */; };
+		59CE6F635354725F7D445625 /* PyLocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */; };
+		5F1FF2954475331208BAAD47 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */; };
+		6176037A389D1F97BB47992B /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */; };
+		67079BBC2E8309A43DF576E5 /* app in Resources */ = {isa = PBXBuildFile; fileRef = D001472BC7DFD3CD7BF27F0C /* app */; };
+		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
+		6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
+		71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
+		779118E89F4D38BF960DB3D0 /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
+		7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */; };
+		8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
+		886AB689C7699471510BAF9A /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
+		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
+		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
+		BKF001 /* BackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKF002 /* BackendFactory.swift */; };
+		C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
+		C91321B8E0BA9F487D5E1AC8 /* PyMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBD293157E715F490613984 /* PyMessage.swift */; };
+		D33B15C781E3C98A5CBD06F3 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F7375908681A4DF99F125C7 /* CallKitManager.swift */; };
+		D85E5BBB51FACA138622FFFA /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4C54CECCAF0B117FB6C197 /* IncomingCallScreen.swift */; };
+		DE9220E1D4ABF9A4C2CBA761 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
+		EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
+		EDF2F6B945FAA23366617FD6 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
+		F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FD6A68A52A54D21FDB70324 /* RNSAPI */; };
+		F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
+		PNT001 /* PythonNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = PNT002 /* PythonNetworkTransport.swift */; };
+		PRC001 /* PythonRNodeCallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRC002 /* PythonRNodeCallbackBridge.swift */; };
+		SRB001 /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
+		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -144,15 +158,51 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		9796AB46906D510ACD8F0AB1 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				6176037A389D1F97BB47992B /* Python.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
-		FT01 /* AudioRingBufferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRingBufferTests.swift; sourceTree = "<group>"; };
-		FT02 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
-		FT04 /* CallManagerCallKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallManagerCallKitTests.swift; sourceTree = "<group>"; };
-		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
-		FTAA /* AutoAnnouncePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnouncePolicyTests.swift; sourceTree = "<group>"; };
-		FTPC /* PeerChildInterfaceRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerChildInterfaceRegistryTests.swift; sourceTree = "<group>"; };
-		FT05 /* MapStyleURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapStyleURLTests.swift; sourceTree = "<group>"; };
-		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		00A8D344945F752C18EF2D9E /* AudioManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
+		11D4DB375C0C7BB62E8A8B23 /* ColumbaPython-Bridging-Header.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = "ColumbaPython-Bridging-Header.h"; sourceTree = "<group>"; };
+		1F7375908681A4DF99F125C7 /* CallKitManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
+		34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyLocalIdentity.swift; path = Python/Models/PyLocalIdentity.swift; sourceTree = "<group>"; };
+		3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = Frameworks/Python.xcframework; sourceTree = "<group>"; };
+		3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyAnnounce.swift; path = Python/Models/PyAnnounce.swift; sourceTree = "<group>"; };
+		3D4C54CECCAF0B117FB6C197 /* IncomingCallScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = IncomingCallScreen.swift; sourceTree = "<group>"; };
+		51D8CBCF7E546028A043E1C7 /* PyConversation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyConversation.swift; path = Python/Models/PyConversation.swift; sourceTree = "<group>"; };
+		710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
+		71922EC204982A357F814F23 /* CallControlButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
+		7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecSelectionSheet.swift; sourceTree = "<group>"; };
+		86E428836698BA8A8973A92F /* CallManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
+		8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNSBackend.swift; sourceTree = "<group>"; };
+		8CBD293157E715F490613984 /* PyMessage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyMessage.swift; path = Python/Models/PyMessage.swift; sourceTree = "<group>"; };
+		9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DiscoveredDevice.swift; sourceTree = "<group>"; };
+		96EBCA636D502CF4367E32C7 /* TCPClientWizard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TCPClientWizard.swift; sourceTree = "<group>"; };
+		9F87296BB580791A95C977B6 /* AutoAnnouncePolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutoAnnouncePolicy.swift; sourceTree = "<group>"; };
+		A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRuntime.swift; sourceTree = "<group>"; };
+		A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PeerChildInterfaceRegistry.swift; sourceTree = "<group>"; };
+		ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
+		AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
+		B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
+		B68384C48BFF8F5294340EDB /* PttButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PttButton.swift; sourceTree = "<group>"; };
+		BF48C97880B30682DC35613C /* CeaseTelemetry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CeaseTelemetry.swift; sourceTree = "<group>"; };
+		BKF002 /* BackendFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFactory.swift; sourceTree = "<group>"; };
+		CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBLECallbackBridge.swift; sourceTree = "<group>"; };
+		D001472BC7DFD3CD7BF27F0C /* app */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = app; sourceTree = "<group>"; };
+		D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
+		E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
+		EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonConfigWriter.swift; sourceTree = "<group>"; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
 		F002 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -193,12 +243,8 @@
 		F037 /* ProfileIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileIcon.swift; sourceTree = "<group>"; };
 		F038 /* IconPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconPickerView.swift; sourceTree = "<group>"; };
 		F039 /* materialdesignicons.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = materialdesignicons.ttf; sourceTree = "<group>"; };
-		FNT1F /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
-		FNT2F /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		F040 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		F041 /* AutoAnnounceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnounceManager.swift; sourceTree = "<group>"; };
-		F041P /* AutoAnnouncePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAnnouncePolicy.swift; sourceTree = "<group>"; };
-		F041R /* PeerChildInterfaceRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerChildInterfaceRegistry.swift; sourceTree = "<group>"; };
 		F042 /* LocalIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalIdentity.swift; sourceTree = "<group>"; };
 		F043 /* IdentityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManager.swift; sourceTree = "<group>"; };
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
@@ -237,15 +283,6 @@
 		F065 /* ThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeManager.swift; sourceTree = "<group>"; };
 		F066 /* AppearanceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceCard.swift; sourceTree = "<group>"; };
 		F067 /* CustomThemeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomThemeEditorView.swift; sourceTree = "<group>"; };
-		F068 /* CallManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
-		F069 /* CodecProfileInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
-		F06A /* CallControlButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
-		F06B /* CodecSelectionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecSelectionSheet.swift; sourceTree = "<group>"; };
-		F06C /* IncomingCallScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingCallScreen.swift; sourceTree = "<group>"; };
-		F06D /* PttButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PttButton.swift; sourceTree = "<group>"; };
-		F06E /* VoiceCallScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
-		F06F /* CallKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
-		F070 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 		F071 /* BLEConnectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEConnectionsView.swift; sourceTree = "<group>"; };
 		F072 /* RNodeProbeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeProbeScanner.swift; sourceTree = "<group>"; };
 		F073 /* MessageDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageDetailView.swift; sourceTree = "<group>"; };
@@ -256,6 +293,8 @@
 		F078 /* ExtensionFrameReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionFrameReader.swift; sourceTree = "<group>"; };
 		F079 /* OnboardingRestoreSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRestoreSheet.swift; sourceTree = "<group>"; };
 		F07A /* PlatformCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformCompat.swift; sourceTree = "<group>"; };
+		F07B /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
+		F07C /* LocalSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/LocalSigning.xcconfig.example; sourceTree = SOURCE_ROOT; };
 		F07D /* MicronDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronDocument.swift; sourceTree = "<group>"; };
 		F07E /* MicronParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParser.swift; sourceTree = "<group>"; };
 		F07F /* NomadNetBrowserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NomadNetBrowserService.swift; sourceTree = "<group>"; };
@@ -265,15 +304,16 @@
 		F083 /* MicronRenderContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronRenderContainer.swift; sourceTree = "<group>"; };
 		F084 /* MonospaceLineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonospaceLineView.swift; sourceTree = "<group>"; };
 		F085 /* ZoomableScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomableScrollView.swift; sourceTree = "<group>"; };
-		F086 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
-		F087 /* TCPClientWizard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPClientWizard.swift; sourceTree = "<group>"; };
-		FT06 /* TCPClientWizardViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModelTests.swift; sourceTree = "<group>"; };
-		F07B /* Config/Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
-		F07C /* Config/LocalSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/LocalSigning.xcconfig.example; sourceTree = SOURCE_ROOT; };
+		FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackendPreference.swift; sourceTree = "<group>"; };
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
+		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
+		PNT002 /* PythonNetworkTransport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonNetworkTransport.swift; sourceTree = "<group>"; };
+		PRC002 /* PythonRNodeCallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNodeCallbackBridge.swift; sourceTree = "<group>"; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		SRB002 /* SwiftRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwiftRNSBackend.swift; path = Sources/RNSBackendSwift/SwiftRNSBackend.swift; sourceTree = SOURCE_ROOT; };
+		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -288,10 +328,13 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				2F3D64B12F7227E100049252 /* ReticulumSwift in Frameworks */,
-				023 /* LXMFSwift in Frameworks */,
-				06FB /* LXSTSwift in Frameworks */,
 				049 /* MapLibre in Frameworks */,
+				8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */,
+				5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */,
+				F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */,
+				13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */,
+				2F8EC8212FC732AB00235991 /* ReticulumSwift in Frameworks */,
+				2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -305,6 +348,96 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		07385E9DF47719A55B436C1B /* Util */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Util;
+			sourceTree = "<group>";
+		};
+		4AD6205A86259FBAD00F37F1 /* RNSAPI */ = {
+			isa = PBXGroup;
+			children = (
+				5C59D74E72B7FB0C3B971D47 /* Compat.swift */,
+				56E3FE7875CE802628A630EF /* Models */,
+				5B34D5BDB12DC34A4AD14EA6 /* Protocols */,
+				07385E9DF47719A55B436C1B /* Util */,
+			);
+			name = RNSAPI;
+			path = Sources/RNSAPI;
+			sourceTree = "<group>";
+		};
+		56E3FE7875CE802628A630EF /* Models */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Models;
+			sourceTree = "<group>";
+		};
+		5B34D5BDB12DC34A4AD14EA6 /* Protocols */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Protocols;
+			sourceTree = "<group>";
+		};
+		5C59D74E72B7FB0C3B971D47 /* Compat.swift */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Compat.swift;
+			sourceTree = "<group>";
+		};
+		91614E532B3F0134673ED735 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		9A4EC6E91C9E0CAAD134372D /* Python */ = {
+			isa = PBXGroup;
+			children = (
+				D293DF12C132854354B20FFF /* Models */,
+			);
+			name = Python;
+			sourceTree = "<group>";
+		};
+		9FCA0C1149D62160BB052B3A /* RNSBackendPy */ = {
+			isa = PBXGroup;
+			children = (
+				8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */,
+				SRB002 /* SwiftRNSBackend.swift */,
+			);
+			name = RNSBackendPy;
+			path = Sources/RNSBackendPy;
+			sourceTree = "<group>";
+		};
+		C6877E3C038C0DC36597F1D5 /* PythonBridge */ = {
+			isa = PBXGroup;
+			children = (
+				710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */,
+				A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */,
+				11D4DB375C0C7BB62E8A8B23 /* ColumbaPython-Bridging-Header.h */,
+				CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */,
+				PRC002 /* PythonRNodeCallbackBridge.swift */,
+			);
+			name = PythonBridge;
+			path = Sources/PythonBridge;
+			sourceTree = "<group>";
+		};
+		D293DF12C132854354B20FFF /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */,
+				8CBD293157E715F490613984 /* PyMessage.swift */,
+				51D8CBCF7E546028A043E1C7 /* PyConversation.swift */,
+				34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */,
+			);
+			name = Models;
+			sourceTree = "<group>";
+		};
 		GAPP /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -316,11 +449,11 @@
 		GCALL /* Call */ = {
 			isa = PBXGroup;
 			children = (
-				F06A /* CallControlButton.swift */,
-				F06B /* CodecSelectionSheet.swift */,
-				F06C /* IncomingCallScreen.swift */,
-				F06D /* PttButton.swift */,
-				F06E /* VoiceCallScreen.swift */,
+				71922EC204982A357F814F23 /* CallControlButton.swift */,
+				7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */,
+				3D4C54CECCAF0B117FB6C197 /* IncomingCallScreen.swift */,
+				B68384C48BFF8F5294340EDB /* PttButton.swift */,
+				D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */,
 			);
 			path = Call;
 			sourceTree = "<group>";
@@ -358,7 +491,7 @@
 			path = Contacts;
 			sourceTree = "<group>";
 		};
-		GEXT /* Sources/ColumbaNetworkExtension */ = {
+		GEXT /* ColumbaNetworkExtension */ = {
 			isa = PBXGroup;
 			children = (
 				FE01 /* PacketTunnelProvider.swift */,
@@ -385,9 +518,10 @@
 				F045 /* LoRaPresets.swift */,
 				F053 /* TcpCommunityServer.swift */,
 				F05B /* MigrationData.swift */,
-				F069 /* CodecProfileInfo.swift */,
 				F07D /* MicronDocument.swift */,
 				F07E /* MicronParser.swift */,
+				ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */,
+				9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -401,6 +535,18 @@
 				F073 /* MessageDetailView.swift */,
 			);
 			path = Messaging;
+			sourceTree = "<group>";
+		};
+		GNOMAD /* NomadNet */ = {
+			isa = PBXGroup;
+			children = (
+				F081 /* NomadNetBrowserView.swift */,
+				F082 /* MicronDocumentView.swift */,
+				F083 /* MicronRenderContainer.swift */,
+				F084 /* MonospaceLineView.swift */,
+				F085 /* ZoomableScrollView.swift */,
+			);
+			path = NomadNet;
 			sourceTree = "<group>";
 		};
 		GONB /* Onboarding */ = {
@@ -417,27 +563,15 @@
 			path = Onboarding;
 			sourceTree = "<group>";
 		};
-		GNOMAD /* NomadNet */ = {
-			isa = PBXGroup;
-			children = (
-				F081 /* NomadNetBrowserView.swift */,
-				F082 /* MicronDocumentView.swift */,
-				F083 /* MicronRenderContainer.swift */,
-				F084 /* MonospaceLineView.swift */,
-				F085 /* ZoomableScrollView.swift */,
-			);
-			path = NomadNet;
-			sourceTree = "<group>";
-		};
 		GRES /* Resources */ = {
 			isa = PBXGroup;
 			children = (
 				F022 /* Assets.xcassets */,
 				F023 /* Info.plist */,
 				F039 /* materialdesignicons.ttf */,
-				FNT1F /* JetBrainsMono-Regular.ttf */,
-				FNT2F /* JetBrainsMono-Bold.ttf */,
 				F075 /* ColumbaApp.entitlements */,
+				E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */,
+				B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -472,13 +606,13 @@
 				F066 /* AppearanceCard.swift */,
 				F067 /* CustomThemeEditorView.swift */,
 				F071 /* BLEConnectionsView.swift */,
-				F087 /* TCPClientWizard.swift */,
 				GRNW /* RNodeWizard */,
+				96EBCA636D502CF4367E32C7 /* TCPClientWizard.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
 		};
-		GSHARED /* Sources/Shared */ = {
+		GSHARED /* Shared */ = {
 			isa = PBXGroup;
 			children = (
 				F076 /* SharedFrameQueue.swift */,
@@ -490,6 +624,7 @@
 			isa = PBXGroup;
 			children = (
 				F024 /* AppServices.swift */,
+				BKF002 /* BackendFactory.swift */,
 				F025 /* MessageRepository.swift */,
 				F026 /* SettingsRepository.swift */,
 				F027 /* NotificationObserver.swift */,
@@ -498,8 +633,6 @@
 				F033 /* PropagationNodeManager.swift */,
 				F040 /* NotificationService.swift */,
 				F041 /* AutoAnnounceManager.swift */,
-				F041P /* AutoAnnouncePolicy.swift */,
-				F041R /* PeerChildInterfaceRegistry.swift */,
 				F042 /* LocalIdentity.swift */,
 				F043 /* IdentityManager.swift */,
 				F04B /* LocationSharingManager.swift */,
@@ -507,15 +640,29 @@
 				F05D /* MigrationExporter.swift */,
 				F05E /* MigrationImporter.swift */,
 				F061 /* OfflineMapManager.swift */,
-				F068 /* CallManager.swift */,
-				F06F /* CallKitManager.swift */,
-				F070 /* AudioManager.swift */,
 				F074 /* SharedDefaults.swift */,
 				F077 /* TunnelManager.swift */,
 				F078 /* ExtensionFrameReader.swift */,
 				F07F /* NomadNetBrowserService.swift */,
+				EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */,
+				00A8D344945F752C18EF2D9E /* AudioManager.swift */,
+				1F7375908681A4DF99F125C7 /* CallKitManager.swift */,
+				86E428836698BA8A8973A92F /* CallManager.swift */,
+				PNT002 /* PythonNetworkTransport.swift */,
+				FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */,
+				BF48C97880B30682DC35613C /* CeaseTelemetry.swift */,
+				9F87296BB580791A95C977B6 /* AutoAnnouncePolicy.swift */,
+				A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		GTESTS /* ColumbaAppTests */ = {
+			isa = PBXGroup;
+			children = (
+				FT03 /* MicronParserTests.swift */,
+			);
+			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
 		};
 		GTHM /* Theme */ = {
@@ -559,7 +706,7 @@
 				F05A /* RNodeWizardViewModel.swift */,
 				F05F /* MigrationViewModel.swift */,
 				F080 /* NomadNetBrowserViewModel.swift */,
-				F086 /* TCPClientWizardViewModel.swift */,
+				AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -574,35 +721,25 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		GTESTS /* Tests/ColumbaAppTests */ = {
-			isa = PBXGroup;
-			children = (
-				FT01 /* AudioRingBufferTests.swift */,
-				FT02 /* AudioManagerConfigChangeTests.swift */,
-				FT03 /* MicronParserTests.swift */,
-				FT04 /* CallManagerCallKitTests.swift */,
-				FTAA /* AutoAnnouncePolicyTests.swift */,
-				FTPC /* PeerChildInterfaceRegistryTests.swift */,
-				FT05 /* MapStyleURLTests.swift */,
-				FT06 /* TCPClientWizardViewModelTests.swift */,
-			);
-			path = Tests/ColumbaAppTests;
-			sourceTree = "<group>";
-		};
 		ROOT = {
 			isa = PBXGroup;
 			children = (
-				SRCS /* Sources/ColumbaApp */,
-				GSHARED /* Sources/Shared */,
-				GEXT /* Sources/ColumbaNetworkExtension */,
-				GTESTS /* Tests/ColumbaAppTests */,
-				F07B /* Config/Signing.xcconfig */,
-				F07C /* Config/LocalSigning.xcconfig.example */,
+				SRCS /* ColumbaApp */,
+				GSHARED /* Shared */,
+				GEXT /* ColumbaNetworkExtension */,
+				GTESTS /* ColumbaAppTests */,
+				F07B /* Signing.xcconfig */,
+				F07C /* LocalSigning.xcconfig.example */,
 				PRODS /* Products */,
+				91614E532B3F0134673ED735 /* Frameworks */,
+				D001472BC7DFD3CD7BF27F0C /* app */,
+				C6877E3C038C0DC36597F1D5 /* PythonBridge */,
+				4AD6205A86259FBAD00F37F1 /* RNSAPI */,
+				9FCA0C1149D62160BB052B3A /* RNSBackendPy */,
 			);
 			sourceTree = "<group>";
 		};
-		SRCS /* Sources/ColumbaApp */ = {
+		SRCS /* ColumbaApp */ = {
 			isa = PBXGroup;
 			children = (
 				GAPP /* App */,
@@ -612,6 +749,7 @@
 				GVIEWS /* Views */,
 				GSVC /* Services */,
 				GRES /* Resources */,
+				9A4EC6E91C9E0CAAD134372D /* Python */,
 			);
 			path = Sources/ColumbaApp;
 			sourceTree = "<group>";
@@ -642,6 +780,8 @@
 				SRCBP /* Sources */,
 				FWBP /* Frameworks */,
 				RESBP /* Resources */,
+				9796AB46906D510ACD8F0AB1 /* Embed Frameworks */,
+				CF4F87412D5E39178E82799E /* Install Python stdlib & process dylibs */,
 			);
 			buildRules = (
 			);
@@ -649,10 +789,12 @@
 			);
 			name = ColumbaApp;
 			packageProductDependencies = (
-				P001 /* LXMFSwift */,
-				P003 /* LXSTSwift */,
 				P002 /* MapLibre */,
-				P004 /* ReticulumSwift */,
+				A49337EFC55C10979AEB702B /* LXSTSwift */,
+				0FD6A68A52A54D21FDB70324 /* RNSAPI */,
+				5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */,
+				2F8EC8202FC732AB00235991 /* ReticulumSwift */,
+				2F8EC8222FC732AF00235991 /* LXMFSwift */,
 			);
 			productName = ColumbaApp;
 			productReference = PROD /* ColumbaApp.app */;
@@ -697,7 +839,7 @@
 					};
 				};
 			};
-			buildConfigurationList = PBCLST /* Build configuration list for PBXProject "ColumbaApp" */;
+			buildConfigurationList = PBCLST /* Build configuration list for PBXProject "Columba" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -707,10 +849,11 @@
 			);
 			mainGroup = ROOT;
 			packageReferences = (
-				PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */,
-				PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */,
 				PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
-				PKGREF4 /* XCRemoteSwiftPackageReference "reticulum-swift" */,
+				PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */,
+				ACEF9566B3811B841D6E5672 /* XCLocalSwiftPackageReference "." */,
+				2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */,
+				2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */,
 			);
 			productRefGroup = PRODS /* Products */;
 			projectDirPath = "";
@@ -730,37 +873,39 @@
 			files = (
 				022 /* Assets.xcassets in Resources */,
 				039 /* materialdesignicons.ttf in Resources */,
-				FNT1 /* JetBrainsMono-Regular.ttf in Resources */,
-				FNT2 /* JetBrainsMono-Bold.ttf in Resources */,
+				67079BBC2E8309A43DF576E5 /* app in Resources */,
+				DE9220E1D4ABF9A4C2CBA761 /* JetBrainsMono-Regular.ttf in Resources */,
+				5F1FF2954475331208BAAD47 /* JetBrainsMono-Bold.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
-/* Begin PBXTargetDependency section */
-		TTDEP /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = TARG /* ColumbaApp */;
-			targetProxy = TTPROXY /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
-
-/* Begin PBXSourcesBuildPhase section */
-		TSRCBP /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
+/* Begin PBXShellScriptBuildPhase section */
+		CF4F87412D5E39178E82799E /* Install Python stdlib & process dylibs */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
-				T001 /* AudioRingBufferTests.swift in Sources */,
-				T002 /* AudioManagerConfigChangeTests.swift in Sources */,
-				T003 /* MicronParserTests.swift in Sources */,
-				T004 /* CallManagerCallKitTests.swift in Sources */,
-				TAA0 /* AutoAnnouncePolicyTests.swift in Sources */,
-				TPCR /* PeerChildInterfaceRegistryTests.swift in Sources */,
-				T005 /* MapStyleURLTests.swift in Sources */,
-				T006 /* TCPClientWizardViewModelTests.swift in Sources */,
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh",
+			);
+			name = "Install Python stdlib & process dylibs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n\n# Swift-native backend build (COLUMBA_BACKEND_SWIFT): no embedded Python,\n# so skip the wheels copy + install_python entirely (leaner build, no\n# multi-hundred-MB app_packages copy). The Python.xcframework is still\n# linked (build phases are not config-scoped) — full unlink is Phase 4 (two\n# targets / gen-time).\ncase \" $SWIFT_ACTIVE_COMPILATION_CONDITIONS \" in\n  *\" COLUMBA_BACKEND_SWIFT \"*) echo \"note: Swift backend — skipping Python wheels/install\"; exit 0 ;;\nesac\n\n# Copy platform-appropriate wheels into <app>/app_packages/ before\n# install_python processes the .so extensions inside them.\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || {\n  echo \"error: $WHEELS_SRC missing — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages";
+			showEnvVarsInLog = 0;
 		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
 		ESRCBP /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -798,6 +943,7 @@
 				021 /* MapView.swift in Sources */,
 				048 /* MapLibreMapView.swift in Sources */,
 				024 /* AppServices.swift in Sources */,
+				BKF001 /* BackendFactory.swift in Sources */,
 				025 /* MessageRepository.swift in Sources */,
 				026 /* SettingsRepository.swift in Sources */,
 				027 /* NotificationObserver.swift in Sources */,
@@ -814,8 +960,6 @@
 				038 /* IconPickerView.swift in Sources */,
 				040 /* NotificationService.swift in Sources */,
 				041 /* AutoAnnounceManager.swift in Sources */,
-				041P /* AutoAnnouncePolicy.swift in Sources */,
-				041R /* PeerChildInterfaceRegistry.swift in Sources */,
 				042 /* LocalIdentity.swift in Sources */,
 				043 /* IdentityManager.swift in Sources */,
 				044 /* IdentityManagerView.swift in Sources */,
@@ -854,15 +998,6 @@
 				065B /* ThemeManager.swift in Sources */,
 				066B /* AppearanceCard.swift in Sources */,
 				067B /* CustomThemeEditorView.swift in Sources */,
-				068B /* CallManager.swift in Sources */,
-				069B /* CodecProfileInfo.swift in Sources */,
-				06AB /* CallControlButton.swift in Sources */,
-				06BB /* CodecSelectionSheet.swift in Sources */,
-				06CB /* IncomingCallScreen.swift in Sources */,
-				06DB /* PttButton.swift in Sources */,
-				06EB /* VoiceCallScreen.swift in Sources */,
-				06F0 /* CallKitManager.swift in Sources */,
-				0700 /* AudioManager.swift in Sources */,
 				071B /* BLEConnectionsView.swift in Sources */,
 				074B /* SharedDefaults.swift in Sources */,
 				076B /* SharedFrameQueue.swift in Sources */,
@@ -879,14 +1014,361 @@
 				082B /* MicronRenderContainer.swift in Sources */,
 				083B /* MonospaceLineView.swift in Sources */,
 				084B /* ZoomableScrollView.swift in Sources */,
-				086B /* TCPClientWizardViewModel.swift in Sources */,
-				087B /* TCPClientWizard.swift in Sources */,
+				779118E89F4D38BF960DB3D0 /* PyAnnounce.swift in Sources */,
+				C91321B8E0BA9F487D5E1AC8 /* PyMessage.swift in Sources */,
+				557D530BBEDAEBE9A6A0BE41 /* PyConversation.swift in Sources */,
+				59CE6F635354725F7D445625 /* PyLocalIdentity.swift in Sources */,
+				4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */,
+				C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */,
+				668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */,
+				SRB001 /* SwiftRNSBackend.swift in Sources */,
+				69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */,
+				71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */,
+				D33B15C781E3C98A5CBD06F3 /* CallKitManager.swift in Sources */,
+				886AB689C7699471510BAF9A /* CallManager.swift in Sources */,
+				PNT001 /* PythonNetworkTransport.swift in Sources */,
+				8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */,
+				03328BB5F0687E3918A9387D /* CodecSelectionSheet.swift in Sources */,
+				D85E5BBB51FACA138622FFFA /* IncomingCallScreen.swift in Sources */,
+				EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */,
+				3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */,
+				7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */,
+				0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */,
+				PRC001 /* PythonRNodeCallbackBridge.swift in Sources */,
+				6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */,
+				238336F8024494A8B57F9419 /* CeaseTelemetry.swift in Sources */,
+				F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */,
+				4758210ABE17DE6E3BE0B3F6 /* AutoAnnouncePolicy.swift in Sources */,
+				AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */,
+				EDF2F6B945FAA23366617FD6 /* TCPClientWizardViewModel.swift in Sources */,
+				55F3BF7D600C32E07B7B8C26 /* TCPClientWizard.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		TSRCBP /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				T003 /* MicronParserTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		TTDEP /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = TTARG /* ColumbaAppTests */;
+			targetProxy = TTPROXY /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		19741F31C64D608B53A0BD61 /* Debug-Swift */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = "Debug-Swift";
+		};
+		1CE9BF08C76D04B9FB6ED9C9 /* Release-Swift */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M2977H5PM5;
+				ENABLE_PREVIEWS = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Columba;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Columba uses the camera to scan QR codes for adding contacts.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Columba uses local network access to discover nearby Reticulum peers and connect to TCP servers on your network.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Columba uses background location to share your position with peers on the mesh network.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Columba uses your location to show your position on the map and share it with peers.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Columba uses the microphone for voice calls over the mesh network.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.0.2;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = "Release-Swift";
+		};
+		22F92FA927670E44C5E34001 /* Debug-Swift */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M2977H5PM5;
+				ENABLE_PREVIEWS = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Columba;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Columba uses the camera to scan QR codes for adding contacts.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Columba uses local network access to discover nearby Reticulum peers and connect to TCP servers on your network.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Columba uses background location to share your position with peers on the mesh network.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Columba uses your location to show your position on the map and share it with peers.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Columba uses the microphone for voice calls over the mesh network.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.0.2;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = "Debug-Swift";
+		};
+		40664B29B91154746B7404C5 /* Release-Swift */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
+			};
+			name = "Release-Swift";
+		};
+		4DDB99DC9C9364354F194D97 /* Debug-Swift */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.0.2;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = "Debug-Swift";
+		};
+		834F37C59F9C28697BFC834F /* Release-Swift */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "COLUMBA_NOMADNET_ENABLED $(inherited)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = "Release-Swift";
+		};
+		937AA4F4090BA98BCC8888B0 /* Debug-Swift */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
+			};
+			name = "Debug-Swift";
+		};
+		BB9D1E96F186BDF9EBE59FE3 /* Release-Swift */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.0.2;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = "Release-Swift";
+		};
 		DBG /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -924,7 +1406,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -946,14 +1428,14 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
 		};
 		EDBG /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F07B /* Config/Signing.xcconfig */;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -979,7 +1461,7 @@
 		};
 		EREL /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F07B /* Config/Signing.xcconfig */;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -1040,7 +1522,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -1055,6 +1537,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "COLUMBA_NOMADNET_ENABLED $(inherited)";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -1062,13 +1545,18 @@
 		};
 		TDBG /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F07B /* Config/Signing.xcconfig */;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M2977H5PM5;
 				ENABLE_PREVIEWS = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Columba;
@@ -1088,11 +1576,13 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.0.2;
+				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -1100,13 +1590,18 @@
 		};
 		TREL /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F07B /* Config/Signing.xcconfig */;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M2977H5PM5;
 				ENABLE_PREVIEWS = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Columba;
@@ -1131,6 +1626,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -1184,6 +1680,8 @@
 			buildConfigurations = (
 				TDBG /* Debug */,
 				TREL /* Release */,
+				22F92FA927670E44C5E34001 /* Debug-Swift */,
+				1CE9BF08C76D04B9FB6ED9C9 /* Release-Swift */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -1193,15 +1691,19 @@
 			buildConfigurations = (
 				EDBG /* Debug */,
 				EREL /* Release */,
+				4DDB99DC9C9364354F194D97 /* Debug-Swift */,
+				BB9D1E96F186BDF9EBE59FE3 /* Release-Swift */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		PBCLST /* Build configuration list for PBXProject "ColumbaApp" */ = {
+		PBCLST /* Build configuration list for PBXProject "Columba" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				DBG /* Debug */,
 				REL /* Release */,
+				19741F31C64D608B53A0BD61 /* Debug-Swift */,
+				834F37C59F9C28697BFC834F /* Release-Swift */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -1211,19 +1713,36 @@
 			buildConfigurations = (
 				TTDBG /* Debug */,
 				TTREL /* Release */,
+				937AA4F4090BA98BCC8888B0 /* Debug-Swift */,
+				40664B29B91154746B7404C5 /* Release-Swift */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		ACEF9566B3811B841D6E5672 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
-		PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */ = {
+		2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/torlando-tech/reticulum-swift.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.2.3;
+			};
+		};
+		2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/torlando-tech/LXMF-swift.git";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.4.0;
+				kind = exactVersion;
+				version = 0.3.4;
 			};
 		};
 		PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
@@ -1238,40 +1757,40 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/torlando-tech/LXST-swift.git";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.2.0;
-			};
-		};
-		PKGREF4 /* XCRemoteSwiftPackageReference "reticulum-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/torlando-tech/reticulum-swift.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.3.0;
+				branch = "feat/transport-agnostic";
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		P001 /* LXMFSwift */ = {
+		0FD6A68A52A54D21FDB70324 /* RNSAPI */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = PKGREF /* XCRemoteSwiftPackageReference "LXMF-swift" */;
+			productName = RNSAPI;
+		};
+		2F8EC8202FC732AB00235991 /* ReticulumSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
+			productName = ReticulumSwift;
+		};
+		2F8EC8222FC732AF00235991 /* LXMFSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
 			productName = LXMFSwift;
+		};
+		5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwiftBLEBridge;
+		};
+		A49337EFC55C10979AEB702B /* LXSTSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
+			productName = LXSTSwift;
 		};
 		P002 /* MapLibre */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
 			productName = MapLibre;
-		};
-		P003 /* LXSTSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
-			productName = LXSTSwift;
-		};
-		P004 /* ReticulumSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = PKGREF4 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
-			productName = ReticulumSwift;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -22,6 +22,14 @@ jobs:
           git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
           git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
 
+      # The Python-backend (`Columba`) scheme links Python.xcframework + the
+      # bundled wheels; without these the build phase that copies them fails.
+      # Fetch them before any xcodebuild step (pinned deps → reproducible).
+      - name: Fetch Python framework + wheels
+        run: |
+          support/fetch-python.sh
+          support/fetch-wheels.sh
+
       - name: Select Xcode
         run: |
           XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
@@ -37,11 +45,27 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      - name: Build
+      - name: Build (Python backend — default)
         run: |
           xcodebuild build \
             -project Columba.xcodeproj \
             -scheme Columba \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.sim.outputs.device_id }}" \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      # Verify the native reticulum-swift/LXMF-swift backend variant also builds
+      # (COLUMBA_BACKEND_SWIFT). The UI/AppServices are backend-agnostic, so this
+      # guards against the Swift backend or its seam drifting out of compile.
+      - name: Build (Swift-native backend)
+        run: |
+          xcodebuild build \
+            -project Columba.xcodeproj \
+            -scheme Columba-Swift \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             CODE_SIGN_IDENTITY=- \
