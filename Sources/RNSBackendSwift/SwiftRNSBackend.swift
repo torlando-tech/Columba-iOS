@@ -453,30 +453,34 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         // 4. Initiate the link (throws TransportError.noPathAvailable if the path
         //    evaporated between the check above and here).
         let link = try await transport.initiateLink(to: dest, identity: localId)
-        // Reserve the id and register the link atomically so concurrent
-        // openLink callers can't collide on nextLinkId / overwrite links.
+        let cont = eventContinuation
+        // Reserve the id and register BOTH the link and its stateUpdates drain
+        // task in one critical section. If these were split (task stored after
+        // the setPacketCallback await), a stop() racing that window would clear
+        // the maps in between and then openLink would re-insert an orphaned
+        // task into the freshly-emptied linkStateTasks — keeping the link actor
+        // alive and yielding stale events into the next session until the next
+        // stop(). The Task constructor is synchronous (its awaits run later), so
+        // it's safe to build under the lock; nothing in the task body touches
+        // linkLock, so there's no re-entrancy.
         linkLock.lock()
         let linkId = nextLinkId
         nextLinkId += 1
         links[linkId] = link
-        linkLock.unlock()
-
-        // 5. Bridge inbound link packets + state transitions onto the event stream.
-        //    stateUpdates yields the terminal .closed(reason) itself, so a separate
-        //    close callback would only duplicate it.
-        let cont = eventContinuation
-        await link.setPacketCallback { data, _ in
-            cont.yield(.linkPacket(linkId: linkId, data: data, t: Date()))
-        }
-        let stateTask = Task {
+        linkStateTasks[linkId] = Task {
             for await st in await link.stateUpdates {
                 let (s, r) = Self.linkStateString(st)
                 cont.yield(.linkState(linkId: linkId, state: s, reason: r, inbound: false, t: Date()))
             }
         }
-        linkLock.lock()
-        linkStateTasks[linkId] = stateTask
         linkLock.unlock()
+
+        // 5. Bridge inbound link packets onto the event stream. stateUpdates
+        //    (drained above) yields the terminal .closed(reason) itself, so a
+        //    separate close callback would only duplicate it.
+        await link.setPacketCallback { data, _ in
+            cont.yield(.linkPacket(linkId: linkId, data: data, t: Date()))
+        }
         return (true, linkId, "")
     }
 
