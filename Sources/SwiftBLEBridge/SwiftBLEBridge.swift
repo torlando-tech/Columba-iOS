@@ -243,6 +243,16 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             // is still in mid-teardown — the symptom we hit on
             // Apply & Restart when stop() was followed milliseconds
             // later by another start().
+            //
+            // Drop the callback invoker INSIDE this serialized block:
+            // cancelPeripheralConnection above makes CoreBluetooth dispatch
+            // didDisconnectPeripheral asynchronously onto `queue`, which
+            // always runs after this block completes. Clearing here (rather
+            // than via a second setCallbackInvoker(nil) hop that races those
+            // async disconnects) guarantees no post-stop .onDeviceDisconnected
+            // reaches Python for peers it has already torn down. Re-installed
+            // by startBLEInterface on the next start.
+            callbackInvoker = nil
         }
     }
 
