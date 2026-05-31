@@ -147,6 +147,15 @@ struct MainTabView: View {
                         peerName: cm.peerName ?? "Unknown",
                         destinationHash: cm.peerHash.flatMap { try? $0.hexToData() } ?? Data()
                     )
+                    .onAppear {
+                        // An active call should always carry a decodable peerHash.
+                        // Keep the empty-Data() fallback so the call UI never
+                        // crashes, but surface the violation instead of masking
+                        // it silently (the previous behavior).
+                        if (cm.peerHash.flatMap { try? $0.hexToData() }) == nil {
+                            DiagLog.log("[CALL] VoiceCallScreen shown without a decodable peerHash (peerHash=\(cm.peerHash ?? "nil")) — CallManager state invariant violation; using empty destination hash")
+                        }
+                    }
                 }
             } else {
                 // callManager went nil between setting the cover and this body
