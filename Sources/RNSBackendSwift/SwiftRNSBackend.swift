@@ -43,13 +43,17 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
     /// stale linkState events into the next session after a restart.
     private var linkStateTasks: [Int: Task<Void, Never>] = [:]
     private var nextLinkId: Int = 1
-    /// Serializes the link-id allocation and the `links` / `linkStateTasks`
-    /// maps. SwiftRNSBackend is a class (not an actor) so `linkSend` stays
-    /// hop-free on the audio path; without this lock, concurrent `openLink`
-    /// callers race the `nextLinkId` increment + the dictionary writes — two
-    /// callers can grab the same id and the second write orphans the first
-    /// link (never tracked, never cancelled by linkTeardown/stop). Mirrors the
-    /// Python backend's `_link_id_lock`. Never held across an `await`.
+    /// Serializes the mutable registries that async methods touch from
+    /// different tasks: `nextLinkId`, `links`, `linkStateTasks`, and
+    /// `interfaceIds`. SwiftRNSBackend is a class (not an actor) so `linkSend`
+    /// stays hop-free on the audio path; without this lock, concurrent
+    /// `openLink` callers race the `nextLinkId` increment + dictionary writes
+    /// (two callers grab the same id, the second orphans the first link), and
+    /// `statusSnapshot()` can read `interfaceIds` while `start()`/`addInterface`
+    /// mutate it (Swift Dictionary read+write races are UB → release-build
+    /// crashes). Mirrors the Python backend's `_link_id_lock`. A Dictionary is
+    /// a value type, so snapshotting one under the lock (`let copy = dict`) is
+    /// a cheap COW retain. Never held across an `await`.
     private let linkLock = NSLock()
 
     /// Section-name → reticulum interface id, backing the Python-shaped
@@ -162,7 +166,9 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
             let section = PythonConfigWriter.sectionName(for: entity)
             do {
                 try await buildAndAdd(entity)
+                linkLock.lock()
                 interfaceIds[section] = entity.id
+                linkLock.unlock()
             } catch {
                 Self.log.error("start: interface \(section, privacy: .public) bring-up failed: \(String(describing: error), privacy: .public)")
             }
@@ -206,6 +212,11 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
     /// lxmf.propagation / lxst.telephony / nomadnetwork.node). `lastSeen` is
     /// task-local, so no shared mutable state escapes the poller.
     private func startAnnouncePolling() {
+        // Cancel any prior poller first: start() has no idempotency guard, so a
+        // second start() without an intervening stop() would otherwise leak the
+        // old task (still polling the orphaned PathTable it captured) and yield
+        // every announce twice.
+        announcePoller?.cancel()
         guard let pathTable else { return }
         let cont = eventContinuation
         announcePoller = Task {
@@ -530,6 +541,11 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
     public func statusSnapshot() async -> StatusSnapshot? {
         guard let transport else { return nil }
         let snaps = await transport.getInterfaceSnapshots()
+        // Snapshot interfaceIds under the lock (cheap COW copy) so the map below
+        // can't race a concurrent start()/addInterface()/removeInterface() write.
+        linkLock.lock()
+        let interfaceIdsSnapshot = interfaceIds
+        linkLock.unlock()
         let ifaces = snaps.map { s in
             // Report the config *section name* (what AppServices matches against
             // via PythonConfigWriter.sectionName), NOT the raw reticulum interface
@@ -538,7 +554,7 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
             // (section -> entity.id). Without this, AppServices.applyPythonInterfaceStatus
             // never matches a Swift-backend interface to its entity, so the UI's
             // connection badge stays "disconnected" even when the interface is up.
-            let section = interfaceIds.first(where: { $0.value == s.id })?.key ?? s.id
+            let section = interfaceIdsSnapshot.first(where: { $0.value == s.id })?.key ?? s.id
             return StatusSnapshot.InterfaceStatus(
                 sectionName: section,
                 name: s.name,
@@ -690,13 +706,18 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         guard transport != nil, identity != nil else { return (false, "not started") }
         // Idempotent: start() already brings up enabled interfaces, and the
         // apply/hot-reload path may re-request one — don't add it twice.
-        if interfaceIds[name] != nil { return (true, "already added") }
+        linkLock.lock()
+        let alreadyAdded = interfaceIds[name] != nil
+        linkLock.unlock()
+        if alreadyAdded { return (true, "already added") }
         guard let entity = Self.entity(forSection: name) else {
             return (false, "no configured interface named \(name)")
         }
         do {
             try await buildAndAdd(entity)
+            linkLock.lock()
             interfaceIds[name] = entity.id
+            linkLock.unlock()
             return (true, "")
         } catch {
             return (false, "\(error)")
@@ -708,11 +729,16 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         guard let transport else { return (false, "not started") }
         // Prefer the tracked id; fall back to the entity's id if we never tracked
         // it (e.g. added before this process started). removeInterface disconnects.
-        guard let rid = interfaceIds[name] ?? Self.entity(forSection: name)?.id else {
+        linkLock.lock()
+        let tracked = interfaceIds[name]
+        linkLock.unlock()
+        guard let rid = tracked ?? Self.entity(forSection: name)?.id else {
             return (false, "no interface named \(name)")
         }
         await transport.removeInterface(id: rid)
+        linkLock.lock()
         interfaceIds.removeValue(forKey: name)
+        linkLock.unlock()
         return (true, "")
     }
 
