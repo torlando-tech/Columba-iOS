@@ -89,6 +89,13 @@ public final class SwiftRNodeBridge: NSObject, @unchecked Sendable {
     private var pendingWrites: [Data] = []
     private let maxPendingWrites = 128
 
+    // Post-link MTU-sized chunks awaiting CoreBluetooth transmit-queue space.
+    // writeValue(.withoutResponse) silently drops once the queue is full
+    // (iOS 11+), so chunks are queued here and drained as the queue frees up
+    // (see drainChunksLocked / peripheralIsReady(toSendWriteWithoutResponse:)).
+    private var pendingChunks: [Data] = []
+    private let maxPendingChunks = 4096
+
     public override init() { super.init() }
 
     // MARK: - Public API (called from the C-ABI shims / app glue)
@@ -169,15 +176,35 @@ public final class SwiftRNodeBridge: NSObject, @unchecked Sendable {
         }
     }
 
-    /// Chunk + write to the RX characteristic. Caller guarantees the link is up.
+    /// Chunk a frame to the negotiated MTU and queue the chunks for sending.
+    /// Caller guarantees the link is up. The chunks aren't written directly —
+    /// they're enqueued and drained under transmit-queue backpressure, so a
+    /// frame that exceeds the BLE queue mid-way isn't silently truncated.
     private func writeChunkedLocked(_ data: Data) {
-        guard let p = peripheral, let rx = rxChar else { return }
+        guard let p = peripheral, rxChar != nil else { return }
         let mtu = max(20, p.maximumWriteValueLength(for: .withoutResponse))
         var offset = 0
         while offset < data.count {
             let end = min(offset + mtu, data.count)
-            p.writeValue(data.subdata(in: offset..<end), for: rx, type: .withoutResponse)
+            guard pendingChunks.count < maxPendingChunks else {
+                log("pending-chunk queue full — dropping \(data.count - offset)B of frame")
+                break
+            }
+            pendingChunks.append(data.subdata(in: offset..<end))
             offset = end
+        }
+        drainChunksLocked()
+    }
+
+    /// Write queued chunks while CoreBluetooth has transmit-queue space. From
+    /// iOS 11, writeValue(.withoutResponse) silently drops the write when the
+    /// queue is full, so gate every write on `canSendWriteWithoutResponse` and
+    /// resume from `peripheralIsReady(toSendWriteWithoutResponse:)` once it
+    /// frees up — mirroring the server-side pendingNotifies discipline.
+    private func drainChunksLocked() {
+        guard let p = peripheral, let rx = rxChar else { return }
+        while !pendingChunks.isEmpty, p.canSendWriteWithoutResponse {
+            p.writeValue(pendingChunks.removeFirst(), for: rx, type: .withoutResponse)
         }
     }
 
@@ -215,6 +242,7 @@ public final class SwiftRNodeBridge: NSObject, @unchecked Sendable {
         // Drop queued writes — on reconnect the protocol re-runs _configure_device
         // and re-sends radio config, so stale queued frames must not replay.
         pendingWrites.removeAll()
+        pendingChunks.removeAll()
         let wasUp = isLinkUp
         isLinkUp = false
         if notify && wasUp {
@@ -361,6 +389,12 @@ extension SwiftRNodeBridge: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error { log("didWriteValueFor error: \(error)") }
+    }
+
+    public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        // Transmit queue freed up — resume draining queued chunks. Delivered on
+        // the central manager's `queue`, so call the locked helper directly.
+        drainChunksLocked()
     }
 }
 

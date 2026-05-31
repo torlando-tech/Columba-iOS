@@ -36,9 +36,19 @@ enum StampGenerator {
 
     /// Find a 32-byte stamp such that SHA-256(workblock ‖ stamp) has at least
     /// `cost` leading zero bits. Multi-threaded across (capped) cores; blocks
-    /// until found. Returns nil only for an out-of-range cost.
+    /// until found. Returns nil for an out-of-range / infeasible cost.
+    ///
+    /// `maxCost` is a hard fail-fast bound: this runs synchronously from Python
+    /// via ctypes (holding the GIL for the whole call), so an infeasible cost
+    /// would freeze all RNS I/O — message delivery, announces, link events —
+    /// with no way to cancel. The practical LXMF range is 0–22 bits (Sideband's
+    /// default); 32 leaves generous headroom (~10 bits, 1024×) while keeping
+    /// the worst case bounded. (Greptile suggested 64, but 2^33–2^64 work is
+    /// hours-to-centuries — still an indefinite GIL freeze — so 32 is the
+    /// defensible ceiling; a message requesting more is undeliverable anyway.)
+    static let maxCost = 32
     static func generate(workblock: Data, cost: Int) -> Data? {
-        guard cost >= 0, cost <= 256 else { return nil }
+        guard cost >= 0, cost <= maxCost else { return nil }
         if cost == 0 { return Data(repeating: 0, count: stampSize) }
 
         // Absorb the workblock once. CC_SHA256_CTX is a flat value struct with
