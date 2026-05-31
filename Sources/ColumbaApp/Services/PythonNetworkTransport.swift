@@ -139,12 +139,13 @@ public actor PythonNetworkTransport: NetworkTransport {
         // Clear the close callback first so our own teardown doesn't echo back
         // as a spurious remote-close.
         await link.setCloseCallback(nil)
-        if link.state.isEstablished {
-            // Local hangup: tear the Python RNS.Link down (not just flip local
-            // state) so the remote peer's link closes promptly instead of
-            // waiting for its ~15s keepalive timeout.
-            await link.teardown()
-        }
+        // Local hangup: tear the Python RNS.Link down (not just flip local
+        // state) so the remote peer's link closes promptly instead of waiting
+        // for its ~15s keepalive timeout. Do this even when not yet
+        // established — aborting an outbound dial during the "calling" window
+        // (or a connect-timeout) leaves a `.pending` link whose Python side
+        // must still be torn down. teardown() is a no-op on an unwired link.
+        await link.teardown()
         activeLink = nil
     }
 
@@ -181,6 +182,10 @@ public actor PythonNetworkTransport: NetworkTransport {
     }
 
     private func handleIncomingLinkEstablished(_ link: Link) async {
+        // A re-delivered established event for the link we're already on must
+        // not be treated as a competing inbound call — otherwise the BUSY
+        // branch below would signal BUSY on and tear down our own live link.
+        if link === activeLink { return }
         // Already on a call → signal BUSY on the NEW link and tear it down,
         // without disturbing the active one. Mirrors Python LXST
         // Telephony.__incoming_link_established (`signal(STATUS_BUSY, link);

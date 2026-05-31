@@ -1893,12 +1893,12 @@ public final class AppServices {
             switch state {
             case "established":
                 if inbound {
-                    Task { await self.dispatchInboundLink(linkId: id) }
+                    await self.dispatchInboundLink(linkId: id)
                 } else {
-                    Task { await self.dispatchOutboundLinkEstablished(linkId: id) }
+                    await self.dispatchOutboundLinkEstablished(linkId: id)
                 }
             case "closed":
-                Task { await self.dispatchLinkClosed(linkId: id, reason: reason) }
+                await self.dispatchLinkClosed(linkId: id, reason: reason)
             default:
                 break  // "establishing" et al — purely informational
             }
@@ -1908,7 +1908,7 @@ public final class AppServices {
                 object: nil,
                 userInfo: ["linkId": linkId, "data": data]
             )
-            Task { await self.dispatchLinkPacket(linkId: UInt64(linkId), data: data) }
+            await self.dispatchLinkPacket(linkId: UInt64(linkId), data: data)
         case .linkIdentified(let linkId, let identityHashHex, _):
             DiagLog.log("[RNS] link \(linkId) identified=\(identityHashHex.prefix(8))")
             NotificationCenter.default.post(
@@ -1916,7 +1916,7 @@ public final class AppServices {
                 object: nil,
                 userInfo: ["linkId": linkId, "identityHashHex": identityHashHex]
             )
-            Task { await self.dispatchLinkIdentified(linkId: UInt64(linkId), identityHashHex: identityHashHex) }
+            await self.dispatchLinkIdentified(linkId: UInt64(linkId), identityHashHex: identityHashHex)
         }
     }
 
@@ -2904,6 +2904,13 @@ public final class AppServices {
             NotificationCenter.default.removeObserver(token)
         }
         pythonNotificationObservers.removeAll()
+        // Drop stale Compat Link records. Python assigns link IDs sequentially
+        // from 0 on each fresh backend, so without this a post-restart inbound
+        // link (id 0, 1, …) would collide with a dead entry and dispatchInbound
+        // Link would fire the established callback on the stale link instead of
+        // creating a new one — silently dropping the first call(s) after a
+        // restart cycle.
+        activeLinksByLinkId.removeAll()
         if let backend = backend {
             await backend.stop()
             self.backend = nil

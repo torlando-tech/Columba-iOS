@@ -648,8 +648,12 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
             default: break
             }
         }
-        guard let txChar = client.txChar, let identityChar = client.identityChar else {
-            emitError("warning", "didDiscoverCharacteristics: missing TX/Identity for \(address)")
+        guard client.rxChar != nil, let txChar = client.txChar,
+              let identityChar = client.identityChar else {
+            // Missing any of RX/TX/Identity means we'd fire onDeviceConnected
+            // (after the identity read) but never be able to write our identity
+            // or data back — a half-open link Python believes is up. Bail.
+            emitError("warning", "didDiscoverCharacteristics: missing RX/TX/Identity for \(address)")
             return
         }
         client.state = .readingIdentity
@@ -847,10 +851,16 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
         _ peripheral: CBPeripheralManager,
         didReceiveWrite requests: [CBATTRequest]
     ) {
+        // CBPeripheralManager requires exactly one respond(to:withResult:) per
+        // didReceiveWrite — passing the first request — and that single reply
+        // ACKs the whole batch. Responding per-request throws "respond called
+        // more than once" and drops the ATT transaction, so accumulate the
+        // result and reply once after processing every request.
+        var result: CBATTError.Code = .success
         for request in requests {
             guard request.characteristic.uuid == rxCharCBUUID,
                   let value = request.value else {
-                peripheral.respond(to: request, withResult: .writeNotPermitted)
+                result = .writeNotPermitted
                 continue
             }
             let address = request.central.identifier.uuidString
@@ -877,7 +887,6 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
                             // notifying them. Upstream interface ignores
                             // duplicates by identity hash anyway.
                             gattServerPeers.removeValue(forKey: address)
-                            peripheral.respond(to: request, withResult: .success)
                             continue
                         }
                     }
@@ -900,7 +909,10 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
                     callbackInvoker?.invoke(slot: .onDataReceived, args: [address, value])
                 }
             }
-            peripheral.respond(to: request, withResult: .success)
+        }
+        // Single response for the whole batch, per the CB contract.
+        if let first = requests.first {
+            peripheral.respond(to: first, withResult: result)
         }
     }
 
