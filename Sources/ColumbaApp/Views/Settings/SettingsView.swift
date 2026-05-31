@@ -7,7 +7,11 @@
 //
 
 import SwiftUI
-import LXMFSwift
+import RNSAPI
+#if os(iOS)
+import CoreLocation
+import UIKit
+#endif
 
 /// Main settings screen view.
 ///
@@ -55,6 +59,16 @@ struct SettingsView: View {
                         // Network
                         networkCard(vm)
 
+                        // Background Transport — the Network Extension VPN
+                        // tunnel that keeps RNS alive when the app is
+                        // backgrounded. Hidden under the Python RNS stack
+                        // because the previous implementation routed
+                        // reticulum-swift's TCP socket through
+                        // PacketTunnelProvider; Python's RNS owns its
+                        // sockets and needs a different architecture
+                        // (likely a Network Extension that pumps the
+                        // Python event loop, or a background-task wake
+                        // approach). Phase 2 work.
                         #if ENABLE_NETWORK_EXTENSION
                         backgroundTransportCard()
                         #endif
@@ -79,8 +93,13 @@ struct SettingsView: View {
                         // Auto Announce
                         autoAnnounceCard(vm)
 
-                        // Location Sharing
-                        locationSharingCard(vm)
+                        // Location Sharing — shown only when the active
+                        // backend implements telemetry/location (the Python
+                        // backend stubs it; the native backend supports it).
+                        // Honest capability gate, not a silent dead-end toggle.
+                        if appServices.capabilities.telemetry.storeOwnTelemetry != .unsupported {
+                            locationSharingCard(vm)
+                        }
 
                         // Map Sources
                         mapSourcesCard(vm)
@@ -96,6 +115,16 @@ struct SettingsView: View {
 
                         // Transport Mode (advanced)
                         transportModeCard(vm)
+
+                        // Network Backend (advanced) — pick the RNS engine.
+                        // Only meaningful when both engines are present. A
+                        // COLUMBA_BACKEND_SWIFT build strips the embedded Python
+                        // wheels (see the "Install Python stdlib" build phase),
+                        // so "Embedded Python" would be a guaranteed dead-end —
+                        // hide the control entirely on Swift-only builds.
+                        #if !COLUMBA_BACKEND_SWIFT
+                        networkBackendCard(vm)
+                        #endif
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -130,10 +159,14 @@ struct SettingsView: View {
                     )
                 }
                 .navigationDestination(isPresented: $showDataMigration) {
+                    #if COLUMBA_MIGRATION_ENABLED
                     MigrationScreen(
                         identityManager: identityManager,
                         settingsRepository: settingsRepository
                     )
+                    #else
+                    Text("Data migration unavailable in this build")
+                    #endif
                 }
             } else {
                 ProgressView()
@@ -146,7 +179,7 @@ struct SettingsView: View {
         // previously, the viewModel was created inline in .navigationDestination, so
         // each re-render produced a fresh InterfaceManagementViewModel with
         // showRNodeWizard=false, which immediately dismissed the fullScreenCover.
-        #if os(iOS)
+        #if os(iOS) && COLUMBA_RNODE_ENABLED
         .fullScreenCover(isPresented: Binding(
             get: { interfaceViewModel?.showRNodeWizard ?? false },
             set: { interfaceViewModel?.showRNodeWizard = $0 }
@@ -337,11 +370,21 @@ struct SettingsView: View {
                 vm.isTransportEnabled = newValue
                 vm.saveSettings()
                 Task {
-                    if newValue {
-                        await appServices.transport?.setTransportEnabled(true, identity: appServices.identity)
-                    } else {
-                        await appServices.transport?.setTransportEnabled(false)
-                    }
+                    #if COLUMBA_BACKEND_SWIFT
+                    // Swift backend: route through the transport seam, not the
+                    // Python-only restart below. restartPythonBackend() is a
+                    // no-op without an embedded Python backend, so the toggle
+                    // would otherwise be saved to disk but never reach the
+                    // running engine.
+                    appServices.transport?.setTransportEnabled(
+                        newValue, identity: appServices.identity)
+                    #else
+                    // RNS reads `enable_transport` at Reticulum.__init__ time,
+                    // so we restart the Python backend to pick the new value
+                    // up — same path Settings → Manage Interfaces → Apply &
+                    // Restart uses. ~1-2s connectivity outage.
+                    await appServices.restartPythonBackend()
+                    #endif
                 }
             })
         ) {
@@ -352,11 +395,73 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Text("Toggling restarts Reticulum (~1-2s offline).")
+                .font(.caption2)
+                .foregroundStyle(Theme.textSecondary.opacity(0.7))
+        }
+    }
+
+    // MARK: - Network Backend Card
+
+    /// Advanced control selecting the RNS engine: embedded Python (default —
+    /// the reference RNS/LXMF stack via CPython) vs the native Swift
+    /// reticulum-swift/LXMF-swift port (experimental). Both are built into the
+    /// binary; `BackendFactory` reads the choice once at startup, so a switch
+    /// applies on the next app launch (the backend can't be hot-swapped live).
+    private func networkBackendCard(_ vm: SettingsViewModel) -> some View {
+        ExpandableSettingsCard(
+            icon: "cpu",
+            title: "Network Backend",
+            isExpanded: Binding(get: { vm.isBackendExpanded }, set: { vm.isBackendExpanded = $0 })
+        ) {
+            Text("Choose the Reticulum engine. Embedded Python runs the reference RNS/LXMF stack (default, battle-tested). Swift-native uses the pure-Swift reticulum-swift/LXMF-swift port (experimental).")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Picker("", selection: Binding(
+                get: { vm.useSwiftBackend },
+                set: { newValue in
+                    vm.useSwiftBackend = newValue
+                    vm.applyBackendSelection()
+                }
+            )) {
+                Text("Embedded Python").tag(false)
+                Text("Swift-native").tag(true)
+            }
+            .pickerStyle(.segmented)
+
+            if vm.backendChangePending {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                    Text("Relaunch Columba to apply the new backend.")
+                        .font(.caption2)
+                }
+                .foregroundStyle(Theme.warning)
+            } else {
+                Text("Switching takes effect after you relaunch Columba.")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
+            }
         }
     }
 
     #if ENABLE_NETWORK_EXTENSION
     // MARK: - Background Transport Card
+    //
+    // Currently compile-guarded off. The previous wiring tied each
+    // toggle into reticulum-swift's `TCPInterface.beginTunnelMode` /
+    // `endTunnelMode`, which routed outbound bytes through the
+    // PacketTunnelProvider extension. The Python RNS migration deletes
+    // that entire path (the Compat-layer TCPInterface has no tunnel
+    // mode) and replaces it with rns_bridge.py's own socket. Bringing
+    // background transport back means re-architecting the NE side to
+    // either (a) drive Python's event loop from within the extension
+    // (heavy — needs CPython embedded twice) or (b) re-wake the app
+    // via BGProcessingTask + silent push when a peer announces and
+    // immediately polls drain_events. Phase 2/3.
 
     @ViewBuilder
     private func backgroundTransportCard() -> some View {
@@ -874,7 +979,7 @@ struct SettingsView: View {
                 set: { newValue in
                     #if os(iOS)
                     if !newValue {
-                        appServices.locationSharingManager?.stopAllSharing()
+                        Task { await appServices.locationSharingManager?.stopAllSharing() }
                     }
                     #endif
                     vm.isLocationSharingEnabled = newValue
@@ -885,6 +990,10 @@ struct SettingsView: View {
                 Text("Location sharing is started per-contact from conversations. Turning this off will immediately stop sharing with all contacts.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
+
+                #if os(iOS)
+                locationPermissionRow()
+                #endif
 
                 HStack {
                     Text("Location Precision")
@@ -927,6 +1036,84 @@ struct SettingsView: View {
             }
         }
     }
+
+    #if os(iOS)
+    /// Mirror of Columba-Android's location-card permission row
+    /// (`LocationSharingCard.kt:155-211`): a single line showing the current
+    /// CLLocationManager authorization status colour-coded — primary when
+    /// `.authorizedAlways`, tertiary when `.authorizedWhenInUse`, error
+    /// when `.denied` / `.restricted`. Tapping triggers the in-app
+    /// `requestWhenInUseAuthorization()` system prompt when status is
+    /// `.notDetermined`, otherwise opens the system Settings deep link
+    /// (only path to flip the answer from `.denied` or to escalate to
+    /// `.authorizedAlways`). Reads `authorizationStatus` straight off the
+    /// `@Observable` LocationSharingManager so the row re-renders the
+    /// moment the user changes the answer in Settings and returns.
+    @ViewBuilder
+    private func locationPermissionRow() -> some View {
+        let status = appServices.locationSharingManager?.authorizationStatus ?? .notDetermined
+        let (title, subtitle, color) = locationStatusDisplay(status)
+        Button(action: { handleLocationPermissionTap(status: status) }) {
+            HStack(spacing: 10) {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("location_permission_row")
+    }
+
+    private func locationStatusDisplay(_ status: CLAuthorizationStatus) -> (String, String, Color) {
+        switch status {
+        case .authorizedAlways:
+            return ("Location: Always", "Tap to change in Settings", .green)
+        case .authorizedWhenInUse:
+            return ("Location: While Using App", "Tap to enable Always (for background sharing)", .orange)
+        case .denied:
+            return ("Location: Denied", "Tap to grant in Settings", .red)
+        case .restricted:
+            return ("Location: Restricted", "Restricted by parental controls / MDM", .red)
+        case .notDetermined:
+            return ("Location: Not Requested", "Tap to grant permission", Theme.textSecondary)
+        @unknown default:
+            return ("Location: Unknown", "Unrecognised authorization state", Theme.textSecondary)
+        }
+    }
+
+    private func handleLocationPermissionTap(status: CLAuthorizationStatus) {
+        switch status {
+        case .notDetermined:
+            // Trigger the system "Allow / Don't Allow" prompt directly. Any
+            // subsequent change flows back through
+            // locationManagerDidChangeAuthorization → @Observable refresh.
+            appServices.locationSharingManager?.requestPermission()
+        default:
+            // For every other state — denied, while-using (wants Always),
+            // always (wants to revoke) — the answer is only changeable
+            // through the system Settings app. iOS treats a second
+            // requestWhenInUseAuthorization() call as a no-op after the
+            // first decision, so we have to send the user out.
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        }
+    }
+    #endif
 
     // MARK: - Map Sources Card
 

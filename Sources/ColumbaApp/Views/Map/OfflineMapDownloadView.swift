@@ -8,6 +8,7 @@
 
 #if os(iOS)
 import SwiftUI
+import RNSAPI
 import CoreLocation
 import MapLibre
 

@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  CompletePage.swift
 //  ColumbaApp
@@ -6,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import CoreImage.CIFilterBuiltins
 
 @available(iOS 17.0, macOS 14.0, *)
@@ -205,3 +207,4 @@ struct CompletePage: View {
         return context.createCGImage(scaled, from: scaled.extent)
     }
 }
+#endif

@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// A reusable expandable settings card with glass material background.
 ///

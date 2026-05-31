@@ -8,8 +8,8 @@
 
 #if os(iOS)
 import SwiftUI
+import RNSAPI
 import MapLibre
-import LXMFSwift
 
 /// Returns the OpenFreeMap style URL for the active color scheme.
 /// MLNOfflineStorage caches the style JSON + tiles during region download,

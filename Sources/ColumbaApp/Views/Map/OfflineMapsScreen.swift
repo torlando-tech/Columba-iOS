@@ -8,6 +8,7 @@
 
 #if os(iOS)
 import SwiftUI
+import RNSAPI
 
 @available(iOS 17.0, *)
 struct OfflineMapsScreen: View {

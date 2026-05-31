@@ -14,7 +14,7 @@
 
 import CallKit
 import Foundation
-import ReticulumSwift
+import RNSAPI
 import XCTest
 
 @testable import ColumbaApp
@@ -75,8 +75,8 @@ final class CallManagerCallKitTests: XCTestCase {
         let allocatedUUID = manager.currentCallUUID
 
         // Simulate the caller having identified (post-AVAILABLE/IDENTIFY exchange)
-        let stubIdentity = Identity()
-        manager.handleCallerIdentified(stubIdentity)
+        let stubHash = Data(repeating: 0xAB, count: 16)
+        manager.handleCallerIdentified(stubHash)
 
         XCTAssertEqual(
             mock.reportIncomingCallInvocations.count,
@@ -89,7 +89,7 @@ final class CallManagerCallKitTests: XCTestCase {
             "CallKit report should reuse the UUID allocated at link-establishment time"
         )
         XCTAssertEqual(manager.callState, .ringing, "callState should transition to ringing on identify")
-        XCTAssertEqual(manager.peerHash, stubIdentity.hexHash, "peerHash should be set to the identified caller")
+        XCTAssertEqual(manager.peerHash, stubHash.toHex(), "peerHash should be set to the identified caller")
     }
 
     /// Outgoing calls handle the ringing callback differently — they
@@ -108,8 +108,8 @@ final class CallManagerCallKitTests: XCTestCase {
         let outgoingUUID = UUID()
         manager.currentCallUUID = outgoingUUID
 
-        let stubIdentity = Identity()
-        manager.handleCallerIdentified(stubIdentity)
+        let stubHash = Data(repeating: 0xAB, count: 16)
+        manager.handleCallerIdentified(stubHash)
 
         XCTAssertEqual(
             mock.reportIncomingCallInvocations.count,
@@ -149,8 +149,8 @@ final class CallManagerCallKitTests: XCTestCase {
         manager.currentCallUUID = nil
         manager.callState = .idle
 
-        let stubIdentity = Identity()
-        manager.handleCallerIdentified(stubIdentity)
+        let stubHash = Data(repeating: 0xAB, count: 16)
+        manager.handleCallerIdentified(stubHash)
 
         XCTAssertEqual(
             mock.reportIncomingCallInvocations.count,

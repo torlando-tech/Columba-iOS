@@ -1,0 +1,63 @@
+# Drive iOS Columba (sim) → tap the chat-screen Location-share toggle,
+# pick a sharing duration in the LocationShareSheet, and let the
+# LocationSharingManager fire its first periodic send. Pins the
+# chat-UI path that ships in Columba (vs the test-only
+# `lxma://test-telemetry` URL).
+#
+# Prerequisites set by the pytest harness before invoking this flow:
+#   * Location permission already granted (`xcrun simctl privacy
+#     booted grant location network.columba.Columba`)
+#   * Sim has a simulated GPS fix (`xcrun simctl location booted set …`)
+#   * Sideband peer has announced + sim has heard it (so the
+#     "Anonymous Peer" row in Contacts exists)
+#
+# Output:
+#   tests/interop/screenshots/loc-01-chat.png    — chat opened, toggle off
+#   tests/interop/screenshots/loc-02-sheet.png   — LocationShareSheet open
+#   tests/interop/screenshots/loc-03-after.png   — toggle on, sheet dismissed
+appId: network.columba.Columba
+env:
+  PEER_DISPLAY: Anonymous Peer
+  DURATION: 15 min
+---
+# Force-foreground Columba so Maestro doesn't try to tap "Contacts" against
+# whatever app happens to be at the top (iOS sometimes drops us on the home
+# screen between Maestro invocations). launchApp DOES trigger
+# AppServices.initialize → DiagLog.clear, but the Simulator wrapper caches
+# the identity/destination hex on first read so subsequent test code still
+# resolves them after the clear.
+- launchApp
+- waitForAnimationToEnd: { timeout: 2500 }
+
+- tapOn: { text: "Allow", optional: true }
+- tapOn: { text: "Don't Allow", optional: true }
+- waitForAnimationToEnd: { timeout: 1500 }
+
+# Navigate Chats → Contacts (if no existing conversation) → Network → peer → Start Chat.
+- tapOn: "Contacts"
+- waitForAnimationToEnd: { timeout: 2000 }
+- tapOn: { text: "Network.*" }
+- waitForAnimationToEnd: { timeout: 2500 }
+- tapOn: { text: "Show.*new announce", optional: true }
+- waitForAnimationToEnd: { timeout: 1500 }
+- tapOn: ${PEER_DISPLAY}
+- waitForAnimationToEnd: { timeout: 2500 }
+- tapOn: "Start Chat"
+- waitForAnimationToEnd: { timeout: 2500 }
+- takeScreenshot: { path: screenshots/loc-01-chat }
+
+# Tap the location-share toggle in the trailing toolbar. Identified by the
+# stable a11y identifier added in MessagingView.swift (see
+# Tests/interop/conftest.py for the matching call sites).
+- tapOn: { id: "location_share_toggle" }
+- waitForAnimationToEnd: { timeout: 1500 }
+- takeScreenshot: { path: screenshots/loc-02-sheet }
+
+# LocationShareSheet has two-step interaction: tap a duration row to
+# select it, then tap "Start Sharing" at the bottom to commit. Maestro
+# matches by visible text — both the duration label and the button.
+- tapOn: ${DURATION}
+- waitForAnimationToEnd: { timeout: 800 }
+- tapOn: "Start Sharing"
+- waitForAnimationToEnd: { timeout: 2500 }
+- takeScreenshot: { path: screenshots/loc-03-after }

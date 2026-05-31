@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Data from a scanned QR code or deep link, used as sheet binding item.
 struct ScannedContact: Identifiable {

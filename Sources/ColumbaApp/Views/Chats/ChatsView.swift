@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-import LXMFSwift
+import RNSAPI
 
 /// Main chats view displaying conversation list.
 ///

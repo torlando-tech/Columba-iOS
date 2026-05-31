@@ -1,0 +1,85 @@
+# Drive iOS Columba (simulator) → send a text message to a peer the simulator
+# already sees in Contacts → Network. Used by the interop harness to reproduce
+# wire-format bugs against a Sideband-headless reference peer.
+#
+# Parameters (set via `maestro test -e KEY=VAL …`):
+#   PEER_DISPLAY  — text shown on the peer's announce card (e.g. "Anonymous Peer"
+#                   for stock Sideband). Defaults below match a Sideband peer
+#                   with no display_name set.
+#   TEXT          — message body to send.
+#
+# Output:
+#   tests/interop/screenshots/01-chats.png            — landed Chats tab
+#   tests/interop/screenshots/02-network.png          — Contacts → Network filter
+#   tests/interop/screenshots/03-node-details.png     — Sideband node details
+#   tests/interop/screenshots/04-chat-empty.png       — empty conversation
+#   tests/interop/screenshots/05-typed.png            — input populated
+#   tests/interop/screenshots/06-sent.png             — post-send (delivery
+#                                                       indicator visible)
+appId: network.columba.Columba
+env:
+  PEER_DISPLAY: Anonymous Peer
+  TEXT: harness-test
+---
+# Dismiss any system permission dialog that fires on the first launch of a
+# fresh sim install (UNUserNotificationCenter.requestAuthorization, microphone,
+# photos). Optional matches so re-runs don't fail when the dialog is gone.
+- tapOn:
+    text: "Allow"
+    optional: true
+- tapOn:
+    text: "OK"
+    optional: true
+
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot:
+    path: screenshots/01-chats
+
+# Contacts → Network. "Network (N)" — the count varies, so regex.
+- tapOn: "Contacts"
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    text: "Network.*"
+- waitForAnimationToEnd:
+    timeout: 2500
+# After landing on Network, fresh announces queue behind a "Show N new
+# announce" pill — tap to apply if present so the peer card appears.
+- tapOn:
+    text: "Show.*new announce"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot:
+    path: screenshots/02-network
+
+# Open the peer's node details, then start chat.
+- tapOn:
+    text: ${PEER_DISPLAY}
+- waitForAnimationToEnd:
+    timeout: 2500
+- takeScreenshot:
+    path: screenshots/03-node-details
+- tapOn: "Start Chat"
+- waitForAnimationToEnd:
+    timeout: 2500
+- takeScreenshot:
+    path: screenshots/04-chat-empty
+
+# Tap the input field by its placeholder, type the body, then tap the send
+# button by its accessibility identifier (send_message_button, set on the
+# button in MessageInputBar) — stable, no brittle tap-by-point.
+- tapOn:
+    text: "Type a message.*"
+- inputText: ${TEXT}
+- waitForAnimationToEnd:
+    timeout: 1500
+- takeScreenshot:
+    path: screenshots/05-typed
+- tapOn:
+    id: "send_message_button"
+- waitForAnimationToEnd:
+    timeout: 4000
+- takeScreenshot:
+    path: screenshots/06-sent

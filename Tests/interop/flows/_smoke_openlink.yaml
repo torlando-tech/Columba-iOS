@@ -1,0 +1,19 @@
+# Smoke test for the lxma:// URL scheme.
+# Issue: iOS 26 (and possibly earlier) shows a "Open in Columba?" confirmation
+# the FIRST time a custom URL scheme is opened from another app (e.g. Safari
+# in this test, or `xcrun simctl openurl`). The dialog stays modal until the
+# user taps Open / Cancel — the URL never reaches the app's `.onOpenURL`
+# handler if the dialog times out or is ignored. We therefore (1) issue the
+# openLink, (2) tap Open if the dialog appears, (3) wait. A second invocation
+# of the same scheme within the session usually skips the prompt.
+appId: network.columba.Columba
+---
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 2000
+- openLink: "lxma://test-restart"
+- tapOn:
+    text: "Open"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 4000

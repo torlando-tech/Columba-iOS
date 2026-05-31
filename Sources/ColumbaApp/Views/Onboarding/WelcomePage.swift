@@ -1,3 +1,4 @@
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  WelcomePage.swift
 //  ColumbaApp
@@ -6,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 import UniformTypeIdentifiers
 
 @available(iOS 17.0, macOS 14.0, *)
@@ -112,3 +114,4 @@ struct WelcomePage: View {
         }
     }
 }
+#endif

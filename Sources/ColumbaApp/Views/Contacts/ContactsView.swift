@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-import LXMFSwift
+import RNSAPI
 
 // MARK: - Navigation Target
 
@@ -144,23 +144,35 @@ public struct ContactsView: View {
                             messageRepository: messageRepository
                         )
                     case .browseSite(let contact):
-                        if let transport = appServices.transport,
-                           let pathTable = appServices.pathTable,
+                        #if COLUMBA_NOMADNET_ENABLED
+                        // Any active backend can browse NomadNet — both
+                        // PythonRNSBackend and SwiftRNSBackend implement
+                        // `fetchNomadNetPage`, and the browser takes
+                        // `any RnsBackend`. Use the generic active backend, not
+                        // a Python-only downcast (which is nil on Swift).
+                        if let backend = appServices.backend,
                            let identity = appServices.identity {
                             NomadNetBrowserView(
                                 nodeHash: contact.identityHash,
                                 nodeName: contact.displayName,
-                                transport: transport,
-                                pathTable: pathTable,
+                                backend: backend,
                                 identity: identity
                             )
                         } else {
                             ContentUnavailableView(
                                 "Browser Unavailable",
                                 systemImage: "globe.badge.chevron.backward",
-                                description: Text("The NomadNet browser requires an active transport.")
+                                description: Text("The NomadNet browser requires an active connection.")
                             )
                         }
+                        #else
+                        let _ = contact
+                        ContentUnavailableView(
+                            "NomadNet Browser Disabled",
+                            systemImage: "globe.badge.chevron.backward",
+                            description: Text("Enable COLUMBA_NOMADNET_ENABLED to use this feature.")
+                        )
+                        #endif
                     }
                 }
                 .onAppear {

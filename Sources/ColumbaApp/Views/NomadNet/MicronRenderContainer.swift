@@ -1,4 +1,6 @@
+#if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
+import RNSAPI
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -183,3 +185,4 @@ public enum MicronRenderStyle: Sendable, Equatable {
         return width
     }
 }
+#endif

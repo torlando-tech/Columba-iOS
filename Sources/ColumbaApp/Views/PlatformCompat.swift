@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 #if !os(iOS)
 import AppKit
 #endif
@@ -86,29 +87,10 @@ extension NSImage {
     }
 }
 
-// MARK: - SharingDuration shim
-
-/// Stub for LocationSharingManager's SharingDuration enum (iOS-only).
-public enum SharingDuration: String, CaseIterable, Identifiable {
-    case fifteenMinutes = "15 min"
-    case oneHour = "1 hour"
-    case fourHours = "4 hours"
-    case untilMidnight = "Until midnight"
-    case indefinite = "Until I stop"
-
-    public var id: String { rawValue }
-
-    public func calculateEndDate(from start: Date = Date()) -> Date? {
-        switch self {
-        case .fifteenMinutes: return start.addingTimeInterval(15 * 60)
-        case .oneHour: return start.addingTimeInterval(60 * 60)
-        case .fourHours: return start.addingTimeInterval(4 * 60 * 60)
-        case .untilMidnight:
-            var cal = Calendar.current
-            cal.timeZone = .current
-            return cal.nextDate(after: start, matching: DateComponents(hour: 0, minute: 0, second: 0), matchingPolicy: .nextTime)
-        case .indefinite: return nil
-        }
-    }
-}
 #endif
+
+// `PeerLocation`, `PropagationTransferState`, and `SharingDuration` are
+// canonicalized in RNSAPI/Compat.swift (same fields/cases as before — fields
+// were copied in verbatim). Duplicating them here caused
+// "is ambiguous for type lookup" errors in the Xcode build, since RNSAPI is
+// now also a compile-time dependency of the ColumbaApp target.

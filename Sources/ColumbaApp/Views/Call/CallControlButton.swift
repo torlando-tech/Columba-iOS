@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Circular control button with icon, label, and active/inactive states.
 @available(iOS 17.0, macOS 14.0, *)

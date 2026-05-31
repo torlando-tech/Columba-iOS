@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  RegionSelectionStep.swift
 //  ColumbaApp
@@ -8,6 +9,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 /// Step 2: Select a frequency region or community preset.
 @available(iOS 17.0, macOS 14.0, *)
@@ -243,3 +245,4 @@ struct RegionSelectionStep: View {
         }
     }
 }
+#endif

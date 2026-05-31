@@ -1,4 +1,6 @@
+#if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
+import RNSAPI
 #if os(iOS)
 import UIKit
 
@@ -86,4 +88,5 @@ struct ZoomableScrollView<Content: View>: UIViewRepresentable {
         }
     }
 }
+#endif
 #endif

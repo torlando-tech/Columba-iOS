@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-import LXMFSwift
+import RNSAPI
 
 /// Main tab-based navigation container.
 ///
@@ -37,6 +37,16 @@ struct MainTabView: View {
     /// trigger the wizard. Set once by `onAppear` so the persisted flag can be
     /// cleared atomically and subsequent re-appearances don't re-route the user.
     @State private var shouldOpenRNodeWizard: Bool = false
+    /// Which app-root voice-call cover (if any) is showing, driven off
+    /// callManager.callState so a call's UI shows from any tab and survives
+    /// navigating away from the chat. A single optional makes the two covers
+    /// mutually exclusive in the type system (vs. two independent bools that
+    /// could, in principle, both be true for a render cycle).
+    private enum CallCover: Identifiable {
+        case incoming, active
+        var id: Self { self }
+    }
+    @State private var activeCallCover: CallCover?
 
     // MARK: - Body
 
@@ -117,5 +127,71 @@ struct MainTabView: View {
             }
         }
         #endif
+        // Reading callState/isIncoming in these onChange `of:` values registers
+        // them as @Observable dependencies, so body re-evaluates and the covers
+        // react when a call rings / connects / ends.
+        .onChange(of: appServices.callManager?.callState) { _, _ in refreshCallPresentation() }
+        .onChange(of: appServices.callManager?.isIncoming) { _, _ in refreshCallPresentation() }
+        #if os(iOS)
+        // Single cover driven by the optional enum — .incoming shows the
+        // pre-answer in-app answer/decline UI (alongside CallKit); .active is
+        // the in-app call UI for an outgoing/answered call's duration.
+        .fullScreenCover(item: $activeCallCover) { cover in
+            if let cm = appServices.callManager {
+                switch cover {
+                case .incoming:
+                    IncomingCallScreen(callManager: cm, onAnswer: {})
+                case .active:
+                    VoiceCallScreen(
+                        callManager: cm,
+                        peerName: cm.peerName ?? "Unknown",
+                        destinationHash: cm.peerHash.flatMap { try? $0.hexToData() } ?? Data()
+                    )
+                    .onAppear {
+                        // An active call should always carry a decodable peerHash.
+                        // Keep the empty-Data() fallback so the call UI never
+                        // crashes, but surface the violation instead of masking
+                        // it silently (the previous behavior).
+                        if (cm.peerHash.flatMap { try? $0.hexToData() }) == nil {
+                            DiagLog.log("[CALL] VoiceCallScreen shown without a decodable peerHash (peerHash=\(cm.peerHash ?? "nil")) — CallManager state invariant violation; using empty destination hash")
+                        }
+                    }
+                }
+            } else {
+                // callManager went nil between setting the cover and this body
+                // (refreshCallPresentation clears it via onChange a tick later);
+                // self-dismiss now so we never flash an empty full-screen view.
+                Color.clear.onAppear { activeCallCover = nil }
+            }
+        }
+        #endif
+    }
+
+    /// Recompute which voice-call cover should show from callManager state:
+    /// IncomingCallScreen while an incoming call rings (pre-answer),
+    /// VoiceCallScreen for everything else non-idle (outgoing + answered +
+    /// the brief "ended" state).
+    private func refreshCallPresentation() {
+        guard let cm = appServices.callManager else {
+            activeCallCover = nil
+            return
+        }
+        switch cm.callState {
+        case .idle:
+            activeCallCover = nil
+        case .connecting, .ringing:
+            // Pre-answer window. An incoming call shows the answer/decline UI
+            // for its *whole* pre-answer lifecycle (.connecting → .ringing) —
+            // never VoiceCallScreen, which inits audio/CallKit and could race
+            // the answer/decline actions. The decision rides on isIncoming
+            // alone (CallManager.prepareForIncomingCall sets it before any
+            // callState transition), so the cover can't depend on the order in
+            // which callState/isIncoming are observed, and a late .ringing
+            // can't flash .active first. Outgoing pre-answer (dialing) → in-call UI.
+            activeCallCover = cm.isIncoming ? .incoming : .active
+        default:
+            // calling / established / busy / ended → in-call UI.
+            activeCallCover = .active
+        }
     }
 }

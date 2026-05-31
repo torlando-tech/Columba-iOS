@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-import LXMFSwift
+import RNSAPI
 #if os(iOS)
 import CoreLocation
 #endif
@@ -63,6 +63,9 @@ struct MapView: View {
                             .clipShape(Capsule())
                             .padding(.trailing, 16)
                             .padding(.top, 60)
+                            // Pure-SwiftUI signal the interop suite can read even
+                            // if XCUITest can't reach the MapLibre annotation view.
+                            .accessibilityIdentifier("map_peer_count")
                     }
                 }
 
@@ -73,7 +76,7 @@ struct MapView: View {
                     let isSharing = locationSharingManager?.isSharingWithAnyone ?? false
                     Button {
                         if isSharing {
-                            locationSharingManager?.stopAllSharing()
+                            Task { await locationSharingManager?.stopAllSharing() }
                         } else {
                             Task { await loadContacts() }
                             showShareSheet = true

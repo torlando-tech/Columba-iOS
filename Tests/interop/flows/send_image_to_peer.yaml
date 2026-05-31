@@ -1,0 +1,43 @@
+# Drive iOS Columba sim → send an FIELD_IMAGE LXMF message to a peer via the
+# `lxma://test-send` deep link. Bypasses the photo-picker UI so the test
+# pins the *wire* path (LxmfFieldCodec.buildFieldMap → LXMessage.pack →
+# RNS encrypt) rather than the SwiftUI PhotosPicker stack.
+#
+# Parameters (set via `maestro test -e KEY=VAL …`):
+#   PEER_HEX       — recipient's LXMF delivery destination hash (full hex).
+#   CONTENT        — text body to send alongside the image (often "").
+#   IMAGE_HEX      — hex-encoded image bytes. For a default PNG fixture, run:
+#                       python fixtures/make_test_image.py hex png
+#   IMAGE_FORMAT   — "png" / "jpeg" / "webp" — what the receiver uses to
+#                    decide how to decode.
+#   METHOD         — "opportunistic" / "direct" / "propagated". For an
+#                    image the encrypted payload exceeds OPPORTUNISTIC's
+#                    single-packet limit so upstream LXMF auto-falls-back
+#                    to DIRECT when given `opportunistic`. To explicitly
+#                    request PROPAGATED, pass that — the sender must have
+#                    an outboundPropagationNode set (PropagationNodeManager
+#                    auto-picks one from inbound lxmf.propagation announces).
+#
+# Output:
+#   screenshots/img-01-app.png
+#   screenshots/img-02-after-send.png
+appId: network.columba.Columba
+---
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot:
+    path: screenshots/img-01-app
+
+# Open lxma://test-send with image fields. iOS prompts "Open in Columba?"
+# the first time a custom-scheme URL is dispatched from outside the app —
+# tap Open if it appears (subsequent invocations within the session usually
+# skip the prompt).
+- openLink: "lxma://test-send?to=${PEER_HEX}&content=${CONTENT}&method=${METHOD}&image_hex=${IMAGE_HEX}&image_format=${IMAGE_FORMAT}"
+- tapOn:
+    text: "Open"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 6000
+- takeScreenshot:
+    path: screenshots/img-02-after-send

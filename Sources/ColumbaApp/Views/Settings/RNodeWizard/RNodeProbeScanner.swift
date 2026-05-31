@@ -1,3 +1,4 @@
+#if COLUMBA_RNODE_ENABLED
 //
 //  RNodeProbeScanner.swift
 //  ColumbaApp
@@ -10,9 +11,24 @@
 
 #if canImport(CoreBluetooth)
 import Foundation
+import RNSAPI
 import CoreBluetooth
 import os
-import ReticulumSwift
+
+/// KISS framing + the subset of RNode command bytes the wizard's BLE probe
+/// needs to verify a peripheral is an RNode. Values are the RNode/KISS
+/// protocol constants — source of truth is `app/rnode/IOSRNodeInterface.py`'s
+/// `KISS` class (and Android's `rnode_interface.py`), kept byte-identical so
+/// the detect handshake interoperates.
+private enum KISS {
+    static let FEND: UInt8 = 0xC0
+}
+
+private enum RNodeConstants {
+    static let CMD_DETECT: UInt8 = 0x08
+    static let DETECT_REQ: UInt8 = 0x73
+    static let DETECT_RESP: UInt8 = 0x46
+}
 
 /// Lightweight BLE scanner for the RNode configuration wizard.
 ///
@@ -254,7 +270,21 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
         let desc = error?.localizedDescription ?? "Unknown"
         diag("Failed to connect: \(desc)")
         connectingPeripheral = nil
-        onProbeResult?(.failed("Connection failed: \(desc)"))
+        // CBError.peerRemovedPairingInformation (code 14): this iPhone still holds
+        // a BLE bond for the RNode, but the device forgot its side (re-flashed /
+        // reset / bond table cleared). iOS does NOT re-show the pairing prompt in
+        // this state — it just fails the connect — and there is no API to drop the
+        // stale bond, so the user has to remove it in Settings. Surface that
+        // instead of the cryptic CoreBluetooth string.
+        if let cbErr = error as? CBError, cbErr.code == .peerRemovedPairingInformation {
+            let name = peripheral.name ?? "this RNode"
+            onProbeResult?(.failed(
+                "\(name) has a stale Bluetooth pairing on this iPhone. Open Settings ▸ Bluetooth, "
+                + "tap the ⓘ next to \(name), choose “Forget This Device”, then scan again."
+            ))
+        } else {
+            onProbeResult?(.failed("Connection failed: \(desc)"))
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
@@ -522,4 +552,5 @@ extension RNodeProbeScanner: CBPeripheralDelegate {
     }
 }
 
+#endif
 #endif

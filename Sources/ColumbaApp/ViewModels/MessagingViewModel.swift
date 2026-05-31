@@ -247,9 +247,14 @@ public final class MessagingViewModel {
         var fields: [UInt8: Any] = [:]
         if let icon { fields[IconAppearance.fieldKey] = icon.toLXMFFieldValue() }
 
-        // Add image field (FIELD_IMAGE = 0x06): [format_string, binary_data]
+        // Add image field (FIELD_IMAGE = 0x06): [format_string, binary_data].
+        // Both halves are required; warn (don't silently drop) if a caller
+        // supplied one without the other — e.g. compression returned nil data,
+        // or a deep-link path passed bytes with no format.
         if let imageData, let imageFormat {
             fields[LXMessage.FIELD_IMAGE] = [imageFormat, imageData] as [Any]
+        } else if imageData != nil || imageFormat != nil {
+            logger.error("FIELD_IMAGE dropped — need both data and format (haveData=\(imageData != nil, privacy: .public) format=\(imageFormat ?? "nil", privacy: .public))")
         }
 
         // Add file attachments field (FIELD_FILE_ATTACHMENTS = 0x05): [[name, data], ...]

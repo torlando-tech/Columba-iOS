@@ -1,4 +1,6 @@
+#if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
+import RNSAPI
 
 /// Renders a parsed MicronDocument as SwiftUI views.
 @available(iOS 17.0, macOS 14.0, *)
@@ -375,3 +377,4 @@ struct MicronSpansText: View {
         return piece
     }
 }
+#endif

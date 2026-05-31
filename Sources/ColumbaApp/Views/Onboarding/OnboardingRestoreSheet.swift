@@ -1,3 +1,4 @@
+#if COLUMBA_MIGRATION_ENABLED
 //
 //  OnboardingRestoreSheet.swift
 //  ColumbaApp
@@ -7,6 +8,7 @@
 //
 
 import SwiftUI
+import RNSAPI
 
 @available(iOS 17.0, macOS 14.0, *)
 struct OnboardingRestoreSheet: View {
@@ -267,3 +269,4 @@ struct OnboardingRestoreSheet: View {
         .padding(.horizontal, 16)
     }
 }
+#endif
