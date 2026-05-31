@@ -167,12 +167,22 @@ struct MainTabView: View {
             activeCallCover = nil
             return
         }
-        if cm.callState == .ringing && cm.isIncoming {
-            activeCallCover = .incoming
-        } else if cm.callState != .idle {
-            activeCallCover = .active
-        } else {
+        switch cm.callState {
+        case .idle:
             activeCallCover = nil
+        case .connecting, .ringing:
+            // Pre-answer window. An incoming call shows the answer/decline UI
+            // for its *whole* pre-answer lifecycle (.connecting → .ringing) —
+            // never VoiceCallScreen, which inits audio/CallKit and could race
+            // the answer/decline actions. The decision rides on isIncoming
+            // alone (CallManager.prepareForIncomingCall sets it before any
+            // callState transition), so the cover can't depend on the order in
+            // which callState/isIncoming are observed, and a late .ringing
+            // can't flash .active first. Outgoing pre-answer (dialing) → in-call UI.
+            activeCallCover = cm.isIncoming ? .incoming : .active
+        default:
+            // calling / established / busy / ended → in-call UI.
+            activeCallCover = .active
         }
     }
 }
