@@ -2529,9 +2529,10 @@ public final class AppServices {
             await transport.removeInterface(id: ble.id)
         }
         // Tear down the Swift bridge so a subsequent start gets a clean
-        // CBCentralManager / CBPeripheralManager pair.
+        // CBCentralManager / CBPeripheralManager pair. stop() now clears the
+        // callbackInvoker inside its serialized queue block (to drop post-stop
+        // disconnect callbacks), so no separate setCallbackInvoker(nil) here.
         SwiftBLEBridge.shared.stop()
-        SwiftBLEBridge.shared.setCallbackInvoker(nil)
         bleInterface = nil
         logger.info("BLEInterface stopped")
     }
@@ -2843,7 +2844,7 @@ public final class AppServices {
     }
 
     /// Map RSSI dBm to a coarse signal-quality bucket. Thresholds borrowed
-    /// from the existing BLEDevicePickerSheet indicator (60/80 dBm steps).
+    /// from the existing BLEDevicePickerSheet indicator (60/75/90 dBm steps).
     private func signalQuality(forRssi rssi: Int?) -> SignalQuality {
         guard let rssi else { return .unknown }
         let absRssi = abs(rssi)
