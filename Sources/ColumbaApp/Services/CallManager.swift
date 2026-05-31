@@ -541,6 +541,7 @@ public final class CallManager {
             // (sim2 is usually backgrounded behind sim1 during the test,
             // and `simctl openurl` only delivers URLs to the frontmost
             // simulator).
+            #if DEBUG
             if ProcessInfo.processInfo.environment["COLUMBA_AUTO_ANSWER"] == "1" {
                 self.logger.error("[CALL] COLUMBA_AUTO_ANSWER=1 — auto-answering")
                 Task { @MainActor [weak self] in
@@ -548,6 +549,7 @@ public final class CallManager {
                     self?.answerCall()
                 }
             }
+            #endif
         } else {
             // Outgoing call: report connecting state to CallKit, and play the
             // caller-side ring-back tone while the callee's phone rings.
@@ -672,10 +674,14 @@ public final class CallManager {
         // smoke test (it's always the callee receiving frames), so we
         // keep the deferred path there — playback works regardless of
         // whether the engine actually started.
-        #if targetEnvironment(simulator)
-        let bypassCallKit = false
-        #else
+        // Real-device DEBUG only: the COLUMBA_AUTO_ANSWER test hook starts the
+        // audio engine outside CallKit's session lifecycle, so it must never
+        // ship; the simulator always defers (no real mic hardware). Both
+        // simulator and release builds therefore force bypassCallKit false.
+        #if DEBUG && !targetEnvironment(simulator)
         let bypassCallKit = ProcessInfo.processInfo.environment["COLUMBA_AUTO_ANSWER"] == "1"
+        #else
+        let bypassCallKit = false
         #endif
         if audioSessionActivatedByCallKit || bypassCallKit {
             manager.start(speakerEnabled: isSpeakerOn)
