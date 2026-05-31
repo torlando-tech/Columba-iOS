@@ -97,6 +97,11 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // Keyed by `CBCentral.identifier.uuidString`.
     private var gattServerPeers: [String: BleGattServerPeer] = [:]
 
+    // Cap on a peer's backpressure notify queue (mirrors
+    // SwiftRNodeBridge.maxPendingWrites) so a stuck or vanished subscriber
+    // can't grow pendingNotifies without bound.
+    private let maxPendingNotifies = 128
+
     // Mutable characteristics published by our peripheral-mode GATT server.
     // Set once during start(); never re-added (iOS broadcasts Service Changed
     // on re-add which can break subscribed centrals).
@@ -377,7 +382,13 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                 let ok = pm.updateValue(data, for: txChar, onSubscribedCentrals: [peer.central])
                 if !ok {
                     // Backpressure — queue and drain on peripheralManagerIsReady.
-                    peer.pendingNotifies.append(data)
+                    // Bounded so a stuck/vanished subscriber can't grow it
+                    // unbounded; drop the frame (and warn) when full.
+                    if peer.pendingNotifies.count < maxPendingNotifies {
+                        peer.pendingNotifies.append(data)
+                    } else {
+                        emitError("warning", "pendingNotifies full (\(maxPendingNotifies)) for \(address); dropping frame")
+                    }
                 }
                 return
             }

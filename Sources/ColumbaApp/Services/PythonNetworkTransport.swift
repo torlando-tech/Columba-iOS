@@ -120,7 +120,14 @@ public actor PythonNetworkTransport: NetworkTransport {
 
     public func identifySelf() async {
         guard let link = activeLink else { return }
-        try? await link.identify(identity: identity)
+        do {
+            try await link.identify(identity: identity)
+        } catch {
+            // An identify failure (link torn down mid-handshake, backend error)
+            // strands the callee at AVAILABLE until connect-timeout — surface it
+            // instead of swallowing via try?, mirroring send()'s logging.
+            logger.error("[PNT] identifySelf failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     public func send(_ payload: Data) async {
