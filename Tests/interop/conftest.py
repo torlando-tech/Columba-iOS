@@ -25,7 +25,9 @@ Prerequisites (asserted in the session fixture):
 """
 
 from __future__ import annotations
+import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -46,8 +48,16 @@ SIDEBAND_SRC = os.environ.get("SIDEBAND_SRC", os.path.expanduser("~/repos/Sideba
 sys.path.insert(0, SIDEBAND_SRC)
 
 BUNDLE_ID = "network.columba.Columba"
+APP_GROUP_ID = "group.network.columba.Columba"  # InterfaceRepository's UserDefaults suite
 PROP_NODE_HEX = os.environ.get("PROP_NODE_HEX", "")  # e.g. lxmd's hash; auto-detected at session start
 LOG_TAIL_LINES = 800  # how much of Documents/diag.log we keep handy per assertion
+
+# The host rnsd/lxmd shared instance the interop sim bridges through. The suite
+# seeds a TCP-client interface to this into Columba's interface store at session
+# start (see _ensure_rnsd_interface), so a fresh install / clean sim needs no
+# manual Settings → Network Interfaces → Add step. Override for a non-default host.
+RNSD_TCP_HOST = os.environ.get("RNSD_TCP_HOST", "127.0.0.1")
+RNSD_TCP_PORT = int(os.environ.get("RNSD_TCP_PORT", "4242"))
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -93,6 +103,90 @@ def _app_data_container(udid: str) -> Path:
     """The Columba.app's data container (Documents/, Library/, …)."""
     out = _sh(["xcrun", "simctl", "get_app_container", udid, BUNDLE_ID, "data"])
     return Path(out.strip())
+
+
+def _app_group_prefs_plist(udid: str) -> Optional[Path]:
+    """The app-group UserDefaults plist where InterfaceRepository persists once
+    the app-group suite has been created. None on a fresh sim that hasn't
+    written it yet (the app falls back to / migrates from .standard)."""
+    base = (Path.home() / "Library/Developer/CoreSimulator/Devices" / udid
+            / "data/Containers/Shared/AppGroup")
+    for p in base.glob(f"*/Library/Preferences/{APP_GROUP_ID}.plist"):
+        return p
+    return None
+
+
+def _ensure_rnsd_interface(udid: str) -> None:
+    """Make the suite self-contained: seed Columba's interface store with a
+    single TCP-client interface to the host rnsd/lxmd shared instance
+    (RNSD_TCP_HOST:RNSD_TCP_PORT) so the sim bridges to the Sideband peer —
+    no manual "Add Interface" step on a fresh install / clean sim.
+
+    InterfaceRepository persists interfaces as a JSON blob under
+    `com.columba.interfaces` in UserDefaults (app-group suite, falling back to
+    / migrated from .standard). We write the blob straight into the container
+    plist(s): `simctl spawn defaults` targets the booted-user GLOBAL domain,
+    NOT the sandbox/app-group plist the app actually reads. Then bounce cfprefsd
+    so the relaunched app re-reads our edit instead of flushing a stale copy
+    back. Deterministic + idempotent — the store is set to exactly this one
+    interface (a dedicated interop sim wants nothing else)."""
+    entity = [{
+        "id": "interop-rnsd-tcp", "name": "rnsd-interop", "type": "TCPClient",
+        "enabled": True, "mode": "full",
+        "config": {"type": "tcpClient",
+                   "config": {"targetHost": RNSD_TCP_HOST, "targetPort": RNSD_TCP_PORT}},
+        "displayOrder": 0, "createdAt": 0, "updatedAt": 0,
+    }]
+    blob = json.dumps(entity).encode("utf-8")
+
+    subprocess.run(["xcrun", "simctl", "terminate", udid, BUNDLE_ID], capture_output=True)
+
+    # Write to the standard sandbox plist AND the app-group plist if it exists.
+    # First run: only standard exists → the app's migrateFromStandardDefaults
+    # copies it into the app-group suite on launch. Later runs: app-group is
+    # authoritative (migration is skipped once it has the key), so we must set
+    # it directly too.
+    targets = [_app_data_container(udid) / "Library/Preferences" / f"{BUNDLE_ID}.plist"]
+    ag = _app_group_prefs_plist(udid)
+    if ag is not None:
+        targets.append(ag)
+    for plist_path in targets:
+        try:
+            with open(plist_path, "rb") as f:
+                pl = plistlib.load(f)
+        except Exception:
+            pl = {}
+        pl["com.columba.interfaces"] = blob   # bytes -> <data>, exactly UserDefaults.set(Data)
+        plist_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(plist_path, "wb") as f:
+            plistlib.dump(pl, f, fmt=plistlib.FMT_BINARY)
+
+    # cfprefsd caches container prefs; kick it AFTER editing so it re-reads our
+    # file rather than serving / flushing back the stale in-memory copy
+    # (mirrors clean_location_state's dance). user/501 is the sim's only scope.
+    subprocess.run(["xcrun", "simctl", "spawn", udid, "launchctl", "kickstart", "-k",
+                    "user/501/com.apple.cfprefsd.xpc.daemon"], capture_output=True)
+    time.sleep(0.5)
+    subprocess.run(["xcrun", "simctl", "launch", udid, BUNDLE_ID], check=True, capture_output=True)
+
+    # Confirm the backend loaded the interface (config written with N>=1), so a
+    # silent seed failure surfaces here rather than as a confusing path-bootstrap
+    # timeout. diag.log is cleared on launch, so the match is fresh.
+    diag = _app_data_container(udid) / "Documents" / "diag.log"
+    deadline = time.time() + 45.0
+    while time.time() < deadline:
+        try:
+            text = diag.read_text(errors="replace")
+        except FileNotFoundError:
+            text = ""
+        if re.search(r"\[RNS\] wrote config \(\d+ bytes, ([1-9]\d*) interfaces\)", text):
+            return
+        time.sleep(0.5)
+    pytest.fail(
+        f"Columba did not register the rnsd TCP interface "
+        f"({RNSD_TCP_HOST}:{RNSD_TCP_PORT}) within 45 s of relaunch — the interface "
+        f"seed did not take (check the sandbox/app-group prefs plist)."
+    )
 
 
 # ── data classes ──────────────────────────────────────────────────────────
@@ -529,7 +623,16 @@ def sideband():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _bootstrap_paths(sim, sideband):
+def _ensure_sim_interface(sim):
+    """Seed the sim's TCP-client interface to the host rnsd/lxmd shared instance
+    before anything else, so the regression suite is fully self-contained (no
+    manual 'Add Interface' setup on a clean sim). _bootstrap_paths depends on
+    this so it always runs first and the relaunched app is bridged in."""
+    _ensure_rnsd_interface(sim.udid)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _bootstrap_paths(sim, sideband, _ensure_sim_interface):
     """Cold-start the bidirectional path table before the first test.
 
     Each direction needs the *other side* to know our identity:
