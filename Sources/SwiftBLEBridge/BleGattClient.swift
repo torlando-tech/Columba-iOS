@@ -52,6 +52,13 @@ internal final class BleGattClient {
     /// completes. The bridge polls periodically post-connect.
     var rssi: Int?
 
+    /// Outbound fragments awaiting CoreBluetooth transmit-queue space.
+    /// writeValue(.withoutResponse) silently drops once the per-peripheral
+    /// queue is full (iOS 11+), so frames are queued here and drained as space
+    /// frees up (see drainClientWritesLocked / peripheralIsReady). Discarded
+    /// with the client on disconnect.
+    var pendingWrites: [Data] = []
+
     init(peripheral: CBPeripheral) {
         self.peripheral = peripheral
     }

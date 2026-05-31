@@ -102,6 +102,9 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // can't grow pendingNotifies without bound.
     private let maxPendingNotifies = 128
 
+    // Same bound for the central-role per-client outbound write queue.
+    private let maxPendingClientWrites = 128
+
     // Mutable characteristics published by our peripheral-mode GATT server.
     // Set once during start(); never re-added (iOS broadcasts Service Changed
     // on re-add which can break subscribed centrals).
@@ -370,9 +373,17 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     public func send(address: String, data: Data) {
         queue.async { [weak self] in
             guard let self else { return }
-            // Central role: write to peer's RX char without response.
-            if let client = self.gattClients[address], let rxChar = client.rxChar {
-                client.peripheral.writeValue(data, for: rxChar, type: .withoutResponse)
+            // Central role: queue + drain under transmit-queue backpressure.
+            // writeValue(.withoutResponse) silently drops once CoreBluetooth's
+            // per-peripheral queue is full (iOS 11+), so gate on
+            // canSendWriteWithoutResponse and resume in peripheralIsReady.
+            if let client = self.gattClients[address], client.rxChar != nil {
+                if client.pendingWrites.count < self.maxPendingClientWrites {
+                    client.pendingWrites.append(data)
+                } else {
+                    self.emitError("warning", "client pendingWrites full (\(self.maxPendingClientWrites)) for \(address); dropping frame")
+                }
+                self.drainClientWritesLocked(client)
                 return
             }
             // Peripheral role: notify on TX char to the specific subscriber.
@@ -393,6 +404,17 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                 return
             }
             self.emitError("warning", "send: no client / no server peer for \(address)")
+        }
+    }
+
+    /// Drain a central-role client's queued writes while its peripheral has
+    /// transmit-queue space. Called on `queue` (from send() and the central
+    /// peripheralIsReady delegate).
+    private func drainClientWritesLocked(_ client: BleGattClient) {
+        guard let rx = client.rxChar else { return }
+        let p = client.peripheral
+        while !client.pendingWrites.isEmpty, p.canSendWriteWithoutResponse {
+            p.writeValue(client.pendingWrites.removeFirst(), for: rx, type: .withoutResponse)
         }
     }
 
@@ -771,6 +793,13 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
         if let error {
             emitError("warning", "didWriteValueFor error uuid=\(characteristic.uuid): \(error)")
         }
+    }
+
+    public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        // Central-role transmit queue freed up — drain the matching client's
+        // queued writes. Delivered on the bridge's `queue`.
+        guard let client = gattClients.values.first(where: { $0.peripheral === peripheral }) else { return }
+        drainClientWritesLocked(client)
     }
 
     /// Result of a `peripheral.readRSSI()` call. The `rssiPollTask` kicks
