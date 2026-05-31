@@ -59,6 +59,12 @@ LOG_TAIL_LINES = 800  # how much of Documents/diag.log we keep handy per asserti
 RNSD_TCP_HOST = os.environ.get("RNSD_TCP_HOST", "127.0.0.1")
 RNSD_TCP_PORT = int(os.environ.get("RNSD_TCP_PORT", "4242"))
 
+# lxmd binary — used to read the propagation-node hash (--status) and to force
+# a propagation announce during bootstrap (so the propagated test runs instead
+# of skipping on lxmd's 5-min announce cadence). Override with LXMD_BIN.
+LXMD_BIN = (os.environ.get("LXMD_BIN") or shutil.which("lxmd")
+            or os.path.expanduser("~/.reticulum-host/venv/bin/lxmd"))
+
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -187,6 +193,18 @@ def _ensure_rnsd_interface(udid: str) -> None:
         f"({RNSD_TCP_HOST}:{RNSD_TCP_PORT}) within 45 s of relaunch — the interface "
         f"seed did not take (check the sandbox/app-group prefs plist)."
     )
+
+
+def _lxmd_propagation_hex() -> Optional[str]:
+    """Query the running lxmd for its LXMF propagation-node destination hash
+    (the `--status` line `Propagation Node running on <hash>`). None if lxmd is
+    down / unreachable."""
+    try:
+        out = _sh([LXMD_BIN, "--status", "--timeout", "10"], check=False, timeout=20)
+    except Exception:
+        return None
+    m = re.search(r"Propagation Node running on <([0-9a-f]+)>", out)
+    return m.group(1) if m else None
 
 
 # ── data classes ──────────────────────────────────────────────────────────
@@ -697,6 +715,29 @@ def _bootstrap_paths(sim, sideband, _ensure_sim_interface):
             f"({sim_hex}). The sim may not be auto-announcing, or its "
             f"announce isn't reaching rnsd's shared-instance side."
         )
+
+    # Make lxmd's propagation node deterministically known to the sim now that
+    # sim + Sideband are connected, so test_image_…_propagated runs instead of
+    # skipping on lxmd's 5-min announce cadence (the ordering flake).
+    #
+    # We can't force a true lxmd broadcast announce non-disruptively: lxmd has
+    # no announce trigger (CLI/signal), and RNS.Transport.request_path here is a
+    # no-op because this shared-instance process already holds the path so no
+    # request leaves the host. A real re-announce needs an lxmd restart, which
+    # would drop every mesh device (incl. the physical phones) — wrong for a
+    # regression run. Instead discover lxmd's prop-node hash from `--status` and
+    # inject it into the sim helper's cache, so auto_propagation_node_hex
+    # resolves it. The propagated test still exercises the real delivery path
+    # (sim → lxmd message store → Sideband sync); only the announce-discovery
+    # hop is shortcut. Warn (don't fail) if lxmd is unreachable.
+    prop_hex = PROP_NODE_HEX or _lxmd_propagation_hex()
+    if prop_hex:
+        sim._cached_propagation_node_hex = prop_hex
+        print(f"[BOOT] propagation node pinned to {prop_hex[:12]}… (via lxmd --status)",
+              flush=True)
+    else:
+        print("[BOOT] WARNING: lxmd propagation hash unavailable (lxmd down?); "
+              "propagated test will skip.", flush=True)
 
 
 @pytest.fixture
