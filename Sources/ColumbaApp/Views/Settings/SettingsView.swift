@@ -369,12 +369,22 @@ struct SettingsView: View {
             toggle: Binding(get: { vm.isTransportEnabled }, set: { newValue in
                 vm.isTransportEnabled = newValue
                 vm.saveSettings()
-                // RNS reads `enable_transport` at Reticulum.__init__ time,
-                // so we restart the Python backend to pick the new value
-                // up — same path Settings → Manage Interfaces → Apply &
-                // Restart uses. ~1-2s connectivity outage.
                 Task {
+                    #if COLUMBA_BACKEND_SWIFT
+                    // Swift backend: route through the transport seam, not the
+                    // Python-only restart below. restartPythonBackend() is a
+                    // no-op without an embedded Python backend, so the toggle
+                    // would otherwise be saved to disk but never reach the
+                    // running engine.
+                    appServices.transport?.setTransportEnabled(
+                        newValue, identity: appServices.identity)
+                    #else
+                    // RNS reads `enable_transport` at Reticulum.__init__ time,
+                    // so we restart the Python backend to pick the new value
+                    // up — same path Settings → Manage Interfaces → Apply &
+                    // Restart uses. ~1-2s connectivity outage.
                     await appServices.restartPythonBackend()
+                    #endif
                 }
             })
         ) {

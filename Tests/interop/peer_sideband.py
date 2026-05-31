@@ -89,8 +89,17 @@ class SidebandPeer:
         appends to `self._taps`. Tests inspect `_taps` via
         `wait_for_tapped_message`."""
         self._taps = []
-        original = self._core.message_router._LXMRouter__delivery_callback
+        router = self._core.message_router
         # `__delivery_callback` is name-mangled; expose via underscore prefix.
+        # Guard explicitly: if a Sideband refactor renames/removes it, accessing
+        # the attribute would raise AttributeError deep inside `_wrapped`,
+        # silently skipping Sideband's own delivery processing so every
+        # `wait_for_tapped_message` times out with no actionable cause.
+        assert hasattr(router, "_LXMRouter__delivery_callback"), (
+            "LXMRouter no longer exposes __delivery_callback — Sideband may have "
+            "renamed or removed it. Update _attach_inbound_tap."
+        )
+        original = router._LXMRouter__delivery_callback
         # On every tap we also emit a one-line stderr log so a pytest run
         # with `-s` shows inbound state — invaluable when an assertion
         # fails because the content didn't match (vs no message at all).
