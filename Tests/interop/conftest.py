@@ -194,14 +194,19 @@ class Simulator:
         """Wire iOS's LXMRouter to `node_hex` as outbound PN via the
         existing `lxma://test-prop-sync` URL. Idempotent."""
         url = f"lxma://test-prop-sync?node={node_hex}"
+        # Poll diag.log (like test_send / test_send_telemetry) rather than a flat
+        # sleep: return as soon as the outcome lands and surface an immediate
+        # URL-handler error instead of always burning the full `wait`.
+        before_size = self.diag_log.stat().st_size if self.diag_log.exists() else 0
         self._open_url(url)
-        time.sleep(wait)
-        # Surface success/failure via diag.log so callers can fail fast.
-        for line in reversed(self._tail_diag(80)):
-            if "[TEST-PROP-SYNC] set node" in line:
-                return
-            if "[TEST-PROP-SYNC] error" in line:
-                pytest.fail(f"set_propagation_node({node_hex}) failed: {line.strip()}")
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            for line in reversed(self._read_diag_since(before_size)):
+                if "[TEST-PROP-SYNC] set node" in line:
+                    return
+                if "[TEST-PROP-SYNC] error" in line:
+                    pytest.fail(f"set_propagation_node({node_hex}) failed: {line.strip()}")
+            time.sleep(0.4)
         pytest.fail("set_propagation_node didn't produce a [TEST-PROP-SYNC] log line")
 
     # ---- send (typed deep-link) ----
