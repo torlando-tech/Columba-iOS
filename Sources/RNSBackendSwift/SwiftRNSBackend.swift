@@ -43,6 +43,14 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
     /// stale linkState events into the next session after a restart.
     private var linkStateTasks: [Int: Task<Void, Never>] = [:]
     private var nextLinkId: Int = 1
+    /// Serializes the link-id allocation and the `links` / `linkStateTasks`
+    /// maps. SwiftRNSBackend is a class (not an actor) so `linkSend` stays
+    /// hop-free on the audio path; without this lock, concurrent `openLink`
+    /// callers race the `nextLinkId` increment + the dictionary writes — two
+    /// callers can grab the same id and the second write orphans the first
+    /// link (never tracked, never cancelled by linkTeardown/stop). Mirrors the
+    /// Python backend's `_link_id_lock`. Never held across an `await`.
+    private let linkLock = NSLock()
 
     /// Section-name → reticulum interface id, backing the Python-shaped
     /// `addInterface(name:)` / `removeInterface(name:)` contract (Python resolves
@@ -185,9 +193,11 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         // Cancel the per-link stateUpdates drain tasks before dropping the
         // links — otherwise they outlive stop() and keep yielding stale
         // linkState events into the (deliberately kept-open) continuation.
+        linkLock.lock()
         linkStateTasks.values.forEach { $0.cancel() }
         linkStateTasks.removeAll()
         links.removeAll()
+        linkLock.unlock()
         localInfo = nil
     }
 
@@ -443,9 +453,13 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         // 4. Initiate the link (throws TransportError.noPathAvailable if the path
         //    evaporated between the check above and here).
         let link = try await transport.initiateLink(to: dest, identity: localId)
+        // Reserve the id and register the link atomically so concurrent
+        // openLink callers can't collide on nextLinkId / overwrite links.
+        linkLock.lock()
         let linkId = nextLinkId
         nextLinkId += 1
         links[linkId] = link
+        linkLock.unlock()
 
         // 5. Bridge inbound link packets + state transitions onto the event stream.
         //    stateUpdates yields the terminal .closed(reason) itself, so a separate
@@ -454,33 +468,45 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         await link.setPacketCallback { data, _ in
             cont.yield(.linkPacket(linkId: linkId, data: data, t: Date()))
         }
-        linkStateTasks[linkId] = Task {
+        let stateTask = Task {
             for await st in await link.stateUpdates {
                 let (s, r) = Self.linkStateString(st)
                 cont.yield(.linkState(linkId: linkId, state: s, reason: r, inbound: false, t: Date()))
             }
         }
+        linkLock.lock()
+        linkStateTasks[linkId] = stateTask
+        linkLock.unlock()
         return (true, linkId, "")
     }
 
     @discardableResult
     public func linkSend(linkId: Int, data: Data) async throws -> Bool {
-        guard let link = links[linkId] else { return false }
+        linkLock.lock()
+        let link = links[linkId]
+        linkLock.unlock()
+        guard let link else { return false }
         try await link.send(data)
         return true
     }
 
     @discardableResult
     public func linkIdentify(linkId: Int) async throws -> Bool {
-        guard let link = links[linkId], let localId = identity else { return false }
+        linkLock.lock()
+        let link = links[linkId]
+        linkLock.unlock()
+        guard let link, let localId = identity else { return false }
         try await link.identify(identity: localId)
         return true
     }
 
     @discardableResult
     public func linkTeardown(linkId: Int) async throws -> Bool {
+        linkLock.lock()
         linkStateTasks.removeValue(forKey: linkId)?.cancel()
-        guard let link = links.removeValue(forKey: linkId) else { return false }
+        let link = links.removeValue(forKey: linkId)
+        linkLock.unlock()
+        guard let link else { return false }
         await link.close(reason: .initiatorClosed)
         return true
     }
