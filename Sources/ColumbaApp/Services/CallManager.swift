@@ -437,6 +437,10 @@ public final class CallManager {
         DiagLog.log("[CALL] handleCallKitReset() triggered")
         logger.info("CallKit provider reset — cleaning up call state")
         stopAudio()
+        // Cancel ringback and clear ringbackActive — otherwise a reset during a
+        // ringing outgoing call leaves the flag set and startRingback()'s
+        // `guard !ringbackActive` suppresses ringback on every later call.
+        stopRingback()
         stopDurationTimer()
         endedDismissTask?.cancel()
         currentCallUUID = nil
@@ -895,6 +899,7 @@ public final class CallManager {
     }
 
     private func resetState() {
+        stopRingback()  // clear ringbackActive so a later call's ringback isn't suppressed
         callState = .idle
         isMuted = false
         isSpeakerOn = false
