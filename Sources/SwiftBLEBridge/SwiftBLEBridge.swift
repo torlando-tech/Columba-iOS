@@ -932,12 +932,16 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
     public func peripheralManagerIsReady(
         toUpdateSubscribers peripheral: CBPeripheralManager
     ) {
-        // Drain queued notifies that hit backpressure earlier.
+        // Drain queued notifies that hit backpressure earlier. updateValue's
+        // transmit queue is global to the peripheral manager, so a `false`
+        // means waiting for the next ready callback — but `break` (not
+        // `return`) so one peer's backpressure or per-central failure doesn't
+        // strand the remaining peers' queued frames.
         guard let tx = serverTxChar else { return }
         for (_, peer) in gattServerPeers {
             while let next = peer.pendingNotifies.first {
                 let ok = peripheral.updateValue(next, for: tx, onSubscribedCentrals: [peer.central])
-                if !ok { return }  // Still backpressured — try again next time.
+                if !ok { break }  // this peer backpressured/failed — move to the next
                 peer.pendingNotifies.removeFirst()
             }
         }
