@@ -156,6 +156,11 @@ def _install_native_stamp_generator() -> None:
 
 
 _lock = threading.Lock()
+# Bumped on every start()/stop()/reset_identity() so the post-start delayed
+# re-announce daemon thread can detect it has been superseded (by a teardown
+# or a restart) and bail before announcing a dead / previous-session
+# destination.
+_announce_generation = 0
 _events: "queue.Queue[dict]" = queue.Queue()
 _state: dict[str, Any] = {
     "started": False,
@@ -398,9 +403,18 @@ def start(
         # connected yet.
         delivery_destination.announce()
 
+        global _announce_generation
+        _announce_generation += 1
+        _reannounce_gen = _announce_generation
+
         def _delayed_reannounce() -> None:
             for delay in (2, 5, 15, 30):
                 time.sleep(delay)
+                # stop()/reset_identity()/a restart bumps the generation; bail
+                # so we never re-announce a torn-down destination — or the
+                # previous session's destination after a stop->start restart.
+                if _announce_generation != _reannounce_gen:
+                    return
                 try:
                     delivery_destination.announce()
                 except Exception:
@@ -898,8 +912,10 @@ def stop() -> None:
         # invoke closures bound to the previous driver / Swift bridge.
         clear_ble_callbacks()
         clear_rnode_callbacks()
-        global _ble_bridge_handle
+        global _ble_bridge_handle, _announce_generation
         _ble_bridge_handle = None
+        # Supersede any in-flight delayed re-announce thread (see start()).
+        _announce_generation += 1
 
         _state.update({
             "started": False,
@@ -1290,9 +1306,14 @@ def fetch_nomadnet_page(
     # sends an encrypted identity-proof packet that a PENDING link cannot send,
     # so identifying before the wait silently no-ops. The remote needs this;
     # nomadnet's node app expects it for stateful pages.
+    # Snapshot the identity under _lock: a concurrent reset_identity()/stop()
+    # can null _state["identity"] between the None-check and link.identify(),
+    # making identify() silently no-op on None (mirrors link_identify()).
+    with _lock:
+        active_identity = _state["identity"]
     try:
-        if _state["identity"] is not None:
-            link.identify(_state["identity"])
+        if active_identity is not None:
+            link.identify(active_identity)
     except Exception:
         pass
 
@@ -1410,8 +1431,10 @@ def reset_identity(identity_path: str) -> None:
         # bound to the torn-down driver / Swift bridge (mirrors stop()).
         clear_ble_callbacks()
         clear_rnode_callbacks()
-        global _ble_bridge_handle
+        global _ble_bridge_handle, _announce_generation
         _ble_bridge_handle = None
+        # Supersede any in-flight delayed re-announce thread (see start()).
+        _announce_generation += 1
         _state.update({
             "started": False,
             "reticulum": None,
@@ -1419,6 +1442,7 @@ def reset_identity(identity_path: str) -> None:
             "identity": None,
             "destination": None,
             "handler": None,
+            "telephony_destination": None,
         })
     # Outside the lock: tear down the snapshotted links.
     for _link in links_to_teardown:
