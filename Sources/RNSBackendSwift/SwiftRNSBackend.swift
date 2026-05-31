@@ -225,17 +225,28 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
 
     @discardableResult
     public func announce(displayName: String) async throws -> Bool {
-        try await emitAnnounce(on: deliveryDestination, displayName: displayName, withRatchet: true)
+        // Canonical LXMF (>= 0.5.0) delivery-announce app_data:
+        // msgpack([display_name_utf8_bytes, stamp_cost]). Mirrors LXMF
+        // LXMRouter.get_announce_app_data (what the Python backend and Sideband
+        // emit) so peers decode the name via the msgpack path rather than
+        // relying on LXMF's legacy raw-utf8 fallback (which also drops the
+        // stamp cost). stamp_cost is nil — Columba registers its delivery
+        // identity without an inbound stamp requirement, matching the Python
+        // backend's register_delivery_identity(display_name=…).
+        let appData = packMsgPack(.array([.binary(Data(displayName.utf8)), .null]))
+        return try await emitAnnounce(on: deliveryDestination, appData: appData, withRatchet: true)
     }
 
     @discardableResult
     public func announceTelephony(displayName: String) async throws -> Bool {
-        try await emitAnnounce(on: telephonyDestination, displayName: displayName, withRatchet: false)
+        // The lxst.telephony announce app_data is LXST's, not LXMF's — keep the
+        // raw display-name bytes the Telephone layer expects.
+        try await emitAnnounce(on: telephonyDestination, appData: Data(displayName.utf8), withRatchet: false)
     }
 
-    private func emitAnnounce(on destination: ReticulumSwift.Destination?, displayName: String, withRatchet: Bool) async throws -> Bool {
+    private func emitAnnounce(on destination: ReticulumSwift.Destination?, appData: Data, withRatchet: Bool) async throws -> Bool {
         guard let transport, let destination else { return false }
-        destination.appData = displayName.data(using: .utf8)
+        destination.appData = appData
         var ratchetPub: Data? = nil
         if withRatchet, let mgr = destination.ratchetManager {
             await mgr.rotateIfNeeded()

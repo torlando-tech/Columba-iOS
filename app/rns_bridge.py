@@ -894,9 +894,10 @@ def stop() -> None:
         _links.clear()
         _telephony_destination = None
 
-        # Drop registered BLE callbacks so a subsequent start() doesn't
+        # Drop registered BLE + RNode callbacks so a subsequent start() doesn't
         # invoke closures bound to the previous driver / Swift bridge.
         clear_ble_callbacks()
+        clear_rnode_callbacks()
         global _ble_bridge_handle
         _ble_bridge_handle = None
 
@@ -1404,6 +1405,13 @@ def reset_identity(identity_path: str) -> None:
         links_to_teardown = list(_links.values())
         _links.clear()
         _telephony_destination = None
+        # Drop registered BLE + RNode callbacks + the BLE bridge handle so the
+        # start() this function's docstring requires doesn't invoke closures
+        # bound to the torn-down driver / Swift bridge (mirrors stop()).
+        clear_ble_callbacks()
+        clear_rnode_callbacks()
+        global _ble_bridge_handle
+        _ble_bridge_handle = None
         _state.update({
             "started": False,
             "reticulum": None,
