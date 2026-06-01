@@ -52,9 +52,14 @@ jobs:
       # race. One explicit resolve makes every later build/test step reuse it.
       - name: Resolve Swift packages
         run: |
+          # Pre-warm both schemes' package deps (same sibling packages, same
+          # .xcodeproj, but be explicit so the Swift-native build benefits too).
           xcodebuild -resolvePackageDependencies \
             -project Columba.xcodeproj \
             -scheme Columba
+          xcodebuild -resolvePackageDependencies \
+            -project Columba.xcodeproj \
+            -scheme Columba-Swift
 
       - name: Find simulator
         id: sim
