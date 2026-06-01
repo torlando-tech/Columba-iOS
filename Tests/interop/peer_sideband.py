@@ -255,23 +255,25 @@ class SidebandPeer:
         process exit to reap RNS threads. CI runners should treat each
         pytest session as the unit of teardown."""
         if self._core is not None:
-            # SidebandCore has a `cleanup()`-ish method? — looking at the
-            # source it's `__exit_handler` registered via atexit. Calling
-            # it manually here is safe and ensures DB flushes. Guard the
-            # private name explicitly (like _attach_inbound_tap does for
-            # __delivery_callback) so a Sideband rename surfaces loudly
-            # instead of silently leaking RNS threads between sessions.
-            if hasattr(self._core, "_exit_handler"):
+            # SidebandCore's teardown is `cleanup()` (the older private
+            # `__exit_handler` was removed). On the host it connects to the
+            # shared rnsd/lxmd instance, so cleanup() is intentionally a near
+            # no-op (RNS teardown belongs to the shared instance, not us); we
+            # still call it for DB flush + future-proofing, and rely on process
+            # exit to reap threads. Guard the name (like _attach_inbound_tap
+            # does for __delivery_callback) so a future Sideband rename surfaces
+            # loudly instead of silently skipping teardown.
+            if hasattr(self._core, "cleanup"):
                 try:
-                    self._core._exit_handler()
+                    self._core.cleanup()
                 except Exception:  # noqa: BLE001
                     # Sideband logs its own teardown errors; suppress here.
                     pass
             else:
                 print(
-                    "[peer_sideband] WARNING: SidebandCore._exit_handler is gone "
-                    "— Sideband may have renamed it; RNS threads can leak between "
-                    "sessions. Update peer_sideband.stop().",
+                    "[peer_sideband] WARNING: SidebandCore.cleanup is gone — "
+                    "Sideband may have renamed its teardown; RNS threads can leak "
+                    "between sessions. Update peer_sideband.stop().",
                     flush=True,
                 )
             self._core = None
