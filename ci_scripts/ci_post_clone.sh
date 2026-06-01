@@ -44,6 +44,18 @@ sed -i.bak -E \
     "$PBXPROJ"
 rm -f "${PBXPROJ}.bak"
 
+# Fetch the embedded Python.xcframework (BeeWare Python-Apple-support). Like the
+# wheels it's gitignored (too large for git, see .gitignore), but the Columba
+# target *links* it, so a fresh CI clone has nothing to link against and the
+# build fails without this. fetch-python.sh is a plain curl+tar of a pinned
+# BeeWare release — no host toolchain needed. Idempotent; skipped if present.
+if [ ! -d "$REPO_ROOT/Frameworks/Python.xcframework" ]; then
+    echo "Fetching Python.xcframework (BeeWare Python-Apple-support)..."
+    "$REPO_ROOT/support/fetch-python.sh"
+else
+    echo "Python.xcframework already present, skipping fetch."
+fi
+
 # Fetch Python wheels. The wheel dirs are gitignored (not committed), but the
 # "Install Python stdlib & process dylibs" build phase hard-requires them, so a
 # fresh CI clone must build them here. fetch-wheels.sh resolves RNS from the
