@@ -12,10 +12,18 @@ Usage:
   PYTHONPATH unneeded — paths injected below.
   python3 voice_caller.py <columba_identity_hex> [ring_seconds]
 """
-import sys, os, time, threading
+import sys, os, time
 
-sys.path.insert(0, os.path.expanduser("~/repos/LXST"))
-sys.path.insert(0, os.path.expanduser("~/repos/Sideband"))
+# LXST + Sideband are sibling checkouts; override with LXST_SRC / SIDEBAND_SRC
+# (SIDEBAND_SRC matches the interop conftest). Default to ~/repos/<name>.
+for _name, _env, _default in (
+    ("LXST", "LXST_SRC", "~/repos/LXST"),
+    ("Sideband", "SIDEBAND_SRC", "~/repos/Sideband"),
+):
+    _path = os.environ.get(_env, os.path.expanduser(_default))
+    if not os.path.isdir(_path):
+        sys.exit(f"{_name} checkout not found at {_path} — set {_env} to its path.")
+    sys.path.insert(0, _path)
 
 import RNS  # noqa: E402
 from sbapp.sideband.voice import ReticulumTelephone  # noqa: E402
