@@ -305,7 +305,12 @@ public struct Message: Identifiable, Equatable {
 
     /// Formatted time string (e.g., "5 min ago", "Just now")
     public var formattedTime: String {
-        Self.relativeFormatter.localizedString(for: timestamp, relativeTo: Date())
+        // Clamp future-dated timestamps to now: a peer (or our own past clock)
+        // can stamp a wire ts ahead of local time, and we must never render
+        // "in 5 min" on a message that has already arrived.
+        let now = Date()
+        let display = min(timestamp, now)
+        return Self.relativeFormatter.localizedString(for: display, relativeTo: now)
     }
 
     /// True if message has no visible content (telemetry-only messages).

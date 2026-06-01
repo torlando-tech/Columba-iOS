@@ -133,6 +133,7 @@
 		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
 		922658C82CEEA53695143F9B /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = DBD8F3A253D413F087742BC0 /* MapLibre */; };
 		92DDF4AE0AB493CC2AA0BA20 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6000D5CED2C3C89F74999BC1 /* LXSTSwift */; };
+		9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */; };
 		98547ADE9B17DD692240E7F7 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 85B9530D8CAE0E16D5371319 /* LXMFSwift */; };
 		9D9069A3F6302111A4727454 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = DD88CFE74E7E22427BC4D163 /* SwiftBLEBridge */; };
 		A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */; };
@@ -207,6 +208,7 @@
 		AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
 		B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		B68384C48BFF8F5294340EDB /* PttButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PttButton.swift; sourceTree = "<group>"; };
+		BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageFormattedTimeTests.swift; sourceTree = "<group>"; };
 		BF48C97880B30682DC35613C /* CeaseTelemetry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CeaseTelemetry.swift; sourceTree = "<group>"; };
 		BKF002 /* BackendFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFactory.swift; sourceTree = "<group>"; };
 		CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBLECallbackBridge.swift; sourceTree = "<group>"; };
@@ -682,6 +684,7 @@
 				DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */,
 				6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */,
 				30A79B9ECDB4166F8A36A670 /* CallManagerCallKitTests.swift */,
+				BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -1082,6 +1085,7 @@
 				2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */,
 				A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */,
 				E49B977D311DA1C9ACE14CAB /* CallManagerCallKitTests.swift in Sources */,
+				9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
