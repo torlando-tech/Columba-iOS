@@ -47,8 +47,10 @@ enum BackendPreference {
     /// `ProxyRnsBackend`'s always-the-node note).
     static var modelB: Bool {
         get {
+            // TEMP (Model-B bring-up): default ON so every launch runs Model B while
+            // we verify it on-device. Revert to `false` + add a UI toggle before ship.
             guard let stored = SharedDefaults.suite.object(forKey: modelBKey) as? Bool else {
-                return false
+                return true
             }
             return stored
         }

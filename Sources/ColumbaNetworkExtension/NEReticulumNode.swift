@@ -99,7 +99,9 @@ actor NEReticulumNode {
         // but matching the app's exact accessor keeps the two provably identical).
         guard let stored = UserDefaults(suiteName: appGroupIdentifier)?
             .object(forKey: modelBDefaultsKey) as? Bool else {
-            return false
+            // TEMP (Model-B bring-up): default ON to match BackendPreference.modelB.
+            // Revert to `false` before ship.
+            return true
         }
         return stored
     }
@@ -407,6 +409,15 @@ actor NEReticulumNode {
     /// `AppServices.sharedKeychainAccessGroup()`. Returns `nil` on unsigned /
     /// simulator builds where the entitlement isn't enforced.
     private static func sharedKeychainAccessGroup() -> String? {
+        // Prefer the group the APP resolved + shared via the App Group. The in-NE
+        // keychain probe (below) is unreliable when the device is locked — exactly
+        // when background delivery must run — and on first NE start before the app
+        // has launched. The app (running unlocked) resolves it once and writes it
+        // here, so the NE doesn't have to probe.
+        if let shared = UserDefaults(suiteName: appGroupIdentifier)?
+            .string(forKey: "resolvedSharedKeychainGroup"), !shared.isEmpty {
+            return shared
+        }
         guard let prefix = keychainAccessGroupPrefix() else { return nil }
         return "\(prefix).\(keychainGroupSuffix)"
     }

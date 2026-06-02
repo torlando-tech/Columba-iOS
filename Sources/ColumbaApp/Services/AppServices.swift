@@ -394,23 +394,36 @@ public final class AppServices {
     /// Resolve the app-identifier (team-id) prefix by reading the access group the system
     /// assigns to a fresh generic-password item (the standard "bundle seed id" probe).
     private static func keychainAccessGroupPrefix() -> String? {
-        let probe: [String: Any] = [
+        let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: "columba.bundleSeedProbe",
             kSecAttrService as String: "columba.bundleSeedProbe",
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
         ]
-        var result: CFTypeRef?
-        var status = SecItemCopyMatching(probe as CFDictionary, &result)
-        if status == errSecItemNotFound {
-            status = SecItemAdd(probe as CFDictionary, &result)
+        // Ensure the probe item exists. Add WITH a value (a value-less generic-
+        // password Add can fail) and tolerate an existing item; the system assigns
+        // the app's default keychain access group ("<teamPrefix>.<bundle-id>").
+        // NB: the previous code read the group from SecItemAdd's RESULT, which
+        // omits kSecAttrAccessGroup — so the probe always returned nil and the
+        // shared group was never resolved (A3 silently fell back to the default
+        // group, unreachable by the NE). Read it back via CopyMatching instead.
+        var addDict = base
+        addDict[kSecValueData as String] = Data()
+        let addStatus = SecItemAdd(addDict as CFDictionary, nil)
+        guard addStatus == errSecSuccess || addStatus == errSecDuplicateItem else {
+            DiagLog.log("[IDENTITY] bundleSeedProbe add failed: \(addStatus)")
+            return nil
         }
-        guard status == errSecSuccess,
+        var query = base
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let copyStatus = SecItemCopyMatching(query as CFDictionary, &result)
+        guard copyStatus == errSecSuccess,
               let attrs = result as? [String: Any],
               let group = attrs[kSecAttrAccessGroup as String] as? String,
               let prefix = group.components(separatedBy: ".").first,
               !prefix.isEmpty else {
+            DiagLog.log("[IDENTITY] bundleSeedProbe read failed: \(copyStatus)")
             return nil
         }
         return prefix
@@ -592,11 +605,39 @@ public final class AppServices {
     /// 2. File-based storage (fallback for unsigned builds)
     /// 3. Creates new identity and saves it
     ///
+    /// Model B: make the active identity reachable by the in-NE node, regardless of
+    /// which init path established it. Resolve the shared keychain group (the app
+    /// runs unlocked, so its probe works), share it via the App Group (the NE can't
+    /// reliably probe while locked), and persist the identity into that shared group
+    /// so the NE can load it (`...AfterFirstUnlockThisDeviceOnly`, NE-readable while
+    /// locked after first unlock). No-op on unsigned/simulator builds (group == nil).
+    private static func shareIdentityForModelB(_ identity: Identity) {
+        guard let group = sharedKeychainAccessGroup() else {
+            DiagLog.log("[IDENTITY] Model B share: shared keychain group unresolved")
+            return
+        }
+        SharedDefaults.suite.set(group, forKey: "resolvedSharedKeychainGroup")
+        do {
+            try identity.saveToKeychain(service: keychainService, account: keychainAccount, accessGroup: group)
+            DiagLog.log("[IDENTITY] Model B share: group resolved + identity persisted to shared keychain")
+        } catch {
+            DiagLog.log("[IDENTITY] Model B share: keychain save failed: \(error.localizedDescription)")
+        }
+    }
+
     /// - Returns: The loaded or newly created identity
     private static func loadOrCreateIdentity() -> Identity {
         // Shared group so the Network Extension reads the SAME identity (Model B).
         // nil on unsigned/simulator builds → falls back to the app's default group.
         let group = sharedKeychainAccessGroup()
+        DiagLog.log("[IDENTITY] shared keychain group resolved=\(group != nil)")
+        // Hand the resolved group to the NE via the App Group: the in-NE keychain
+        // probe is unreliable while the device is locked (exactly when background
+        // delivery must run) and before the app has ever launched, so the NE reads
+        // this app-resolved value instead of probing.
+        if let group {
+            SharedDefaults.suite.set(group, forKey: "resolvedSharedKeychainGroup")
+        }
 
         // 1. Keychain, shared group (the group the NE also reads).
         do {
@@ -2241,6 +2282,10 @@ public final class AppServices {
 
         self.identity = identity
         self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
+        // Model B: make this identity reachable by the in-NE node. This overload
+        // receives the identity pre-loaded (multi-identity path) and never calls
+        // loadOrCreateIdentity, so do the NE-sharing here.
+        Self.shareIdentityForModelB(identity)
 
         // 2. Create path table for routing with persistence
         let pathDbPath = Self.pathTableFilePath
