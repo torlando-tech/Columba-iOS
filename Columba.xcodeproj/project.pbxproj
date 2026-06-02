@@ -1769,16 +1769,16 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/torlando-tech/reticulum-swift.git";
 			requirement = {
-				kind = exactVersion;
-				version = 0.2.3;
+				branch = "perf/resource-disk-streaming";
+				kind = branch;
 			};
 		};
 		2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/torlando-tech/LXMF-swift.git";
 			requirement = {
-				kind = exactVersion;
-				version = 0.3.4;
+				branch = "feat/lxmfdb-appgroup-sharing";
+				kind = branch;
 			};
 		};
 		PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
