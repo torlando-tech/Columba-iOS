@@ -110,13 +110,15 @@ public struct Identity: Equatable, Sendable {
     /// Save the 64-byte private-key blob to Keychain under the given
     /// service / account. Caller-supplied service+account keys let
     /// `IdentityManager` namespace per-identity entries.
-    public func saveToKeychain(service: String, account: String) throws {
+    public func saveToKeychain(service: String, account: String, accessGroup: String? = nil) throws {
         guard let pk = privateKeyBytes else { throw IdentityError.noPrivateKeys }
-        let baseQuery: [String: Any] = [
+        var baseQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
+        // Shared keychain group so the app + Network Extension resolve the SAME item.
+        if let accessGroup { baseQuery[kSecAttrAccessGroup as String] = accessGroup }
         let attrs: [String: Any] = baseQuery.merging([
             kSecValueData as String: pk,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
@@ -135,14 +137,15 @@ public struct Identity: Equatable, Sendable {
 
     /// Load identity from Keychain. Returns `nil` if no item is stored at
     /// the (service, account) pair.
-    public static func loadFromKeychain(service: String, account: String) throws -> Identity? {
-        let query: [String: Any] = [
+    public static func loadFromKeychain(service: String, account: String, accessGroup: String? = nil) throws -> Identity? {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnData as String: true,
         ]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         switch status {
@@ -157,12 +160,13 @@ public struct Identity: Equatable, Sendable {
     }
 
     @discardableResult
-    public static func deleteFromKeychain(service: String, account: String) -> Bool {
-        let query: [String: Any] = [
+    public static func deleteFromKeychain(service: String, account: String, accessGroup: String? = nil) -> Bool {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }

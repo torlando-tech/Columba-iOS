@@ -329,6 +329,44 @@ public final class AppServices {
     /// Keychain account identifier for storing identity.
     private static let keychainAccount = "reticulum-identity"
 
+    /// Suffix of the shared keychain access group (app + Network Extension). The full
+    /// group is `<team-id-prefix>.<suffix>` — see ColumbaApp.entitlements.
+    private static let keychainGroupSuffix = "network.columba.Columba.shared"
+
+    /// The shared keychain access group, resolved at runtime so the team-id prefix is
+    /// NOT hardcoded in source (no deployment-identifying PII). Returns nil on unsigned /
+    /// simulator builds where the keychain-access-groups entitlement isn't enforced; in
+    /// that case identity ops fall back to the app's default (unshared) keychain group.
+    private static func sharedKeychainAccessGroup() -> String? {
+        guard let prefix = keychainAccessGroupPrefix() else { return nil }
+        return "\(prefix).\(keychainGroupSuffix)"
+    }
+
+    /// Resolve the app-identifier (team-id) prefix by reading the access group the system
+    /// assigns to a fresh generic-password item (the standard "bundle seed id" probe).
+    private static func keychainAccessGroupPrefix() -> String? {
+        let probe: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: "columba.bundleSeedProbe",
+            kSecAttrService as String: "columba.bundleSeedProbe",
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        var status = SecItemCopyMatching(probe as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            status = SecItemAdd(probe as CFDictionary, &result)
+        }
+        guard status == errSecSuccess,
+              let attrs = result as? [String: Any],
+              let group = attrs[kSecAttrAccessGroup as String] as? String,
+              let prefix = group.components(separatedBy: ".").first,
+              !prefix.isEmpty else {
+            return nil
+        }
+        return prefix
+    }
+
     /// File path for identity persistence (fallback when Keychain unavailable).
     private static var identityFilePath: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -386,41 +424,63 @@ public final class AppServices {
     ///
     /// - Returns: The loaded or newly created identity
     private static func loadOrCreateIdentity() -> Identity {
-        // Try Keychain first (most secure)
+        // Shared group so the Network Extension reads the SAME identity (Model B).
+        // nil on unsigned/simulator builds → falls back to the app's default group.
+        let group = sharedKeychainAccessGroup()
+
+        // 1. Keychain, shared group (the group the NE also reads).
         do {
             if let stored = try Identity.loadFromKeychain(
-                service: keychainService,
-                account: keychainAccount
+                service: keychainService, account: keychainAccount, accessGroup: group
             ) {
-                sLogger.info("[IDENTITY] Loaded from Keychain")
+                sLogger.info("[IDENTITY] Loaded from Keychain (shared group)")
                 return stored
             }
         } catch {
             sLogger.warning("[IDENTITY] Keychain load error: \(error.localizedDescription)")
         }
 
-        // Try file-based storage (fallback)
+        // 1b. One-time migration: an identity stored before the shared-group change lives
+        //     in the app's DEFAULT keychain group, unreachable by the NE. Move it into the
+        //     shared group, then delete the legacy copy. Only meaningful on signed builds
+        //     (group != nil).
+        if group != nil {
+            if let legacy = try? Identity.loadFromKeychain(
+                service: keychainService, account: keychainAccount, accessGroup: nil
+            ) {
+                try? legacy.saveToKeychain(
+                    service: keychainService, account: keychainAccount, accessGroup: group
+                )
+                _ = Identity.deleteFromKeychain(
+                    service: keychainService, account: keychainAccount, accessGroup: nil
+                )
+                sLogger.info("[IDENTITY] Migrated identity into the shared keychain group")
+                return legacy
+            }
+        }
+
+        // 2. File-based storage (fallback for unsigned builds where keychain is unavailable).
         if let stored = loadIdentityFromFile() {
             sLogger.info("[IDENTITY] Loaded from file")
             return stored
         }
 
-        // Create new identity
+        // 3. Create a new identity and save it to the shared keychain group.
         let created = Identity()
         sLogger.info("[IDENTITY] Created new identity")
-
-        // Save to Keychain (try first, more secure)
         do {
             try created.saveToKeychain(
-                service: keychainService,
-                account: keychainAccount
+                service: keychainService, account: keychainAccount, accessGroup: group
             )
+            // Keychain is the source of truth on signed builds; remove any stale plaintext
+            // fallback file so an unencrypted private key never lingers at rest.
+            removeIdentityFile()
             return created
         } catch {
             sLogger.warning("[IDENTITY] Keychain save failed: \(error.localizedDescription)")
         }
 
-        // Fall back to file storage
+        // Fall back to file storage (dev/unsigned only).
         _ = saveIdentityToFile(created)
         return created
     }
@@ -440,16 +500,31 @@ public final class AppServices {
         }
     }
 
-    /// Save identity to file.
+    /// Save identity to file (dev/unsigned fallback only).
     private static func saveIdentityToFile(_ identity: Identity) -> Bool {
         do {
             let data = try identity.exportPrivateKeys()
             try data.write(to: identityFilePath, options: .atomic)
+            #if os(iOS)
+            // Even the fallback must not leave the private key at default protection;
+            // require at least first-unlock so it isn't readable on a locked cold device.
+            try? FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: identityFilePath.path
+            )
+            #endif
             return true
         } catch {
             sLogger.warning("[IDENTITY] File save error: \(error.localizedDescription)")
             return false
         }
+    }
+
+    /// Remove the plaintext identity fallback file (called once the keychain — the
+    /// source of truth on signed builds — holds the identity, so an unencrypted private
+    /// key doesn't linger at rest).
+    private static func removeIdentityFile() {
+        try? FileManager.default.removeItem(at: identityFilePath)
     }
 
     // MARK: - Initialization

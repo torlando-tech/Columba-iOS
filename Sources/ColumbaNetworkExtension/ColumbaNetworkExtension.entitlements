@@ -6,6 +6,12 @@
 	<array>
 		<string>group.network.columba.Columba</string>
 	</array>
+	<!-- Shared keychain group (must match ColumbaApp.entitlements) so the NE loads
+	     the same RNS identity to decrypt/sign while locked. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)network.columba.Columba.shared</string>
+	</array>
 	<key>com.apple.developer.networking.networkextension</key>
 	<array>
 		<string>packet-tunnel-provider</string>
