@@ -2677,6 +2677,12 @@ public final class AppServices {
 
         try await transport.addAutoInterface(newAutoInterface)
         logger.info("AutoInterface started with group: \(groupId)")
+
+        #if ENABLE_NETWORK_EXTENSION
+        // Same launch-race fix as connectTCPInterface: if the tunnel is already up,
+        // bring this freshly-registered interface into tunnel mode.
+        await reapplyTunnelModeIfActive()
+        #endif
     }
 
     /// Stop the AutoInterface.
@@ -3358,6 +3364,16 @@ public final class AppServices {
         }
 
         startStateObserver()
+
+        #if ENABLE_NETWORK_EXTENSION
+        // Launch-race fix: the persistent background-transport tunnel can already be
+        // `.connected` when the app cold-starts, so `onStatusChange` fires (and tunnel
+        // mode is applied) BEFORE this interface is registered — leaving it in
+        // local-socket mode, black-holed by the active packet tunnel (connected,
+        // rx=0 tx=0, no announces). Re-assert tunnel mode now that this interface
+        // exists so it's bridged through the extension.
+        await reapplyTunnelModeIfActive()
+        #endif
     }
 
     /// Stop a specific TCP interface by entity ID.
