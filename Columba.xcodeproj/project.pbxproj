@@ -94,7 +94,6 @@
 		074B /* SharedDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = F074 /* SharedDefaults.swift */; };
 		076B /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		077B /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F077 /* TunnelManager.swift */; };
-		BGTB /* BackgroundTransportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGTF /* BackgroundTransportView.swift */; };
 		078B /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
 		079B /* OnboardingRestoreSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F079 /* OnboardingRestoreSheet.swift */; };
 		07AB /* PlatformCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07A /* PlatformCompat.swift */; };
@@ -116,6 +115,7 @@
 		35DF1F7406C71743BBE8C39B /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = DA31FE974552414C399D4949 /* ReticulumSwift */; };
 		3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
 		4758210ABE17DE6E3BE0B3F6 /* AutoAnnouncePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F87296BB580791A95C977B6 /* AutoAnnouncePolicy.swift */; };
+		48B07E3EF989716BF75BFEE5 /* ColumbaNetworkExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = EPROD /* ColumbaNetworkExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
 		4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */; };
 		5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A49337EFC55C10979AEB702B /* LXSTSwift */; };
 		557D530BBEDAEBE9A6A0BE41 /* PyConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D8CBCF7E546028A043E1C7 /* PyConversation.swift */; };
@@ -141,8 +141,10 @@
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		AGB1B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
 		AGB2B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
-		NERN2 /* NEReticulumNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = NERN1 /* NEReticulumNode.swift */; };
+		AGP1B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
+		AGP2B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
 		BDC9FF09929596ECF0A1037F /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */; };
+		BGTB /* BackgroundTransportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGTF /* BackgroundTransportView.swift */; };
 		BKF001 /* BackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKF002 /* BackendFactory.swift */; };
 		C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
 		C91321B8E0BA9F487D5E1AC8 /* PyMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBD293157E715F490613984 /* PyMessage.swift */; };
@@ -156,23 +158,29 @@
 		EDF2F6B945FAA23366617FD6 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
 		EDL1B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
 		EDL2B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
-		AGP1B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
-		AGP2B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
-		PXI1B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
-		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
-		OBQ1B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
-		OBQ2B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
-		PRB001 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
 		F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FD6A68A52A54D21FDB70324 /* RNSAPI */; };
 		F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
 		FB2F3248AE405614B36BC798 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = E049A7D4D6D58690C0B674CE /* RNSAPI */; };
+		NERN2 /* NEReticulumNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = NERN1 /* NEReticulumNode.swift */; };
+		OBQ1B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
+		OBQ2B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		PNT001 /* PythonNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = PNT002 /* PythonNetworkTransport.swift */; };
+		PRB001 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
 		PRC001 /* PythonRNodeCallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRC002 /* PythonRNodeCallbackBridge.swift */; };
+		PXI1B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
+		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		SRB001 /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		C6825ACD06BF2495019C47AB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = PROJ /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ETARG;
+			remoteInfo = ColumbaNetworkExtension;
+		};
 		TTPROXY /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = PROJ /* Project object */;
@@ -183,6 +191,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		039DD8D9BCB53A1A02C04D9C /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				48B07E3EF989716BF75BFEE5 /* ColumbaNetworkExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		9796AB46906D510ACD8F0AB1 /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -221,9 +240,11 @@
 		ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
 		AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
 		AGBF /* AppGroupBridgeInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBridgeInterface.swift; sourceTree = "<group>"; };
+		AGPF /* AppGroupPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupPaths.swift; sourceTree = "<group>"; };
 		B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		B68384C48BFF8F5294340EDB /* PttButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PttButton.swift; sourceTree = "<group>"; };
 		BF48C97880B30682DC35613C /* CeaseTelemetry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CeaseTelemetry.swift; sourceTree = "<group>"; };
+		BGTF /* BackgroundTransportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTransportView.swift; sourceTree = "<group>"; };
 		BKF002 /* BackendFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFactory.swift; sourceTree = "<group>"; };
 		CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBLECallbackBridge.swift; sourceTree = "<group>"; };
 		D001472BC7DFD3CD7BF27F0C /* app */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = app; sourceTree = "<group>"; };
@@ -232,10 +253,6 @@
 		E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
 		EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonConfigWriter.swift; sourceTree = "<group>"; };
 		EDLF /* ExtensionDiagLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDiagLog.swift; sourceTree = "<group>"; };
-		AGPF /* AppGroupPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupPaths.swift; sourceTree = "<group>"; };
-		PXIF /* ProxyIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyIPC.swift; sourceTree = "<group>"; };
-		OBQF /* OutboxQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxQueue.swift; sourceTree = "<group>"; };
-		NERN1 /* NEReticulumNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEReticulumNode.swift; sourceTree = "<group>"; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
 		F002 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -323,7 +340,6 @@
 		F075 /* ColumbaApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaApp.entitlements; sourceTree = "<group>"; };
 		F076 /* SharedFrameQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedFrameQueue.swift; sourceTree = "<group>"; };
 		F077 /* TunnelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelManager.swift; sourceTree = "<group>"; };
-		BGTF /* BackgroundTransportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTransportView.swift; sourceTree = "<group>"; };
 		F078 /* ExtensionFrameReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionFrameReader.swift; sourceTree = "<group>"; };
 		F079 /* OnboardingRestoreSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRestoreSheet.swift; sourceTree = "<group>"; };
 		F07A /* PlatformCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformCompat.swift; sourceTree = "<group>"; };
@@ -343,11 +359,14 @@
 		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
 		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
+		NERN1 /* NEReticulumNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEReticulumNode.swift; sourceTree = "<group>"; };
+		OBQF /* OutboxQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxQueue.swift; sourceTree = "<group>"; };
 		PNT002 /* PythonNetworkTransport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonNetworkTransport.swift; sourceTree = "<group>"; };
+		PRB002 /* ProxyRnsBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProxyRnsBackend.swift; path = Sources/RNSBackendProxy/ProxyRnsBackend.swift; sourceTree = SOURCE_ROOT; };
 		PRC002 /* PythonRNodeCallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNodeCallbackBridge.swift; sourceTree = "<group>"; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		PXIF /* ProxyIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyIPC.swift; sourceTree = "<group>"; };
 		SRB002 /* SwiftRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwiftRNSBackend.swift; path = Sources/RNSBackendSwift/SwiftRNSBackend.swift; sourceTree = SOURCE_ROOT; };
-		PRB002 /* ProxyRnsBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProxyRnsBackend.swift; path = Sources/RNSBackendProxy/ProxyRnsBackend.swift; sourceTree = SOURCE_ROOT; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -840,10 +859,12 @@
 				RESBP /* Resources */,
 				9796AB46906D510ACD8F0AB1 /* Embed Frameworks */,
 				CF4F87412D5E39178E82799E /* Install Python stdlib & process dylibs */,
+				039DD8D9BCB53A1A02C04D9C /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B4BE17F06FA1F20BA8E46747 /* PBXTargetDependency */,
 			);
 			name = ColumbaApp;
 			packageProductDependencies = (
@@ -1138,6 +1159,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		B4BE17F06FA1F20BA8E46747 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ColumbaNetworkExtension;
+			target = ETARG /* ColumbaNetworkExtension */;
+			targetProxy = C6825ACD06BF2495019C47AB /* PBXContainerItemProxy */;
+		};
 		TTDEP /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = TTARG /* ColumbaAppTests */;
@@ -1329,6 +1356,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M2977H5PM5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -1434,6 +1462,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M2977H5PM5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -1524,6 +1553,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M2977H5PM5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -1550,6 +1580,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M2977H5PM5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
