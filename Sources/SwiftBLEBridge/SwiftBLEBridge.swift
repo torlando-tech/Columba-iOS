@@ -120,6 +120,18 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     private var txCharCBUUID: CBUUID = BleConstants.txCharCBUUID
     private var identityCharCBUUID: CBUUID = BleConstants.identityCharCBUUID
 
+    // MARK: - State-restoration identifiers (Track C8 — background BLE wake)
+
+    /// Stable restore identifiers handed to CoreBluetooth so iOS can RELAUNCH
+    /// the app (into the background) on a BLE event for a peer we were
+    /// connected/scanning/advertising to, then hand the SAME manager instances
+    /// back via `willRestoreState`. These strings MUST be stable across launches
+    /// — iOS keys its preserved manager state on them. Changing them orphans the
+    /// preserved state. Process-wide constants since there is exactly one
+    /// central + one peripheral manager per app (see `shared`).
+    public static let centralRestoreIdentifier = "network.columba.ble.central"
+    public static let peripheralRestoreIdentifier = "network.columba.ble.peripheral"
+
     public override init() { super.init() }
 
     // MARK: - Public API
@@ -166,11 +178,59 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             // calls stop() then start() in quick succession; stop() now
             // intentionally leaves the managers alive to avoid CB
             // teardown races). Only create on first start.
+            //
+            // Track C8 — state-restoration / background BLE wake: pass the
+            // stable restore identifiers so iOS preserves these managers'
+            // state across an app kill and RELAUNCHES us (into the background)
+            // on a BLE event for a preserved peer, handing the same managers
+            // back via `centralManager(_:willRestoreState:)` /
+            // `peripheralManager(_:willRestoreState:)`. Opting in here is what
+            // arms `UIApplication.LaunchOptionsKey.bluetoothCentrals` /
+            // `.bluetoothPeripherals` at relaunch. For iOS to actually hand the
+            // restored manager back, the app must RE-CREATE a manager with the
+            // SAME restore identifier EARLY in launch — see
+            // `SwiftBLEBridge.restoreAtLaunch()` and its call site in the app's
+            // launch path (ColumbaApp).
+            //
+            // ────────────────────────────────────────────────────────────────
+            // DELIVERY CAVEAT (read before relying on background wake):
+            // The wake itself (relaunch + manager hand-back) is wired here in
+            // native Swift. But the BLE message DELIVERY path — turning inbound
+            // GATT bytes into a processed + notified LXMF message — is currently
+            // Python-coupled: SwiftBLEBridge routes `on_data_received` (and the
+            // rest of the BleCallbackSlot callbacks) through `callbackInvoker`
+            // into the embedded Python RNS stack (IOSBLEDriver.py /
+            // IOSRNodeInterface.py / PythonBLECallbackBridge). On the SWIFT
+            // backend (Model B's target) there is NO native BLE delivery path
+            // yet, so a background BLE wake only results in a *delivered +
+            // notified* message when the PYTHON backend is the active one and is
+            // (re)started early enough in the relaunch to re-install the
+            // callbackInvoker. Native-Swift BLE delivery is a deliberate
+            // follow-on; until it lands, treat C8's wake as Python-backend-only
+            // for end-to-end delivery. Scope is BLE-direct; RNode-over-iOS wake
+            // (SwiftRNodeBridge owns its own CBCentralManager) is best-effort and
+            // device-unverified — intentionally NOT given a restore identifier
+            // here.
+            // ────────────────────────────────────────────────────────────────
             if self.centralManager == nil {
-                self.centralManager = CBCentralManager(delegate: self, queue: queue)
+                self.centralManager = CBCentralManager(
+                    delegate: self,
+                    queue: queue,
+                    options: [
+                        CBCentralManagerOptionRestoreIdentifierKey:
+                            Self.centralRestoreIdentifier
+                    ]
+                )
             }
             if self.peripheralManager == nil {
-                self.peripheralManager = CBPeripheralManager(delegate: self, queue: queue)
+                self.peripheralManager = CBPeripheralManager(
+                    delegate: self,
+                    queue: queue,
+                    options: [
+                        CBPeripheralManagerOptionRestoreIdentifierKey:
+                            Self.peripheralRestoreIdentifier
+                    ]
+                )
             }
             self.isStartedFlag = true
             // Surface any already-poweredOn managers so scan/advertise
@@ -184,6 +244,63 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             }
         }
         startRssiPolling()
+    }
+
+    /// Track C8 — at-launch re-instantiation for background BLE wake.
+    ///
+    /// Call this EARLY in the app's launch path (before the run loop settles)
+    /// when iOS has relaunched the app for a CoreBluetooth event — i.e. when
+    /// `UIApplication.LaunchOptionsKey.bluetoothCentrals` and/or
+    /// `.bluetoothPeripherals` are present in `launchOptions`, or simply
+    /// unconditionally at every launch (cheap, and the only reliable trigger
+    /// in a pure-SwiftUI app that has no `application(_:didFinishLaunching…)`
+    /// to read `launchOptions` from — see the call-site note in the app).
+    ///
+    /// Re-creating a `CBCentralManager` / `CBPeripheralManager` with the SAME
+    /// restore identifier is the documented contract that makes iOS replay the
+    /// preserved state through `willRestoreState`. If we don't re-create the
+    /// manager promptly at relaunch, iOS discards the preserved state and the
+    /// wake is wasted.
+    ///
+    /// This intentionally does NOT call `start(...)` (which needs the per-
+    /// session service/char UUIDs the Python driver injects, and flips
+    /// `isStartedFlag` / starts scanning+advertising). It only re-materialises
+    /// the managers so the restore handshake completes; the regular
+    /// `start(...)` path (driven by the active backend bringing BLE up) then
+    /// re-adopts the rest of the session. The manager UUIDs default to
+    /// `BleConstants` until `start(...)` overrides them, which is correct — the
+    /// service/char UUIDs are fixed wire constants (see BleConstants), so the
+    /// restored peripherals re-wire against the right service even before
+    /// `start(...)` runs.
+    ///
+    /// NOTE (delivery): re-creating the managers re-arms the wake and re-wires
+    /// CoreBluetooth state, but inbound bytes are only turned into a notified
+    /// message once the active backend's delivery path is live (Python-backend-
+    /// only today — see the DELIVERY CAVEAT in `start(...)`). The app's launch
+    /// path should kick the backend's BLE bring-up alongside calling this.
+    public func restoreAtLaunch() {
+        queue.sync {
+            if self.centralManager == nil {
+                self.centralManager = CBCentralManager(
+                    delegate: self,
+                    queue: queue,
+                    options: [
+                        CBCentralManagerOptionRestoreIdentifierKey:
+                            Self.centralRestoreIdentifier
+                    ]
+                )
+            }
+            if self.peripheralManager == nil {
+                self.peripheralManager = CBPeripheralManager(
+                    delegate: self,
+                    queue: queue,
+                    options: [
+                        CBPeripheralManagerOptionRestoreIdentifierKey:
+                            Self.peripheralRestoreIdentifier
+                    ]
+                )
+            }
+        }
     }
 
     /// Periodically request RSSI samples from connected centrals so the
@@ -556,6 +673,76 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
 extension SwiftBLEBridge: CBCentralManagerDelegate {
 
+    /// Track C8 — central-side state restoration. CoreBluetooth invokes this
+    /// (on `queue`, BEFORE `centralManagerDidUpdateState`) when the system has
+    /// relaunched the app and is handing back a `CBCentralManager` we created
+    /// with `centralRestoreIdentifier`. Re-adopt the preserved central state so
+    /// the bridge's in-memory model matches what CoreBluetooth still holds:
+    ///
+    ///   • `CBCentralManagerRestoredStatePeripheralsKey` — peripherals that
+    ///     were connected (or pending connection) when we were suspended. iOS
+    ///     hands back the live `CBPeripheral` objects; we MUST take a strong ref
+    ///     (re-populate `gattClients` / `discoveredPeripherals`) or it
+    ///     deallocates them and drops the connection. We re-set ourselves as
+    ///     delegate and, for already-`.connected` peripherals, re-drive service
+    ///     discovery so the GATT handshake (identity read → connected) re-runs
+    ///     exactly as in the normal `didConnect` path.
+    ///   • `CBCentralManagerRestoredStateScanServicesKey` /
+    ///     `…ScanOptionsKey` — if we were scanning when killed, mark scan as
+    ///     pending so `tryStartScanLocked()` (called from
+    ///     `centralManagerDidUpdateState(.poweredOn)`, which fires right after
+    ///     this) resumes it.
+    ///
+    /// Already on `queue` (CB delegate dispatch), so peer-state mutation here
+    /// follows the same locking discipline as the other delegate callbacks.
+    ///
+    /// DELIVERY CAVEAT: re-adopting here re-wires CoreBluetooth, but the
+    /// resulting `on_data_received` only becomes a notified message via the
+    /// Python delivery path (Python-backend-only today — see the block in
+    /// `start(...)`). Native-Swift BLE delivery is a follow-on.
+    public func centralManager(
+        _ central: CBCentralManager,
+        willRestoreState dict: [String: Any]
+    ) {
+        let restoredPeripherals =
+            (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral]) ?? []
+        emitInfo("centralManager willRestoreState peripherals=\(restoredPeripherals.count)")
+
+        for peripheral in restoredPeripherals {
+            let address = peripheral.identifier.uuidString
+            // Strong ref so iOS doesn't deallocate the restored peripheral.
+            peripheral.delegate = self
+            discoveredPeripherals[address] = peripheral
+            let client = gattClients[address] ?? BleGattClient(peripheral: peripheral)
+            gattClients[address] = client
+
+            // Re-drive the handshake for peripherals CB still has connected.
+            // Mirrors the normal didConnect adoption: stamp MTU, then discover
+            // our service so didDiscoverServices → … → identity read re-runs.
+            // Peripherals restored mid-connect (.connecting) are left for
+            // CoreBluetooth to finish; its didConnect will adopt them normally.
+            if peripheral.state == .connected {
+                let mtu = peripheral.maximumWriteValueLength(for: .withoutResponse)
+                client.mtu = mtu
+                client.state = .discoveringServices
+                peripheral.discoverServices([serviceCBUUID])
+                emitInfo("restored connected peripheral addr=\(address) mtu=\(mtu)")
+            } else {
+                client.state = .connecting
+                emitInfo("restored pending peripheral addr=\(address) state=\(peripheral.state.rawValue)")
+            }
+        }
+
+        // If a scan was in flight when we were killed, re-arm it. The actual
+        // scanForPeripherals call happens in centralManagerDidUpdateState once
+        // the manager reports .poweredOn (which lands right after this).
+        if let scanServices = dict[CBCentralManagerRestoredStateScanServicesKey] as? [CBUUID],
+           !scanServices.isEmpty {
+            pendingScanRequested = true
+            emitInfo("restored scan request services=\(scanServices.map { $0.uuidString })")
+        }
+    }
+
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
@@ -848,6 +1035,74 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
 // MARK: - CBPeripheralManagerDelegate
 
 extension SwiftBLEBridge: CBPeripheralManagerDelegate {
+
+    /// Track C8 — peripheral-side state restoration. CoreBluetooth invokes this
+    /// (on `queue`, BEFORE `peripheralManagerDidUpdateState`) when the system
+    /// has relaunched the app and is handing back a `CBPeripheralManager` we
+    /// created with `peripheralRestoreIdentifier`. Re-adopt the preserved
+    /// peripheral (GATT-server) state:
+    ///
+    ///   • `CBPeripheralManagerRestoredStateServicesKey` — the published
+    ///     `CBMutableService`(s) iOS preserved. We re-bind our
+    ///     `serverRxChar` / `serverTxChar` / `serverIdentityChar` to the
+    ///     restored characteristic objects and set `gattServiceAdded = true` so
+    ///     the `setUpGattServiceIfNeeded()` call in
+    ///     `peripheralManagerDidUpdateState(.poweredOn)` (which fires right
+    ///     after this) does NOT re-`add(service:)`. Re-adding a service iOS
+    ///     already holds makes it broadcast Service Changed, which breaks
+    ///     subscribed centrals — the exact hazard `gattServiceAdded` guards
+    ///     against in the normal path.
+    ///   • `CBPeripheralManagerRestoredStateAdvertisementDataKey` — if we were
+    ///     advertising when killed, mark advertise as pending so
+    ///     `tryStartAdvertiseLocked()` resumes it once the manager reports
+    ///     `.poweredOn`.
+    ///
+    /// Subscribed centrals are NOT in this dictionary — CoreBluetooth re-issues
+    /// `didSubscribeTo` for restored subscriptions, which the existing delegate
+    /// already adopts into `gattServerPeers`. Already on `queue` (CB delegate
+    /// dispatch), so the same locking discipline as the other callbacks holds.
+    ///
+    /// DELIVERY CAVEAT: same as the central side — re-adoption re-wires the
+    /// GATT server, but inbound writes only become notified messages via the
+    /// Python delivery path today (see `start(...)`). Native-Swift delivery is
+    /// a follow-on.
+    public func peripheralManager(
+        _ peripheral: CBPeripheralManager,
+        willRestoreState dict: [String: Any]
+    ) {
+        let restoredServices =
+            (dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService]) ?? []
+        emitInfo("peripheralManager willRestoreState services=\(restoredServices.count)")
+
+        // Re-bind our characteristic refs from the restored service so
+        // send()/drainPeerNotifiesLocked keep working against the same objects
+        // CoreBluetooth still has published. Match by UUID — the wire constants
+        // are fixed (see BleConstants).
+        if let service = restoredServices.first(where: { $0.uuid == serviceCBUUID }) {
+            for case let ch as CBMutableCharacteristic in (service.characteristics ?? []) {
+                switch ch.uuid {
+                case rxCharCBUUID:       serverRxChar = ch
+                case txCharCBUUID:       serverTxChar = ch
+                case identityCharCBUUID: serverIdentityChar = ch
+                default: break
+                }
+            }
+            // The service is already published — do NOT re-add it (would
+            // trigger Service Changed). Flag as added so setUpGattServiceIfNeeded
+            // becomes a no-op when poweredOn lands right after this.
+            gattServiceAdded = true
+            emitInfo("restored published service uuid=\(service.uuid.uuidString)")
+        }
+
+        // Resume advertising if we were advertising when suspended.
+        if let adData = dict[CBPeripheralManagerRestoredStateAdvertisementDataKey] as? [String: Any] {
+            pendingAdvertiseRequested = true
+            if let name = adData[CBAdvertisementDataLocalNameKey] as? String, !name.isEmpty {
+                pendingAdvertiseDeviceName = name
+            }
+            emitInfo("restored advertise request name=\(pendingAdvertiseDeviceName ?? "<nil>")")
+        }
+    }
 
     public func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         switch peripheral.state {

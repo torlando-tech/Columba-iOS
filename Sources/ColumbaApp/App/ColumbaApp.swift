@@ -10,7 +10,11 @@ import SwiftUI
 import RNSAPI
 import UserNotifications
 import BackgroundTasks
+import SwiftBLEBridge
 import os
+#if canImport(CoreBluetooth)
+import CoreBluetooth
+#endif
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "ColumbaApp")
 
@@ -44,6 +48,35 @@ struct ColumbaApp: App {
         case .failure(let err):
             logger.error("Python runtime failed: \(err.localizedDescription, privacy: .public)")
         }
+
+        #if os(iOS) && canImport(CoreBluetooth)
+        // Track C8 — background BLE wake / CoreBluetooth state restoration.
+        // When iOS RELAUNCHES the app for a preserved BLE event, it sets
+        // UIApplication.LaunchOptionsKey.bluetoothCentrals / .bluetoothPeripherals
+        // and expects the app to RE-CREATE its CBCentralManager /
+        // CBPeripheralManager with the SAME restore identifiers EARLY in launch,
+        // so it can replay the preserved state via `willRestoreState`. This is a
+        // pure-SwiftUI app (`@main struct ColumbaApp: App`) with NO
+        // UIApplicationDelegate, so there is no
+        // `application(_:didFinishLaunchingWithOptions:)` from which to read
+        // `launchOptions` and branch on those keys. `App.init()` is the earliest
+        // app-owned hook and runs before the run loop settles, so we
+        // re-materialise the managers here UNCONDITIONALLY (every launch). That
+        // is cheap and satisfies CoreBluetooth's "re-create promptly with the
+        // same identifier" contract on the relaunch-for-BLE case; on a normal
+        // launch it just pre-creates the managers (the regular
+        // AppServices.startBLEInterface() path reuses them via start()).
+        //
+        // GAP / FOLLOW-ON: this re-arms the wake and re-adopts CoreBluetooth
+        // state, but inbound BLE bytes only become a *delivered + notified*
+        // message through the Python delivery path, which requires the active
+        // backend to be the Python backend AND its BLE bring-up
+        // (startBLEInterface → re-install of SwiftBLEBridge's callbackInvoker) to
+        // run on this relaunch. Native-Swift BLE delivery is a deliberate
+        // follow-on; until it lands, background-wake delivery is
+        // Python-backend-only. See the DELIVERY CAVEAT in SwiftBLEBridge.start().
+        SwiftBLEBridge.shared.restoreAtLaunch()
+        #endif
 
         #if os(iOS)
         BGTaskScheduler.shared.register(
