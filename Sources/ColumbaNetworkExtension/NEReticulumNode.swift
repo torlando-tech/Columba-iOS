@@ -335,37 +335,38 @@ actor NEReticulumNode {
 
     /// Path to the App-Group-shared canonical `lxmf-swift.db` for `identityHashHex`
     /// (the raw identity hash — NOT the lxmf.delivery destination hash, matching
-    /// `AppServices.grdbDatabaseFilePath(for:)`). Falls back to the NE's temporary
-    /// directory if the App-Group container is unavailable (shouldn't happen in
-    /// production — same fallback posture as `SharedFrameQueue`).
+    /// `AppServices.grdbDatabaseFilePath(for:)`). Delegates to the SHARED
+    /// `AppGroupPaths` helper so the NE and the app provably compute the identical
+    /// path (the whole point of A2). Falls back to the NE's temporary directory if
+    /// the App-Group container is unavailable (shouldn't happen in production —
+    /// same fallback posture as `SharedFrameQueue`).
     static func appGroupLXMFDatabasePath(identityHashHex: String) -> String {
-        let dir = appGroupColumbaSubdirectory(named: "python-\(identityHashHex)")
-        return dir.appendingPathComponent("lxmf-swift.db").path
+        if let url = AppGroupPaths.lxmfDatabaseURL(identityHashHex: identityHashHex) {
+            return url.path
+        }
+        return tmpFallbackDirectory(named: "python-\(identityHashHex)")
+            .appendingPathComponent("lxmf-swift.db").path
     }
 
     /// Path to the App-Group-shared ratchet storage for `identityHashHex`,
     /// alongside the GRDB store so all per-identity state co-locates in the shared
     /// container. (`SwiftRNSBackend` keeps ratchets next to its db under
     /// `configDir`; we mirror that under the App-Group `python-<hash>` dir.)
+    /// Delegates to the SHARED `AppGroupPaths` helper (see above).
     static func appGroupRatchetStoragePath(identityHashHex: String) -> String {
-        let dir = appGroupColumbaSubdirectory(named: "python-\(identityHashHex)")
-        return dir.appendingPathComponent("ratchets").path
+        if let url = AppGroupPaths.ratchetStorageURL(identityHashHex: identityHashHex) {
+            return url.path
+        }
+        return tmpFallbackDirectory(named: "python-\(identityHashHex)")
+            .appendingPathComponent("ratchets").path
     }
 
-    /// Resolve (creating if needed) `<App-Group container>/Columba/<named>/`.
-    private static func appGroupColumbaSubdirectory(named name: String) -> URL {
-        let base: URL
-        if let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) {
-            base = container
-        } else {
-            // Fallback (shouldn't happen in production with the App-Group
-            // entitlement present). No path is logged — NO-PII.
-            ExtensionDiagLog.log("NEReticulumNode: App-Group container unavailable — falling back to tmp for the LXMF store")
-            base = FileManager.default.temporaryDirectory
-        }
-        let dir = base
+    /// Resolve (creating if needed) `<tmp>/Columba/<named>/`, used only when the
+    /// App-Group container is unavailable (shouldn't happen in production with the
+    /// App-Group entitlement present). No path is logged — NO-PII.
+    private static func tmpFallbackDirectory(named name: String) -> URL {
+        ExtensionDiagLog.log("NEReticulumNode: App-Group container unavailable — falling back to tmp for the LXMF store")
+        let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("Columba", isDirectory: true)
             .appendingPathComponent(name, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

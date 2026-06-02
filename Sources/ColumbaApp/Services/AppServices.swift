@@ -431,21 +431,124 @@ public final class AppServices {
 
     /// File path for the GRDB-backed canonical LXMF store (`lxmf-swift.db`).
     ///
-    /// This MUST match the path the Swift / Network-Extension backend writes to,
-    /// so the SwiftUI layer (via `MessageRepository(grdbPath:)`) reads the same
-    /// store. `SwiftRNSBackend` uses `<configDir>/lxmf-swift.db` where
-    /// `configDir` is `<appSupport>/Columba/python-<identityHashHex>` (see
-    /// `startPythonBackend`), and `identityHashHex` is `identity.hexHash`
-    /// (the raw identity hash — NOT the lxmf.delivery destination hash).
+    /// Under Model B this store lives in the SHARED App-Group container so the app
+    /// and the Network Extension converge on ONE store, computed via the shared
+    /// `AppGroupPaths` helper (the single source of truth both sides delegate to —
+    /// see `AppGroupPaths.swift`). The layout is
+    /// `<App-Group container>/Columba/python-<identityHashHex>/lxmf-swift.db`, and
+    /// `identityHashHex` is `identity.hexHash` (the raw identity hash — NOT the
+    /// lxmf.delivery destination hash).
+    ///
+    /// Falls back to the legacy process-local Application Support path
+    /// (`<appSupport>/Columba/python-<hash>/lxmf-swift.db`) ONLY when the App-Group
+    /// container is unavailable (unsigned / simulator builds with no App-Group
+    /// entitlement); on such builds the NE isn't running anyway, so there is no
+    /// store to converge with. One-time migration of an existing process-local
+    /// store into the App-Group container is handled by
+    /// `migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex:)`, which callers run
+    /// before opening the store.
     ///
     /// - Parameter identityHashHex: Hex of the raw identity hash (`identity.hexHash`).
     /// - Returns: Full path to `lxmf-swift.db` for that identity.
     static func grdbDatabaseFilePath(for identityHashHex: String) -> String {
+        if let url = AppGroupPaths.lxmfDatabaseURL(identityHashHex: identityHashHex) {
+            return url.path
+        }
+        return legacyProcessLocalGRDBDatabaseFilePath(for: identityHashHex)
+    }
+
+    /// Legacy process-local path for `lxmf-swift.db`
+    /// (`<Application Support>/Columba/python-<identityHashHex>/lxmf-swift.db`).
+    /// This is the location the store lived at BEFORE the A2 move to the App-Group
+    /// container; retained as (a) the fallback when the App-Group container is
+    /// unavailable and (b) the migration source in
+    /// `migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex:)`.
+    private static func legacyProcessLocalGRDBDatabaseFilePath(for identityHashHex: String) -> String {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
         try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
         return pyDir.appendingPathComponent("lxmf-swift.db").path
     }
+
+    /// One-time migration of the canonical LXMF GRDB store from the legacy
+    /// process-local Application Support path to the SHARED App-Group container, so
+    /// an existing install's message history carries over when the store relocates
+    /// for Model B (A2). Idempotent and guarded by a `SharedDefaults` flag.
+    ///
+    /// Behavior: if the flag is unset AND the OLD process-local `lxmf-swift.db`
+    /// exists AND the NEW App-Group `lxmf-swift.db` does NOT exist, copy all three
+    /// SQLite WAL-mode files (`lxmf-swift.db`, `-wal`, `-shm`) into the App-Group
+    /// container, then set the flag. The old files are LEFT in place as a fallback
+    /// (we only flip the flag). Must be called BEFORE the store is opened
+    /// (`MessageRepository(grdbPath:)`), so the copied files are in place when GRDB
+    /// first attaches. No-op (just flips the flag, if not already set) when there's
+    /// nothing to migrate or when the App-Group container is unavailable.
+    ///
+    /// - Parameter identityHashHex: Hex of the raw identity hash (`identity.hexHash`).
+    static func migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: String) {
+        // Idempotent: once migrated (or determined a no-op), never run again.
+        guard !SharedDefaults.suite.bool(forKey: lxmfDatabaseMigratedToAppGroupKey) else {
+            return
+        }
+
+        // New (App-Group) destination. nil ⇒ container unavailable (unsigned /
+        // simulator): nothing to migrate to; leave the flag unset so a later
+        // signed run can still migrate.
+        guard let newURL = AppGroupPaths.lxmfDatabaseURL(identityHashHex: identityHashHex) else {
+            return
+        }
+
+        let fm = FileManager.default
+        let oldPath = legacyProcessLocalGRDBDatabaseFilePath(for: identityHashHex)
+        let oldURL = URL(fileURLWithPath: oldPath)
+
+        // If the old store doesn't exist, there's nothing to copy (fresh install,
+        // or already running on the App-Group store). Mark migrated so we don't
+        // re-check on every launch.
+        guard fm.fileExists(atPath: oldURL.path) else {
+            SharedDefaults.suite.set(true, forKey: lxmfDatabaseMigratedToAppGroupKey)
+            return
+        }
+
+        // If the new store already exists, do NOT clobber it — the App-Group store
+        // is authoritative. Just flip the flag.
+        guard !fm.fileExists(atPath: newURL.path) else {
+            SharedDefaults.suite.set(true, forKey: lxmfDatabaseMigratedToAppGroupKey)
+            return
+        }
+
+        // Copy the main DB plus the WAL sidecar files. Copying -wal/-shm matters
+        // for a WAL-mode SQLite DB: recent committed pages may live only in the
+        // WAL until a checkpoint folds them into the main file, so omitting them
+        // could silently drop the newest messages.
+        for suffix in ["", "-wal", "-shm"] {
+            let src = URL(fileURLWithPath: oldURL.path + suffix)
+            let dst = URL(fileURLWithPath: newURL.path + suffix)
+            guard fm.fileExists(atPath: src.path) else { continue }
+            do {
+                // Destination dir already created by AppGroupPaths.lxmfDatabaseURL.
+                if fm.fileExists(atPath: dst.path) {
+                    try fm.removeItem(at: dst)
+                }
+                try fm.copyItem(at: src, to: dst)
+            } catch {
+                // Best-effort: log and continue. We deliberately do NOT set the
+                // flag on a copy failure so a subsequent launch can retry. The old
+                // files are untouched, so the worst case is the app opens an empty
+                // App-Group store this run and retries the copy next launch.
+                sLogger.warning("[A2-MIGRATE] copy of lxmf-swift.db\(suffix, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+        }
+
+        SharedDefaults.suite.set(true, forKey: lxmfDatabaseMigratedToAppGroupKey)
+        sLogger.info("[A2-MIGRATE] migrated lxmf-swift.db to the App-Group container")
+    }
+
+    /// `SharedDefaults` flag key recording that the one-time A2 migration of
+    /// `lxmf-swift.db` into the App-Group container has run (see
+    /// `migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex:)`).
+    private static let lxmfDatabaseMigratedToAppGroupKey = "lxmf_db_migrated_to_appgroup"
 
     /// File path for ratchet key storage for a specific identity.
     ///
@@ -638,6 +741,10 @@ public final class AppServices {
         // 4b. Open the GRDB canonical store the Swift/NE backend writes, so the
         //     UI reads the same messages. Keyed by the raw identity hash (the
         //     same `identity.hexHash` startPythonBackend derives configDir from).
+        //     The store now lives in the shared App-Group container so the app and
+        //     the NE converge on ONE store (Model B / A2); migrate any pre-existing
+        //     process-local store over BEFORE opening it.
+        Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: newIdentity.hexHash)
         let grdbPath = Self.grdbDatabaseFilePath(for: newIdentity.hexHash)
         self.grdbDatabasePath = grdbPath
         self.messageRepository = try MessageRepository(grdbPath: grdbPath)
@@ -2100,7 +2207,10 @@ public final class AppServices {
 
         // 4b. Open the GRDB canonical store the Swift/NE backend writes (keyed
         //     by the same identity hash startPythonBackend uses for configDir),
-        //     so the UI reads the same messages.
+        //     so the UI reads the same messages. Store lives in the shared
+        //     App-Group container (Model B / A2); migrate any pre-existing
+        //     process-local store over BEFORE opening it.
+        Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: identityHash)
         let grdbPath = Self.grdbDatabaseFilePath(for: identityHash)
         self.grdbDatabasePath = grdbPath
         self.messageRepository = try MessageRepository(grdbPath: grdbPath)
@@ -2862,8 +2972,11 @@ public final class AppServices {
             self.database = newDatabase
         }
 
-        // 4b. GRDB canonical store (matches the Swift/NE backend path).
+        // 4b. GRDB canonical store (matches the Swift/NE backend path). Store lives
+        //     in the shared App-Group container (Model B / A2); migrate any
+        //     pre-existing process-local store over BEFORE opening it.
         if messageRepository == nil {
+            Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: existingIdentity.hexHash)
             let grdbPath = Self.grdbDatabaseFilePath(for: existingIdentity.hexHash)
             self.grdbDatabasePath = grdbPath
             self.messageRepository = try MessageRepository(grdbPath: grdbPath)
