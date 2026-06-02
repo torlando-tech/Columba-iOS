@@ -90,6 +90,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let ESC: UInt8 = 0x7D
     private static let ESC_MASK: UInt8 = 0x20
 
+    /// Model B in-NE Reticulum + LXMF node (Track A5a). Constructed + started
+    /// ONLY when `NEReticulumNode.modelBNodeEnabled` is `true` — which it is NOT
+    /// yet. While the flag is `false` this stays `nil` and the live PoC dumb-pipe
+    /// (the NWConnection forwarding above) is the sole delivery path. Track C3
+    /// flips the flag and makes the node the live path (replacing the dumb-pipe).
+    private var reticulumNode: NEReticulumNode?
+
     // MARK: - Tunnel Lifecycle
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
@@ -97,6 +104,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // Apply current interface configs.
         applyConfigs()
+
+        // ── Track A5a (Model B in-NE node) — GATED OFF ──────────────────────────
+        // The in-NE Reticulum + LXMF node is wired here but inert: it activates
+        // only when `NEReticulumNode.modelBNodeEnabled` is `true`, which it is NOT
+        // yet. Starting it now would run-conflict with the live PoC dumb-pipe set
+        // up by `applyConfigs()` (double-bound interfaces, duplicate delivery), so
+        // it stays gated until Track C3 flips the flag and makes the node the live
+        // delivery path in place of the dumb-pipe. `start()` is a clean no-op when
+        // the shared identity isn't available yet.
+        if NEReticulumNode.modelBNodeEnabled {
+            let node = NEReticulumNode()
+            self.reticulumNode = node
+            Task {
+                do {
+                    _ = try await node.start()
+                } catch {
+                    ExtensionDiagLog.log("startTunnel: NEReticulumNode.start failed: \(String(describing: error))")
+                }
+            }
+        }
 
         // Watch for path changes (WiFi<->cellular, etc.) so the TCP
         // relay is rebuilt proactively rather than after the dead
@@ -300,6 +327,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             CFNotificationName(Self.configChangedNotification as CFString),
             nil
         )
+
+        // Track A5a: tear down the in-NE node if it was started (gated; nil while
+        // `modelBNodeEnabled` is false). Fire-and-forget — teardown is best-effort
+        // and the completion handler must not block on it.
+        if let node = reticulumNode {
+            reticulumNode = nil
+            Task { await node.stop() }
+        }
 
         completionHandler()
     }
