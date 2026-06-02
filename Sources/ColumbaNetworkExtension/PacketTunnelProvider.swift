@@ -51,6 +51,40 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// HDLC receive buffer for TCP stream framing
     private var tcpReceiveBuffer = Data()
 
+    /// Consecutive TCP-relay reconnect attempts since the last time the
+    /// connection reached `.ready`. Drives the capped exponential
+    /// backoff in `scheduleTCPReconnectLocked()`: the Nth attempt waits
+    /// `min(base << N, cap)` seconds. Reset to 0 on `.ready` and on a
+    /// fresh TCP (re)apply. Mutated only on `configQueue`.
+    private var tcpReconnectAttempt = 0
+
+    /// True while a backoff reconnect is already queued on `configQueue`
+    /// but hasn't fired yet. Guards against a storm of `.waiting` /
+    /// `.failed` callbacks stacking overlapping reconnects (each of
+    /// which tears down + re-applies, which would itself re-enter
+    /// `.waiting`). Cleared when the queued reconnect fires, and via
+    /// `resetTCPReconnectBackoffLocked()` on `.ready` / fresh apply /
+    /// wake / path-change / stop. Mutated only on `configQueue`.
+    private var tcpReconnectScheduled = false
+
+    /// Base / cap for the TCP reconnect backoff (seconds). 1, 2, 4, 8,
+    /// 16, 32, then pinned at 60. The cap plus the separately-owned
+    /// on-demand relaunch keep us from hammering the relay.
+    private static let tcpReconnectBaseDelay: TimeInterval = 1
+    private static let tcpReconnectMaxDelay: TimeInterval = 60
+
+    /// Watches for path changes (e.g. WiFi<->cellular) so we can
+    /// proactively rebuild the TCP relay connection instead of waiting
+    /// for the dead socket to time out. Started in `startTunnel`,
+    /// cancelled in `stopTunnel`. Its handler funnels through
+    /// `configQueue`. nil before start / after stop.
+    private var pathMonitor: NWPathMonitor?
+
+    /// Last primary interface type seen by `pathMonitor`, used to
+    /// distinguish a real interface switch from incidental satisfied
+    /// path updates. Mutated only on `configQueue`.
+    private var lastPathInterfaceType: NWInterface.InterfaceType?
+
     /// HDLC constants
     private static let FLAG: UInt8 = 0x7E
     private static let ESC: UInt8 = 0x7D
@@ -63,6 +97,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // Apply current interface configs.
         applyConfigs()
+
+        // Watch for path changes (WiFi<->cellular, etc.) so the TCP
+        // relay is rebuilt proactively rather than after the dead
+        // socket times out.
+        startPathMonitor()
 
         // Subscribe to live config changes so the user adding /
         // removing / editing an interface in the app updates the
@@ -110,8 +149,27 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// properties.
     private func applyConfigs() {
         configQueue.async { [weak self] in
-            self?.applyConfigsLocked()
+            guard let self else { return }
+            // A "fresh" apply (startTunnel / user config change via the
+            // Darwin notification) is a new situation, so reset the
+            // reconnect backoff to the base. The self-driven backoff
+            // retry deliberately calls `applyConfigsLocked()` directly
+            // (not this wrapper) so it preserves the escalating delay.
+            self.resetTCPReconnectBackoffLocked()
+            self.applyConfigsLocked()
         }
+    }
+
+    /// Reset the TCP reconnect backoff to the base delay and clear any
+    /// pending-reconnect guard. Called on a fresh apply, on `.ready`,
+    /// and on the proactive path-change / wake re-applies. Always on
+    /// `configQueue`. Does not cancel an already-queued reconnect work
+    /// item — clearing the flag just lets the next failure schedule a
+    /// fresh (base-delay) one, and the stale item's `applyConfigsLocked`
+    /// is a harmless no-op when nothing changed.
+    private func resetTCPReconnectBackoffLocked() {
+        tcpReconnectAttempt = 0
+        tcpReconnectScheduled = false
     }
 
     /// Tear down the current TCP connection and clear the HDLC
@@ -123,6 +181,48 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         tcpConnection?.cancel()
         tcpConnection = nil
         tcpReceiveBuffer = Data()
+    }
+
+    /// Schedule a TCP-relay reconnect with capped exponential backoff.
+    /// The delay doubles each consecutive failure (1, 2, 4, 8, 16, 32,
+    /// 60s cap) and is reset to the base when the connection next
+    /// reaches `.ready` (see `startTCPConnection`) or a fresh config is
+    /// applied. Always called from `configQueue`; the reconnect itself
+    /// is dispatched back onto `configQueue` so the `tcpConnection`
+    /// pointer and `tcpReceiveBuffer` are still only touched serially —
+    /// no unsynchronized timer races `applyConfigsLocked` / `stopTunnel`.
+    ///
+    /// Idempotent within a backoff cycle: if a reconnect is already
+    /// queued (`tcpReconnectScheduled`) this is a no-op, so a burst of
+    /// `.waiting`/`.failed` callbacks can't stack overlapping reconnects.
+    private func scheduleTCPReconnectLocked() {
+        // Tear down the dead socket immediately (resets `tcpReceiveBuffer`
+        // so a half-frame can't corrupt the next connection's framing)
+        // and forget the cached endpoint so applyConfigsLocked rebuilds
+        // it rather than treating it as already-applied. Do this even if
+        // a reconnect is already queued — the socket is gone regardless.
+        teardownTCPConnectionLocked()
+        currentTCP = nil
+
+        guard !tcpReconnectScheduled else { return }
+        tcpReconnectScheduled = true
+
+        let exponent = min(tcpReconnectAttempt, 16) // cap the exponent; pow result is clamped to the 60s cap below anyway
+        let delay = min(
+            Self.tcpReconnectBaseDelay * pow(2.0, Double(exponent)),
+            Self.tcpReconnectMaxDelay
+        )
+        tcpReconnectAttempt += 1
+
+        ExtensionDiagLog.log("TCP relay reconnect scheduled in \(Int(delay))s (attempt \(tcpReconnectAttempt))")
+
+        configQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.tcpReconnectScheduled = false
+            // Re-reads the current config and brings the connection back
+            // up (no-op if the TCP interface was meanwhile removed).
+            self.applyConfigsLocked()
+        }
     }
 
     /// Body of `applyConfigs` — runs on `configQueue`. Mutates
@@ -180,11 +280,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // keeps the existing contract that the completion handler
         // fires only after teardown has finished.
         configQueue.sync {
+            stopPathMonitorLocked()
             teardownTCPConnectionLocked()
             autoListener?.cancel()
             autoListener = nil
             currentTCP = nil
             currentAutoGroupId = nil
+            // Drop any pending reconnect state so a queued backoff work
+            // item is a no-op (its applyConfigsLocked sees no config).
+            resetTCPReconnectBackoffLocked()
         }
 
         // Remove the config-changed observer registered in startTunnel.
@@ -198,6 +302,105 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         )
 
         completionHandler()
+    }
+
+    // MARK: - Path Monitoring
+
+    /// Start watching for network path changes. Created lazily and run
+    /// on `configQueue` so its `pathUpdateHandler` is serialized with
+    /// every connection / config mutation — no separate queue to funnel
+    /// back from. Idempotent: a second call cancels the prior monitor
+    /// first. Called from `startTunnel`.
+    private func startPathMonitor() {
+        configQueue.async { [weak self] in
+            guard let self else { return }
+            self.stopPathMonitorLocked()
+
+            let monitor = NWPathMonitor()
+            self.pathMonitor = monitor
+            monitor.pathUpdateHandler = { [weak self] path in
+                // Already on `configQueue` (see `monitor.start(queue:)`).
+                self?.handlePathUpdateLocked(path)
+            }
+            monitor.start(queue: self.configQueue)
+            ExtensionDiagLog.log("Path monitor started")
+        }
+    }
+
+    /// Cancel + clear the path monitor. Always called on `configQueue`.
+    private func stopPathMonitorLocked() {
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        lastPathInterfaceType = nil
+    }
+
+    /// React to a path update. Runs on `configQueue`.
+    ///
+    /// On a *satisfied* path whose primary interface type changed (e.g.
+    /// WiFi -> cellular) while a TCP relay is configured, proactively
+    /// tear down + re-apply so the relay rebinds to the new interface
+    /// immediately rather than after the stale socket times out. The
+    /// interface-type comparison guards against re-applying on every
+    /// incidental satisfied update.
+    ///
+    /// NO-PII: logs only the coarse interface-type label
+    /// ("wifi"/"cellular"/"wiredEthernet"/"loopback"/"other"), never an
+    /// SSID, interface name, or address.
+    private func handlePathUpdateLocked(_ path: Network.NWPath) {
+        guard path.status == .satisfied else {
+            // Unsatisfied / requires-connection: nothing to rebind onto
+            // yet. Leave the interface label so the next satisfied path
+            // is compared against the last *working* interface.
+            return
+        }
+
+        let newType = Self.primaryInterfaceType(of: path)
+        let previousType = lastPathInterfaceType
+        lastPathInterfaceType = newType
+
+        // First satisfied path after start: record the baseline, don't
+        // churn the (just-applied) connection.
+        guard let previousType else { return }
+
+        guard newType != previousType else { return } // no real interface switch
+
+        ExtensionDiagLog.log(
+            "Path changed: \(Self.label(for: previousType)) -> \(Self.label(for: newType))"
+        )
+
+        // Only churn the relay if one is actually configured/active.
+        guard currentTCP != nil else { return }
+
+        ExtensionDiagLog.log("Rebuilding TCP relay for interface change")
+        // A fresh interface is a new situation — reset backoff so the
+        // rebind starts at the base delay.
+        resetTCPReconnectBackoffLocked()
+        teardownTCPConnectionLocked()
+        currentTCP = nil // force applyConfigsLocked to rebuild rather than diff-skip
+        applyConfigsLocked()
+    }
+
+    /// The path's primary (first available) interface type, or nil if
+    /// the path reports none.
+    private static func primaryInterfaceType(of path: Network.NWPath) -> NWInterface.InterfaceType? {
+        for type: NWInterface.InterfaceType in [.wifi, .cellular, .wiredEthernet, .loopback, .other]
+        where path.usesInterfaceType(type) {
+            return type
+        }
+        return path.availableInterfaces.first?.type
+    }
+
+    /// Coarse, PII-free label for an interface type.
+    private static func label(for type: NWInterface.InterfaceType?) -> String {
+        guard let type else { return "none" }
+        switch type {
+        case .wifi: return "wifi"
+        case .cellular: return "cellular"
+        case .wiredEthernet: return "wiredEthernet"
+        case .loopback: return "loopback"
+        case .other: return "other"
+        @unknown default: return "unknown"
+        }
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
@@ -262,6 +465,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             default:
                 break
             }
+            // Wake is a fresh situation — reset the reconnect backoff so a
+            // post-sleep reconnect doesn't inherit a long stale delay.
+            self.resetTCPReconnectBackoffLocked()
             self.applyConfigsLocked()
         }
     }
@@ -277,32 +483,44 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let connection = NWConnection(host: nwHost, port: nwPort, using: params)
         self.tcpConnection = connection
 
-        connection.stateUpdateHandler = { [weak self] state in
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            // Runs on `configQueue` (see `connection.start(queue:)`
+            // below), so it's serialized with every `tcpConnection` /
+            // backoff mutation and can call the `*Locked` helpers
+            // directly — no extra dispatch.
+            //
             // NO-PII: do NOT interpolate the raw NWConnection.State — its
             // description can embed the endpoint host:port. Log only the
-            // case label (and sanitized error descriptions below).
+            // case label (and sanitized NWError descriptions below).
+            guard let self else { return }
+
+            // Ignore callbacks from a stale connection: teardown /
+            // reconnect may have already replaced `tcpConnection`, and a
+            // late `.failed`/`.waiting` from the previous socket must not
+            // tear down the live one.
+            guard let connection, connection === self.tcpConnection else { return }
+
             switch state {
             case .ready:
                 ExtensionDiagLog.log("TCP relay state: ready")
-                self?.receiveTCPData()
+                // Connection succeeded — reset the reconnect backoff so the
+                // next drop starts at the base delay again.
+                self.resetTCPReconnectBackoffLocked()
+                self.receiveTCPData()
             case .failed(let error):
-                ExtensionDiagLog.log("TCP relay failed: \(error), reconnecting in 5s")
-                // Reconnect must go through configQueue — otherwise the
-                // .failed handler's main-queue write to `tcpConnection`
-                // would race `applyConfigsLocked` writing the same
-                // property. Routing through `applyConfigs` re-reads the
-                // current config, clears the stale connection, and
-                // starts a fresh one all on the serial queue.
-                guard let self else { return }
-                self.configQueue.async {
-                    self.teardownTCPConnectionLocked()
-                    self.currentTCP = nil
-                }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [weak self] in
-                    self?.applyConfigs()
-                }
+                ExtensionDiagLog.log("TCP relay failed: \(error)")
+                // Capped exponential backoff (1,2,4,…,60s). Tears down the
+                // dead socket + resets `tcpReceiveBuffer`, then schedules
+                // the re-apply on `configQueue`.
+                self.scheduleTCPReconnectLocked()
             case .waiting(let error):
+                // `.waiting` means the path is currently unsatisfiable
+                // (e.g. no route). Treat it like a failure for backoff
+                // purposes; the guard in `scheduleTCPReconnectLocked`
+                // collapses a storm of `.waiting` callbacks into a single
+                // pending reconnect.
                 ExtensionDiagLog.log("TCP relay waiting: \(error)")
+                self.scheduleTCPReconnectLocked()
             default:
                 break
             }
