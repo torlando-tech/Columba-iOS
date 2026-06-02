@@ -3,10 +3,30 @@
 //  Columba Shared
 //
 //  Lock-free append-only queue backed by a shared file in the App Group container.
-//  The Network Extension appends frames; the main app reads and clears them.
+//  One process appends frames; the other reads and clears them.
 //
 //  Frame format: [4-byte length (big-endian)][1-byte interface tag][N-byte frame data]
-//  Interface tags: 0x01 = TCP, 0x02 = Auto
+//  Interface tags: 0x01 = TCP, 0x02 = Auto, 0x10 = BLE mesh radio, 0x11 = RNode radio
+//
+//  Two named directional queues live in the App Group container (Model B IPC bridge):
+//
+//    • `e2a` (NE→app): frames the Network Extension produces. Historically this
+//      carried inbound TCP/Auto frames for the app to inject into its transport
+//      (#57); under Model B it also carries NE-originated frames that the app
+//      must transmit on a radio (tagged with the target radio selector). Backed
+//      by the original `frame_queue` file name for back-compat — `init` defaults
+//      to that name so existing call sites (`PacketTunnelProvider`,
+//      `ExtensionFrameReader`) keep working unchanged.
+//
+//    • `a2e` (app→NE): radio-received frames the app forwards into the NE's RNS
+//      instance so the NE is the single RNS node reachable over both TCP and
+//      radio. Backed by the `frame_queue_a2e` file name.
+//
+//  This file imports ONLY Foundation and is compiled into BOTH the ColumbaApp
+//  and ColumbaNetworkExtension targets. It must stay free of ReticulumSwift /
+//  RNSAPI so it can compile in the NE target (which does not link those). The
+//  `NetworkInterface`-conforming bridge lives in a separate file
+//  (`AppGroupBridgeInterface.swift`) that imports ReticulumSwift.
 //
 
 import Foundation
@@ -26,10 +46,17 @@ public enum SharedDefaultsConstants {
     /// restart.
     public static let configChangedNotificationName = "network.columba.configChanged"
 
-    /// Darwin notification posted by the extension when inbound
-    /// frames have been written to `SharedFrameQueue`. The app's
+    /// Darwin notification posted by the extension when frames have
+    /// been written to the NE→app (`e2a`) `SharedFrameQueue`. The app's
     /// `ExtensionFrameReader` observes this to drain the queue.
     public static let packetReadyNotificationName = "network.columba.packetReady"
+
+    /// Darwin notification posted by the app when radio-received frames
+    /// have been written to the app→NE (`a2e`) `SharedFrameQueue`. The
+    /// extension observes this to drain the queue and inject the frames
+    /// into its RNS transport via `AppGroupBridgeInterface`. (Wiring of
+    /// the observer on the NE side is Track A5.)
+    public static let radioFrameReadyNotificationName = "network.columba.radioFrameReady"
 
     /// Shared UserDefaults key holding the JSON-encoded interface
     /// configuration array (full `InterfaceEntity` objects). Both the
@@ -38,10 +65,31 @@ public enum SharedDefaultsConstants {
     public static let interfacesKey = "com.columba.interfaces"
 }
 
-/// Interface tag identifying which network interface a frame arrived on.
+/// Interface tag identifying which network interface a frame is associated with.
+///
+/// For `e2a` (NE→app) inbound frames this is the interface the frame arrived on
+/// inside the NE (`tcp` / `auto`). For `e2a` NE-originated radio transmissions and
+/// for `a2e` (app→NE) radio receptions, this selects which radio the frame came
+/// from / should be transmitted on (`bleMesh` / `rnode`).
 public enum FrameInterfaceTag: UInt8 {
     case tcp = 0x01
     case auto = 0x02
+    /// BLE-mesh radio (Columba's GATT mesh transport).
+    case bleMesh = 0x10
+    /// RNode radio (LoRa over BLE/serial RNode hardware).
+    case rnode = 0x11
+}
+
+/// File names for the two directional App-Group frame queues.
+///
+/// `default_` (= `frame_queue`) preserves the original single-queue file name so
+/// existing NE→app call sites keep working without migration (#57). `a2e` is the
+/// new app→NE radio-ingest queue introduced for the Model B IPC bridge.
+public enum SharedFrameQueueName {
+    /// NE→app direction. Original file name — keep for back-compat.
+    public static let e2a = "frame_queue"
+    /// app→NE direction (radio-received frames forwarded into the NE's RNS).
+    public static let a2e = "frame_queue_a2e"
 }
 
 /// A frame read from the shared queue, tagged with its source interface.
@@ -76,16 +124,23 @@ public final class SharedFrameQueue: @unchecked Sendable {
 
     /// Create a shared frame queue in the given App Group container.
     ///
-    /// - Parameter appGroupIdentifier: The App Group identifier (e.g., "group.network.columba.Columba")
-    public init(appGroupIdentifier: String) {
+    /// - Parameters:
+    ///   - appGroupIdentifier: The App Group identifier (e.g., "group.network.columba.Columba")
+    ///   - name: Queue file name within the container. Defaults to
+    ///     `SharedFrameQueueName.e2a` (`"frame_queue"`) for back-compat with
+    ///     the original single NE→app queue (#57). Pass
+    ///     `SharedFrameQueueName.a2e` for the app→NE radio-ingest queue. Each
+    ///     name gets its own backing file and its own `.lock` file, so the two
+    ///     directions never contend on the same POSIX lock.
+    public init(appGroupIdentifier: String, name: String = SharedFrameQueueName.e2a) {
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
         ) else {
             // Fallback to tmp if app group not available (shouldn't happen in production)
-            self.fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("frame_queue")
+            self.fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(name)
             return
         }
-        self.fileURL = containerURL.appendingPathComponent("frame_queue")
+        self.fileURL = containerURL.appendingPathComponent(name)
     }
 
     deinit {
