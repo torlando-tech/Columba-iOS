@@ -1811,6 +1811,18 @@ public final class AppServices {
             await hotAddInterface(entity, backend: backend)
         }
 
+        #if ENABLE_NETWORK_EXTENSION
+        // 4. Newly hot-added interfaces are created in normal (local-socket) mode.
+        // The tunnel-mode coordinator (`applyTunnelModeToInterfaces`) only fires on
+        // VPN *status* changes, not interface changes — so if background transport
+        // is already up, an interface added afterward (e.g. switching Auto -> a TCP
+        // relay after enabling background transport) would never enter tunnel mode,
+        // and with the packet tunnel active its own socket is black-holed
+        // (connected, rx=0 tx=0). Re-assert tunnel mode so anything added while the
+        // tunnel is up is bridged through the extension.
+        await reapplyTunnelModeIfActive()
+        #endif
+
         // 5. Keep the status-poll's matching set in sync with what's live.
         pythonInterfaceEntities = freshById
     }
@@ -2409,6 +2421,7 @@ public final class AppServices {
     @MainActor
     private func applyTunnelModeToInterfaces(active: Bool) async {
         guard let tunnel = tunnelManager else { return }
+        tunnelModeActive = active
 
         if active {
             for (_, iface) in tcpInterfaces {
@@ -2431,6 +2444,22 @@ public final class AppServices {
             }
             DiagLog.log("[TUNNEL] disabled tunnel mode; interfaces resuming local connections")
         }
+    }
+
+    /// Whether tunnel mode is currently active (background-transport tunnel
+    /// connected + interfaces bridged through the extension). Tracked so
+    /// `applyInterfaceChanges` can bring interfaces hot-added *after* the tunnel
+    /// came up into tunnel mode — `onStatusChange` only fires on VPN state changes,
+    /// not on interface changes.
+    @MainActor private var tunnelModeActive = false
+
+    /// Re-assert tunnel mode on the current interface set if the tunnel is up.
+    /// Called after a hot-reload so a freshly added interface doesn't get stranded
+    /// in local-socket mode (black-holed by the active packet tunnel).
+    @MainActor
+    private func reapplyTunnelModeIfActive() async {
+        guard tunnelModeActive else { return }
+        await applyTunnelModeToInterfaces(active: true)
     }
     #endif
 
