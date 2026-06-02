@@ -384,6 +384,225 @@ actor NEReticulumNode {
     fileprivate static func hashPrefix(_ hex: String) -> String {
         String(hex.prefix(8))
     }
+
+    // MARK: - A5b IPC dispatch (Model B app→NE send path)
+    //
+    // Thin node-ops invoked by `PacketTunnelProvider.handleAppMessage` when it
+    // decodes a `ProxyRequest` envelope (see `ProxyIPC`, Shared/Foundation-only).
+    // The app's `ProxyRnsBackend` marshals the matching `RnsBackend` methods to
+    // these. Each returns a Foundation-only result the dispatcher encodes into a
+    // `ProxyResponse`; node-not-running is handled by the dispatcher (it only
+    // calls these on a non-nil, started node). These mirror the corresponding
+    // `SwiftRNSBackend` methods, but here on the NE's own stack — keeping the
+    // NE's RNSAPI-free collision posture (no RNSAPI types cross this boundary).
+    //
+    // SCOPE: A5b is inert — the node is constructed/started only when
+    // `modelBNodeEnabled` is true (it is NOT), so in the shipping build these are
+    // never reached. They exist so the IPC path compiles + links end-to-end.
+
+    /// Lowercase-hex of the learned `lxmf.delivery` destination + identity, for
+    /// the `.start` response. `nil` before `start()`.
+    func localInfoForIPC() -> ProxyLocalInfo? {
+        guard let identity, let dest = deliveryDestination else { return nil }
+        return ProxyLocalInfo(identityHash: identity.hexHash, destinationHash: dest.hexHash)
+    }
+
+    /// Emit an `lxmf.delivery` announce (mirrors `SwiftRNSBackend.announce`).
+    /// Canonical LXMF (>= 0.5.0) app_data: msgpack([display_name_bytes, stamp_cost]).
+    @discardableResult
+    func announceForIPC(displayName: String) async -> Bool {
+        // msgpack([display_name_utf8_bytes, null]) — stamp_cost nil, matching the
+        // app-side `SwiftRNSBackend.announce`.
+        let appData = packMsgPack(.array([.binary(Data(displayName.utf8)), .null]))
+        return await emitAnnounceForIPC(on: deliveryDestination, appData: appData, withRatchet: true)
+    }
+
+    /// Telephony announce is out of A5b scope: the A5a node owns only the
+    /// `lxmf.delivery` destination (no `lxst.telephony` destination), so there's
+    /// nothing to announce here. Returns false so the proxy degrades cleanly.
+    /// (Model B: telephony stays app-local / not owned by the NE node yet.)
+    @discardableResult
+    func announceTelephonyForIPC(displayName: String) async -> Bool {
+        ExtensionDiagLog.log("NEReticulumNode: announceTelephony not owned by NE node (A5b) — no-op")
+        return false
+    }
+
+    private func emitAnnounceForIPC(on destination: Destination?, appData: Data, withRatchet: Bool) async -> Bool {
+        guard let transport, let destination else { return false }
+        destination.appData = appData
+        var ratchetPub: Data? = nil
+        if withRatchet, let mgr = destination.ratchetManager {
+            await mgr.rotateIfNeeded()
+            ratchetPub = await mgr.currentRatchetPublicBytes()
+        }
+        do {
+            let announce = Announce(destination: destination, ratchet: ratchetPub)
+            let packet = try announce.buildPacket()
+            try await transport.send(packet: packet)
+            return true
+        } catch {
+            ExtensionDiagLog.log("NEReticulumNode: announce send failed: \(String(describing: error))")
+            return false
+        }
+    }
+
+    /// Flush the router's pending state to its GRDB store
+    /// (mirrors `SwiftRNSBackend.persist`).
+    @discardableResult
+    func persistForIPC() async -> Bool {
+        await router?.persistPendingState()
+        return true
+    }
+
+    /// Lowercase-hex destination hashes this node has registered — just the
+    /// `lxmf.delivery` destination in A5a (no telephony destination on the NE
+    /// node yet). Mirrors `SwiftRNSBackend.registeredDestinationHashes`.
+    func registeredDestinationHashesForIPC() -> [String] {
+        [deliveryDestination].compactMap { $0?.hexHash }
+    }
+
+    /// Transport diagnostic snapshot as a Foundation-only JSON object whose keys
+    /// match `RNSAPI.StatusSnapshot`'s `snake_case` `CodingKeys`, so the app
+    /// decodes the `.ok` payload straight into `StatusSnapshot`. We build the
+    /// JSON inline (rather than encoding an RNSAPI type) to honor the collision
+    /// rule (the NE never imports RNSAPI).
+    func statusSnapshotJSONForIPC() async -> Data? {
+        guard let transport else { return nil }
+        let snaps = await transport.getInterfaceSnapshots()
+        let interfaces: [[String: Any]] = snaps.map { s in
+            [
+                "section_name": s.id,
+                "name": s.name,
+                "online": s.state == .connected,
+                "rx_bytes": 0,
+                "tx_bytes": 0,
+            ]
+        }
+        let destCount = await transport.destinationCount
+        let pathCount = await transport.getPathTable().count
+        let object: [String: Any] = [
+            "started": identity != nil,
+            "interfaces": interfaces,
+            "destination_table_size": destCount,
+            "path_table_size": pathCount,
+        ]
+        return try? JSONSerialization.data(withJSONObject: object)
+    }
+
+    /// Send an LXMF message on the NE node (mirrors
+    /// `SwiftRNSBackend.sendLxmfMessage`, but the field map arrives pre-packed as
+    /// MessagePack `fieldsData` from the app — the NE unpacks it to `[UInt8: Any]`
+    /// for `LXMessage.fields` rather than rebuilding it from typed params, since
+    /// it can't import RNSAPI's `LxmfFieldCodec`). `method` is the
+    /// `RNSAPI.LXDeliveryMethod` raw value string. Returns a Foundation-only
+    /// `ProxySendOutcome`.
+    func sendLxmfForIPC(destHashHex: String, content: String, method: String, fieldsData: Data) async -> ProxySendOutcome {
+        guard let router, let id = identity else { return ProxySendOutcome(kind: .notStarted) }
+        guard let destHash = Self.hexToData(destHashHex), !destHash.isEmpty else {
+            return ProxySendOutcome(kind: .badHash)
+        }
+        let fields = Self.unpackFieldMap(fieldsData)
+        var msg = LXMessage(
+            destinationHash: destHash,
+            sourceIdentity: id,
+            content: Data(content.utf8),
+            title: Data(),
+            fields: fields.isEmpty ? nil : fields,
+            desiredMethod: Self.deliveryMethod(method)
+        )
+        do {
+            try await router.handleOutbound(&msg)
+            return ProxySendOutcome(kind: .queued, detail: msg.hash.hexHash)
+        } catch {
+            return ProxySendOutcome(kind: .other, detail: String(describing: error))
+        }
+    }
+
+    // MARK: - A5b dispatch helpers
+
+    /// Map the `RNSAPI.LXDeliveryMethod` raw value string to LXMF-swift's enum.
+    /// Defaults to opportunistic for unknown/paper (matching `SwiftRNSBackend`'s
+    /// `lxmfMethod`, which only distinguishes direct / propagated / else).
+    private static func deliveryMethod(_ raw: String) -> LXDeliveryMethod {
+        switch raw {
+        case "direct":     return .direct
+        case "propagated": return .propagated
+        default:           return .opportunistic
+        }
+    }
+
+    /// Unpack the app's MessagePack field bytes (produced by RNSAPI's
+    /// `LxmfFieldCodec.pack`, standard MessagePack) into `[UInt8: Any]` for
+    /// `LXMessage.fields`. Mirrors `LxmfFieldCodec.unpack`'s shape but uses
+    /// reticulum-swift's `unpackMsgPack` (the NE can't import RNSAPI). Empty /
+    /// malformed / non-map input yields an empty map.
+    private static func unpackFieldMap(_ data: Data) -> [UInt8: Any] {
+        guard !data.isEmpty, let value = try? unpackMsgPack(data), case .map(let m) = value else {
+            return [:]
+        }
+        var out: [UInt8: Any] = [:]
+        for (k, v) in m {
+            guard let key = uint8Key(k) else { continue }
+            out[key] = anyValue(from: v)
+        }
+        return out
+    }
+
+    /// Coerce a MessagePack map key to a `UInt8` LXMF field id.
+    private static func uint8Key(_ v: MessagePackValue) -> UInt8? {
+        switch v {
+        case .uint(let u) where u <= UInt64(UInt8.max): return UInt8(u)
+        case .int(let i) where i >= 0 && i <= Int64(UInt8.max): return UInt8(i)
+        default: return nil
+        }
+    }
+
+    /// Convert a `MessagePackValue` to the `Any` representation LXMF-swift's
+    /// `LXMessage.fields` expects: `binary → Data`, `string → String`,
+    /// `array → [Any]`, nested `map → [UInt8: Any]` (LXMF field sub-maps are
+    /// id-keyed, e.g. FIELD_REACTION), scalars → their Swift value.
+    private static func anyValue(from v: MessagePackValue) -> Any {
+        switch v {
+        case .null:            return NSNull()
+        case .bool(let b):     return b
+        case .int(let i):      return i
+        case .uint(let u):     return u
+        case .float(let f):    return f
+        case .double(let d):   return d
+        case .string(let s):   return s
+        case .binary(let d):   return d
+        case .array(let a):    return a.map { anyValue(from: $0) }
+        case .map(let m):
+            // Prefer a UInt8-keyed sub-map (LXMF sub-fields); fall back to a
+            // string-keyed dictionary if the keys aren't field ids.
+            var idKeyed: [UInt8: Any] = [:]
+            var ok = true
+            for (k, val) in m {
+                if let key = uint8Key(k) { idKeyed[key] = anyValue(from: val) }
+                else { ok = false; break }
+            }
+            if ok { return idKeyed }
+            var strKeyed: [String: Any] = [:]
+            for (k, val) in m {
+                if case .string(let s) = k { strKeyed[s] = anyValue(from: val) }
+            }
+            return strKeyed
+        }
+    }
+
+    /// Decode a hex string to `Data` (mirrors `SwiftRNSBackend.hexData`; the NE
+    /// has no RNSAPI hex helper and reticulum-swift's would be ambiguous).
+    private static func hexToData(_ hex: String) -> Data? {
+        guard hex.count % 2 == 0 else { return nil }
+        var out = Data(capacity: hex.count / 2)
+        var i = hex.startIndex
+        while i < hex.endIndex {
+            let j = hex.index(i, offsetBy: 2)
+            guard let b = UInt8(hex[i..<j], radix: 16) else { return nil }
+            out.append(b); i = j
+        }
+        return out
+    }
 }
 
 // MARK: - NEDeliveryDelegate

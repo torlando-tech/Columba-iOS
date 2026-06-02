@@ -173,6 +173,35 @@ public final class TunnelManager: @unchecked Sendable {
         }
     }
 
+    /// Track A5b — Model B IPC transport for `ProxyRnsBackend`.
+    ///
+    /// Send a `ProxyRequest` envelope (already magic+version-framed by
+    /// `ProxyIPC.encodeRequest`) to the extension and await its `ProxyResponse`
+    /// bytes, bridging `NETunnelProviderSession.sendProviderMessage`'s
+    /// completion-handler API into `async`. Returns the raw response `Data` the NE
+    /// hands back (an encoded `ProxyResponse`), or `nil` when there's no live
+    /// session or the send throws — the proxy maps `nil` onto an IPC-failure.
+    ///
+    /// `BackendFactory.make(proxySend:)` injects this as the proxy's `send`
+    /// closure when Model B is on (currently never — `BackendPreference.modelB`
+    /// defaults `false`), so this primitive is present + testable but inert until
+    /// A5c wires it live.
+    public func proxySend(_ data: Data) async -> Data? {
+        guard let session = manager?.connection as? NETunnelProviderSession else {
+            return nil
+        }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Data?, Never>) in
+            do {
+                try session.sendProviderMessage(data) { response in
+                    continuation.resume(returning: response)
+                }
+            } catch {
+                self.logger.error("proxySend failed: \(error)")
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
     /// Whether the extension is currently running.
     public var isRunning: Bool {
         status == .connected

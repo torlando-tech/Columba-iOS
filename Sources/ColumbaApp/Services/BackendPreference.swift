@@ -25,6 +25,29 @@ import Foundation
 /// is visible to the Network Extension, mirroring `transport_enabled`.
 enum BackendPreference {
     private static let key = "useSwiftBackend"
+    private static let modelBKey = "modelBBackgroundNE"
+
+    /// Track A5b/Model B master flag. When `true`, `BackendFactory.make()` returns
+    /// the thin-client `ProxyRnsBackend` (which owns no destination and marshals
+    /// node-owning ops to the in-NE `NEReticulumNode` over IPC) instead of a
+    /// destination-owning backend. **Default `false`** — current behavior is
+    /// unchanged until Model B is wired live (A5c) and this is intentionally
+    /// flipped. Stored in the App Group suite so it survives relaunch and is
+    /// visible to the NE, like `useSwiftBackend`.
+    ///
+    /// INVARIANT: this is mutually exclusive with running a local
+    /// `Swift`/`Python` backend — when it's on, the NE is the SINGLE owner of the
+    /// `lxmf.delivery` destination (see `BackendFactory.make()` and
+    /// `ProxyRnsBackend`'s always-the-node note).
+    static var modelB: Bool {
+        get {
+            guard let stored = SharedDefaults.suite.object(forKey: modelBKey) as? Bool else {
+                return false
+            }
+            return stored
+        }
+        set { SharedDefaults.suite.set(newValue, forKey: modelBKey) }
+    }
 
     /// Default when the user has never chosen explicitly. The `Columba-Swift`
     /// scheme (`COLUMBA_BACKEND_SWIFT`) starts on the Swift backend; the stock

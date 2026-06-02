@@ -439,6 +439,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
+        // ── Track A5b (Model B app→NE send path) ────────────────────────────────
+        // A `ProxyRequest` envelope is marked by a leading magic byte
+        // (`ProxyIPC.magic` = 0xF5) that the PoC interface-tag space (tcp = 0x01,
+        // auto = 0x02) never uses, so we can branch on it unambiguously. If the
+        // incoming data is a ProxyRequest, dispatch it to the in-NE node and reply
+        // with an encoded `ProxyResponse`; otherwise fall through to the existing
+        // PoC frame-forwarding below (untouched). Inert in the shipping build:
+        // `reticulumNode` is nil unless `NEReticulumNode.modelBNodeEnabled` is true
+        // (it is NOT yet), so every ProxyRequest currently answers `.unsupported`.
+        if ProxyIPC.isProxyRequest(messageData) {
+            handleProxyRequest(messageData, completionHandler: completionHandler)
+            return
+        }
+
         // Format: [1-byte interface tag][N-byte HDLC-framed data]
         guard messageData.count >= 2 else {
             completionHandler?(nil)
@@ -471,6 +485,100 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 ExtensionDiagLog.log("Unknown interface tag: \(interfaceTag)")
             }
             completionHandler?(nil)
+        }
+    }
+
+    // MARK: - Track A5b — Model B app→NE IPC dispatch
+
+    /// Decode a `ProxyRequest` envelope and dispatch it to the in-NE
+    /// `NEReticulumNode`, replying through `completionHandler` with an encoded
+    /// `ProxyResponse`. Only called from `handleAppMessage` once the magic prefix
+    /// has matched. If the node isn't running (the common case today — the node is
+    /// gated off behind `modelBNodeEnabled`), every op replies `.unsupported` so
+    /// the app degrades gracefully.
+    ///
+    /// `ProxyRequest` / `ProxyResponse` / `ProxyLocalInfo` / `ProxySendOutcome`
+    /// live in the Foundation-only `ProxyIPC` (Shared target, linked into the NE),
+    /// so this honors the NE's RNSAPI-free collision rule.
+    private func handleProxyRequest(_ data: Data, completionHandler: ((Data?) -> Void)?) {
+        // A malformed envelope (magic matched but JSON body undecodable) is a
+        // protocol error, not a PoC frame — reply `.error` rather than falling
+        // through (the magic byte already proved intent).
+        let request: ProxyRequest?
+        do {
+            request = try ProxyIPC.decodeRequest(data)
+        } catch {
+            completionHandler?(ProxyIPC.encodeResponse(.error("malformed ProxyRequest")))
+            return
+        }
+        guard let request else {
+            completionHandler?(ProxyIPC.encodeResponse(.error("unrecognized ProxyRequest envelope")))
+            return
+        }
+
+        // Snapshot the node reference. Nil ⇒ the Model B node isn't running
+        // (gated off, or not yet started): reply `.unsupported` for every op.
+        guard let node = reticulumNode else {
+            completionHandler?(ProxyIPC.encodeResponse(.unsupported))
+            return
+        }
+
+        Task {
+            let response = await Self.dispatch(request, to: node)
+            completionHandler?(ProxyIPC.encodeResponse(response))
+        }
+    }
+
+    /// Route a decoded `ProxyRequest` to the node and build its `ProxyResponse`.
+    /// `nonisolated`/`static` so it can be awaited from the detached `Task` above
+    /// without capturing `self`.
+    private static func dispatch(_ request: ProxyRequest, to node: NEReticulumNode) async -> ProxyResponse {
+        switch request {
+        case .start:
+            // The node loads its own shared identity + store path; the display
+            // name isn't needed to *start* (announce carries it). A start that
+            // can't bring up the node (no identity yet) ⇒ `.unsupported`.
+            do {
+                let started = try await node.start()
+                guard started, let info = await node.localInfoForIPC() else {
+                    return .unsupported
+                }
+                let payload = try? JSONEncoder().encode(info)
+                return .ok(payload)
+            } catch {
+                return .error(String(describing: error))
+            }
+
+        case .stop:
+            await node.stop()
+            return .ok(nil)
+
+        case .announce(let displayName):
+            let ok = await node.announceForIPC(displayName: displayName)
+            return .ok(try? JSONEncoder().encode(ok))
+
+        case .announceTelephony(let displayName):
+            let ok = await node.announceTelephonyForIPC(displayName: displayName)
+            return .ok(try? JSONEncoder().encode(ok))
+
+        case .statusSnapshot:
+            guard let json = await node.statusSnapshotJSONForIPC() else {
+                return .ok(nil)
+            }
+            return .ok(json)
+
+        case .persist:
+            let ok = await node.persistForIPC()
+            return ok ? .ok(nil) : .error("persist failed")
+
+        case .registeredDestinationHashes:
+            let hashes = await node.registeredDestinationHashesForIPC()
+            return .ok(try? JSONEncoder().encode(hashes))
+
+        case .lxmfSend(let destHashHex, let content, let method, let fieldsData):
+            let outcome = await node.sendLxmfForIPC(
+                destHashHex: destHashHex, content: content, method: method, fieldsData: fieldsData)
+            return .ok(try? JSONEncoder().encode(outcome))
         }
     }
 
