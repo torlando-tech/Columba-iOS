@@ -49,6 +49,25 @@ enum DiagLog {
             }
         }
     }
+
+    /// Copy the Network Extension's App-Group diagnostic log
+    /// (`ExtensionDiagLog`'s `ext-diag.log`) into the app's Documents directory
+    /// as `ext-diag.log` so it's retrievable alongside `diag.log` via
+    /// `devicectl ... copy from --domain-type appDataContainer`. The NE is
+    /// sandboxed and can only write to the shared App-Group container; the host
+    /// surfaces it on launch. No-op when the App-Group container or source file
+    /// is unavailable. NO-PII: the source carries envelope/metadata only — see
+    /// `ExtensionDiagLog`'s contract.
+    static func copyExtensionDiagToDocuments() {
+        guard let source = ExtensionDiagLog.fileURL,
+              FileManager.default.fileExists(atPath: source.path) else {
+            return
+        }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let dest = docs.appendingPathComponent("ext-diag.log")
+        try? FileManager.default.removeItem(at: dest)
+        try? FileManager.default.copyItem(at: source, to: dest)
+    }
 }
 
 /// Central LXMF service layer for the SwiftUI application.

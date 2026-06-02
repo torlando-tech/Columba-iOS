@@ -59,7 +59,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: - Tunnel Lifecycle
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
-        NSLog("[EXT] startTunnel called")
+        ExtensionDiagLog.log("startTunnel called")
 
         // Apply current interface configs.
         applyConfigs()
@@ -90,7 +90,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         setTunnelNetworkSettings(settings) { error in
             if let error {
-                NSLog("[EXT] Failed to set tunnel settings: \(error)")
+                ExtensionDiagLog.log("Failed to set tunnel settings: \(error)")
+            } else {
+                ExtensionDiagLog.log("tunnel settings applied")
             }
             completionHandler(error)
         }
@@ -136,13 +138,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             if let existing = currentTCP, existing.host == tcp.host && existing.port == tcp.port {
                 // No change.
             } else {
-                NSLog("[EXT] TCP config (re)applying: \(tcp.host):\(tcp.port)")
+                // NO-PII: never log tcp.host / tcp.port (relay endpoint).
+                ExtensionDiagLog.log("TCP relay config (re)applying")
                 teardownTCPConnectionLocked()
                 startTCPConnection(host: tcp.host, port: tcp.port)
                 currentTCP = (tcp.host, tcp.port)
             }
         } else if currentTCP != nil {
-            NSLog("[EXT] TCP config removed; tearing down connection")
+            ExtensionDiagLog.log("TCP relay config removed; tearing down connection")
             teardownTCPConnectionLocked()
             currentTCP = nil
         }
@@ -152,14 +155,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             if currentAutoGroupId == groupId {
                 // No change.
             } else {
-                NSLog("[EXT] Auto config (re)applying: groupId=\(groupId)")
+                // groupId is a non-secret multicast group label (e.g. "reticulum"),
+                // not an address — safe to log.
+                ExtensionDiagLog.log("Auto config (re)applying: groupId=\(groupId)")
                 autoListener?.cancel()
                 autoListener = nil
                 startAutoListener(groupId: groupId)
                 currentAutoGroupId = groupId
             }
         } else if currentAutoGroupId != nil {
-            NSLog("[EXT] Auto config removed; tearing down listener")
+            ExtensionDiagLog.log("Auto config removed; tearing down listener")
             autoListener?.cancel()
             autoListener = nil
             currentAutoGroupId = nil
@@ -167,7 +172,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
-        NSLog("[EXT] stopTunnel reason=\(reason.rawValue)")
+        ExtensionDiagLog.log("stopTunnel reason=\(reason.rawValue)")
 
         // Serialize teardown through the same queue `applyConfigs` uses
         // so we can't race a config-change notification arriving on the
@@ -214,30 +219,30 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             case FrameInterfaceTag.tcp.rawValue:
                 self.tcpConnection?.send(content: frameData, completion: .contentProcessed { error in
                     if let error {
-                        NSLog("[EXT] TCP send error: \(error)")
+                        ExtensionDiagLog.log("TCP send error: \(error)")
                     }
                 })
             case FrameInterfaceTag.auto.rawValue:
                 // Auto frames are sent as UDP datagrams via the connection group
                 self.autoListener?.send(content: frameData) { error in
                     if let error {
-                        NSLog("[EXT] Auto send error: \(error)")
+                        ExtensionDiagLog.log("Auto send error: \(error)")
                     }
                 }
             default:
-                NSLog("[EXT] Unknown interface tag: \(interfaceTag)")
+                ExtensionDiagLog.log("Unknown interface tag: \(interfaceTag)")
             }
             completionHandler?(nil)
         }
     }
 
     override func sleep(completionHandler: @escaping () -> Void) {
-        NSLog("[EXT] sleep")
+        ExtensionDiagLog.log("sleep")
         completionHandler()
     }
 
     override func wake() {
-        NSLog("[EXT] wake")
+        ExtensionDiagLog.log("wake")
         // Re-apply configs through the serial queue so a dropped TCP
         // connection (cancelled / failed) gets restarted without
         // racing applyConfigsLocked / stopTunnel writes. The diff
@@ -273,12 +278,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         self.tcpConnection = connection
 
         connection.stateUpdateHandler = { [weak self] state in
-            NSLog("[EXT] TCP state: \(state)")
+            // NO-PII: do NOT interpolate the raw NWConnection.State — its
+            // description can embed the endpoint host:port. Log only the
+            // case label (and sanitized error descriptions below).
             switch state {
             case .ready:
+                ExtensionDiagLog.log("TCP relay state: ready")
                 self?.receiveTCPData()
             case .failed(let error):
-                NSLog("[EXT] TCP failed: \(error), reconnecting in 5s")
+                ExtensionDiagLog.log("TCP relay failed: \(error), reconnecting in 5s")
                 // Reconnect must go through configQueue — otherwise the
                 // .failed handler's main-queue write to `tcpConnection`
                 // would race `applyConfigsLocked` writing the same
@@ -294,7 +302,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     self?.applyConfigs()
                 }
             case .waiting(let error):
-                NSLog("[EXT] TCP waiting: \(error)")
+                ExtensionDiagLog.log("TCP relay waiting: \(error)")
             default:
                 break
             }
@@ -323,12 +331,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
 
             if isComplete {
-                NSLog("[EXT] TCP connection complete (EOF)")
+                ExtensionDiagLog.log("TCP relay connection complete (EOF)")
                 return
             }
 
             if let error {
-                NSLog("[EXT] TCP receive error: \(error)")
+                ExtensionDiagLog.log("TCP relay receive error: \(error)")
                 return
             }
 
@@ -367,7 +375,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 .hostPort(host: .ipv6(IPv6Address("ff02::1")!), port: NWEndpoint.Port(rawValue: discoveryPort)!)
             ])
         } catch {
-            NSLog("[EXT] Failed to create multicast group: %@", "\(error)")
+            ExtensionDiagLog.log("Failed to create multicast group: \(error)")
             return
         }
 
@@ -379,7 +387,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         self.autoListener = group
 
         group.stateUpdateHandler = { state in
-            NSLog("[EXT] Auto multicast state: \(state)")
+            // Auto multicast uses the fixed link-local group ff02::1 (a constant,
+            // not the user's LAN address), but log only the case label to keep
+            // the channel uniformly endpoint-free.
+            switch state {
+            case .ready: ExtensionDiagLog.log("Auto multicast state: ready")
+            case .failed: ExtensionDiagLog.log("Auto multicast state: failed")
+            case .waiting: ExtensionDiagLog.log("Auto multicast state: waiting")
+            case .cancelled: ExtensionDiagLog.log("Auto multicast state: cancelled")
+            default: break
+            }
         }
 
         group.setReceiveHandler(maximumMessageSize: 2048, rejectOversizedMessages: false) { [weak self] message, content, isComplete in
@@ -466,13 +483,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         var result = InterfaceConfigs()
 
         guard let data = defaults.data(forKey: Self.interfacesKey) else {
-            NSLog("[EXT] No interface configs found")
+            ExtensionDiagLog.log("No interface configs found")
             return result
         }
 
         // Parse the JSON array — we only need type + config fields
         guard let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            NSLog("[EXT] Failed to parse interface configs")
+            ExtensionDiagLog.log("Failed to parse interface configs")
             return result
         }
 
@@ -489,12 +506,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 if let host = config["targetHost"] as? String,
                    let port = config["targetPort"] as? Int {
                     result.tcp = (host: host, port: UInt16(port))
-                    NSLog("[EXT] Found TCP config: \(host):\(port)")
+                    // NO-PII: never log host / port (the relay endpoint).
+                    ExtensionDiagLog.log("Found TCP relay config")
                 }
             case "autoInterface":
                 let groupId = config["groupId"] as? String ?? "reticulum"
                 result.autoGroupId = groupId
-                NSLog("[EXT] Found Auto config: groupId=\(groupId)")
+                ExtensionDiagLog.log("Found Auto config: groupId=\(groupId)")
             default:
                 break
             }

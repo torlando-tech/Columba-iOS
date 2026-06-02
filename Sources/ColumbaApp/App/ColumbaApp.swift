@@ -622,6 +622,12 @@ struct RootView: View {
     private func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
 
+        // Surface the Network Extension's App-Group diagnostic log into Documents
+        // so it's retrievable via `devicectl ... copy from` alongside diag.log.
+        // The NE (sandboxed) writes ext-diag.log to the shared container; the host
+        // copies the previous background session's log out here on each launch.
+        DiagLog.copyExtensionDiagToDocuments()
+
         // Retry the entire init up to 5 times with increasing delay —
         // the Keychain, file system, or CryptoKit may not be ready
         // immediately after device unlock.

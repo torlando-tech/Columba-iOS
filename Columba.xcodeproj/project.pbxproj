@@ -94,6 +94,7 @@
 		074B /* SharedDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = F074 /* SharedDefaults.swift */; };
 		076B /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		AGB1B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
+		EDL1B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
 		077B /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F077 /* TunnelManager.swift */; };
 		078B /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
 		079B /* OnboardingRestoreSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F079 /* OnboardingRestoreSheet.swift */; };
@@ -146,6 +147,7 @@
 		DE9220E1D4ABF9A4C2CBA761 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
+		EDL2B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
 		E49B977D311DA1C9ACE14CAB /* CallManagerCallKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30A79B9ECDB4166F8A36A670 /* CallManagerCallKitTests.swift */; };
 		EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
 		EDF2F6B945FAA23366617FD6 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
@@ -303,6 +305,7 @@
 		F075 /* ColumbaApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaApp.entitlements; sourceTree = "<group>"; };
 		F076 /* SharedFrameQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedFrameQueue.swift; sourceTree = "<group>"; };
 		AGBF /* AppGroupBridgeInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBridgeInterface.swift; sourceTree = "<group>"; };
+		EDLF /* ExtensionDiagLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDiagLog.swift; sourceTree = "<group>"; };
 		F077 /* TunnelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelManager.swift; sourceTree = "<group>"; };
 		F078 /* ExtensionFrameReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionFrameReader.swift; sourceTree = "<group>"; };
 		F079 /* OnboardingRestoreSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRestoreSheet.swift; sourceTree = "<group>"; };
@@ -637,6 +640,7 @@
 			children = (
 				F076 /* SharedFrameQueue.swift */,
 				AGBF /* AppGroupBridgeInterface.swift */,
+				EDLF /* ExtensionDiagLog.swift */,
 			);
 			path = Sources/Shared;
 			sourceTree = "<group>";
@@ -944,6 +948,7 @@
 			files = (
 				E001 /* PacketTunnelProvider.swift in Sources */,
 				E002 /* SharedFrameQueue.swift in Sources */,
+				EDL2B /* ExtensionDiagLog.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1034,6 +1039,7 @@
 				074B /* SharedDefaults.swift in Sources */,
 				076B /* SharedFrameQueue.swift in Sources */,
 				AGB1B /* AppGroupBridgeInterface.swift in Sources */,
+				EDL1B /* ExtensionDiagLog.swift in Sources */,
 				077B /* TunnelManager.swift in Sources */,
 				078B /* ExtensionFrameReader.swift in Sources */,
 				079B /* OnboardingRestoreSheet.swift in Sources */,
