@@ -4,10 +4,11 @@
 # add-swift-backend-config.rb — Phase 2 build-time backend toggle.
 #
 # Adds `Debug-Swift` / `Release-Swift` build configurations (clones of Debug /
-# Release) that define `COLUMBA_BACKEND_SWIFT` on the ColumbaApp target, plus a
-# shared `Columba-Swift` scheme that builds them. Selecting that scheme (or
-# `xcodebuild -scheme Columba-Swift`) builds the native reticulum-swift/LXMF-swift
-# backend instead of the embedded-Python default; the rest of the app is backend-
+# Release) that define `COLUMBA_BACKEND_SWIFT` + `ENABLE_NETWORK_EXTENSION` on the
+# ColumbaApp target, plus a shared `Columba-Swift` scheme that builds them.
+# Selecting that scheme (or `xcodebuild -scheme Columba-Swift`) builds the native
+# reticulum-swift/LXMF-swift backend instead of the embedded-Python default and
+# enables the background Network-Extension wiring; the rest of the app is backend-
 # agnostic (BackendFactory's `#if COLUMBA_BACKEND_SWIFT`).
 #
 # Additive + idempotent — only adds the new configs/scheme, never strips packages
@@ -19,42 +20,59 @@ require 'xcodeproj'
 
 PROJECT_PATH = File.expand_path('../Columba.xcodeproj', __dir__)
 APP_TARGET = 'ColumbaApp'
-BACKEND_CONDITION = 'COLUMBA_BACKEND_SWIFT'
+# Swift compilation conditions injected on the app target's -Swift configs.
+# COLUMBA_BACKEND_SWIFT selects the native backend; ENABLE_NETWORK_EXTENSION
+# compiles the background-NE wiring (TunnelManager/ExtensionFrameReader/etc.).
+APP_CONDITIONS = %w[COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION].freeze
 
 project = Xcodeproj::Project.open(PROJECT_PATH)
 
 # (base config name => Swift variant name)
 VARIANTS = { 'Debug' => 'Debug-Swift', 'Release' => 'Release-Swift' }.freeze
 
-def clone_config(owner, base_name, swift_name, project, inject_condition: false)
+def ensure_swift_config(owner, base_name, swift_name, project, conditions: [])
   list = owner.build_configuration_list
-  return if list.build_configurations.any? { |c| c.name == swift_name }
+  cfg = list.build_configurations.find { |c| c.name == swift_name }
 
-  base = list.build_configurations.find { |c| c.name == base_name }
-  raise "no '#{base_name}' config on #{owner}" unless base
+  if cfg.nil?
+    base = list.build_configurations.find { |c| c.name == base_name }
+    raise "no '#{base_name}' config on #{owner}" unless base
 
-  cfg = project.new(Xcodeproj::Project::Object::XCBuildConfiguration)
-  cfg.name = swift_name
-  cfg.build_settings = base.build_settings.dup
-  cfg.base_configuration_reference = base.base_configuration_reference
-
-  if inject_condition
-    existing = cfg.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] || '$(inherited)'
-    unless existing.include?(BACKEND_CONDITION)
-      cfg.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = "#{existing} #{BACKEND_CONDITION}"
-    end
+    cfg = project.new(Xcodeproj::Project::Object::XCBuildConfiguration)
+    cfg.name = swift_name
+    cfg.build_settings = base.build_settings.dup
+    cfg.base_configuration_reference = base.base_configuration_reference
+    list.build_configurations << cfg
+    puts "  + #{swift_name} on #{owner.respond_to?(:name) ? owner.name : 'project'}"
   end
 
-  list.build_configurations << cfg
-  puts "  + #{swift_name} on #{owner.respond_to?(:name) ? owner.name : 'project'}#{inject_condition ? " (#{BACKEND_CONDITION})" : ''}"
+  # Idempotently ensure each Swift compilation condition — runs on first create
+  # AND on every re-run, so adding a new condition (e.g. ENABLE_NETWORK_EXTENSION
+  # alongside COLUMBA_BACKEND_SWIFT) only needs a re-run of this script. Token-
+  # exact match (split), not substring, so conditions can't false-positive.
+  return if conditions.empty?
+
+  existing = cfg.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] || '$(inherited)'
+  tokens = existing.split
+  added = []
+  conditions.each do |cond|
+    next if tokens.include?(cond)
+    tokens << cond
+    added << cond
+  end
+  unless added.empty?
+    cfg.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = tokens.join(' ')
+    puts "    ~ #{swift_name} on #{owner.respond_to?(:name) ? owner.name : 'project'}: += #{added.join(' ')}"
+  end
 end
 
 VARIANTS.each do |base_name, swift_name|
   # Project-level config (Xcode requires the config to exist at project + target).
-  clone_config(project, base_name, swift_name, project)
-  # Per-target — inject the backend condition only on the app target.
+  ensure_swift_config(project, base_name, swift_name, project)
+  # Per-target — inject the app conditions only on the app target.
   project.targets.each do |target|
-    clone_config(target, base_name, swift_name, project, inject_condition: target.name == APP_TARGET)
+    conds = target.name == APP_TARGET ? APP_CONDITIONS : []
+    ensure_swift_config(target, base_name, swift_name, project, conditions: conds)
   end
 end
 
