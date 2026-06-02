@@ -148,9 +148,10 @@ public actor MessageRepository {
 
     /// Fetch messages for a conversation (LXMessage form).
     ///
-    /// Rebuilt from the lightweight GRDB `MessageRecord` rows via the field-map
-    /// bridge rather than unpacking the LXMF wire (the app lacks the signed wire
-    /// bytes). Ordered newest-first to match `getMessages`.
+    /// Rebuilt from the lightweight GRDB `MessageRecord` rows via `mapToLXMessage`,
+    /// which recovers the field map whether the row stores a packed field map
+    /// (app / Python path) or the signed LXMF wire (Swift / NE path). Ordered
+    /// newest-first to match `getMessages`.
     public func fetchMessages(for conversationHash: Data, limit: Int = 50, offset: Int = 0) async throws -> [RNSAPI.LXMessage] {
         try await database.getMessageRecords(forConversation: conversationHash, limit: limit, offset: offset)
             .map(Self.mapToLXMessage)
@@ -268,13 +269,78 @@ extension MessageRepository {
 
     // MARK: Message record
 
+    /// Recover an LXMF field map from a GRDB row's `packed_lxmf`, regardless of
+    /// whether that column holds a MessagePack **field map** (app / Python-path
+    /// rows, written via `LxmfFieldCodec.pack`) or the signed LXMF **wire**
+    /// (rows the Swift / Network-Extension backend persists — `LXMRouter` stores
+    /// `LXMessage.packed`, the on-wire bytes, into `packed_lxmf`).
+    ///
+    /// ── Discriminator (wire vs field map) — order is load-bearing ──
+    /// We attempt the WIRE decode *first* (`LXMessage.unpackFromBytes`) and only
+    /// fall back to the field-map codec. This direction is deliberate:
+    ///
+    ///   • `unpackFromBytes` is strict: it requires `count > 96` (dest 16 + src
+    ///     16 + sig 64) AND the trailing msgpack to be an *array* whose [0] is a
+    ///     numeric timestamp and [1]/[2] are binary/string title+content. A
+    ///     field map is a top-level msgpack *map*; small ones (text-only =
+    ///     empty `Data()`, or just an icon/reply) fail the size guard, and a
+    ///     large one (image/file ≥ 96 B) has its byte-tail-past-96 fed to the
+    ///     msgpack parser, which essentially never yields a 4+ element array
+    ///     with those exact element types. So a field map is not mistaken for
+    ///     wire.
+    ///   • The reverse order would NOT be safe: `LxmfFieldCodec.unpack` reads a
+    ///     single top-level msgpack value from byte 0 and *ignores trailing
+    ///     bytes* (see `MsgPack.unpack`). On wire, byte 0 is an arbitrary
+    ///     destination-hash byte; whenever it lands in the fixmap range
+    ///     (0x80–0x8f, ~1/16 of rows) `unpack` happily decodes a bogus map from
+    ///     the following hash/sig bytes — so a wire row would be misread as a
+    ///     field map and its attachments dropped.
+    ///
+    /// Signature is intentionally NOT re-validated here: `unpackFromBytes` only
+    /// verifies the signature when given a `sourceIdentity` (we pass `nil`), and
+    /// `LXMRouter` already validated it at receive time — at render time we only
+    /// need to *extract* fields. With `nil` identity, `unpackFromBytes` still
+    /// fully populates `.fields` (it just marks the message source-unverified).
+    static func recoverFields(from packedLxmf: Data) -> [UInt8: Any]? {
+        // WIRE first (strict). A wire row carries its fields inside the signed
+        // payload; extract them without re-validating the signature.
+        if let wire = try? LXMFSwift.LXMessage.unpackFromBytes(packedLxmf, sourceIdentity: nil),
+           let fields = wire.fields, !fields.isEmpty {
+            return fields
+        }
+        // Otherwise treat the bytes as a MessagePack field map (app / Python
+        // path), or wire with no fields → nil.
+        return LxmfFieldCodec.unpack(packedLxmf)
+    }
+
+    /// Normalize a row's `packed_lxmf` to the MessagePack **field map** the chat
+    /// UI consumes (`LxmfFieldCodec.unpack` in `MessageBubble`/`Message(from:)`).
+    /// Wire rows are unpacked and re-packed as a field map; field-map rows (and
+    /// empty / no-field bytes) are already in the right shape and pass through
+    /// untouched, so only the wire branch does extra work.
+    static func normalizedFieldMap(_ packedLxmf: Data) -> Data {
+        // WIRE first, with the SAME strict discriminator as `recoverFields`:
+        // we must NOT gate on `LxmfFieldCodec.unpack(...) != nil` here, because
+        // that codec ignores trailing bytes and can spuriously decode a bogus
+        // map from a wire row whose leading hash byte is a fixmap marker
+        // (~1/16) — which would leave the wire bytes un-normalized and the
+        // attachments unrendered. Re-pack only genuine wire-with-fields.
+        if let wire = try? LXMFSwift.LXMessage.unpackFromBytes(packedLxmf, sourceIdentity: nil),
+           let fields = wire.fields, !fields.isEmpty {
+            return LxmfFieldCodec.pack(fields)
+        }
+        // Field map (app / Python path), empty, or wire-without-fields: already
+        // the shape the UI handles — hand it back verbatim.
+        return packedLxmf
+    }
+
     /// GRDB `MessageRecord` → RNSAPI `MessageRecord`.
     ///
-    /// `packedLxmf` is passed through verbatim: for app-written rows it is the
-    /// MessagePack field map (what the chat UI's `LxmfFieldCodec.unpack`
-    /// expects). NE-written rows currently store the full LXMF wire there — see
-    /// the file/A0 note; attachment extraction on those rows is a known
-    /// follow-up.
+    /// `packedLxmf` is normalized to a MessagePack field map: app / Python-path
+    /// rows already store one (passed through verbatim), while Swift / NE rows
+    /// store the signed LXMF wire — those are unpacked and re-packed as a field
+    /// map so the chat UI's `LxmfFieldCodec.unpack(record.packedLxmf)` recovers
+    /// their attachments/icons too. See `recoverFields` / `normalizedFieldMap`.
     static func mapRecord(_ r: LXMFSwift.MessageRecord) -> RNSAPI.MessageRecord {
         RNSAPI.MessageRecord(
             id: r.messageId,
@@ -291,13 +357,15 @@ extension MessageRepository {
             receivingInterface: r.receivingInterface,
             replyToId: r.replyToId,
             reactionsJson: r.reactionsJson,
-            packedLxmf: r.packedLxmf
+            packedLxmf: normalizedFieldMap(r.packedLxmf)
         )
     }
 
     /// GRDB `MessageRecord` → RNSAPI `LXMessage` (via the field-map bridge).
     static func mapToLXMessage(_ r: LXMFSwift.MessageRecord) -> RNSAPI.LXMessage {
-        let fields = LxmfFieldCodec.unpack(r.packedLxmf)
+        // Recover fields whether `packed_lxmf` is a field map or the LXMF wire,
+        // so attachment/icon fields survive for Swift/NE-delivered rows too.
+        let fields = recoverFields(from: r.packedLxmf)
         let msg = RNSAPI.LXMessage(
             destinationHash: r.destinationHash,
             sourceIdentity: nil,
@@ -316,7 +384,9 @@ extension MessageRepository {
         msg.snr = r.snr
         msg.q = r.q
         msg.receivingInterface = r.receivingInterface
-        msg.packed = r.packedLxmf
+        // Keep `packed` as the field map (matching `msg.fields` and the A0
+        // bridge contract): wire rows are normalized so this stays coherent.
+        msg.packed = normalizedFieldMap(r.packedLxmf)
         return msg
     }
 

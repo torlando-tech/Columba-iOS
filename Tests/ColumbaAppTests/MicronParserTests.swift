@@ -828,4 +828,140 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         XCTAssertEqual(r.foregroundColor, "abcdef")
         XCTAssertEqual(r.backgroundColor, "012345")
     }
+
+    // MARK: packed_lxmf = field map vs LXMF wire (A0 follow-up #2)
+    //
+    // The chat UI recovers attachments/icons by running
+    // `LxmfFieldCodec.unpack(record.packedLxmf)` (MessageBubble / Message(from:)).
+    // App / Python-path rows store a MessagePack *field map* in `packed_lxmf`;
+    // Swift / Network-Extension rows store the signed LXMF *wire* (LXMRouter
+    // persists `LXMessage.packed`). The adapter must recover fields for BOTH so
+    // attachments render uniformly. These tests drive the real production
+    // adapter (`mapRecord` / `mapToLXMessage`) — no reimplementation.
+
+    /// Common attachment/icon payload used by both the field-map and wire rows
+    /// so the assertions are identical regardless of storage form.
+    ///   FIELD_IMAGE (0x06)            = [format, bytes]
+    ///   FIELD_FILE_ATTACHMENTS (0x05) = [[name, bytes], …]
+    ///   FIELD_ICON_APPEARANCE (0x04)  = [name, fgRGB(3), bgRGB(3)]
+    private static let imageBytes = Data([0x89, 0x50, 0x4E, 0x47])
+    private static let fileBytes = Data([0x01, 0x02, 0x03, 0x04, 0x05])
+    private func attachmentFields() -> [UInt8: Any] {
+        [
+            LXMFSwift.LXMessage.FIELD_IMAGE: ["png", Self.imageBytes] as [Any],
+            LXMFSwift.LXMessage.FIELD_FILE_ATTACHMENTS: [["doc.txt", Self.fileBytes] as [Any]] as [Any],
+            LXMFSwift.LXMessage.FIELD_ICON_APPEARANCE: ["account", Data([0xAA, 0xBB, 0xCC]), Data([0x11, 0x22, 0x33])] as [Any],
+        ]
+    }
+
+    /// Assert the three attachment/icon fields survived recovery, matching the
+    /// exact shape the chat UI (`MessageBubble`) extracts.
+    private func assertAttachmentsRecovered(_ fields: [UInt8: Any]?, _ label: String) {
+        guard let fields else { return XCTFail("\(label): no fields recovered") }
+
+        // FIELD_IMAGE: [format, bytes]
+        let image = fields[LXMFSwift.LXMessage.FIELD_IMAGE] as? [Any]
+        XCTAssertEqual(image?.count, 2, "\(label): image field shape")
+        XCTAssertEqual(image?[0] as? String, "png", "\(label): image format")
+        XCTAssertEqual(image?[1] as? Data, Self.imageBytes, "\(label): image bytes")
+
+        // FIELD_FILE_ATTACHMENTS: [[name, bytes]]
+        let files = fields[LXMFSwift.LXMessage.FIELD_FILE_ATTACHMENTS] as? [Any]
+        let firstFile = files?.first as? [Any]
+        XCTAssertEqual(firstFile?[0] as? String, "doc.txt", "\(label): file name")
+        XCTAssertEqual(firstFile?[1] as? Data, Self.fileBytes, "\(label): file bytes")
+
+        // FIELD_ICON_APPEARANCE: [name, fgRGB, bgRGB]
+        let icon = fields[LXMFSwift.LXMessage.FIELD_ICON_APPEARANCE] as? [Any]
+        XCTAssertEqual(icon?.count, 3, "\(label): icon field shape")
+        XCTAssertEqual(icon?[0] as? String, "account", "\(label): icon name")
+        XCTAssertEqual(icon?[1] as? Data, Data([0xAA, 0xBB, 0xCC]), "\(label): icon fg")
+        XCTAssertEqual(icon?[2] as? Data, Data([0x11, 0x22, 0x33]), "\(label): icon bg")
+    }
+
+    /// (a) A realistic FIELD-MAP row (app / Python path): `packed_lxmf` =
+    /// `LxmfFieldCodec.pack(fields)`. Seeded onto a no-identity GRDB LXMessage
+    /// exactly as `MessageRepository.mapToGRDBMessage` does.
+    private func makeFieldMapRecord() throws -> LXMFSwift.MessageRecord {
+        var msg = LXMFSwift.LXMessage(
+            destinationHash: Data([0xDE, 0xAD, 0x10]),
+            sourceHash: Data([0x50, 0x52, 0x43]),
+            content: Data("body".utf8),
+            title: Data("subj".utf8),
+            timestamp: 1_650_000_000.25,
+            state: .delivered,
+            incoming: true
+        )
+        msg.hash = Data([0xAA, 0xBB, 0xCC])
+        msg.method = .direct
+        msg.fields = attachmentFields()
+        msg.packed = LxmfFieldCodec.pack(msg.fields!)  // FIELD MAP, not wire
+        return try LXMFSwift.MessageRecord(from: msg)
+    }
+
+    /// (b) A realistic WIRE row (Swift / NE path): a genuine LXMessage signed +
+    /// packed to the on-wire format via the real pack path, then persisted —
+    /// `MessageRecord.init(from:)` copies `LXMessage.packed` (the wire) into
+    /// `packed_lxmf`, exactly like `LXMRouter` does on inbound delivery.
+    private func makeWireRecord() throws -> (rec: LXMFSwift.MessageRecord, wire: Data) {
+        // Real ReticulumSwift identity (re-exported via LXMFSwift) so `pack()`
+        // can sign. Qualified to avoid the RNSAPI.Identity Compat-stub collision.
+        // The destination hash value is irrelevant to field recovery — any
+        // 16-byte value packs to valid wire.
+        let sourceIdentity = ReticulumSwift.Identity()
+        var msg = LXMFSwift.LXMessage(
+            destinationHash: Data(repeating: 0xD7, count: 16),
+            sourceIdentity: sourceIdentity,
+            content: Data("hello".utf8),
+            title: Data("subj".utf8),
+            fields: attachmentFields(),
+            desiredMethod: .direct
+        )
+        let wire = try msg.pack()  // genuine signed LXMF wire bytes
+        // Sanity: this is wire (not a field map) — the field-map codec can't
+        // read it, which is precisely the live bug this change fixes.
+        XCTAssertNil(LxmfFieldCodec.unpack(wire),
+                     "wire bytes must NOT decode as a field map (else no bug)")
+        XCTAssertGreaterThan(wire.count, 96, "wire carries dest+src+sig header")
+        let rec = try LXMFSwift.MessageRecord(from: msg)
+        XCTAssertEqual(rec.packedLxmf, wire, "record must store the wire verbatim")
+        return (rec, wire)
+    }
+
+    /// FIELD-MAP row → attachments recovered through BOTH adapter entry points.
+    func testFieldMapRowRecoversAttachments() throws {
+        let rec = try makeFieldMapRecord()
+
+        // mapRecord → the UI runs LxmfFieldCodec.unpack(packedLxmf).
+        let mr = MessageRepository.mapRecord(rec)
+        assertAttachmentsRecovered(LxmfFieldCodec.unpack(mr.packedLxmf), "fieldmap/mapRecord")
+
+        // mapToLXMessage → fields populated directly.
+        let lx = MessageRepository.mapToLXMessage(rec)
+        assertAttachmentsRecovered(lx.fields, "fieldmap/mapToLXMessage")
+    }
+
+    /// WIRE row → attachments recovered through BOTH adapter entry points.
+    /// This is the regression target: before normalization the UI's
+    /// `LxmfFieldCodec.unpack(packedLxmf)` returned nil on wire bytes, so
+    /// Swift/NE-delivered images/files/icons silently didn't render.
+    func testWireRowRecoversAttachments() throws {
+        let (rec, _) = try makeWireRecord()
+
+        // mapRecord must normalize wire → field map so the UI's unpack works.
+        let mr = MessageRepository.mapRecord(rec)
+        XCTAssertNotNil(LxmfFieldCodec.unpack(mr.packedLxmf),
+                        "mapRecord must hand the UI a field map for wire rows")
+        assertAttachmentsRecovered(LxmfFieldCodec.unpack(mr.packedLxmf), "wire/mapRecord")
+
+        // mapToLXMessage must populate fields from the wire, and keep `packed`
+        // coherent as a field map.
+        let lx = MessageRepository.mapToLXMessage(rec)
+        assertAttachmentsRecovered(lx.fields, "wire/mapToLXMessage")
+        assertAttachmentsRecovered(LxmfFieldCodec.unpack(lx.packed ?? Data()), "wire/mapToLXMessage.packed")
+    }
+
+    // Note: the empty/field-map/wire discriminator is covered through the public
+    // adapters by testFieldMapRowRecoversAttachments + testWireRowRecoversAttachments
+    // (which call mapRecord/mapToLXMessage -> the internal recoverFields/normalizedFieldMap).
 }
