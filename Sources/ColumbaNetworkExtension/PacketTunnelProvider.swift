@@ -90,11 +90,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let ESC: UInt8 = 0x7D
     private static let ESC_MASK: UInt8 = 0x20
 
-    /// Model B in-NE Reticulum + LXMF node (Track A5a). Constructed + started
-    /// ONLY when `NEReticulumNode.modelBNodeEnabled` is `true` — which it is NOT
-    /// yet. While the flag is `false` this stays `nil` and the live PoC dumb-pipe
-    /// (the NWConnection forwarding above) is the sole delivery path. Track C3
-    /// flips the flag and makes the node the live path (replacing the dumb-pipe).
+    /// Model B in-NE Reticulum + LXMF node (Track A5a + C3). Constructed + started
+    /// in `startTunnel` ONLY when `NEReticulumNode.modelBNodeEnabled` (the shared
+    /// App-Group flag `modelBBackgroundNE`, default `false`) is `true`. When it's
+    /// non-nil the node is the LIVE delivery path — it owns its TCP relay
+    /// interface + the AppGroupBridge — and the PoC dumb-pipe (the NWConnection
+    /// forwarding above) is bypassed (`applyConfigs()` / `wake()` re-apply are
+    /// skipped) so the relay isn't double-bound. `nil` (the default) ⇒ the PoC
+    /// dumb-pipe is the sole delivery path, exactly as before.
     private var reticulumNode: NEReticulumNode?
 
     // MARK: - Tunnel Lifecycle
@@ -102,18 +105,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         ExtensionDiagLog.log("startTunnel called")
 
-        // Apply current interface configs.
-        applyConfigs()
-
-        // ── Track A5a (Model B in-NE node) — GATED OFF ──────────────────────────
-        // The in-NE Reticulum + LXMF node is wired here but inert: it activates
-        // only when `NEReticulumNode.modelBNodeEnabled` is `true`, which it is NOT
-        // yet. Starting it now would run-conflict with the live PoC dumb-pipe set
-        // up by `applyConfigs()` (double-bound interfaces, duplicate delivery), so
-        // it stays gated until Track C3 flips the flag and makes the node the live
-        // delivery path in place of the dumb-pipe. `start()` is a clean no-op when
-        // the shared identity isn't available yet.
-        if NEReticulumNode.modelBNodeEnabled {
+        // ── Model B vs PoC delivery path (unified runtime switch, Track C3) ──────
+        // `NEReticulumNode.modelBNodeEnabled` is the SHARED App-Group flag
+        // (`modelBBackgroundNE`, the SAME key `BackendPreference.modelB` reads),
+        // **default FALSE**. The two paths are mutually exclusive so the relay is
+        // never double-bound:
+        //
+        //   • FALSE (default / shipping fallback): the PoC dumb-pipe. `applyConfigs()`
+        //     brings up the raw NWConnection relay forwarding, the path monitor +
+        //     `configChanged` observer keep it healthy, and the in-NE node stays nil.
+        //
+        //   • TRUE (opt-in device-test): the in-NE Reticulum + LXMF node is the LIVE
+        //     delivery path. It OWNS its own TCP relay interface (read from the same
+        //     App-Group config) + the AppGroupBridge, so we MUST skip the PoC
+        //     `applyConfigs()` here — otherwise the node's relay socket and the PoC
+        //     NWConnection would both bind the relay (double connection / duplicate
+        //     delivery). `start()` is a clean no-op if the shared identity isn't
+        //     available yet.
+        let modelBActive = NEReticulumNode.modelBNodeEnabled
+        if modelBActive {
+            ExtensionDiagLog.log("startTunnel: Model B active — in-NE node owns delivery; skipping PoC dumb-pipe")
             let node = NEReticulumNode()
             self.reticulumNode = node
             Task {
@@ -123,31 +134,42 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     ExtensionDiagLog.log("startTunnel: NEReticulumNode.start failed: \(String(describing: error))")
                 }
             }
+        } else {
+            // PoC path: apply current interface configs (raw relay forwarding).
+            applyConfigs()
         }
 
         // Watch for path changes (WiFi<->cellular, etc.) so the TCP
         // relay is rebuilt proactively rather than after the dead
-        // socket times out.
-        startPathMonitor()
+        // socket times out. Only meaningful for the PoC path — the
+        // Model B node's `TCPInterface` self-reconnects (see the
+        // C3-followup reconnect-parity TODO in `NEReticulumNode.start`).
+        if !modelBActive {
+            startPathMonitor()
+        }
 
         // Subscribe to live config changes so the user adding /
         // removing / editing an interface in the app updates the
         // extension's sockets without a tunnel restart. The handler
-        // diffs and only restarts what actually changed.
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        let observer = Unmanaged.passUnretained(self).toOpaque()
-        CFNotificationCenterAddObserver(
-            center,
-            observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(observer).takeUnretainedValue()
-                provider.applyConfigs()
-            },
-            Self.configChangedNotification as CFString,
-            nil,
-            .deliverImmediately
-        )
+        // diffs and only restarts what actually changed. Skipped under
+        // Model B: the node owns its interfaces and `applyConfigs()`
+        // (which this fires) is the PoC path we deliberately bypass.
+        if !modelBActive {
+            let center = CFNotificationCenterGetDarwinNotifyCenter()
+            let observer = Unmanaged.passUnretained(self).toOpaque()
+            CFNotificationCenterAddObserver(
+                center,
+                observer,
+                { _, observer, _, _, _ in
+                    guard let observer else { return }
+                    let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(observer).takeUnretainedValue()
+                    provider.applyConfigs()
+                },
+                Self.configChangedNotification as CFString,
+                nil,
+                .deliverImmediately
+            )
+        }
 
         // Set up dummy tunnel settings (required by NEPacketTunnelProvider)
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
@@ -318,7 +340,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             resetTCPReconnectBackoffLocked()
         }
 
-        // Remove the config-changed observer registered in startTunnel.
+        // Remove the config-changed observer registered in startTunnel (PoC path
+        // only). Harmless no-op under Model B, where it was never added — the PoC
+        // teardown above is likewise a no-op when the dumb-pipe was never started.
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let observer = Unmanaged.passUnretained(self).toOpaque()
         CFNotificationCenterRemoveObserver(
@@ -328,9 +352,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             nil
         )
 
-        // Track A5a: tear down the in-NE node if it was started (gated; nil while
-        // `modelBNodeEnabled` is false). Fire-and-forget — teardown is best-effort
-        // and the completion handler must not block on it.
+        // Track C3: tear down the in-NE node if it was started (Model B path; nil
+        // when the flag was off and the PoC dumb-pipe ran instead). Stopping the
+        // node drops its TCP relay interface + AppGroupBridge. Fire-and-forget —
+        // teardown is best-effort and the completion handler must not block on it.
         if let node = reticulumNode {
             reticulumNode = nil
             Task { await node.stop() }
@@ -445,9 +470,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // auto = 0x02) never uses, so we can branch on it unambiguously. If the
         // incoming data is a ProxyRequest, dispatch it to the in-NE node and reply
         // with an encoded `ProxyResponse`; otherwise fall through to the existing
-        // PoC frame-forwarding below (untouched). Inert in the shipping build:
+        // PoC frame-forwarding below (untouched). Inert by default:
         // `reticulumNode` is nil unless `NEReticulumNode.modelBNodeEnabled` is true
-        // (it is NOT yet), so every ProxyRequest currently answers `.unsupported`.
+        // (the App-Group flag, default off), so a ProxyRequest answers
+        // `.unsupported` until the user opts into Model B.
         if ProxyIPC.isProxyRequest(messageData) {
             handleProxyRequest(messageData, completionHandler: completionHandler)
             return
@@ -493,9 +519,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Decode a `ProxyRequest` envelope and dispatch it to the in-NE
     /// `NEReticulumNode`, replying through `completionHandler` with an encoded
     /// `ProxyResponse`. Only called from `handleAppMessage` once the magic prefix
-    /// has matched. If the node isn't running (the common case today — the node is
-    /// gated off behind `modelBNodeEnabled`), every op replies `.unsupported` so
-    /// the app degrades gracefully.
+    /// has matched. If the node isn't running (the default case — `modelBNodeEnabled`
+    /// is off, so the node was never constructed), every op replies `.unsupported`
+    /// so the app degrades gracefully.
     ///
     /// `ProxyRequest` / `ProxyResponse` / `ProxyLocalInfo` / `ProxySendOutcome`
     /// live in the Foundation-only `ProxyIPC` (Shared target, linked into the NE),
@@ -517,7 +543,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
 
         // Snapshot the node reference. Nil ⇒ the Model B node isn't running
-        // (gated off, or not yet started): reply `.unsupported` for every op.
+        // (flag off — the default — or not yet started): reply `.unsupported`.
         guard let node = reticulumNode else {
             completionHandler?(ProxyIPC.encodeResponse(.unsupported))
             return
@@ -589,6 +615,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func wake() {
         ExtensionDiagLog.log("wake")
+        // Under Model B the in-NE node owns the relay (its `TCPInterface`
+        // self-reconnects), and the PoC dumb-pipe never ran — so re-applying the
+        // PoC configs here would START a duplicate NWConnection to the relay
+        // (double-bind). Skip the PoC wake path entirely when the node is active.
+        guard reticulumNode == nil else { return }
+
         // Re-apply configs through the serial queue so a dropped TCP
         // connection (cancelled / failed) gets restarted without
         // racing applyConfigsLocked / stopTunnel writes. The diff

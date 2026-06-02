@@ -27,13 +27,19 @@ enum BackendPreference {
     private static let key = "useSwiftBackend"
     private static let modelBKey = "modelBBackgroundNE"
 
-    /// Track A5b/Model B master flag. When `true`, `BackendFactory.make()` returns
-    /// the thin-client `ProxyRnsBackend` (which owns no destination and marshals
-    /// node-owning ops to the in-NE `NEReticulumNode` over IPC) instead of a
-    /// destination-owning backend. **Default `false`** — current behavior is
-    /// unchanged until Model B is wired live (A5c) and this is intentionally
-    /// flipped. Stored in the App Group suite so it survives relaunch and is
-    /// visible to the NE, like `useSwiftBackend`.
+    /// Model B master flag (Tracks A5b/C3). When `true`, `BackendFactory.make()`
+    /// returns the thin-client `ProxyRnsBackend` (which owns no destination and
+    /// marshals node-owning ops to the in-NE `NEReticulumNode` over IPC) instead
+    /// of a destination-owning backend, AND the NE activates its in-extension node
+    /// as the live delivery path. **Default `false`** — current PoC behavior is
+    /// unchanged; Model B is opt-in (the user flips this to device-test). Stored in
+    /// the App Group suite so it survives relaunch and is visible to the NE, like
+    /// `useSwiftBackend`.
+    ///
+    /// UNIFIED SWITCH (C3): this is the SAME App-Group key
+    /// (`modelBBackgroundNE`) the NE reads via `NEReticulumNode.modelBNodeEnabled`,
+    /// so the app-side backend selection and the NE-side node activation share ONE
+    /// flag — flipping it here flips both.
     ///
     /// INVARIANT: this is mutually exclusive with running a local
     /// `Swift`/`Python` backend — when it's on, the NE is the SINGLE owner of the

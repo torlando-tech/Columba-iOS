@@ -11,23 +11,29 @@
 //  (transport + router + lxmf.delivery destination + App-Group bridge interface)
 //  mirrors `SwiftRNSBackend.start()` directly on reticulum-swift / LXMF-swift.
 //
-//  SCOPE (A5a only):
+//  SCOPE (A5a + C3):
 //    • node setup (transport / router / delivery destination),
 //    • shared-identity load from the App's keychain group,
 //    • App-Group GRDB path computation (LXMF-swift owns the store),
 //    • AppGroupBridgeInterface registration on the transport,
+//    • live TCP/relay interface registration (Track C3) reading the relay config
+//      from the App-Group `interfacesKey` (the SAME config the PoC reads),
 //    • inbound delivery → (LXMF-swift persists) → local notification + DB-changed
-//      Darwin notification so the app refreshes.
-//  Explicitly NOT here: the live TCP/relay path (Track C3 — see TODO(C3) below),
-//  the app-side ProxyRnsBackend IPC (A5b), the durable outbox (A5c).
+//      Darwin notification so the app refreshes,
+//    • app→NE IPC dispatch (A5b) + durable-outbox drain (A5c).
+//  Follow-up (TODO(C3-followup)): Auto/multicast + non-TCP interface kinds, and
+//  WiFi↔cellular path-change reconnect parity with the PoC path.
 //
-//  GATING: this node MUST NOT auto-start in `startTunnel` yet — doing so would
-//  run-conflict with the live PoC dumb-pipe (`PacketTunnelProvider`'s
-//  NWConnection path, which is still the shipping behaviour). It is exposed as a
-//  constructible / startable type, but its activation is guarded behind
-//  `NEReticulumNode.modelBNodeEnabled`, which is `false`. Track C3 flips that flag
-//  and wires `start()` live (replacing the dumb-pipe). For now the goal is solely
-//  that this COMPILES + LINKS via the `ColumbaNetworkExtension` scheme.
+//  GATING (unified switch, Track C3): activation is guarded behind
+//  `NEReticulumNode.modelBNodeEnabled`, now a RUNTIME read of the SHARED App-Group
+//  flag `modelBBackgroundNE` — the SAME key `BackendPreference.modelB` reads, so
+//  the app (ProxyRnsBackend selection) and the NE (this node) share ONE switch.
+//  **It DEFAULTS FALSE**: while off, the node is NOT started from `startTunnel`
+//  and the PoC dumb-pipe (`PacketTunnelProvider`'s NWConnection path) remains the
+//  shipping fallback — starting the node alongside it would run-conflict
+//  (double-binding the relay, duplicate delivery). When the user flips the flag
+//  `true` (opt-in device-test), the node becomes the live delivery path and the
+//  PoC `applyConfigs()` is skipped (see `PacketTunnelProvider.startTunnel`).
 //
 //  ── COLLISION RULE (HARD — bit us in A0) ─────────────────────────────────────
 //  This file imports ONLY: Foundation, UserNotifications, ReticulumSwift,
@@ -38,7 +44,9 @@
 //  ReticulumSwift + LXMFSwift are in scope, so they are unambiguous), matching
 //  `AppGroupBridgeInterface.swift`. Do NOT add `import Network` /
 //  `import NetworkExtension` here: in that combination `NWPath` is ambiguous, and
-//  this file needs neither.
+//  this file needs neither — the C3 TCP-relay path reads the endpoint as a plain
+//  Foundation `(String, UInt16)` and hands it to reticulum-swift's `TCPInterface`
+//  (which owns the socket internally), so no `Network` type ever crosses here.
 //
 //  ── NO-PII CONTRACT ──────────────────────────────────────────────────────────
 //  All logging goes through `ExtensionDiagLog.log` (never NSLog directly here),
@@ -64,13 +72,37 @@ actor NEReticulumNode {
 
     // MARK: - Model B gate
 
-    /// Master gate for the Model B in-NE node. While `false`, the node must NOT
-    /// be started from `startTunnel` — the live PoC dumb-pipe
-    /// (`PacketTunnelProvider`'s NWConnection forwarding) is still the shipping
-    /// path and the two would run-conflict (double-binding interfaces, duplicate
-    /// delivery). Track C3 flips this to `true` and wires `start()` live in place
-    /// of the dumb-pipe. Keep `false` until then.
-    static let modelBNodeEnabled = false
+    /// Shared App-Group UserDefaults key for the Model B master flag. MUST equal
+    /// `BackendPreference.modelBKey` (`"modelBBackgroundNE"`) — the app writes it
+    /// (Settings → Advanced) and BOTH the app (`BackendPreference.modelB`, which
+    /// selects `ProxyRnsBackend`) and the NE (this node's activation) read the
+    /// SAME key so there is ONE switch. The app target can't be imported here
+    /// (collision rule), so the literal is duplicated; keep it in sync.
+    private static let modelBDefaultsKey = "modelBBackgroundNE"
+
+    /// Master gate for the Model B in-NE node, read at runtime from the SHARED
+    /// App-Group UserDefaults suite (Track C3). Unifies the switch with the
+    /// app-side `BackendPreference.modelB`: both read `modelBBackgroundNE` from the
+    /// App-Group suite, so flipping it in the app simultaneously selects the
+    /// app-side `ProxyRnsBackend` AND activates this node in the NE.
+    ///
+    /// **DEFAULT FALSE** — absence of the key (or a non-Bool value) resolves to
+    /// `false`, exactly like `BackendPreference.modelB`. While `false` the node
+    /// must NOT be started from `startTunnel`: the PoC dumb-pipe
+    /// (`PacketTunnelProvider`'s NWConnection forwarding) remains the shipping
+    /// path and the two would run-conflict (double-binding the relay, duplicate
+    /// delivery). The node is the live Model B delivery path only when this is
+    /// flipped `true`; the PoC stays as the default-off fallback.
+    static var modelBNodeEnabled: Bool {
+        // Mirror `BackendPreference.modelB`'s `object(forKey:) as? Bool` read so
+        // absence ⇒ false (a plain `bool(forKey:)` also returns false on absence,
+        // but matching the app's exact accessor keeps the two provably identical).
+        guard let stored = UserDefaults(suiteName: appGroupIdentifier)?
+            .object(forKey: modelBDefaultsKey) as? Bool else {
+            return false
+        }
+        return stored
+    }
 
     // MARK: - Keychain identity coordinates (MUST match the app's A3 code)
     //
@@ -139,7 +171,9 @@ actor NEReticulumNode {
     /// never as a crash. Throws only on a genuine setup failure (router/db open).
     ///
     /// NOTE: callers in `startTunnel` MUST gate this behind
-    /// `NEReticulumNode.modelBNodeEnabled` (currently `false`) — see the type doc.
+    /// `NEReticulumNode.modelBNodeEnabled` (the runtime App-Group flag, default
+    /// `false`) and, when active, skip the PoC `applyConfigs()` so the relay isn't
+    /// double-bound — see the type doc and `PacketTunnelProvider.startTunnel`.
     @discardableResult
     func start() async throws -> Bool {
         guard !isRunning else { return true }
@@ -188,8 +222,8 @@ actor NEReticulumNode {
 
         // 7. Register the App-Group bridge interface so the NE's transport is
         //    reachable over the app's radios (BLE mesh / RNode) via the IPC
-        //    queues. `hwMtu` here is a conservative placeholder; C3 supplies the
-        //    active radio's negotiated MTU when it wires the relay live.
+        //    queues. `hwMtu` here is a conservative placeholder; a follow-up can
+        //    supply the active radio's negotiated MTU (TODO(C3-followup)).
         //    The bridge `connect()`s itself when `addInterface` runs it.
         let br = AppGroupBridgeInterface(
             appGroupIdentifier: appGroupIdentifier,
@@ -200,17 +234,55 @@ actor NEReticulumNode {
         do {
             try await tp.addInterface(br)
         } catch {
-            // Non-fatal: the node can still deliver over TCP once C3 wires it.
+            // Non-fatal: the node can still deliver over the TCP relay (below).
             ExtensionDiagLog.log("NEReticulumNode: AppGroupBridge addInterface failed (non-fatal): \(String(describing: error))")
         }
 
-        // TODO(C3): add the live TCP / relay interface here (mirror
-        // SwiftRNSBackend.start step 6.5 / `buildAndAdd`, reading the App-Group
-        // interface configs from `SharedDefaultsConstants.interfacesKey`). Not
-        // done in A5a: it must replace — not run alongside — the live PoC
-        // NWConnection dumb-pipe in `PacketTunnelProvider`, which is the whole
-        // reason the node is gated off behind `modelBNodeEnabled` for now. The
-        // interface that A5a registers is the AppGroupBridgeInterface above.
+        // C3: live TCP / relay interface. Read the relay config from the SAME
+        // App-Group UserDefaults the PoC dumb-pipe reads
+        // (`SharedDefaultsConstants.interfacesKey`), construct a reticulum-swift
+        // `TCPInterface` to it, and register it on the transport. `addInterface`
+        // sets the delegate + `connect()`s the interface itself (same as the
+        // AppGroupBridge above), so the node OWNS this relay connection. When the
+        // node is active `PacketTunnelProvider` skips its PoC `applyConfigs()` so
+        // there's no double-bound relay socket (see `startTunnel`). Mirrors
+        // `SwiftRNSBackend.buildAndAdd`'s `.tcpClient` case.
+        //
+        // SCOPE: only the TCP (`tcpClient`) relay is wired live here. Auto /
+        // multicast and the other interface kinds the app supports are a
+        // follow-up (TODO(C3-followup)); the AppGroupBridge above already carries
+        // the app's radios (BLE mesh / RNode) into the node.
+        if let tcp = Self.loadTCPRelayConfig() {
+            do {
+                let cfg = InterfaceConfig(
+                    id: "ne-tcp-relay",
+                    name: "NE TCP Relay",
+                    type: .tcp,
+                    enabled: true,
+                    mode: .full,
+                    host: tcp.host,
+                    port: tcp.port
+                )
+                let tcpIface = try TCPInterface(config: cfg)
+                try await tp.addInterface(tcpIface)
+                // NO-PII: never log tcp.host / tcp.port (the relay endpoint).
+                ExtensionDiagLog.log("NEReticulumNode: TCP relay interface registered")
+            } catch {
+                // Non-fatal: the node can still deliver over the AppGroupBridge
+                // (radio) even if the relay socket can't be brought up.
+                ExtensionDiagLog.log("NEReticulumNode: TCP relay addInterface failed (non-fatal): \(String(describing: error))")
+            }
+        } else {
+            ExtensionDiagLog.log("NEReticulumNode: no TCP relay configured — node running on AppGroupBridge only")
+        }
+
+        // TODO(C3-followup): reconnect parity. The PoC path
+        // (`PacketTunnelProvider`) drives capped-backoff reconnects + a path
+        // monitor for its relay socket; reticulum-swift's `TCPInterface` has its
+        // own `ExponentialBackoff` auto-reconnect, so the node's relay self-heals,
+        // but it does NOT yet react to a WiFi↔cellular path change the way the PoC
+        // path-monitor does. Acceptable for device-testing; wire a path-change
+        // rebind here if interface switches prove flaky under Model B.
 
         isRunning = true
         ExtensionDiagLog.log("NEReticulumNode: started (delivery dest=\(Self.hashPrefix(dest.hexHash)))")
@@ -421,10 +493,38 @@ actor NEReticulumNode {
 
     // MARK: - Helpers
 
-    /// Conservative placeholder hardware MTU for the bridge interface until C3
-    /// supplies the active radio's negotiated MTU. Sized for a typical BLE-mesh
-    /// payload so the link MDU never exceeds what the radio can carry.
+    /// Conservative placeholder hardware MTU for the bridge interface until a
+    /// follow-up supplies the active radio's negotiated MTU (TODO(C3-followup)).
+    /// Sized for a typical BLE-mesh payload so the link MDU never exceeds what the
+    /// radio can carry.
     private static let bridgePlaceholderHWMTU = 500
+
+    /// Read the enabled `tcpClient` relay endpoint from the SHARED App-Group
+    /// UserDefaults (the same `SharedDefaultsConstants.interfacesKey` JSON the PoC
+    /// dumb-pipe parses in `PacketTunnelProvider.loadInterfaceConfigs`). Returns
+    /// the first enabled TCP relay's `(host, port)`, or `nil` if none is
+    /// configured. Foundation-only JSON parse — the node does NOT import `Network`
+    /// (collision rule), so it surfaces a plain `(String, UInt16)` that `start()`
+    /// feeds to a reticulum-swift `TCPInterface`. NO-PII: never logs host/port.
+    static func loadTCPRelayConfig() -> (host: String, port: UInt16)? {
+        let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
+        guard let data = defaults.data(forKey: SharedDefaultsConstants.interfacesKey),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
+        }
+        for entity in array {
+            guard let enabled = entity["enabled"] as? Bool, enabled,
+                  let configWrapper = entity["config"] as? [String: Any],
+                  let type = configWrapper["type"] as? String, type == "tcpClient",
+                  let config = configWrapper["config"] as? [String: Any],
+                  let host = config["targetHost"] as? String,
+                  let port = config["targetPort"] as? Int else {
+                continue
+            }
+            return (host: host, port: UInt16(truncatingIfNeeded: port))
+        }
+        return nil
+    }
 
     /// Short, NO-PII hash prefix (≤ 8 hex chars) for logging.
     fileprivate static func hashPrefix(_ hex: String) -> String {
@@ -442,9 +542,9 @@ actor NEReticulumNode {
     // `SwiftRNSBackend` methods, but here on the NE's own stack — keeping the
     // NE's RNSAPI-free collision posture (no RNSAPI types cross this boundary).
     //
-    // SCOPE: A5b is inert — the node is constructed/started only when
-    // `modelBNodeEnabled` is true (it is NOT), so in the shipping build these are
-    // never reached. They exist so the IPC path compiles + links end-to-end.
+    // SCOPE: the node is constructed/started only when `modelBNodeEnabled` is true
+    // (the runtime App-Group flag, default `false`), so in the default shipping
+    // build these are never reached; they go live when the user opts into Model B.
 
     /// Lowercase-hex of the learned `lxmf.delivery` destination + identity, for
     /// the `.start` response. `nil` before `start()`.

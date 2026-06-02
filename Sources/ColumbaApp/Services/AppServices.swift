@@ -897,7 +897,32 @@ public final class AppServices {
         self.pythonStartIdentity = identity
         self.pythonStartDisplayName = displayName
 
+        // Model B (Track C3): when `BackendPreference.modelB` is on,
+        // `BackendFactory.make` returns the thin-client `ProxyRnsBackend`, which
+        // needs a live IPC transport to the NE's `NEReticulumNode`. Inject
+        // `TunnelManager.proxySend` (wraps `sendProviderMessage`). Resolved LAZILY
+        // (read `self.tunnelManager` at send-time, not make-time) so it works even
+        // though one of the two init paths creates the tunnel after this call. The
+        // closure is `@Sendable`; it hops to the @MainActor `AppServices` to read
+        // the tunnel, then calls the non-isolated async `proxySend`. When Model B
+        // is off (the default) `make` ignores `proxySend` and returns the
+        // Swift/Python backend, so this wiring is inert until the flag is flipped.
+        #if ENABLE_NETWORK_EXTENSION
+        let proxySend: @Sendable (Data) async -> Data? = { [weak self] data in
+            // Read the @MainActor-isolated `tunnelManager` via `MainActor.run`
+            // (the established pattern in this file for crossing into MainActor
+            // state from a Sendable async context — see `applyPythonInterfaceStatus`
+            // callers). `TunnelManager` is Sendable and `proxySend` is non-isolated,
+            // so the IPC call itself needs no hop.
+            guard let tunnel = await MainActor.run(body: { self?.tunnelManager }) else {
+                return nil
+            }
+            return await tunnel.proxySend(data)
+        }
+        let backend = BackendFactory.make(proxySend: proxySend)
+        #else
         let backend = BackendFactory.make()
+        #endif
         self.backend = backend
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
