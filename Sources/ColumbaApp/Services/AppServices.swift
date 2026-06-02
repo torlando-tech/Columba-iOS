@@ -2167,8 +2167,12 @@ public final class AppServices {
         self.autoAnnounceManager = announceManager
         announceManager.start()
 
-        // Dump all registered destinations and link callbacks for diagnostics
-        let regDests = await newTransport.registeredDestinationHashes()
+        // Dump all registered destinations and link callbacks for diagnostics.
+        // Registered destinations now come from the active backend's neutral
+        // `RnsCore` seam (the backend-agnostic source of truth both backends
+        // share — the same set the NE's destination filter matches), not the
+        // dead Compat-layer transport stub which always returned [].
+        let regDests = await self.backend?.core.registeredDestinationHashes() ?? []
         let regCallbacks = await newTransport.registeredLinkCallbackHashes()
         DiagLog.log("[INIT2] Registered destinations: \(regDests)")
         DiagLog.log("[INIT2] Registered link callbacks: \(regCallbacks)")

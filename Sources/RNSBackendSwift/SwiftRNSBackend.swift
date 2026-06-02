@@ -573,6 +573,15 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         )
     }
 
+    /// The destinations this backend registered on its transport in `start()`:
+    /// the `lxmf.delivery` destination and the `lxst.telephony` destination.
+    /// Both `hexHash` values are lowercase hex (reticulum-swift `%02x`). Empty
+    /// before `start` (both are nil). Mirrors what the Python backend reports so
+    /// the NE's sniff-only filter matches the same set in either backend.
+    public func registeredDestinationHashes() async -> [String] {
+        [deliveryDestination, telephonyDestination].compactMap { $0?.hexHash }
+    }
+
     // MARK: - NomadNet (one-shot page fetch over a fresh RNS Link)
     //
     // Ported from main's NomadNetBrowserService: resolve a path + node identity,

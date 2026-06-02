@@ -238,6 +238,18 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         return Self.map(s)
     }
 
+    /// Lowercase-hex destination hashes this backend has registered. Python's
+    /// `start` registers both the `lxmf.delivery` and `lxst.telephony`
+    /// destinations, but the bridge only surfaces the delivery hash (via
+    /// `LocalInfo.destination_hash`), so that's what we return from the cached
+    /// `localInfo` rather than adding a bridge round-trip for the telephony hash.
+    /// The delivery hash is lowercase hex (rns_bridge.py uses `.hex()`), matching
+    /// the Swift backend's convention. Empty before `start`.
+    public func registeredDestinationHashes() async -> [String] {
+        guard let delivery = localInfo?.destinationHash, !delivery.isEmpty else { return [] }
+        return [delivery]
+    }
+
     /// Force RNS to flush its path table + known destinations to disk. RNS only
     /// persists on a 12h timer / clean exit, which iOS skips — call on background.
     @discardableResult

@@ -1608,7 +1608,6 @@ public final class ReticulumTransport: @unchecked Sendable {
     public var initiateLinkHook:
         (@Sendable (Destination, Identity) async throws -> Link)?
 
-    public func registeredDestinationHashes() -> [String] { [] }
     public func registeredLinkCallbackHashes() -> [String] { [] }
     public func registerDestination(_ destination: Destination) async {
         await registerDestinationHook?(destination)

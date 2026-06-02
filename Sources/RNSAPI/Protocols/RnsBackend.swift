@@ -209,6 +209,13 @@ public protocol RnsCore: AnyObject, Sendable {
     @discardableResult func announceTelephony(displayName: String) async throws -> Bool
     func statusSnapshot() async -> StatusSnapshot?
     @discardableResult func persist() async -> Bool
+
+    /// Lowercase-hex destination hashes this node has actually registered
+    /// (its `lxmf.delivery` destination, plus `lxst.telephony` where the backend
+    /// surfaces it). Backend-neutral so the Network Extension's sniff-only
+    /// destination filter matches the same set both backends register. Empty
+    /// before `start`.
+    func registeredDestinationHashes() async -> [String]
 }
 
 /// RNS.Link operations backing LXST voice (the Swift state machine drives these;
