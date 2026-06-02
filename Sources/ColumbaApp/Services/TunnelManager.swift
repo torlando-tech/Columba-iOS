@@ -159,7 +159,16 @@ public final class TunnelManager: @unchecked Sendable {
     ///   - data: Raw frame data (already HDLC-framed for TCP)
     ///   - interfaceTag: Which interface to send on (TCP=0x01, Auto=0x02)
     public func sendFrame(_ data: Data, interfaceTag: UInt8) async {
-        guard let session = manager?.connection as? NETunnelProviderSession else {
+        // Bridge diagnostic: report the frame and whether a live NE session
+        // exists. `session=NIL` here means the frame is DROPPED below (no
+        // NETunnelProviderSession to forward it on). DiagLog is visible from
+        // this module (ColumbaApp), so mirror to it directly. NO-PII: tag +
+        // byte length only. Use the same `as?` the guard uses so the logged
+        // state and the drop decision can't disagree.
+        let session = manager?.connection as? NETunnelProviderSession
+        DiagLog.log("[BRIDGE-OUT] sendFrame tag=\(interfaceTag) len=\(data.count) session=\(session != nil ? "yes" : "NIL")")
+        guard let session else {
+            DiagLog.log("[BRIDGE-OUT] sendFrame DROPPED: no NETunnelProviderSession")
             return
         }
 

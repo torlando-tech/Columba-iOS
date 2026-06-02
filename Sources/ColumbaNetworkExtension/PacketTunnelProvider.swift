@@ -495,12 +495,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let self else { completionHandler?(nil); return }
             switch interfaceTag {
             case FrameInterfaceTag.tcp.rawValue:
+                ExtensionDiagLog.log("[BRIDGE] app->NE frame tag=\(interfaceTag) len=\(frameData.count) -> relay")
                 self.tcpConnection?.send(content: frameData, completion: .contentProcessed { error in
                     if let error {
                         ExtensionDiagLog.log("TCP send error: \(error)")
                     }
                 })
             case FrameInterfaceTag.auto.rawValue:
+                ExtensionDiagLog.log("[BRIDGE] app->NE frame tag=\(interfaceTag) len=\(frameData.count) -> relay")
                 // Auto frames are sent as UDP datagrams via the connection group
                 self.autoListener?.send(content: frameData) { error in
                     if let error {
@@ -752,6 +754,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
 
         if !frames.isEmpty {
+            // Bridge diagnostic: relay bytes in -> HDLC frames queued for the app.
+            // NO-PII: byte length + frame count only. Low-noise (frames>0 only).
+            ExtensionDiagLog.log("[BRIDGE] relay->NE \(data.count)B -> \(frames.count) frame(s) queued")
             postDarwinNotification()
         }
     }

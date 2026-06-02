@@ -84,6 +84,10 @@ public final class ExtensionFrameReader: @unchecked Sendable {
         guard !frames.isEmpty else { return }
 
         logger.info("Processing \(frames.count) queued frame(s) from extension")
+        // Bridge diagnostic: frames pulled from the shared queue and about to be
+        // injected into transport. Only reached when frames>0 (guard above).
+        // NO-PII: frame count only. DiagLog is visible from this module (ColumbaApp).
+        DiagLog.log("[BRIDGE-IN] \(frames.count) frame(s) from queue -> transport")
 
         for frame in frames {
             switch frame.interfaceTag {

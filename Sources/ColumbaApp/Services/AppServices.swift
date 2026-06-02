@@ -279,6 +279,19 @@ public final class AppServices {
     private var extensionFrameReader: ExtensionFrameReader?
     #endif
 
+    /// Darwin notification name used by on-device test instrumentation to
+    /// trigger a manual announce. Posted from the host via
+    /// `xcrun devicectl device notification post network.columba.test.announce`,
+    /// since Maestro/idb can't drive the physical device. Not gated behind the
+    /// Network Extension flag — the handler only calls `sendAllAnnounces`, which
+    /// is meaningful regardless of the background-transport posture.
+    private static let testAnnounceNotification = "network.columba.test.announce"
+
+    /// Whether the test-announce Darwin observer has been registered. Guards
+    /// against double-registration across the two `initialize` overloads /
+    /// re-init cycles (the observer is process-global, keyed by `self`).
+    private var testAnnounceObserverRegistered = false
+
     // MARK: - Interface Lookup
 
     /// Get a human-readable name for an interface ID.
@@ -849,6 +862,10 @@ public final class AppServices {
             interfaces: InterfaceRepository().getEnabledInterfaces(),
             displayName: ""
         )
+
+        // On-device test instrumentation: listen for the test-announce Darwin
+        // notification now that the backend is up (see helper docs). Idempotent.
+        registerTestAnnounceObserver()
 
         logger.info("Initialization complete")
     }
@@ -2406,6 +2423,10 @@ public final class AppServices {
             displayName: ""
         )
 
+        // On-device test instrumentation: listen for the test-announce Darwin
+        // notification now that the backend is up (see helper docs). Idempotent.
+        registerTestAnnounceObserver()
+
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
 
@@ -2426,11 +2447,13 @@ public final class AppServices {
         if active {
             for (_, iface) in tcpInterfaces {
                 await iface.beginTunnelMode { [weak tunnel] frame in
+                    DiagLog.log("[BRIDGE-OUT] iface->sendFrame tag=tcp len=\(frame.count)")
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
                 }
             }
             if let auto = autoInterface {
                 await auto.beginTunnelMode { [weak tunnel] frame in
+                    DiagLog.log("[BRIDGE-OUT] iface->sendFrame tag=auto len=\(frame.count)")
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.auto.rawValue)
                 }
             }
@@ -3242,6 +3265,9 @@ public final class AppServices {
             NotificationCenter.default.removeObserver(token)
         }
         pythonNotificationObservers.removeAll()
+        // Remove the test-announce Darwin observer so a re-init re-registers
+        // cleanly instead of stacking callbacks (no-op if never registered).
+        unregisterTestAnnounceObserver()
         // Drop stale Compat Link records. Python assigns link IDs sequentially
         // from 0 on each fresh backend, so without this a post-restart inbound
         // link (id 0, 1, …) would collide with a dead entry and dispatchInbound
@@ -3578,6 +3604,63 @@ public final class AppServices {
         #endif
 
         if let firstError { throw firstError }
+    }
+
+    // MARK: - Test instrumentation (Darwin-notification trigger)
+
+    /// Register a Darwin-notification observer for `network.columba.test.announce`
+    /// so an on-device test harness can drive a manual announce on a physical
+    /// device that Maestro/idb can't automate. The host posts the notification
+    /// via `xcrun devicectl device notification post network.columba.test.announce`;
+    /// on receipt this fires `sendAllAnnounces(displayName:)` (the same entry point
+    /// the auto-announce path uses), passing the empty string the backend resolves
+    /// to the configured display name.
+    ///
+    /// Idempotent: registers at most once (see `testAnnounceObserverRegistered`).
+    /// Call only AFTER the backend is started, so the announce has a live stack to
+    /// route through. The C callback can't capture `self`, so we pass the opaque
+    /// pointer and resolve it back, then hop to the `@MainActor` to call the async
+    /// announce inside a `Task` (the callback runs on a Mach-port thread).
+    private func registerTestAnnounceObserver() {
+        guard !testAnnounceObserverRegistered else { return }
+        testAnnounceObserverRegistered = true
+
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let self_ = Unmanaged<AppServices>
+                    .fromOpaque(observer)
+                    .takeUnretainedValue()
+                DiagLog.log("[TEST-TRIGGER] test-announce Darwin notification received -> sendAllAnnounces")
+                Task { @MainActor in
+                    // Empty string -> backend resolves the configured display name,
+                    // matching the auto-announce path.
+                    try? await self_.sendAllAnnounces(displayName: "")
+                }
+            },
+            Self.testAnnounceNotification as CFString,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    /// Remove the test-announce Darwin observer. Called from `shutdown()` so a
+    /// re-init cycle re-registers cleanly rather than stacking callbacks.
+    private func unregisterTestAnnounceObserver() {
+        guard testAnnounceObserverRegistered else { return }
+        testAnnounceObserverRegistered = false
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterRemoveObserver(
+            center,
+            observer,
+            CFNotificationName(Self.testAnnounceNotification as CFString),
+            nil
+        )
     }
 
     /// Wire transport callbacks that need app-layer context.
