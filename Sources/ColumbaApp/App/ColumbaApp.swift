@@ -718,13 +718,18 @@ struct RootView: View {
             )
             DiagLog.log("[STARTUP] Step 5: AppServices initialized OK")
 
-            // 6. Wire up database, message repo, handler
-            guard let db = appServices.database else {
+            // 6. Wire up database, message repo, handler.
+            // `db` is the RNSAPI Compat store IncomingMessageHandler uses for
+            // sender-name lookups. `repo` is the GRDB-backed canonical store
+            // (Track A0) the UI reads — built and held by AppServices during
+            // initialize(), so reuse that single instance rather than opening a
+            // second handle to the same `lxmf-swift.db` (and keeping the
+            // LXMFSwift import walled off in MessageRepository.swift).
+            guard let db = appServices.database,
+                  let repo = appServices.messageRepository else {
                 throw AppServicesError.routerNotInitialized
             }
             self.database = db
-
-            let repo = MessageRepository(database: db)
             self.messageRepository = repo
 
             #if os(iOS)

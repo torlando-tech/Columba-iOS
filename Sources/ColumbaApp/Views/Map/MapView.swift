@@ -154,8 +154,11 @@ struct MapView: View {
     }
 
     private func loadContacts() async {
-        guard let db = appServices.database else { return }
-        let repo = MessageRepository(database: db)
+        // Read conversations from the GRDB canonical store (Track A0) via the
+        // repository AppServices builds during initialize(). MapView must not
+        // import LXMFSwift, so it reuses that instance instead of constructing
+        // its own MessageRepository(grdbPath:).
+        guard let repo = appServices.messageRepository else { return }
         contacts = (try? await repo.fetchConversations()) ?? []
     }
 

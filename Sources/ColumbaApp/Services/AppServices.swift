@@ -135,8 +135,25 @@ public final class AppServices {
     /// LXMF delivery destination for receiving messages.
     public private(set) var deliveryDestination: Destination?
 
-    /// LXMF database for message persistence.
+    /// RNSAPI Compat LXMF database — still used by `IncomingMessageHandler`
+    /// for sender-name lookups and by `CallManager`. NOT the canonical message
+    /// store any more (that's the GRDB store behind `messageRepository`); kept
+    /// because those collaborators take an `RNSAPI.LXMFDatabase`.
     public private(set) var database: LXMFDatabase?
+
+    /// Filesystem path of the GRDB-backed canonical LXMF store
+    /// (`<configDir>/lxmf-swift.db`) the Swift / NE backend writes. Set during
+    /// `initialize(...)`. External call sites (ColumbaApp / MapView) read this
+    /// and pass it to `MessageRepository(grdbPath:)` so they don't have to
+    /// import LXMFSwift or re-derive the path.
+    public private(set) var grdbDatabasePath: String?
+
+    /// The repository over the GRDB canonical store, built once during
+    /// `initialize(...)`. Held so the Python inbound-persist path
+    /// (`persistInboundFromPython`) and delivery-state updates route their
+    /// writes through the SAME store the UI reads, instead of constructing a
+    /// throwaway repo or touching a separate store.
+    public private(set) var messageRepository: MessageRepository?
 
     /// Propagation node manager for relay discovery and sync.
     public private(set) var propagationManager: PropagationNodeManager?
@@ -393,6 +410,24 @@ public final class AppServices {
         return columbaDir.appendingPathComponent(filename).path
     }
 
+    /// File path for the GRDB-backed canonical LXMF store (`lxmf-swift.db`).
+    ///
+    /// This MUST match the path the Swift / Network-Extension backend writes to,
+    /// so the SwiftUI layer (via `MessageRepository(grdbPath:)`) reads the same
+    /// store. `SwiftRNSBackend` uses `<configDir>/lxmf-swift.db` where
+    /// `configDir` is `<appSupport>/Columba/python-<identityHashHex>` (see
+    /// `startPythonBackend`), and `identityHashHex` is `identity.hexHash`
+    /// (the raw identity hash — NOT the lxmf.delivery destination hash).
+    ///
+    /// - Parameter identityHashHex: Hex of the raw identity hash (`identity.hexHash`).
+    /// - Returns: Full path to `lxmf-swift.db` for that identity.
+    static func grdbDatabaseFilePath(for identityHashHex: String) -> String {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
+        return pyDir.appendingPathComponent("lxmf-swift.db").path
+    }
+
     /// File path for ratchet key storage for a specific identity.
     ///
     /// - Parameter identityHash: Hex hash of the identity
@@ -575,10 +610,18 @@ public final class AppServices {
         await configureTransportCallbacks(newTransport)
         await newTransport.registerPathRequestHandler()
 
-        // 4. Create persistent LXMF database
+        // 4. Create persistent LXMF database (RNSAPI Compat store — sender-name
+        //    lookups for IncomingMessageHandler / CallManager).
         let dbPath = Self.databaseFilePath
         let newDatabase = try LXMFDatabase(path: dbPath)
         self.database = newDatabase
+
+        // 4b. Open the GRDB canonical store the Swift/NE backend writes, so the
+        //     UI reads the same messages. Keyed by the raw identity hash (the
+        //     same `identity.hexHash` startPythonBackend derives configDir from).
+        let grdbPath = Self.grdbDatabaseFilePath(for: newIdentity.hexHash)
+        self.grdbDatabasePath = grdbPath
+        self.messageRepository = try MessageRepository(grdbPath: grdbPath)
 
         // 5. Create LXMRouter with identity and database path
         let newRouter = try await LXMRouter(identity: newIdentity, databasePath: dbPath)
@@ -1783,11 +1826,16 @@ public final class AppServices {
     /// IncomingMessageHandler. Returns nil if blocked or persistence failed.
     @discardableResult
     private func persistInboundFromPython(sourceHash: Data, content: String, title: String, fields: [UInt8: Any]?, timestamp: Date) async -> LXMessage? {
-        guard let database = self.database else {
-            DiagLog.log("[RNS] persistInbound: no database")
+        // Route Python-path inbound persistence through the GRDB canonical
+        // store (the same one the UI reads and the Swift/NE path writes), via
+        // the shared MessageRepository's RNSAPI-typed methods — NOT the
+        // RNSAPI Compat `database`. (The Swift backend already persists its own
+        // inbound to GRDB through its LXMRouter, so this AppServices write is
+        // only for the Python backend path.)
+        guard let repo = self.messageRepository else {
+            DiagLog.log("[RNS] persistInbound: no messageRepository")
             return nil
         }
-        let repo = MessageRepository(database: database)
         let sourceHashHex = sourceHash.map { String(format: "%02x", $0) }.joined()
 
         // Privacy: block_unknown_senders drops messages from anyone the
@@ -1797,7 +1845,7 @@ public final class AppServices {
         if UserDefaults.standard.bool(forKey: "block_unknown_senders") {
             let isKnownContact: Bool
             do {
-                let conversation = try await database.getConversation(hash: sourceHash)
+                let conversation = try await repo.fetchConversation(sourceHash)
                 isKnownContact = (conversation?.isFavorite ?? 0) != 0
             } catch {
                 // Fail open: surface the message if the DB check itself
@@ -1935,8 +1983,11 @@ public final class AppServices {
             DiagLog.log("[RNS] delivery \(messageHash.prefix(16)) state=\(state)")
             guard let hashData = Data(hexString: messageHash) else { return }
             let newState: LXMessageState = (state == "delivered") ? .delivered : .failed
-            if let database = self.database {
-                try? database.updateMessageState(id: hashData, state: newState)
+            // Update the GRDB canonical store (where outbound messages are
+            // persisted and the UI reads from), via the shared repository's
+            // RNSAPI-typed method — not the Compat `database`.
+            if let repo = self.messageRepository {
+                try? await repo.updateMessageState(id: hashData, state: newState)
             }
             // Notify the open chat so it can flip the bubble's indicator
             // (double-check for delivered / failed) without a full reload.
@@ -2022,10 +2073,18 @@ public final class AppServices {
         await configureTransportCallbacks(newTransport)
         await newTransport.registerPathRequestHandler()
 
-        // 4. Create persistent LXMF database (per-identity)
+        // 4. Create persistent LXMF database (per-identity; RNSAPI Compat store
+        //    used for IncomingMessageHandler / CallManager sender lookups).
         let dbPath = Self.databaseFilePath(for: identityHash)
         let newDatabase = try LXMFDatabase(path: dbPath)
         self.database = newDatabase
+
+        // 4b. Open the GRDB canonical store the Swift/NE backend writes (keyed
+        //     by the same identity hash startPythonBackend uses for configDir),
+        //     so the UI reads the same messages.
+        let grdbPath = Self.grdbDatabaseFilePath(for: identityHash)
+        self.grdbDatabasePath = grdbPath
+        self.messageRepository = try MessageRepository(grdbPath: grdbPath)
 
         // 5. Create LXMRouter with identity and database path
         let newRouter = try await LXMRouter(identity: identity, databasePath: dbPath)
@@ -2773,11 +2832,18 @@ public final class AppServices {
             await configureTransportCallbacks(newTransport)
         }
 
-        // 4. Database
+        // 4. Database (RNSAPI Compat store)
         if database == nil {
             let dbPath = Self.databaseFilePath
             let newDatabase = try LXMFDatabase(path: dbPath)
             self.database = newDatabase
+        }
+
+        // 4b. GRDB canonical store (matches the Swift/NE backend path).
+        if messageRepository == nil {
+            let grdbPath = Self.grdbDatabaseFilePath(for: existingIdentity.hexHash)
+            self.grdbDatabasePath = grdbPath
+            self.messageRepository = try MessageRepository(grdbPath: grdbPath)
         }
 
         // 5. Router
