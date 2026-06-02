@@ -145,12 +145,15 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             }
 
-            // Check block unknown senders setting (needs async DB access)
-            if UserDefaults.standard.bool(forKey: "block_unknown_senders"),
-               let db = self.database {
+            // Check block unknown senders setting (needs async DB access).
+            // Reads the unified GRDB store via messageRepository (Track A0): the
+            // Swift/NE backend writes only that store, so the old Compat
+            // `database` would miss Swift/NE-delivered favorites. Same semantics:
+            // "known" == an existing conversation with isFavorite != 0.
+            if UserDefaults.standard.bool(forKey: "block_unknown_senders") {
                 let isKnownContact: Bool
                 do {
-                    let conversation = try await db.getConversation(hash: sourceHash)
+                    let conversation = try await self.messageRepository.fetchConversation(sourceHash)
                     isKnownContact = conversation != nil && conversation!.isFavorite != 0
                 } catch {
                     // Fail open: allow message through if DB check fails
@@ -255,15 +258,17 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     // User is viewing this conversation — skip notification
                 } else {
                     // Check if sender is a saved/favorite contact
-                    let senderIsFavorite: Bool
-                    if let db = self.database {
-                        senderIsFavorite = ((try? await db.getConversation(hash: sourceHash))?.isFavorite ?? 0) != 0
-                    } else {
-                        senderIsFavorite = false
-                    }
+                    // Resolve the sender once from the unified GRDB store (Track A0):
+                    // the UI writes favorites + display-names via messageRepository and
+                    // the Swift/NE backend persists inbound there, so the old Compat
+                    // `database` is stale for both. Passing the resolved name lets
+                    // NotificationService use it directly (senderName takes precedence
+                    // over its own — now bypassed — Compat lookup).
+                    let senderConversation = try? await self.messageRepository.fetchConversation(sourceHash)
+                    let senderIsFavorite = (senderConversation?.isFavorite ?? 0) != 0
                     await NotificationService.shared.postMessageNotification(
                         message,
-                        senderName: nil,
+                        senderName: senderConversation?.displayName,
                         database: self.database,
                         isFavorite: senderIsFavorite
                     )
