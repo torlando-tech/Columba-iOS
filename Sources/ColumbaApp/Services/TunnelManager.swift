@@ -109,13 +109,22 @@ public final class TunnelManager: @unchecked Sendable {
         mgr.localizedDescription = "Columba Background Transport"
         mgr.isEnabled = true
 
+        // On-demand: relaunch the tunnel automatically after iOS terminates it
+        // (jetsam / reboot / user toggle) so background delivery resumes without
+        // the app being foregrounded — the NE can't wake itself, so a connect rule
+        // keeps it up whenever a network path exists (the deliver-while-locked
+        // posture; see Track C2/C4). NEOnDemandRuleConnect with no interface match
+        // applies on every interface (WiFi + cellular).
+        mgr.isOnDemandEnabled = true
+        mgr.onDemandRules = [NEOnDemandRuleConnect()]
+
         try await mgr.saveToPreferences()
         try await mgr.loadFromPreferences()
 
         manager = mgr
         isEnabled = true
         status = mgr.connection.status
-        logger.info("Tunnel config installed")
+        logger.info("Tunnel config installed (on-demand connect enabled)")
     }
 
     /// Start the tunnel extension.
