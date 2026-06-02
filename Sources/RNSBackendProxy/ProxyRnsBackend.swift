@@ -215,21 +215,57 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             extraFields: extraFields)
         let fieldsData = fields.isEmpty ? Data() : LxmfFieldCodec.pack(fields)
 
-        let response = try await roundTrip(
-            .lxmfSend(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData),
-            op: "lxmfSend")
+        // A5c — durable outbox. The round-trip throws `BackendError.ipcFailed`
+        // when the NE is unreachable (nil / garbled reply). Catch that here and
+        // treat it the same as the NE answering `.error` / `.unsupported`: the NE
+        // did NOT accept the send, so persist it to the App-Group outbox and
+        // return optimistically (`.queued`) — the NE replays it on its next start.
+        let response: ProxyResponse
+        do {
+            response = try await roundTrip(
+                .lxmfSend(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData),
+                op: "lxmfSend")
+        } catch {
+            // Transport-level failure (no/garbled response) — NE down/unreachable.
+            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData)
+        }
         switch response {
         case .ok(let payload):
             guard let payload,
                   let outcome = try? JSONDecoder().decode(ProxySendOutcome.self, from: payload) else {
                 return .other("malformed send response")
             }
+            // Live IPC success — behave exactly as before (real LXMF hash from NE).
             return Self.sendOutcome(from: outcome)
-        case .error(let message):
-            return .other(message)
-        case .unsupported:
-            return .notStarted
+        case .error, .unsupported:
+            // NE answered but did NOT accept the send (node not running / send
+            // rejected). Persist for replay rather than dropping it.
+            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData)
         }
+    }
+
+    /// Persist an undelivered send to the durable App-Group outbox and return an
+    /// optimistic `.queued` outcome so the UI shows it pending (the NE replays the
+    /// queue on its next `start()`, A5c).
+    ///
+    /// `messageHashHex` is stored `nil`: the real LXMF hash is computed NE-side at
+    /// pack time and this proxy (RNSAPI-only, no `Identity`/LXMF-swift) cannot
+    /// derive it — see `OutboxEntry.messageHashHex`. The returned `.queued` hash is
+    /// therefore empty, matching the existing "no real hash yet" shape (the live
+    /// path's `ProxySendOutcome.detail` is likewise empty until the NE packs).
+    private func enqueueToOutbox(destHashHex: String, content: String, method: String, fieldsData: Data) -> SendOutcome {
+        let entry = OutboxEntry(
+            destHashHex: destHashHex,
+            content: content,
+            method: method,
+            fieldsData: fieldsData.isEmpty ? nil : fieldsData,
+            messageHashHex: nil,
+            createdAt: Date().timeIntervalSince1970
+        )
+        OutboxQueue().append(entry)
+        let destPrefix = String(destHashHex.prefix(8))
+        Self.log.info("Model B NE unreachable — queued LXMF send to durable outbox (dest=\(destPrefix, privacy: .public)…)")
+        return .queued(messageHash: "")
     }
 
     @discardableResult

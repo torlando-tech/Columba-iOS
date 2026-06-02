@@ -159,6 +159,8 @@
 		AGP2B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
 		PXI1B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
+		OBQ1B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
+		OBQ2B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		PRB001 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
 		F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FD6A68A52A54D21FDB70324 /* RNSAPI */; };
 		F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
@@ -231,6 +233,7 @@
 		EDLF /* ExtensionDiagLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDiagLog.swift; sourceTree = "<group>"; };
 		AGPF /* AppGroupPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupPaths.swift; sourceTree = "<group>"; };
 		PXIF /* ProxyIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyIPC.swift; sourceTree = "<group>"; };
+		OBQF /* OutboxQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxQueue.swift; sourceTree = "<group>"; };
 		NERN1 /* NEReticulumNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEReticulumNode.swift; sourceTree = "<group>"; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumbaApp.swift; sourceTree = "<group>"; };
@@ -660,6 +663,7 @@
 				EDLF /* ExtensionDiagLog.swift */,
 				AGPF /* AppGroupPaths.swift */,
 				PXIF /* ProxyIPC.swift */,
+				OBQF /* OutboxQueue.swift */,
 			);
 			path = Sources/Shared;
 			sourceTree = "<group>";
@@ -976,6 +980,7 @@
 				AGB2B /* AppGroupBridgeInterface.swift in Sources */,
 				NERN2 /* NEReticulumNode.swift in Sources */,
 				PXI2B /* ProxyIPC.swift in Sources */,
+				OBQ2B /* OutboxQueue.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1069,6 +1074,7 @@
 				EDL1B /* ExtensionDiagLog.swift in Sources */,
 				AGP1B /* AppGroupPaths.swift in Sources */,
 				PXI1B /* ProxyIPC.swift in Sources */,
+				OBQ1B /* OutboxQueue.swift in Sources */,
 				077B /* TunnelManager.swift in Sources */,
 				078B /* ExtensionFrameReader.swift in Sources */,
 				079B /* OnboardingRestoreSheet.swift in Sources */,

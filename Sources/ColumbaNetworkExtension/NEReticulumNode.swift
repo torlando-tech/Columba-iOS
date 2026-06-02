@@ -214,7 +214,53 @@ actor NEReticulumNode {
 
         isRunning = true
         ExtensionDiagLog.log("NEReticulumNode: started (delivery dest=\(Self.hashPrefix(dest.hexHash)))")
+
+        // 8. A5c — drain the durable App-Group outbox. While the NE was down the
+        //    app persisted any outbound LXMF sends here (ProxyRnsBackend on IPC
+        //    failure); now that transport + router + delivery destination are up,
+        //    replay each one through the same `sendLxmfForIPC(...)` path a live IPC
+        //    send would take. Re-sending is safe: LXMF-swift dedups inbound by
+        //    message hash receiver-side, and we only enqueue sends the NE never
+        //    accepted. Failures are logged + skipped (the rest still drain) — we do
+        //    NOT re-append, because `drainAll()` already cleared the file and a
+        //    `handleOutbound` throw is a pack/sign error that a verbatim retry on
+        //    the next start would just hit again (an unbounded requeue loop). This
+        //    is the simpler correct option; the cost is dropping an entry that
+        //    cannot be packed at all, which the optimistic UI row will surface as
+        //    not-delivered. Run after `isRunning = true` so the node is observably
+        //    started even if the drain is slow.
+        await drainOutbox()
+
         return true
+    }
+
+    /// Replay every entry the app persisted to the durable App-Group outbox while
+    /// the NE was down (A5c). Called at the end of `start()`. NO-PII: logs counts
+    /// and dest-hash short prefixes only.
+    private func drainOutbox() async {
+        let pending = OutboxQueue().drainAll()
+        guard !pending.isEmpty else { return }
+        ExtensionDiagLog.log("NEReticulumNode: draining outbox (\(pending.count) pending send(s))")
+
+        var sent = 0
+        var failed = 0
+        for entry in pending {
+            // `sendLxmfForIPC` does not throw (it returns a `ProxySendOutcome`);
+            // treat anything other than `.queued` as a failed replay for the count.
+            let outcome = await sendLxmfForIPC(
+                destHashHex: entry.destHashHex,
+                content: entry.content,
+                method: entry.method,
+                fieldsData: entry.fieldsData ?? Data()
+            )
+            if outcome.kind == .queued {
+                sent += 1
+            } else {
+                failed += 1
+                ExtensionDiagLog.log("NEReticulumNode: outbox replay not queued (dest=\(Self.hashPrefix(entry.destHashHex)), kind=\(outcome.kind.rawValue)) — dropped")
+            }
+        }
+        ExtensionDiagLog.log("NEReticulumNode: outbox drain complete (queued=\(sent), dropped=\(failed))")
     }
 
     /// Tear the node down. Mirrors `SwiftRNSBackend.stop()`'s teardown (drop the
