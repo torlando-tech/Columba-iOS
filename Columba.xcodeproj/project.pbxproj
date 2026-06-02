@@ -108,6 +108,7 @@
 		084B /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
 		13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */; };
 		238336F8024494A8B57F9419 /* CeaseTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF48C97880B30682DC35613C /* CeaseTelemetry.swift */; };
+		266929D6972E8D373E7A926D /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 021FA3D73B6F8B711A97D40F /* ReticulumSwift */; };
 		2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */; };
 		2F8EC8212FC732AB00235991 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8202FC732AB00235991 /* ReticulumSwift */; };
 		2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8222FC732AF00235991 /* LXMFSwift */; };
@@ -138,6 +139,7 @@
 		A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */; };
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		AGB1B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
+		BDC9FF09929596ECF0A1037F /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */; };
 		BKF001 /* BackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKF002 /* BackendFactory.swift */; };
 		C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
 		C91321B8E0BA9F487D5E1AC8 /* PyMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBD293157E715F490613984 /* PyMessage.swift */; };
@@ -338,6 +340,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				266929D6972E8D373E7A926D /* ReticulumSwift in Frameworks */,
+				BDC9FF09929596ECF0A1037F /* LXMFSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -797,6 +801,10 @@
 			dependencies = (
 			);
 			name = ColumbaNetworkExtension;
+			packageProductDependencies = (
+				021FA3D73B6F8B711A97D40F /* ReticulumSwift */,
+				B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */,
+			);
 			productName = ColumbaNetworkExtension;
 			productReference = EPROD /* ColumbaNetworkExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
@@ -1810,6 +1818,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		021FA3D73B6F8B711A97D40F /* ReticulumSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
+			productName = ReticulumSwift;
+		};
 		0FD6A68A52A54D21FDB70324 /* RNSAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RNSAPI;
@@ -1842,6 +1855,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
 			productName = LXSTSwift;
+		};
+		B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
+			productName = LXMFSwift;
 		};
 		DA31FE974552414C399D4949 /* ReticulumSwift */ = {
 			isa = XCSwiftPackageProductDependency;
