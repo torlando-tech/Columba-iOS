@@ -94,6 +94,7 @@
 		074B /* SharedDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = F074 /* SharedDefaults.swift */; };
 		076B /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		077B /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F077 /* TunnelManager.swift */; };
+		BGTB /* BackgroundTransportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGTF /* BackgroundTransportView.swift */; };
 		078B /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
 		079B /* OnboardingRestoreSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F079 /* OnboardingRestoreSheet.swift */; };
 		07AB /* PlatformCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07A /* PlatformCompat.swift */; };
@@ -322,6 +323,7 @@
 		F075 /* ColumbaApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaApp.entitlements; sourceTree = "<group>"; };
 		F076 /* SharedFrameQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedFrameQueue.swift; sourceTree = "<group>"; };
 		F077 /* TunnelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelManager.swift; sourceTree = "<group>"; };
+		BGTF /* BackgroundTransportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTransportView.swift; sourceTree = "<group>"; };
 		F078 /* ExtensionFrameReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionFrameReader.swift; sourceTree = "<group>"; };
 		F079 /* OnboardingRestoreSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRestoreSheet.swift; sourceTree = "<group>"; };
 		F07A /* PlatformCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformCompat.swift; sourceTree = "<group>"; };
@@ -641,6 +643,7 @@
 				F018 /* ExpandableSettingsCard.swift */,
 				F031 /* InterfaceManagementScreen.swift */,
 				F035 /* NetworkStatusView.swift */,
+				BGTF /* BackgroundTransportView.swift */,
 				F038 /* IconPickerView.swift */,
 				F044 /* IdentityManagerView.swift */,
 				F046 /* BLEDevicePickerSheet.swift */,
@@ -1076,6 +1079,7 @@
 				PXI1B /* ProxyIPC.swift in Sources */,
 				OBQ1B /* OutboxQueue.swift in Sources */,
 				077B /* TunnelManager.swift in Sources */,
+				BGTB /* BackgroundTransportView.swift in Sources */,
 				078B /* ExtensionFrameReader.swift in Sources */,
 				079B /* OnboardingRestoreSheet.swift in Sources */,
 				07AB /* PlatformCompat.swift in Sources */,
