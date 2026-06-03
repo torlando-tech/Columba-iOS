@@ -80,6 +80,11 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// `localInfo` is synchronous (`get`-only), so cache the async-fetched value
     /// here. Guarded by `stateLock`.
     private var cachedLocalInfo: LocalInfo?
+    /// Polls the NE's heard-announce snapshot over IPC and re-emits `.announce`
+    /// events on `eventStream` — the Model B incoming-announce bridge, since the
+    /// app owns no transport to hear announces itself. Guarded by `stateLock`;
+    /// cancelled in `stop()`.
+    private var announcePoller: Task<Void, Never>?
     private let stateLock = NSLock()
 
     /// The neutral event stream. Under Model B the NE owns inbound delivery and
@@ -138,6 +143,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             }
             let local = LocalInfo(identityHash: info.identityHash, destinationHash: info.destinationHash)
             stateLock.lock(); cachedLocalInfo = local; stateLock.unlock()
+            startAnnouncePolling()
             return local
         case .error(let message):
             throw RNSError.generic(message: message, stackTraceText: nil)
@@ -149,7 +155,50 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     public func stop() async {
         _ = try? await roundTrip(.stop, op: "stop")
-        stateLock.lock(); cachedLocalInfo = nil; stateLock.unlock()
+        stateLock.lock()
+        cachedLocalInfo = nil
+        announcePoller?.cancel()
+        announcePoller = nil
+        stateLock.unlock()
+    }
+
+    /// Model B incoming-announce bridge: poll the NE's heard-announce snapshot
+    /// and re-emit each newly-seen / re-announced destination as a `.announce`
+    /// event, so the app's existing announce handling (`for await event in
+    /// backend.events`) populates the network-announce list even though the app
+    /// owns no transport. Mirrors `SwiftRNSBackend.startAnnouncePolling` (diff by
+    /// last-heard time) but sources the PathTable from the NE over IPC. Idempotent.
+    private func startAnnouncePolling() {
+        stateLock.lock()
+        guard announcePoller == nil else { stateLock.unlock(); return }
+        let cont = eventContinuation
+        announcePoller = Task { [weak self] in
+            var lastSeen: [String: Double] = [:]
+            while !Task.isCancelled {
+                // 2.5s: an IPC round-trip each tick, and announces are infrequent;
+                // a few seconds of latency surfacing a heard announce is fine.
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                guard let self else { return }
+                guard let response = try? await self.roundTrip(.heardAnnounces, op: "heardAnnounces"),
+                      case .ok(let payload) = response, let payload,
+                      let announces = try? JSONDecoder().decode([ProxyHeardAnnounce].self, from: payload)
+                else { continue }
+                for a in announces {
+                    if let prev = lastSeen[a.destHashHex], prev >= a.timestamp { continue }
+                    lastSeen[a.destHashHex] = a.timestamp
+                    cont.yield(.announce(
+                        destHash: a.destHashHex,
+                        appDataHex: a.appDataHex,
+                        aspect: a.aspect,
+                        publicKeysHex: a.publicKeysHex,
+                        interfaceName: a.interfaceName,
+                        hops: a.hops,
+                        t: Date(timeIntervalSince1970: a.timestamp)
+                    ))
+                }
+            }
+        }
+        stateLock.unlock()
     }
 
     @discardableResult

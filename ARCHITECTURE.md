@@ -2,6 +2,10 @@
 
 Target / module dependency graph for the iOS app. Mirrors the role of `docs/architecture.md` in the sibling Android repo (`columba/`).
 
+## Subsystem deep-dives
+
+- [Model B — Background LXMF Delivery](docs/MODEL_B_BACKGROUND_DELIVERY.md) — how the Network Extension delivers LXMF messages + notifications while the app is backgrounded/suspended/locked (no APNS): the NE-canonical node, the control IPC + App-Group frame bridge, the load-bearing invariants, and the on-device-verified inbound/outbound/announce flows.
+
 Regenerate this file from the current `Package.swift` + `Columba.xcodeproj/project.pbxproj`:
 
 ```sh

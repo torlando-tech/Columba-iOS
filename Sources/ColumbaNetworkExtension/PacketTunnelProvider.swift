@@ -595,6 +595,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             return .ok(json)
 
+        case .heardAnnounces:
+            guard let json = await node.heardAnnouncesJSONForIPC() else {
+                return .ok(nil)
+            }
+            return .ok(json)
+
         case .persist:
             let ok = await node.persistForIPC()
             return ok ? .ok(nil) : .error("persist failed")

@@ -159,6 +159,12 @@ actor NEReticulumNode {
     /// holds it weakly.
     private var delegate: NEDeliveryDelegate?
 
+    /// Periodic self-announce loop. Model B: the NE owns `lxmf.delivery` and the
+    /// app may be suspended, so the node must announce its OWN delivery destination
+    /// (on start, once the relay connects, then on the user's interval) — otherwise
+    /// peers/transport nodes never learn a path to it. Cancelled in `stop()`.
+    private var announceTask: Task<Void, Never>?
+
     /// `true` once `start()` has fully wired the node. Guards against double-start.
     private(set) var isRunning = false
 
@@ -254,6 +260,16 @@ actor NEReticulumNode {
         // multicast and the other interface kinds the app supports are a
         // follow-up (TODO(C3-followup)); the AppGroupBridge above already carries
         // the app's radios (BLE mesh / RNode) into the node.
+        // iOS NE egress fix (see reticulum-swift port-deviations.md): prohibit
+        // the virtual (.other = our own utun packet tunnel) interface on the
+        // relay's NWConnection so it egresses a physical interface (wifi/
+        // cellular) and actually reaches the relay — a stock NWParameters.tcp
+        // connection created inside the provider reports a phantom `.ready` but
+        // produces no SYN/socket on the relay host (verified on-device via
+        // tcpdump+lsof), black-holed in our own tunnel. Process-global; set
+        // before the interface connects.
+        TCPTransport.bypassTunnelEgress = true
+
         if let tcp = Self.loadTCPRelayConfig() {
             do {
                 let cfg = InterfaceConfig(
@@ -288,6 +304,23 @@ actor NEReticulumNode {
 
         isRunning = true
         ExtensionDiagLog.log("NEReticulumNode: started (delivery dest=\(Self.hashPrefix(dest.hexHash)))")
+
+        // 7b. Self-announce. In Model B the NE owns `lxmf.delivery` and the app may
+        //     be suspended, so the node announces its OWN delivery destination —
+        //     peers/transport nodes learn the path from this. Wait for the relay to
+        //     connect (so the first announce traverses TCP, not just the radio
+        //     bridge), then re-announce on the user's configured interval.
+        //
+        // 7c. Re-announce whenever the relay (re)connects. A relay that restarted
+        //     loses its path table, so without this our delivery dest would be
+        //     unreachable until the periodic interval elapsed. Mirrors the app's
+        //     AutoAnnounceManager "on TCP reconnect" trigger; reticulum-swift
+        //     rate-limits announces per interface, so a flapping link can't spam.
+        await tp.setOnInterfaceConnected { [weak self] interfaceId in
+            guard interfaceId == "ne-tcp-relay" else { return }
+            await self?.onRelayReconnected()
+        }
+        startAnnounceScheduler()
 
         // 8. A5c — drain the durable App-Group outbox. While the NE was down the
         //    app persisted any outbound LXMF sends here (ProxyRnsBackend on IPC
@@ -342,6 +375,8 @@ actor NEReticulumNode {
     func stop() async {
         guard isRunning else { return }
         isRunning = false
+        announceTask?.cancel()
+        announceTask = nil
         if let br = bridge {
             await br.disconnect()
         }
@@ -585,7 +620,10 @@ actor NEReticulumNode {
     }
 
     private func emitAnnounceForIPC(on destination: Destination?, appData: Data, withRatchet: Bool) async -> Bool {
-        guard let transport, let destination else { return false }
+        guard let transport, let destination else {
+            ExtensionDiagLog.log("NEReticulumNode: emitAnnounce SKIPPED — node not started (no transport/destination)")
+            return false
+        }
         destination.appData = appData
         var ratchetPub: Data? = nil
         if withRatchet, let mgr = destination.ratchetManager {
@@ -596,11 +634,101 @@ actor NEReticulumNode {
             let announce = Announce(destination: destination, ratchet: ratchetPub)
             let packet = try announce.buildPacket()
             try await transport.send(packet: packet)
+            // Diagnostic: confirm the emit + show interface connection states — if the
+            // TCP relay interface is "down" the announce can't reach the Mac even
+            // though the socket is established.
+            let snaps = await transport.getInterfaceSnapshots()
+            let ifaces = snaps.map { "\($0.id.prefix(14))=\($0.state == .connected ? "conn" : "down")" }
+                .joined(separator: ",")
+            ExtensionDiagLog.log("NEReticulumNode: announce EMITTED dest=\(destination.hexHash.prefix(8)) \(packet.size)B ifaces=[\(ifaces)]")
             return true
         } catch {
             ExtensionDiagLog.log("NEReticulumNode: announce send failed: \(String(describing: error))")
             return false
         }
+    }
+
+    // MARK: - Self-announce (Model B)
+
+    /// Launch the periodic self-announce loop. Idempotent: cancels any prior task.
+    private func startAnnounceScheduler() {
+        announceTask?.cancel()
+        announceTask = Task { [weak self] in
+            guard let self else { return }
+            // Wait for the relay to connect so the FIRST announce actually goes out
+            // the TCP interface (transport-node path), not only the radio bridge.
+            // Best-effort: if the relay never connects (radio-only node), announce
+            // anyway once the timeout elapses.
+            let connected = await self.waitForRelayConnected(timeoutMs: 15_000)
+            ExtensionDiagLog.log("NEReticulumNode: announce scheduler — relay connected=\(connected) before first announce")
+            await self.selfAnnounce()
+            // Periodic re-announce on the user's configured interval (default 3h),
+            // mirroring the app's AutoAnnounceManager cadence.
+            while !Task.isCancelled {
+                let hours = await self.configuredAnnounceIntervalHours()
+                do {
+                    try await Task.sleep(for: .seconds(hours * 3600))
+                } catch {
+                    return  // cancelled
+                }
+                if Task.isCancelled { return }
+                await self.selfAnnounce()
+            }
+        }
+    }
+
+    /// Emit one `lxmf.delivery` announce using the user's shared display name.
+    private func selfAnnounce() async {
+        let ok = await announceForIPC(displayName: sharedDisplayName())
+        ExtensionDiagLog.log("NEReticulumNode: self-announce (ok=\(ok))")
+    }
+
+    /// The relay interface reached `.connected` (initial connect, or a reconnect
+    /// after the relay/daemon restarted). Re-announce so the relay relearns our
+    /// delivery destination promptly. No-op once the node is torn down.
+    private func onRelayReconnected() async {
+        guard isRunning else { return }
+        ExtensionDiagLog.log("NEReticulumNode: relay (re)connected — re-announcing delivery dest")
+        await selfAnnounce()
+    }
+
+    /// Poll the transport's interface snapshots until the relay (`ne-tcp-relay`)
+    /// reports `.connected`, or `timeoutMs` elapses. Returns whether it connected.
+    private func waitForRelayConnected(timeoutMs: Int) async -> Bool {
+        guard let transport else { return false }
+        var waited = 0
+        let stepMs = 500
+        while waited < timeoutMs {
+            let snaps = await transport.getInterfaceSnapshots()
+            if snaps.contains(where: { $0.id == "ne-tcp-relay" && $0.state == .connected }) {
+                return true
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(stepMs))
+            } catch {
+                return false
+            }
+            waited += stepMs
+        }
+        return false
+    }
+
+    /// The user's announce display name from the shared App-Group defaults
+    /// (`SettingsRepository` key `"displayName"`), falling back to the identity
+    /// hash prefix (matching the app's anonymous-peer naming).
+    private func sharedDisplayName() -> String {
+        if let s = UserDefaults(suiteName: appGroupIdentifier)?.string(forKey: "displayName"),
+           !s.isEmpty {
+            return s
+        }
+        return String((identity?.hexHash ?? "").prefix(8))
+    }
+
+    /// The user's configured announce interval in hours (App-Group key
+    /// `"announce_interval_hours"`, default 3), matching `AutoAnnounceManager`.
+    private func configuredAnnounceIntervalHours() -> Int {
+        let h = UserDefaults(suiteName: appGroupIdentifier)?.integer(forKey: "announce_interval_hours") ?? 0
+        return h > 0 ? h : 3
     }
 
     /// Flush the router's pending state to its GRDB store
@@ -644,6 +772,31 @@ actor NEReticulumNode {
             "path_table_size": pathCount,
         ]
         return try? JSONSerialization.data(withJSONObject: object)
+    }
+
+    /// Heard-announce snapshot (Model B incoming-announce bridge). The NE owns
+    /// the transport, so the app can't hear announces itself — it polls this and
+    /// re-emits `.announce` events. Mirrors the PathTable read in
+    /// `SwiftRNSBackend.startAnnouncePolling` (only entries whose aspect we
+    /// recognise — lxmf.delivery / lxmf.propagation / lxst.telephony /
+    /// nomadnetwork.node — carry a `detectedAspect`). Returns JSON
+    /// `[ProxyHeardAnnounce]`.
+    func heardAnnouncesJSONForIPC() async -> Data? {
+        guard let pathTable else { return nil }
+        let entries = await pathTable.allEntries()
+        let announces: [ProxyHeardAnnounce] = entries.compactMap { entry in
+            guard let aspect = entry.detectedAspect else { return nil }
+            return ProxyHeardAnnounce(
+                destHashHex: entry.destinationHash.hexHash,
+                appDataHex: (entry.appData ?? Data()).hexHash,
+                aspect: aspect,
+                publicKeysHex: entry.publicKeys.hexHash,
+                interfaceName: entry.interfaceId,
+                hops: Int(entry.hopCount),
+                timestamp: entry.timestamp.timeIntervalSince1970
+            )
+        }
+        return try? JSONEncoder().encode(announces)
     }
 
     /// Send an LXMF message on the NE node (mirrors

@@ -145,6 +145,11 @@ public final class SettingsViewModel {
     /// Whether the native Swift backend is selected (vs embedded Python).
     /// Persisted via `BackendPreference`; applied on next app launch.
     public var useSwiftBackend: Bool = false
+    /// Model B (background delivery): run the LXMF node inside the Network
+    /// Extension so messages + notifications arrive while backgrounded/locked.
+    /// Persisted via `BackendPreference.modelB` (the shared `modelBBackgroundNE`
+    /// flag both the app and the NE read); applied on next app launch.
+    public var modelBEnabled: Bool = false
     public var isBackendExpanded: Bool = false
     /// True once the user changes the backend, surfacing the "relaunch to
     /// apply" hint until the app is restarted.
@@ -414,6 +419,7 @@ public final class SettingsViewModel {
         lastAnnounceTime = lastTs > 0 ? Date(timeIntervalSince1970: lastTs) : nil
         isTransportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
         useSwiftBackend = BackendPreference.isSwift
+        modelBEnabled = BackendPreference.modelB
         isLocationSharingEnabled = defaults.bool(forKey: "location_sharing_enabled")
         locationPrecisionRadius = defaults.integer(forKey: "location_precision_radius")
         if let storedDuration = defaults.string(forKey: "default_sharing_duration") {
@@ -480,13 +486,24 @@ public final class SettingsViewModel {
     /// Called from loadSettings() and periodically by the view.
     @MainActor
     public func refreshConnectionState() async {
-        isConnected = appServices.isConnected
-        isReconnecting = appServices.isReconnecting
-        reconnectError = appServices.connectionError
+        // In Model B the NE owns the TCP relay and the app owns no local TCP
+        // interface, so reading app interfaces would always report
+        // "disconnected". Reflect the NE relay's state (via the proxy) for TCP;
+        // app-owned radios (Auto / BLE / RNode) are read locally in both models.
+        let modelB = BackendPreference.modelB
+
+        let tcpConnected: Bool
+        if modelB {
+            tcpConnected = await appServices.neTcpRelayOnline()
+        } else if let tcp = appServices.tcpInterface {
+            tcpConnected = await tcp.state == .connected
+        } else {
+            tcpConnected = false
+        }
 
         // Build connected interface string from all active interfaces
         var activeInterfaces: [String] = []
-        if let tcp = appServices.tcpInterface, await tcp.state == .connected {
+        if tcpConnected {
             let interfaceRepo = InterfaceRepository()
             if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
                case .tcpClient(let config) = tcpEntity.config {
@@ -511,6 +528,13 @@ public final class SettingsViewModel {
             }
         }
         connectedInterface = activeInterfaces.isEmpty ? "No active interface" : activeInterfaces.joined(separator: ", ")
+
+        // Overall state: in Model B "connected" = at least one active interface
+        // (the NE relay or an app-owned radio); otherwise defer to the app's own
+        // connection tracking (which owns the interfaces in Model A).
+        isConnected = modelB ? !activeInterfaces.isEmpty : appServices.isConnected
+        isReconnecting = modelB ? false : appServices.isReconnecting
+        reconnectError = modelB ? nil : appServices.connectionError
     }
 
     /// Sync auto-announce manager state with current settings.
@@ -534,6 +558,17 @@ public final class SettingsViewModel {
     @MainActor
     public func applyBackendSelection() {
         BackendPreference.isSwift = useSwiftBackend
+        backendChangePending = true
+    }
+
+    /// Persist the Model B (background delivery) choice. Writes the shared
+    /// `modelBBackgroundNE` flag both the app (`BackendPreference.modelB`) and
+    /// the NE (`NEReticulumNode.modelBNodeEnabled`) read. Takes effect on next
+    /// launch (the backend + NE node are constructed at stack init), so the UI
+    /// surfaces the same relaunch hint as the backend picker.
+    @MainActor
+    public func applyModelBSelection() {
+        BackendPreference.modelB = modelBEnabled
         backendChangePending = true
     }
 

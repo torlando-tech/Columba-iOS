@@ -371,7 +371,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 guard let self = self else { break }
 
                 // Read @MainActor properties we need for actor lookups
-                let (tcpEntities, tcpIfaces, autoIf, bleIf, rnodeIf, mpcIf, enabledIfs) = await MainActor.run {
+                let (tcpEntities, tcpIfaces, autoIf, bleIf, rnodeIf, mpcIf, enabledIfs, appSvc) = await MainActor.run {
                     (
                         self.repository.getEnabledInterfaces().filter { $0.type == .tcpClient },
                         self.appServices.tcpInterfaces,
@@ -379,27 +379,40 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                         self.appServices.bleInterface,
                         self.appServices.rnodeInterface,
                         self.appServices.mpcInterface,
-                        self.repository.getEnabledInterfaces()
+                        self.repository.getEnabledInterfaces(),
+                        self.appServices
                     )
                 }
 
                 // Read TCP interface states off main thread
                 var tcpUpdates: [(String, InterfaceStatus, String?)] = []
-                for entity in tcpEntities {
-                    if let iface = tcpIfaces[entity.id] {
-                        let state = await iface.state
-                        let err = await iface.lastErrorDescription
-                        let status: InterfaceStatus
-                        switch state {
-                        case .connected: status = .connected
-                        case .connecting: status = .connecting
-                        case .reconnecting: status = .reconnecting
-                        case .disconnected, .notConnected: status = .disconnected
-                        case .connectionFailed, .sendFailed, .invalidConfig: status = .error
+                if BackendPreference.modelB {
+                    // Model B: the app owns no local TCP interface — the NE owns
+                    // the relay socket. Reflect the NE's relay status (via the
+                    // proxy statusSnapshot) so the card isn't stuck "disconnected"
+                    // while the NE relay is actually connected.
+                    let relayOnline = await appSvc.neTcpRelayOnline()
+                    let neStatus: InterfaceStatus = relayOnline ? .connected : .connecting
+                    for entity in tcpEntities {
+                        tcpUpdates.append((entity.id, neStatus, nil))
+                    }
+                } else {
+                    for entity in tcpEntities {
+                        if let iface = tcpIfaces[entity.id] {
+                            let state = await iface.state
+                            let err = await iface.lastErrorDescription
+                            let status: InterfaceStatus
+                            switch state {
+                            case .connected: status = .connected
+                            case .connecting: status = .connecting
+                            case .reconnecting: status = .reconnecting
+                            case .disconnected, .notConnected: status = .disconnected
+                            case .connectionFailed, .sendFailed, .invalidConfig: status = .error
+                            }
+                            tcpUpdates.append((entity.id, status, err))
+                        } else {
+                            tcpUpdates.append((entity.id, .disconnected, nil))
                         }
-                        tcpUpdates.append((entity.id, status, err))
-                    } else {
-                        tcpUpdates.append((entity.id, .disconnected, nil))
                     }
                 }
 

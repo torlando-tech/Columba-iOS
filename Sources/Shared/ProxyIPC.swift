@@ -163,6 +163,14 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// JSON `[String]`.
     case registeredDestinationHashes
 
+    /// Heard-announce snapshot: the NE's PathTable entries for known aspects
+    /// (lxmf.delivery / lxmf.propagation / lxst.telephony / nomadnetwork.node).
+    /// The NE owns the transport in Model B, so the app can't hear announces
+    /// itself — it polls this and re-emits `.announce` BackendEvents, exactly
+    /// what `SwiftRNSBackend`'s PathTable poller does locally in Model A.
+    /// Response payload: JSON `[ProxyHeardAnnounce]`.
+    case heardAnnounces
+
     /// Send an LXMF message (mirrors `RnsLxmf.sendLxmfMessage`). The structured
     /// fields the typed seam carries (image / attachments / icon / reply) are
     /// pre-assembled by the APP into the canonical on-wire field map and passed
@@ -182,7 +190,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// rename can't silently break the wire).
     private enum Op: String, Codable {
         case start, stop, announce, announceTelephony, statusSnapshot
-        case persist, registeredDestinationHashes, lxmfSend
+        case persist, registeredDestinationHashes, lxmfSend, heardAnnounces
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -205,6 +213,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(Op.persist, forKey: .op)
         case .registeredDestinationHashes:
             try c.encode(Op.registeredDestinationHashes, forKey: .op)
+        case .heardAnnounces:
+            try c.encode(Op.heardAnnounces, forKey: .op)
         case .lxmfSend(let destHashHex, let content, let method, let fieldsData):
             try c.encode(Op.lxmfSend, forKey: .op)
             try c.encode(destHashHex, forKey: .destHashHex)
@@ -232,6 +242,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             self = .persist
         case .registeredDestinationHashes:
             self = .registeredDestinationHashes
+        case .heardAnnounces:
+            self = .heardAnnounces
         case .lxmfSend:
             self = .lxmfSend(
                 destHashHex: try c.decode(String.self, forKey: .destHashHex),
@@ -325,5 +337,33 @@ public struct ProxySendOutcome: Codable, Sendable, Equatable {
     public init(kind: Kind, detail: String? = nil) {
         self.kind = kind
         self.detail = detail
+    }
+}
+
+/// `Codable` mirror of a heard announce — the fields of a `BackendEvent.announce`
+/// — Foundation-only so it crosses the seam. The NE builds these from its
+/// transport's PathTable (`heardAnnounces` response); `ProxyRnsBackend` polls and
+/// re-emits each as a `.announce` event, so the app's existing announce handling
+/// (`AppServices` `for await event in backend.events`) works unchanged in Model B.
+public struct ProxyHeardAnnounce: Codable, Sendable, Equatable {
+    public let destHashHex: String
+    public let appDataHex: String
+    public let aspect: String
+    public let publicKeysHex: String
+    public let interfaceName: String
+    public let hops: Int
+    /// Last-heard time, epoch seconds (the proxy diffs on this to emit only
+    /// newly-seen / freshly re-announced destinations).
+    public let timestamp: Double
+
+    public init(destHashHex: String, appDataHex: String, aspect: String,
+                publicKeysHex: String, interfaceName: String, hops: Int, timestamp: Double) {
+        self.destHashHex = destHashHex
+        self.appDataHex = appDataHex
+        self.aspect = aspect
+        self.publicKeysHex = publicKeysHex
+        self.interfaceName = interfaceName
+        self.hops = hops
+        self.timestamp = timestamp
     }
 }

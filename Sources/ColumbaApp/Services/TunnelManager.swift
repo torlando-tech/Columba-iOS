@@ -196,7 +196,16 @@ public final class TunnelManager: @unchecked Sendable {
     /// defaults `false`), so this primitive is present + testable but inert until
     /// A5c wires it live.
     public func proxySend(_ data: Data) async -> Data? {
-        guard let session = manager?.connection as? NETunnelProviderSession else {
+        // The NE may still be coming up when the app first sends: proxy `start`
+        // (and any early announce/status) races the tunnel session reaching
+        // `.connected` at launch. `sendProviderMessage` on a non-`.connected`
+        // session throws → nil → the proxy reports `ipcFailed`, and a one-time
+        // launch race then leaves the proxy backend permanently "not started"
+        // (the announce button later throws `transportNotConnected`). So wait
+        // briefly for a live, connected session first — bounded, so a genuinely
+        // down tunnel still returns nil promptly.
+        guard let session = await connectedSession(timeoutMs: 8000) else {
+            logger.error("proxySend: no connected tunnel session")
             return nil
         }
         return await withCheckedContinuation { (continuation: CheckedContinuation<Data?, Never>) in
@@ -208,6 +217,23 @@ public final class TunnelManager: @unchecked Sendable {
                 self.logger.error("proxySend failed: \(error)")
                 continuation.resume(returning: nil)
             }
+        }
+    }
+
+    /// Await a `.connected` `NETunnelProviderSession`, polling up to `timeoutMs`.
+    /// The NE/tunnel is often still `.connecting` for a moment right after the
+    /// app launches; this lets the first proxy round-trip succeed instead of
+    /// spuriously failing. Returns nil if no connected session appears in time.
+    private func connectedSession(timeoutMs: Int) async -> NETunnelProviderSession? {
+        var waited = 0
+        let step = 200
+        while true {
+            if let s = manager?.connection as? NETunnelProviderSession, s.status == .connected {
+                return s
+            }
+            if waited >= timeoutMs { return nil }
+            try? await Task.sleep(for: .milliseconds(step))
+            waited += step
         }
     }
 

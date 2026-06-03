@@ -795,7 +795,14 @@ struct RootView: View {
                 DiagLog.log("[STARTUP] Starting interface: \(iface.type) name=\(iface.name)")
                 switch iface.type {
                 case .tcpClient:
-                    if case .tcpClient(let config) = iface.config {
+                    if BackendPreference.modelB {
+                        // Model B: the NE owns the single TCP relay interface. The app
+                        // must NOT open a competing/duplicate one — doing so spawns a
+                        // second socket to the relay and surfaces as a stray
+                        // "enabled but disconnected" interface in the UI. The app owns
+                        // only Auto/BLE/RNode in Model B; their frames bridge to the NE.
+                        DiagLog.log("[STARTUP] Model B: skipping app-side TCP interface (NE owns TCP)")
+                    } else if case .tcpClient(let config) = iface.config {
                         let entityId = iface.id
                         Task {
                             DiagLog.log("[STARTUP] TCP interface \(config.targetHost):\(config.targetPort) — registering")

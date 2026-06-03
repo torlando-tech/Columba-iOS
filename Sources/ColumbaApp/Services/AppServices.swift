@@ -3616,6 +3616,17 @@ public final class AppServices {
         DiagLog.log("[ANNOUNCE] sent via Python (name=\"\(displayName)\")")
     }
 
+    /// Model B UI helper: the NE owns the TCP relay, so the app has no local
+    /// `TCPInterface` to report — the interface card would otherwise show a
+    /// permanent "disconnected". Query the NE (via the proxy `statusSnapshot`)
+    /// for the relay's connected state so the card reflects reality. Returns
+    /// `false` off Model B or when the NE isn't reachable.
+    public func neTcpRelayOnline() async -> Bool {
+        guard BackendPreference.modelB, let backend = backend else { return false }
+        let snap = await backend.statusSnapshot()
+        return snap?.interfaces.first { $0.sectionName == "ne-tcp-relay" }?.online ?? false
+    }
+
     /// Send both the LXMF delivery announce and the LXST telephony announce.
     ///
     /// This is the single entry point for all announce triggers (app start,
