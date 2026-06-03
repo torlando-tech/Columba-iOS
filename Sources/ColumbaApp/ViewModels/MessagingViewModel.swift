@@ -138,6 +138,11 @@ public final class MessagingViewModel {
                 .map { Message(from: $0, localHash: appServices.localIdentityHash) }
                 .filter { !$0.isEmpty }  // Hide telemetry-only messages (e.g. location sharing)
 
+            // [TEMP DIAG — Model B render bug] records = rows the app's read saw;
+            // loaded = after telemetry filtering. Distinguishes "cross-process
+            // read returned nothing" from "read OK but everything filtered out".
+            DiagLog.log("[MSG] loadMessages hash=\(conversationHash.map { String(format: "%02x", $0) }.joined().prefix(8)) modelB=\(BackendPreference.modelB) records=\(records.count) loaded=\(loaded.count)")
+
             // Resolve reply previews from loaded messages
             var resolvedMessages = loaded
             let contentById = Dictionary(loaded.map { ($0.id, $0.content) }, uniquingKeysWith: { first, _ in first })

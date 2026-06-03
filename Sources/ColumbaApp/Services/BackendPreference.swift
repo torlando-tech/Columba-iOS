@@ -25,36 +25,31 @@ import Foundation
 /// is visible to the Network Extension, mirroring `transport_enabled`.
 enum BackendPreference {
     private static let key = "useSwiftBackend"
-    private static let modelBKey = "modelBBackgroundNE"
 
-    /// Model B master flag (Tracks A5b/C3). When `true`, `BackendFactory.make()`
-    /// returns the thin-client `ProxyRnsBackend` (which owns no destination and
-    /// marshals node-owning ops to the in-NE `NEReticulumNode` over IPC) instead
-    /// of a destination-owning backend, AND the NE activates its in-extension node
-    /// as the live delivery path. **Default `false`** — current PoC behavior is
-    /// unchanged; Model B is opt-in (the user flips this to device-test). Stored in
-    /// the App Group suite so it survives relaunch and is visible to the NE, like
-    /// `useSwiftBackend`.
+    /// Whether the app runs as the thin **Model B** proxy — the Network
+    /// Extension owns the `lxmf.delivery` node and the app marshals node-owning
+    /// ops to it over IPC (`ProxyRnsBackend`) — rather than a destination-owning
+    /// local backend.
     ///
-    /// UNIFIED SWITCH (C3): this is the SAME App-Group key
-    /// (`modelBBackgroundNE`) the NE reads via `NEReticulumNode.modelBNodeEnabled`,
-    /// so the app-side backend selection and the NE-side node activation share ONE
-    /// flag — flipping it here flips both.
+    /// This is **not** a user setting. It's tied to the build: the NE is only
+    /// compiled in on the Swift build (`ENABLE_NETWORK_EXTENSION`, the same
+    /// `Debug-Swift` / `Release-Swift` configs that define `COLUMBA_BACKEND_SWIFT`),
+    /// and on that build Model B is the *sole* architecture — there is no toggle
+    /// and no opt-out. On the standard build the NE isn't present, so the app runs
+    /// a foreground node (embedded-Python or local Swift).
     ///
-    /// INVARIANT: this is mutually exclusive with running a local
-    /// `Swift`/`Python` backend — when it's on, the NE is the SINGLE owner of the
-    /// `lxmf.delivery` destination (see `BackendFactory.make()` and
-    /// `ProxyRnsBackend`'s always-the-node note).
+    /// INVARIANT: when `true`, the NE is the SINGLE owner of `lxmf.delivery`
+    /// (see `BackendFactory.make()` / `ProxyRnsBackend`). The NE mirrors this via
+    /// `NEReticulumNode.modelBNodeEnabled`, which is likewise hardcoded `true`
+    /// (the extension only exists to be the node). Hardcoding both sides also
+    /// removes the cross-process flag race that used to leave the NE in sniff
+    /// mode while the app came up as the proxy.
     static var modelB: Bool {
-        get {
-            // TEMP (Model-B bring-up): default ON so every launch runs Model B while
-            // we verify it on-device. Revert to `false` + add a UI toggle before ship.
-            guard let stored = SharedDefaults.suite.object(forKey: modelBKey) as? Bool else {
-                return true
-            }
-            return stored
-        }
-        set { SharedDefaults.suite.set(newValue, forKey: modelBKey) }
+        #if COLUMBA_BACKEND_SWIFT
+        return true
+        #else
+        return false
+        #endif
     }
 
     /// Default when the user has never chosen explicitly. The `Columba-Swift`

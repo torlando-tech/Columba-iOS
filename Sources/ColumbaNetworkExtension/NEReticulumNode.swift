@@ -94,16 +94,13 @@ actor NEReticulumNode {
     /// delivery). The node is the live Model B delivery path only when this is
     /// flipped `true`; the PoC stays as the default-off fallback.
     static var modelBNodeEnabled: Bool {
-        // Mirror `BackendPreference.modelB`'s `object(forKey:) as? Bool` read so
-        // absence ⇒ false (a plain `bool(forKey:)` also returns false on absence,
-        // but matching the app's exact accessor keeps the two provably identical).
-        guard let stored = UserDefaults(suiteName: appGroupIdentifier)?
-            .object(forKey: modelBDefaultsKey) as? Bool else {
-            // TEMP (Model-B bring-up): default ON to match BackendPreference.modelB.
-            // Revert to `false` before ship.
-            return true
-        }
-        return stored
+        // Model B is the only architecture on the build that compiles the NE in
+        // (ENABLE_NETWORK_EXTENSION ⇔ COLUMBA_BACKEND_SWIFT): the extension exists
+        // solely to own the node. Hardcoded `true` — no runtime flag, no toggle —
+        // which also removes the cross-process flag race that used to leave the NE
+        // in sniff mode while the app came up as the proxy (→ ipcFailed). Mirrors
+        // the app-side `BackendPreference.modelB`, which is likewise build-flag-true.
+        return true
     }
 
     // MARK: - Keychain identity coordinates (MUST match the app's A3 code)

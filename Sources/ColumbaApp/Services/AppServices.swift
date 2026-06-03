@@ -2174,6 +2174,35 @@ public final class AppServices {
                     "timestamp": t,
                 ]
             )
+
+            // Stamp the announced display name onto an EXISTING conversation
+            // that still lacks one. Under Model B the NE persists an inbound
+            // message — creating the conversation row with a nil display name —
+            // BEFORE this announce is heard, and the app's inbound-side name
+            // backfill (IncomingMessageHandler) never runs in that path, so the
+            // conversation title would otherwise stay stuck on the "Peer <hash>"
+            // fallback even though the announce tells us the real name. This is
+            // UPDATE-only (never creates a conversation for a bare announce) and
+            // only fills an empty/nil name (never clobbers one we already have).
+            if !displayName.isEmpty, let repo = self.messageRepository,
+               let convo = try? await repo.fetchConversation(data) {
+                // [TEMP DIAG — Model B render bug] log the app's cross-process
+                // read of this conversation's message count whenever an announce
+                // is heard for it. If the NE persisted messages (see ext-diag
+                // "inbound message persisted from=…") but this logs msgs=0, the
+                // app's read isn't seeing the NE's writes (the render bug).
+                let cnt = (try? await repo.fetchMessageRecords(for: data, limit: 500, offset: 0).count) ?? -1
+                DiagLog.log("[DIAG-STORE] announce-read convo=\(data.map { String(format: "%02x", $0) }.joined().prefix(8)) msgs=\(cnt) name=\"\(convo.displayName ?? "<nil>")\" modelB=\(BackendPreference.modelB)")
+                // Stamp the announced display name onto an EXISTING conversation
+                // that still lacks one (Model B: the NE creates the row with a
+                // nil display name on inbound, BEFORE this announce is heard, and
+                // the app's inbound-side backfill never runs in that path).
+                // UPDATE-only, only fills an empty/nil name.
+                if (convo.displayName ?? "").isEmpty {
+                    try? await repo.updateDisplayName(data, displayName: displayName)
+                    DiagLog.log("[RNS] stamped display name onto convo \(data.map { String(format: "%02x", $0) }.joined().prefix(8))")
+                }
+            }
         case .inbound(let sourceHash, let content, let title, let fieldsPacked, let t):
             DiagLog.log("[RNS] inbound source=\(sourceHash) content=\"\(content)\" fields=\(fieldsPacked.count)B")
             guard let data = Data(hexString: sourceHash) else { return }

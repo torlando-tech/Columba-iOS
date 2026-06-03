@@ -134,23 +134,46 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     public func start(_ params: StartParams) async throws -> LocalInfo {
         // The NE loads the shared identity + computes the App-Group store path
         // itself (A5a); only the display name needs to cross the seam.
-        let response = try await roundTrip(.start(displayName: params.displayName), op: "start")
-        switch response {
-        case .ok(let payload):
-            guard let payload,
-                  let info = try? JSONDecoder().decode(ProxyLocalInfo.self, from: payload) else {
-                throw BackendError.ipcFailed(operation: "start")
+        //
+        // Model B is the only architecture now, so on a cold start or a jetsam
+        // relaunch the NE node may still be initializing (shared-identity load →
+        // transport → LXMRouter/GRDB open) when the app first reaches here. Rather
+        // than fail the whole backend, retry the `.start` handshake until the node
+        // answers `.ok`, bounded to ~12s. Both `.unsupported` (node not up yet)
+        // and a failed IPC round-trip retry; a real backend `.error` does not.
+        let stepMs: UInt64 = 400
+        let maxAttempts = 30
+        var lastError: Error = RNSError.backendNotReady
+        for attempt in 0..<maxAttempts {
+            do {
+                let response = try await roundTrip(.start(displayName: params.displayName), op: "start")
+                switch response {
+                case .ok(let payload):
+                    guard let payload,
+                          let info = try? JSONDecoder().decode(ProxyLocalInfo.self, from: payload) else {
+                        throw BackendError.ipcFailed(operation: "start")
+                    }
+                    let local = LocalInfo(identityHash: info.identityHash, destinationHash: info.destinationHash)
+                    stateLock.lock(); cachedLocalInfo = local; stateLock.unlock()
+                    startAnnouncePolling()
+                    return local
+                case .error(let message):
+                    // A real backend error (not a not-ready condition) — don't retry.
+                    throw RNSError.generic(message: message, stackTraceText: nil)
+                case .unsupported:
+                    // NE node not up yet (shared identity not created, or still
+                    // initializing) — wait and retry.
+                    lastError = RNSError.backendNotReady
+                }
+            } catch let e as BackendError {
+                // IPC round-trip didn't complete (NE not answering yet) — retry.
+                lastError = e
             }
-            let local = LocalInfo(identityHash: info.identityHash, destinationHash: info.destinationHash)
-            stateLock.lock(); cachedLocalInfo = local; stateLock.unlock()
-            startAnnouncePolling()
-            return local
-        case .error(let message):
-            throw RNSError.generic(message: message, stackTraceText: nil)
-        case .unsupported:
-            // NE node not running (e.g. shared identity not yet created).
-            throw RNSError.backendNotReady
+            if attempt < maxAttempts - 1 {
+                try? await Task.sleep(nanoseconds: stepMs * 1_000_000)
+            }
         }
+        throw lastError
     }
 
     public func stop() async {

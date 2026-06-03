@@ -61,7 +61,7 @@
       "location" : "https://github.com/torlando-tech/reticulum-swift.git",
       "state" : {
         "branch" : "perf/resource-disk-streaming",
-        "revision" : "04e4b03807f888ea58a0a97f7651856c4bd635a9"
+        "revision" : "9fa66453bbae4a90d876c94904854298b8700bd4"
       }
     },
     {

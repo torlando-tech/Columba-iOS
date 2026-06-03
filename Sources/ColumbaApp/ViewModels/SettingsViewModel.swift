@@ -145,11 +145,6 @@ public final class SettingsViewModel {
     /// Whether the native Swift backend is selected (vs embedded Python).
     /// Persisted via `BackendPreference`; applied on next app launch.
     public var useSwiftBackend: Bool = false
-    /// Model B (background delivery): run the LXMF node inside the Network
-    /// Extension so messages + notifications arrive while backgrounded/locked.
-    /// Persisted via `BackendPreference.modelB` (the shared `modelBBackgroundNE`
-    /// flag both the app and the NE read); applied on next app launch.
-    public var modelBEnabled: Bool = false
     public var isBackendExpanded: Bool = false
     /// True once the user changes the backend, surfacing the "relaunch to
     /// apply" hint until the app is restarted.
@@ -419,7 +414,6 @@ public final class SettingsViewModel {
         lastAnnounceTime = lastTs > 0 ? Date(timeIntervalSince1970: lastTs) : nil
         isTransportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
         useSwiftBackend = BackendPreference.isSwift
-        modelBEnabled = BackendPreference.modelB
         isLocationSharingEnabled = defaults.bool(forKey: "location_sharing_enabled")
         locationPrecisionRadius = defaults.integer(forKey: "location_precision_radius")
         if let storedDuration = defaults.string(forKey: "default_sharing_duration") {
@@ -561,16 +555,9 @@ public final class SettingsViewModel {
         backendChangePending = true
     }
 
-    /// Persist the Model B (background delivery) choice. Writes the shared
-    /// `modelBBackgroundNE` flag both the app (`BackendPreference.modelB`) and
-    /// the NE (`NEReticulumNode.modelBNodeEnabled`) read. Takes effect on next
-    /// launch (the backend + NE node are constructed at stack init), so the UI
-    /// surfaces the same relaunch hint as the backend picker.
-    @MainActor
-    public func applyModelBSelection() {
-        BackendPreference.modelB = modelBEnabled
-        backendChangePending = true
-    }
+    // Model B is no longer a user toggle — it's the sole architecture on the
+    // Swift build (see `BackendPreference.modelB`). `applyModelBSelection` and
+    // the `modelBEnabled` state were removed with the Settings toggle.
 
     /// Update icon appearance and persist.
     @MainActor

@@ -440,25 +440,6 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
 
-            Divider().padding(.vertical, 2)
-
-            Toggle(isOn: Binding(
-                get: { vm.modelBEnabled },
-                set: { newValue in
-                    vm.modelBEnabled = newValue
-                    vm.applyModelBSelection()
-                }
-            )) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Background delivery (Model B)")
-                        .font(.subheadline)
-                    Text("Run the LXMF node inside the Network Extension so messages + notifications arrive while Columba is backgrounded or locked (no APNS). Requires the Swift-native backend.")
-                        .font(.caption2)
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .disabled(!vm.useSwiftBackend)
 
             if vm.backendChangePending {
                 HStack(spacing: 6) {
