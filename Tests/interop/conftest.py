@@ -140,15 +140,19 @@ class Simulator:
 
     @property
     def identity_hex(self) -> str:
-        """Local RNS identity hash hex (the `[PY] started identity=…` line)."""
+        """Local RNS identity hash hex (the `[RNS] started identity=…` line).
+
+        The diag marker prefix was renamed `[PY]` → `[RNS]` when the backend
+        was abstracted behind the native engine; accept both so the harness
+        works against old and new builds."""
         if self._cached_identity_hex is not None:
             return self._cached_identity_hex
         for line in self._tail_diag(LOG_TAIL_LINES * 4):
-            m = re.search(r"\[PY\] started identity=([0-9a-f]+)\s+destination=", line)
+            m = re.search(r"\[(?:PY|RNS)\] started identity=([0-9a-f]+)\s+destination=", line)
             if m:
                 self._cached_identity_hex = m.group(1)
                 return self._cached_identity_hex
-        pytest.fail("Couldn't find `[PY] started identity=…` in diag.log")
+        pytest.fail("Couldn't find `[RNS] started identity=…` in diag.log")
 
     @property
     def lxmf_delivery_hex(self) -> str:
@@ -156,7 +160,7 @@ class Simulator:
         if self._cached_lxmf_delivery_hex is not None:
             return self._cached_lxmf_delivery_hex
         for line in self._tail_diag(LOG_TAIL_LINES * 4):
-            m = re.search(r"\[PY\] started identity=[0-9a-f]+\s+destination=([0-9a-f]+)", line)
+            m = re.search(r"\[(?:PY|RNS)\] started identity=[0-9a-f]+\s+destination=([0-9a-f]+)", line)
             if m:
                 self._cached_lxmf_delivery_hex = m.group(1)
                 return self._cached_lxmf_delivery_hex
@@ -182,7 +186,7 @@ class Simulator:
             return self._cached_propagation_node_hex
         for line in reversed(self._tail_diag(LOG_TAIL_LINES * 4)):
             m = re.search(
-                r"\[PY\] announce dest=([0-9a-f]+)\s+aspect=lxmf\.propagation\s+name=\"([^\"]*)\"",
+                r"\[(?:PY|RNS)\] announce dest=([0-9a-f]+)\s+aspect=lxmf\.propagation\s+name=\"([^\"]*)\"",
                 line,
             )
             if m and m.group(2):  # non-empty name
@@ -379,6 +383,118 @@ class Simulator:
                 f"assert_bubble_visible failed (peer={peer_display_name!r}, "
                 f"content={content!r}, has_image={has_image}, "
                 f"has_file_name={has_file_name!r}). Maestro stderr:\n"
+                f"{e.stderr or e.stdout}"
+            )
+        finally:
+            flow_path.unlink(missing_ok=True)
+
+    def assert_bubble_visible_via_network(
+        self,
+        *,
+        peer_display_name: str = "Anonymous Peer",
+        content: Optional[str] = None,
+        has_image: bool = False,
+        has_file_name: Optional[str] = None,
+        screenshot: Optional[str] = None,
+        timeout: float = 30.0,
+    ) -> None:
+        """Open the peer's thread via the **Contacts → Network** nav path and
+        assert the bubble renders — the BUG #1 path.
+
+        The Chats path (`assert_bubble_visible`) reaches `MessagingView` from
+        an existing `Conversation` DB row via a `NavigationLink`. This path
+        instead goes Contacts tab → segmented **Network** → tap the peer's
+        announce row → NodeDetails → **Start Chat**, which builds a *fresh*
+        `Conversation(destinationHash: contact.identityHash, …)` and pushes it
+        through the `.chat` `navigationDestination`. `contact.identityHash` is
+        the announce's *destination* hash (`Contact.init(from: PathEntry)` sets
+        `identityHash = entry.destinationHash`), which equals the inbound
+        message's `sourceHash` — so both paths key `loadMessages` on the same
+        conversation hash and should render identically. This pins that they
+        do (BUG #1 = thread empty via Network tab).
+
+        Leaves the app at the Network-tab root (two trailing `back`s pop
+        MessagingView → NodeDetails → Network list) so a follow-on
+        `assert_bubble_visible` (Chats path) can still reach the tab bar.
+        Call this BEFORE the Chats-path assertion for that reason.
+        """
+        lines = [
+            "appId: " + BUNDLE_ID,
+            "---",
+            # First-launch permission alerts can block the first tab tap.
+            "- tapOn: { text: \"Allow\", optional: true }",
+            "- tapOn: { text: \"Don't Allow\", optional: true }",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+            # Defensive pop-to-root: if a prior step left the app inside a
+            # pushed view (a thread / NodeDetails), the tab bar is hidden and
+            # the tab taps below would miss. `back` is a harmless no-op swipe
+            # at a tab root, so this is safe when already there.
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            # Contacts tab → segmented "Network" (label renders "Network (N)";
+            # Maestro substring-matches "Network").
+            "- tapOn:",
+            "    text: \"Contacts\"",
+            "    optional: true",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            # The segmented control renders "Network (N)". Maestro's text
+            # matcher is a FULL-string regex match (not substring), so a bare
+            # "Network" misses "Network (15)" — the trailing `.*` is required.
+            # Non-optional so a selector regression fails loudly here rather
+            # than silently scrolling the wrong (My Contacts) list below.
+            "- tapOn:",
+            "    text: \"Network.*\"",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            # The announce list can be long (every heard peer/relay/site);
+            # scroll the peer's row into view, then open it.
+            "- scrollUntilVisible:",
+            "    element:",
+            f"      text: \"{_yaml_escape(peer_display_name)}\"",
+            "    direction: DOWN",
+            "    timeout: 15000",
+            f"- tapOn: \"{_yaml_escape(peer_display_name)}\"",
+            "- waitForAnimationToEnd: { timeout: 2500 }",
+            # NodeDetails → Start Chat → MessagingView (.chat destination).
+            "- tapOn:",
+            "    text: \"Start Chat\"",
+            "- waitForAnimationToEnd: { timeout: 2500 }",
+        ]
+        if content is not None:
+            lines += [
+                "- assertVisible:",
+                f"    text: \"{_yaml_escape(content)}\"",
+            ]
+        if has_image:
+            lines += [
+                "- assertVisible:",
+                "    id: \"bubble_image\"",
+            ]
+        if has_file_name is not None:
+            lines += [
+                "- assertVisible:",
+                f"    text: \"{_yaml_escape(has_file_name)}\"",
+            ]
+        if screenshot is not None:
+            lines += [f"- takeScreenshot: {screenshot}"]
+        # Pop back to the Network-tab root so the tab bar is reachable again.
+        lines += [
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+        ]
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_assert_net_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        try:
+            _sh(["maestro", "--device", self.udid, "test", str(flow_path)], timeout=timeout + 30)
+        except subprocess.CalledProcessError as e:
+            pytest.fail(
+                f"assert_bubble_visible_via_network failed (peer={peer_display_name!r}, "
+                f"content={content!r}, has_image={has_image}, "
+                f"has_file_name={has_file_name!r}). This is the BUG #1 path "
+                f"(thread empty when opened via Contacts→Network). Maestro stderr:\n"
                 f"{e.stderr or e.stdout}"
             )
         finally:
@@ -694,7 +810,8 @@ def clean_location_state(sim):
         if not cleared and (size < pre_size or time.time() > clear_fallback):
             cleared = True
         if cleared and any(
-            "[PY] started identity=" in line for line in sim._tail_diag(LOG_TAIL_LINES)
+            ("[RNS] started identity=" in line or "[PY] started identity=" in line)
+            for line in sim._tail_diag(LOG_TAIL_LINES)
         ):
             break
         time.sleep(0.5)

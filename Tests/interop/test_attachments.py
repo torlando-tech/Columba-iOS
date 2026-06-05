@@ -275,12 +275,13 @@ def test_file_sideband_to_ios(sim, sideband):
 
 
 def _wait_for_diag_inbound(sim, *, content: str, timeout: float = 30.0) -> None:
-    """Block until `[PY] inbound` for this content lands in diag.log so
-    the Chats list has the conversation row Maestro will tap on."""
+    """Block until the inbound-delivery diag line for this content lands so
+    the Chats list has the conversation row Maestro will tap on. The marker
+    prefix was renamed `[PY]` → `[RNS]` (backend abstraction); accept both."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         for line in reversed(sim._tail_diag(800)):
-            if "[PY] inbound source=" in line and content in line:
+            if ("[RNS] inbound source=" in line or "[PY] inbound source=" in line) and content in line:
                 return
         time.sleep(0.4)
     pytest.fail(f"iOS didn't record inbound for {content!r} within {timeout}s")
