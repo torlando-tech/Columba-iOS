@@ -72,34 +72,17 @@ actor NEReticulumNode {
 
     // MARK: - Model B gate
 
-    /// Shared App-Group UserDefaults key for the Model B master flag. MUST equal
-    /// `BackendPreference.modelBKey` (`"modelBBackgroundNE"`) — the app writes it
-    /// (Settings → Advanced) and BOTH the app (`BackendPreference.modelB`, which
-    /// selects `ProxyRnsBackend`) and the NE (this node's activation) read the
-    /// SAME key so there is ONE switch. The app target can't be imported here
-    /// (collision rule), so the literal is duplicated; keep it in sync.
-    private static let modelBDefaultsKey = "modelBBackgroundNE"
-
-    /// Master gate for the Model B in-NE node, read at runtime from the SHARED
-    /// App-Group UserDefaults suite (Track C3). Unifies the switch with the
-    /// app-side `BackendPreference.modelB`: both read `modelBBackgroundNE` from the
-    /// App-Group suite, so flipping it in the app simultaneously selects the
-    /// app-side `ProxyRnsBackend` AND activates this node in the NE.
+    /// Master gate for the Model B in-NE node. Hardcoded `true`: Model B is the
+    /// SOLE architecture on the build that compiles the NE in
+    /// (ENABLE_NETWORK_EXTENSION ⇔ COLUMBA_BACKEND_SWIFT) — the extension exists
+    /// solely to own this node. Mirrors the app-side `BackendPreference.modelB`,
+    /// which is likewise build-flag `true`.
     ///
-    /// **DEFAULT FALSE** — absence of the key (or a non-Bool value) resolves to
-    /// `false`, exactly like `BackendPreference.modelB`. While `false` the node
-    /// must NOT be started from `startTunnel`: the PoC dumb-pipe
-    /// (`PacketTunnelProvider`'s NWConnection forwarding) remains the shipping
-    /// path and the two would run-conflict (double-binding the relay, duplicate
-    /// delivery). The node is the live Model B delivery path only when this is
-    /// flipped `true`; the PoC stays as the default-off fallback.
+    /// (Formerly a runtime read of the shared App-Group flag `modelBBackgroundNE`;
+    /// hardcoding it removed the cross-process flag race that used to leave the NE
+    /// in sniff mode while the app came up as the proxy → `ipcFailed`. The PoC
+    /// dumb-pipe it used to gate has since been deleted from `PacketTunnelProvider`.)
     static var modelBNodeEnabled: Bool {
-        // Model B is the only architecture on the build that compiles the NE in
-        // (ENABLE_NETWORK_EXTENSION ⇔ COLUMBA_BACKEND_SWIFT): the extension exists
-        // solely to own the node. Hardcoded `true` — no runtime flag, no toggle —
-        // which also removes the cross-process flag race that used to leave the NE
-        // in sniff mode while the app came up as the proxy (→ ipcFailed). Mirrors
-        // the app-side `BackendPreference.modelB`, which is likewise build-flag-true.
         return true
     }
 
@@ -151,6 +134,11 @@ actor NEReticulumNode {
     private var router: LXMRouter?
     private var deliveryDestination: Destination?
     private var bridge: AppGroupBridgeInterface?
+    /// Model B BLE: reticulum-swift's `BLEInterface` runs here, driven by an
+    /// `AppGroupBLEDriver` that marshals the `BLEDriver` seam to the app (which
+    /// owns CoreBluetooth). Retained so they outlive `start()`.
+    private var bleSeamTransport: AppGroupBLESeamTransport?
+    private var bleInterface: BLEInterface?
 
     /// Retained so the @MainActor delegate isn't deallocated while the router
     /// holds it weakly.
@@ -241,6 +229,54 @@ actor NEReticulumNode {
         } catch {
             // Non-fatal: the node can still deliver over the TCP relay (below).
             ExtensionDiagLog.log("NEReticulumNode: AppGroupBridge addInterface failed (non-fatal): \(String(describing: error))")
+        }
+
+        // Model B BLE mesh: run reticulum-swift's `BLEInterface` here — it owns
+        // fragmentation, per-peer `BLEPeerInterface` spawning, and the identity
+        // handshake — driven by an `AppGroupBLEDriver` that marshals the `BLEDriver`
+        // seam to the app process, which runs the real `CoreBluetoothBLEDriver`
+        // (the NE sandbox can't drive CoreBluetooth). `BLEInterface` spawns a
+        // `BLEPeerInterface` per connected peer; register/unregister those on the
+        // transport via the peer callbacks. Supersedes the AppGroupBridge's BLE-mesh
+        // role above; retire that once this path is validated on-device (TODO).
+        ExtensionDiagLog.log("NEReticulumNode: BLE setup begin (identity=\(id.hash.count)B)")
+        // `BLEInterface` preconditions a 16-byte identity — guard so a bad length
+        // can't crash the NE on start.
+        if id.hash.count == 16 {
+            let bleTx = AppGroupBLESeamTransport(role: .networkExtension)
+            bleTx.start()
+            self.bleSeamTransport = bleTx
+            let bleCfg = InterfaceConfig(
+                id: "ne-ble-mesh", name: "BLE Mesh", type: .ble,
+                enabled: true, mode: .full, host: "", port: 0
+            )
+            let bleIface = BLEInterface(
+                config: bleCfg,
+                driver: AppGroupBLEDriver(transport: bleTx),
+                transportIdentity: id.hash
+            )
+            // `Task.detached` (NOT a bare `Task {}`): a bare task inherits this
+            // node-actor's executor, which is kept continuously busy servicing the
+            // app's proxy IPC — so the registration would starve and never run.
+            await bleIface.setPeerCallbacks(
+                onPeerAdded: { peer in Task.detached { try? await tp.addInterface(peer) } },
+                onPeerRemoved: { peerId in Task.detached { await tp.removeInterface(id: peerId) } }
+            )
+            self.bleInterface = bleIface
+            ExtensionDiagLog.log("NEReticulumNode: BLE interface built; registering off the critical path")
+            // OFF THE CRITICAL PATH: `addInterface` → `BLEInterface.connect()` must
+            // never gate the node's delivery bring-up (the TCP relay below). Even if
+            // BLE setup stalls, the node still delivers over the relay.
+            Task.detached {
+                do {
+                    try await tp.addInterface(bleIface)
+                    ExtensionDiagLog.log("NEReticulumNode: BLE mesh interface registered (driver seam)")
+                } catch {
+                    ExtensionDiagLog.log("NEReticulumNode: BLE addInterface failed (non-fatal): \(String(describing: error))")
+                }
+            }
+        } else {
+            ExtensionDiagLog.log("NEReticulumNode: BLE skipped — identity not 16 bytes (\(id.hash.count))")
         }
 
         // C3: live TCP / relay interface. Read the relay config from the SAME
@@ -758,6 +794,13 @@ actor NEReticulumNode {
                 "online": s.state == .connected,
                 "rx_bytes": 0,
                 "tx_bytes": 0,
+                // Model B: the app's Network Status view can't see the NE's transport,
+                // so carry enough to reconstruct each interface row (type / peer / error).
+                "type": s.type.rawValue,
+                "is_ble_peer": s.isBLEPeerInterface,
+                "is_auto_peer": s.isAutoInterfacePeer,
+                "peer_address": s.peerAddress ?? "",
+                "last_error": s.lastErrorDescription ?? "",
             ]
         }
         let destCount = await transport.destinationCount
@@ -769,6 +812,32 @@ actor NEReticulumNode {
             "path_table_size": pathCount,
         ]
         return try? JSONSerialization.data(withJSONObject: object)
+    }
+
+    /// Native Model B BLE peer snapshot. reticulum-swift's `BLEInterface` runs in
+    /// the NE and owns the peers; map its `BLEConnectionInfo` onto the Codable
+    /// `BLEPeerSnapshot` wire DTO so the app's BLE connections screen can render
+    /// the real native peers (the app can't enumerate them — the radio + the
+    /// `BLEInterface` both live across the seam). Returns JSON `[BLEPeerSnapshot]`,
+    /// or nil when the BLE interface isn't up. See `ble_to_ne_driver_abstraction_plan`.
+    func bleConnectionsJSONForIPC() async -> Data? {
+        guard let bleInterface else { return nil }
+        let infos = await bleInterface.getConnectionInfos()
+        let snapshots: [BLEPeerSnapshot] = infos.map { info in
+            BLEPeerSnapshot(
+                identityHash: info.identityHash,
+                isOutgoing: info.isOutgoing,
+                rssi: info.rssi,
+                mtu: info.mtu,
+                connectedAt: info.connectedAt,
+                lastActivity: info.lastActivity,
+                bytesSent: info.bytesSent,
+                bytesReceived: info.bytesReceived,
+                packetsSent: info.packetsSent,
+                packetsReceived: info.packetsReceived
+            )
+        }
+        return try? JSONEncoder().encode(snapshots)
     }
 
     /// Heard-announce snapshot (Model B incoming-announce bridge). The NE owns

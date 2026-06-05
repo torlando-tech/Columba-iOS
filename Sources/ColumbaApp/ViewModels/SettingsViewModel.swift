@@ -513,7 +513,14 @@ public final class SettingsViewModel {
         if let rnode = appServices.rnodeInterface, await rnode.state == .connected {
             activeInterfaces.append("RNode")
         }
-        if let ble = appServices.bleInterface, await ble.state == .connected {
+        if modelB {
+            // Model B: BLE runs in the NE — count its native peers (over the proxy
+            // IPC) rather than the app's Compat `bleInterface`, which never has peers.
+            let bleCount = await appServices.getBLEConnectionInfos().count
+            if bleCount > 0 {
+                activeInterfaces.append("Bluetooth LE (\(bleCount) peer\(bleCount == 1 ? "" : "s"))")
+            }
+        } else if let ble = appServices.bleInterface, await ble.state == .connected {
             let count = await ble.peerCount
             if count > 0 {
                 activeInterfaces.append("Bluetooth LE (\(count) peer\(count == 1 ? "" : "s"))")

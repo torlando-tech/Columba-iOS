@@ -426,7 +426,17 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
                 var bleState: InterfaceState?
                 var blePeerCount: Int?
-                if let ble = bleIf {
+                if BackendPreference.modelB {
+                    // Model B: reticulum-swift's `BLEInterface` runs in the NE, not
+                    // the app's Compat `bleIf`. Reflect the native peer count (over
+                    // the proxy IPC) and DRIVE THE BADGE off it — a live BLE peer ⇒
+                    // connected. Leaving `bleState` nil would hit the nil-branch below
+                    // (`else { ... = .disconnected }`) which ignores peer count, so the
+                    // badge must be set explicitly here. Mirrors the TCP-relay branch.
+                    let count = await appSvc.getBLEConnectionInfos().count
+                    blePeerCount = count
+                    bleState = count > 0 ? .connected : .disconnected
+                } else if let ble = bleIf {
                     bleState = await ble.state
                     blePeerCount = await ble.peerCount
                 }

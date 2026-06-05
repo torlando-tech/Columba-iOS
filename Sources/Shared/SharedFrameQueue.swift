@@ -58,6 +58,13 @@ public enum SharedDefaultsConstants {
     /// the observer on the NE side is Track A5.)
     public static let radioFrameReadyNotificationName = "network.columba.radioFrameReady"
 
+    /// Darwin notification posted when a `BLEDriverSeamMessage` is written to the
+    /// NE→app BLE-seam queue (`bleSeamN2A`). The app's seam transport observes it.
+    public static let bleSeamN2ANotificationName = "network.columba.bleSeam.n2a"
+    /// Darwin notification posted when a `BLEDriverSeamMessage` is written to the
+    /// app→NE BLE-seam queue (`bleSeamA2N`). The NE's seam transport observes it.
+    public static let bleSeamA2NNotificationName = "network.columba.bleSeam.a2n"
+
     /// Shared UserDefaults key holding the JSON-encoded interface
     /// configuration array (full `InterfaceEntity` objects). Both the
     /// app's `InterfaceRepository` and the extension's
@@ -78,6 +85,9 @@ public enum FrameInterfaceTag: UInt8 {
     case bleMesh = 0x10
     /// RNode radio (LoRa over BLE/serial RNode hardware).
     case rnode = 0x11
+    /// A codec'd `BLEDriverSeamMessage` on the Model B BLE driver seam (the
+    /// dedicated `bleSeam*` queues carry only these, so the tag is uniform).
+    case bleControl = 0x20
 }
 
 /// File names for the two directional App-Group frame queues.
@@ -90,6 +100,14 @@ public enum SharedFrameQueueName {
     public static let e2a = "frame_queue"
     /// app→NE direction (radio-received frames forwarded into the NE's RNS).
     public static let a2e = "frame_queue_a2e"
+
+    // Model B BLE driver seam (dedicated queues, separate from the radio-frame
+    // a2e/e2a above so the BLE control/data stream never intermixes with — or
+    // double-drains against — `AppGroupBridgeInterface`).
+    /// NE→app: `BLEDriver` commands + `sendFragment` (app drains).
+    public static let bleSeamN2A = "ble_seam_n2a"
+    /// app→NE: driver stream events + `receivedFragment` + reqId results (NE drains).
+    public static let bleSeamA2N = "ble_seam_a2n"
 }
 
 /// A frame read from the shared queue, tagged with its source interface.

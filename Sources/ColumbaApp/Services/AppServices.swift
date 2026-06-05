@@ -983,6 +983,20 @@ public final class AppServices {
         #endif
         self.backend = backend
 
+        #if ENABLE_NETWORK_EXTENSION
+        // Model B: bring up the app-side BLE host — reticulum-swift's
+        // `CoreBluetoothBLEDriver` (CoreBluetooth can't run in the NE) + the
+        // `AppGroupBLEServer` that bridges it to the NE's `BLEInterface` over the
+        // App-Group seam. The NE drives scan/advertise/connect through the seam.
+        // Idempotent; uses the SAME 16-byte identity the NE's BLEInterface uses.
+        // (ModelBBLEService lives in its own file because it `import ReticulumSwift`
+        // for the REAL driver — here `CoreBluetoothBLEDriver` would be the RNSAPI
+        // Compat stub.) `SwiftBLEBridge` is gated off under Model B at launch.
+        if BackendPreference.modelB {
+            ModelBBLEService.shared.start(identityHash: identity.hash)
+        }
+        #endif
+
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
         try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
@@ -2186,18 +2200,6 @@ public final class AppServices {
             // only fills an empty/nil name (never clobbers one we already have).
             if !displayName.isEmpty, let repo = self.messageRepository,
                let convo = try? await repo.fetchConversation(data) {
-                // [TEMP DIAG — Model B render bug] log the app's cross-process
-                // read of this conversation's message count whenever an announce
-                // is heard for it. If the NE persisted messages (see ext-diag
-                // "inbound message persisted from=…") but this logs msgs=0, the
-                // app's read isn't seeing the NE's writes (the render bug).
-                let cnt = (try? await repo.fetchMessageRecords(for: data, limit: 500, offset: 0).count) ?? -1
-                DiagLog.log("[DIAG-STORE] announce-read convo=\(data.map { String(format: "%02x", $0) }.joined().prefix(8)) msgs=\(cnt) name=\"\(convo.displayName ?? "<nil>")\" modelB=\(BackendPreference.modelB)")
-                // Stamp the announced display name onto an EXISTING conversation
-                // that still lacks one (Model B: the NE creates the row with a
-                // nil display name on inbound, BEFORE this announce is heard, and
-                // the app's inbound-side backfill never runs in that path).
-                // UPDATE-only, only fills an empty/nil name.
                 if (convo.displayName ?? "").isEmpty {
                     try? await repo.updateDisplayName(data, displayName: displayName)
                     DiagLog.log("[RNS] stamped display name onto convo \(data.map { String(format: "%02x", $0) }.joined().prefix(8))")
@@ -3217,6 +3219,13 @@ public final class AppServices {
     /// `BleConnectionDetails` → `BLEConnectionInfo` here so the dedicated
     /// connections screen renders real peers.
     public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
+        // Model B: the BLE radio + reticulum-swift `BLEInterface` run across the NE
+        // seam, NOT `SwiftBLEBridge` (the Model A Python-path CoreBluetooth
+        // singleton). Query the NE's native peers over the proxy IPC. The Model A
+        // `SwiftBLEBridge` path below only applies when Model B is off.
+        if BackendPreference.modelB {
+            return await backend?.bleConnections() ?? []
+        }
         guard bleInterface != nil else { return [] }
         let details = SwiftBLEBridge.shared.getConnectionDetails()
         // Group by identity. When a peer is connected via BOTH central

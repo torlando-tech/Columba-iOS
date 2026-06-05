@@ -75,7 +75,17 @@ struct ColumbaApp: App {
         // run on this relaunch. Native-Swift BLE delivery is a deliberate
         // follow-on; until it lands, background-wake delivery is
         // Python-backend-only. See the DELIVERY CAVEAT in SwiftBLEBridge.start().
-        SwiftBLEBridge.shared.restoreAtLaunch()
+        //
+        // Model B follow-on (now landing): reticulum-swift's `CoreBluetoothBLEDriver`
+        // owns CoreBluetooth via `ModelBBLEService` (started from `AppServices` once
+        // the identity is ready). It must be the ONLY CB stack — `SwiftBLEBridge`
+        // creating its own managers would fight over the same GATT service — so we
+        // restore `SwiftBLEBridge` only on the Python-backend (non-Model-B) path.
+        // (Model B background-restore via CoreBluetoothBLEDriver's own restore
+        // identifier is a further follow-on: it needs the identity at launch.)
+        if !BackendPreference.modelB {
+            SwiftBLEBridge.shared.restoreAtLaunch()
+        }
         #endif
 
         #if os(iOS)

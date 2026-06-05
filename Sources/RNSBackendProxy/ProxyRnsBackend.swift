@@ -244,6 +244,49 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         return try? JSONDecoder().decode(StatusSnapshot.self, from: payload)
     }
 
+    public func bleConnections() async -> [BLEConnectionInfo] {
+        // Native Model B BLE peers live in the NE's reticulum-swift `BLEInterface`.
+        // Round-trip the snapshot DTO and map it onto the UI `BLEConnectionInfo`
+        // (deriving displayName / connectionType / signalQuality the same way the
+        // Model A path does in `AppServices.getBLEConnectionInfos`).
+        guard let response = try? await roundTrip(.bleConnections, op: "bleConnections"),
+              case .ok(let payload) = response, let payload,
+              let snapshots = try? JSONDecoder().decode([BLEPeerSnapshot].self, from: payload) else {
+            return []
+        }
+        let now = Date()
+        return snapshots.map { s in
+            BLEConnectionInfo(
+                identityHex: s.identityHash,
+                identityHash: s.identityHash,
+                displayName: String(s.identityHash.prefix(8)),
+                rssi: s.rssi,
+                connected: true,
+                lastSeen: s.lastActivity,
+                lastActivity: s.lastActivity,
+                connectionType: s.isOutgoing ? "central" : "peripheral",
+                connectionDuration: max(0, now.timeIntervalSince(s.connectedAt)),
+                isOutgoing: s.isOutgoing,
+                mtu: s.mtu,
+                bytesSent: s.bytesSent,
+                bytesReceived: s.bytesReceived,
+                packetsSent: s.packetsSent,
+                packetsReceived: s.packetsReceived,
+                signalQuality: Self.signalQuality(forRssi: s.rssi)
+            )
+        }
+    }
+
+    /// RSSI dBm → coarse signal bucket (60/75/90 steps), matching the Model A
+    /// mapping in `AppServices`.
+    private static func signalQuality(forRssi rssi: Int) -> SignalQuality {
+        let absRssi = abs(rssi)
+        if absRssi < 60 { return .excellent }
+        if absRssi < 75 { return .good }
+        if absRssi < 90 { return .fair }
+        return .poor
+    }
+
     @discardableResult
     public func persist() async -> Bool {
         guard let response = try? await roundTrip(.persist, op: "persist") else { return false }

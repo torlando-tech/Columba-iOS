@@ -180,6 +180,12 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// / …). Response payload: JSON-encoded `ProxySendOutcome`.
     case lxmfSend(destHashHex: String, content: String, method: String, fieldsData: Data)
 
+    /// Native Model B BLE peer snapshot. The NE owns reticulum-swift's
+    /// `BLEInterface` in Model B (the app can't enumerate BLE peers itself), so
+    /// the BLE connections screen polls this. Response payload: JSON
+    /// `[BLEPeerSnapshot]`.
+    case bleConnections
+
     // MARK: Codable (discriminated union)
 
     private enum CodingKeys: String, CodingKey {
@@ -191,6 +197,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     private enum Op: String, Codable {
         case start, stop, announce, announceTelephony, statusSnapshot
         case persist, registeredDestinationHashes, lxmfSend, heardAnnounces
+        case bleConnections
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -221,6 +228,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(content, forKey: .content)
             try c.encode(method, forKey: .method)
             try c.encode(fieldsData, forKey: .fieldsData)
+        case .bleConnections:
+            try c.encode(Op.bleConnections, forKey: .op)
         }
     }
 
@@ -251,7 +260,40 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
                 method: try c.decode(String.self, forKey: .method),
                 fieldsData: try c.decode(Data.self, forKey: .fieldsData)
             )
+        case .bleConnections:
+            self = .bleConnections
         }
+    }
+}
+
+/// Wire DTO for one native Model B BLE peer (the NE's reticulum-swift
+/// `BLEInterface.getConnectionInfos()` mapped to a `Codable` shape). The app maps
+/// these onto its `BLEConnectionInfo` UI model in `ProxyRnsBackend.bleConnections()`.
+public struct BLEPeerSnapshot: Codable, Sendable, Equatable {
+    public let identityHash: String
+    public let isOutgoing: Bool
+    public let rssi: Int
+    public let mtu: Int
+    public let connectedAt: Date
+    public let lastActivity: Date
+    public let bytesSent: Int
+    public let bytesReceived: Int
+    public let packetsSent: Int
+    public let packetsReceived: Int
+
+    public init(identityHash: String, isOutgoing: Bool, rssi: Int, mtu: Int,
+                connectedAt: Date, lastActivity: Date, bytesSent: Int,
+                bytesReceived: Int, packetsSent: Int, packetsReceived: Int) {
+        self.identityHash = identityHash
+        self.isOutgoing = isOutgoing
+        self.rssi = rssi
+        self.mtu = mtu
+        self.connectedAt = connectedAt
+        self.lastActivity = lastActivity
+        self.bytesSent = bytesSent
+        self.bytesReceived = bytesReceived
+        self.packetsSent = packetsSent
+        self.packetsReceived = packetsReceived
     }
 }
 

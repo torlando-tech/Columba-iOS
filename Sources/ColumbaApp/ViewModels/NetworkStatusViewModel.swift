@@ -83,6 +83,14 @@ final class NetworkStatusViewModel {
     }
 
     func refresh() async {
+        // Model B: the app's local transport is a Compat stub — the real interfaces
+        // (relay, BLE mesh + peers) live in the NE. Read them over the proxy
+        // `statusSnapshot` IPC instead of the empty/stale app transport.
+        if BackendPreference.modelB {
+            await refreshFromNE()
+            return
+        }
+
         // Read transport reference on MainActor
         let transport = await MainActor.run { appServices.transport }
 
@@ -152,6 +160,80 @@ final class NetworkStatusViewModel {
             } else {
                 networkStatus = "All interfaces offline"
             }
+        }
+    }
+
+    /// Model B: read the NE's interfaces over the proxy `statusSnapshot` IPC and
+    /// reconstruct the rows (the app's local transport is a Compat stub and never
+    /// holds the relay / BLE mesh / BLE peers the NE actually runs).
+    private func refreshFromNE() async {
+        let backend = await MainActor.run { appServices.backend }
+        guard let backend else {
+            await MainActor.run {
+                isInitialized = false
+                networkStatus = "Backend not initialized"
+                interfaces = []
+            }
+            return
+        }
+        guard let snap = await backend.statusSnapshot() else {
+            await MainActor.run {
+                isInitialized = false
+                networkStatus = "Network Extension not running"
+                interfaces = []
+            }
+            return
+        }
+
+        let infos: [InterfaceInfo] = snap.interfaces.map { iface in
+            let isBLEPeer = iface.isBLEPeer ?? false
+            let isAutoPeer = iface.isAutoPeer ?? false
+            let typeName: String
+            if isAutoPeer { typeName = "AutoInterfacePeer" }
+            else if isBLEPeer { typeName = "BLEPeer" }
+            else { typeName = Self.displayType(forRaw: iface.typeRaw) }
+            let addr = (iface.peerAddress?.isEmpty == false) ? iface.peerAddress : nil
+            let err = (iface.lastError?.isEmpty == false) ? iface.lastError : nil
+            return InterfaceInfo(
+                id: iface.sectionName,
+                name: iface.name,
+                type: typeName,
+                online: iface.online,
+                state: iface.online ? .connected : .disconnected,
+                isAutoInterfacePeer: isAutoPeer,
+                peerAddress: addr,
+                lastErrorDescription: err
+            )
+        }
+
+        let onlineCount = infos.filter(\.online).count
+        await MainActor.run {
+            isInitialized = true
+            interfaces = infos
+            if infos.isEmpty {
+                networkStatus = "No interfaces"
+            } else if onlineCount == infos.count {
+                networkStatus = "All interfaces online"
+            } else if onlineCount > 0 {
+                networkStatus = "\(onlineCount)/\(infos.count) interfaces online"
+            } else {
+                networkStatus = "All interfaces offline"
+            }
+        }
+    }
+
+    /// Map a reticulum-swift `InterfaceType.rawValue` (the camelCase case name) to
+    /// the display label the Model A path uses, so the UI reads identically either way.
+    private static func displayType(forRaw raw: String?) -> String {
+        switch raw {
+        case "tcp": return "TCPClient"
+        case "udp": return "UDP"
+        case "i2p": return "I2P"
+        case "autoInterface": return "AutoInterface"
+        case "rnode": return "RNode"
+        case "ble": return "BLE"
+        case "multipeerConnectivity": return "Multipeer"
+        default: return raw ?? "Interface"
         }
     }
 }
