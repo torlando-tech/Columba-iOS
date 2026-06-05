@@ -99,13 +99,16 @@ public final class AppGroupBLEServer: @unchecked Sendable {
         case let .disconnect(address): await driver.disconnect(address: address)
 
         case let .connect(reqId, address):
+            log?("[BLE] server: connect → \(address.prefix(8)) (central)")
             do {
                 let conn = try await driver.connect(address: address)
+                log?("[BLE] server: connect OK \(address.prefix(8)) mtu=\(conn.mtu)")
                 register(conn)
                 transport.send(.connectResult(reqId: reqId, address: conn.address,
                                               mtu: UInt16(clamping: conn.mtu),
                                               identity: conn.identity, error: nil))
             } catch {
+                log?("[BLE] server: connect FAILED \(address.prefix(8)): \(error)")
                 transport.send(.connectResult(reqId: reqId, address: address, mtu: 0,
                                               identity: nil, error: String(describing: error)))
             }
@@ -119,18 +122,28 @@ public final class AppGroupBLEServer: @unchecked Sendable {
             try? await connection(address)?.sendFragment(data)
 
         case let .writeIdentity(address, identity):
-            try? await connection(address)?.writeIdentity(identity)
+            log?("[BLE] server: writeIdentity → \(address.prefix(8)) (\(identity.count)B)")
+            do { try await connection(address)?.writeIdentity(identity); log?("[BLE] server: writeIdentity OK \(address.prefix(8))") }
+            catch { log?("[BLE] server: writeIdentity FAILED \(address.prefix(8)): \(error)") }
 
         case let .closeConnection(address):
             connection(address)?.close()
             unregister(address)
 
         case let .readIdentity(reqId, address):
+            log?("[BLE] server: readIdentity → \(address.prefix(8))")
             guard let conn = connection(address) else {
+                log?("[BLE] server: readIdentity NO-CONN \(address.prefix(8))")
                 transport.send(.readIdentityResult(reqId: reqId, identity: nil, error: "no connection")); return
             }
-            do { transport.send(.readIdentityResult(reqId: reqId, identity: try await conn.readIdentity(), error: nil)) }
-            catch { transport.send(.readIdentityResult(reqId: reqId, identity: nil, error: String(describing: error))) }
+            do {
+                let id = try await conn.readIdentity()
+                log?("[BLE] server: readIdentity OK \(address.prefix(8)) (\(id.count)B)")
+                transport.send(.readIdentityResult(reqId: reqId, identity: id, error: nil))
+            } catch {
+                log?("[BLE] server: readIdentity FAILED \(address.prefix(8)): \(error)")
+                transport.send(.readIdentityResult(reqId: reqId, identity: nil, error: String(describing: error)))
+            }
 
         case let .readRemoteRssi(reqId, address):
             guard let conn = connection(address) else {
