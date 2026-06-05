@@ -44,6 +44,18 @@ public final class NotificationObserver: @unchecked Sendable {
                     .fromOpaque(observer)
                     .takeUnretainedValue()
                 self_.callback?()
+                // Bridge the cross-process Darwin signal to the in-process
+                // `messageReceivedNotification` the rest of the UI observes (the open
+                // thread's `MessagingViewModel`, message views). Under Model B the NE
+                // delivers inbound LXMF + receives delivery proofs and posts ONLY this
+                // Darwin notification — the app-local `IncomingMessageHandler` never
+                // fires — so without this re-post an open conversation never reloads
+                // inbound messages or advances the sent-message delivery checkmarks.
+                // `loadMessages` re-reads both, so no per-message userInfo is needed.
+                NotificationCenter.default.post(
+                    name: IncomingMessageHandler.messageReceivedNotification,
+                    object: nil
+                )
             },
             Self.newMessageNotification,
             nil,

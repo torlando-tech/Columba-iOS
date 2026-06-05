@@ -1037,20 +1037,24 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
     }
 
     func router(_ router: LXMRouter, didUpdateMessage message: LXMessage) {
-        // Outbound state transitions aren't the NE's concern in A5a (the NE
-        // delivers inbound; outbound sending is the app's path until A5b/A5c).
-        // Log envelope only.
         if message.state == .delivered {
             ExtensionDiagLog.log("NEReticulumNode: outbound message delivered (hash=\(NEReticulumNode.hashPrefix(message.hash.hexHash)))")
         }
+        // Under full Model B the NE owns outbound sending (`.lxmfSend` IPC), so the
+        // proof/state transitions for sent messages land HERE, not in the app. The
+        // app reads message state from the shared LXMF store, so it must be told to
+        // refresh or the sent-message checkmarks never advance past the single tick.
+        Self.postNewMessageDarwinNotification()
     }
 
     func router(_ router: LXMRouter, didFailMessage message: LXMessage, reason: LXMFError) {
         ExtensionDiagLog.log("NEReticulumNode: message failed (hash=\(NEReticulumNode.hashPrefix(message.hash.hexHash)))")
+        Self.postNewMessageDarwinNotification()
     }
 
     func router(_ router: LXMRouter, didConfirmDelivery messageHash: Data) {
         ExtensionDiagLog.log("NEReticulumNode: delivery confirmed (hash=\(NEReticulumNode.hashPrefix(messageHash.hexHash)))")
+        Self.postNewMessageDarwinNotification()
     }
 
     // didUpdateSyncState / didCompleteSyncWithNewMessages: use the protocol's
