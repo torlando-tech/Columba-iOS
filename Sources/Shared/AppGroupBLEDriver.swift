@@ -62,6 +62,12 @@ public final class AppGroupBLEDriver: BLEDriver, @unchecked Sendable {
         let inbound = transport.inbound
         Task { [weak self] in
             for await message in inbound { self?.handleInbound(message) }
+            // Inbound ended (the seam transport was stopped on NE teardown). Finish the
+            // driver streams so `BLEInterface`'s consumer tasks exit cleanly instead of
+            // blocking forever on a stream that will never yield again.
+            self?.discoveredCont.finish()
+            self?.incomingCont.finish()
+            self?.connectionLostCont.finish()
         }
     }
 

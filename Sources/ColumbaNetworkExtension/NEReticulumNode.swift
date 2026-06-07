@@ -184,6 +184,10 @@ actor NEReticulumNode {
         ExtensionDiagLog.log("NEReticulumNode: starting (identity=\(Self.hashPrefix(id.hexHash)))")
 
         // 3. Path table + transport (mirror SwiftRNSBackend.start step 2).
+        //    NOTE: path-table persistence reverted to in-memory pending a fix — the
+        //    App-Group SQLite path table must be opened suspend-safe (like the LXMF
+        //    store) or iOS 0xDEAD10CC-kills the NE while it holds the file lock,
+        //    flapping BLE. `appGroupPathTableDatabasePath` is kept for the rework.
         let pt = PathTable()
         self.pathTable = pt
         let tp = ReticulumTransport(pathTable: pt)
@@ -209,7 +213,7 @@ actor NEReticulumNode {
         await rt.setTransport(tp)
         await rt.setRatchetManager(dest.ratchetManager)
         try await rt.registerDeliveryDestination(dest)
-        let d = await MainActor.run { NEDeliveryDelegate() }
+        let d = await MainActor.run { NEDeliveryDelegate(databasePath: dbPath) }
         self.delegate = d
         await rt.setDelegate(d)
 
@@ -413,6 +417,18 @@ actor NEReticulumNode {
         if let br = bridge {
             await br.disconnect()
         }
+        // Tear down the BLE seam. Without this the seam transport's Darwin observer
+        // (and the AppGroupBLEDriver behind it) LEAK across a same-process NE restart
+        // (e.g. a VPN reconnect — PacketTunnelProvider makes a new node per startTunnel
+        // but iOS reuses the process): the orphaned observer keeps draining the app→NE
+        // queue (readAllAndClear) and STEALS discovery/connection/fragment events from
+        // the freshly-started node, which then spawns its BLE interface but never sees a
+        // peer. Stop the transport (removes the observer + ends the driver inbound loop)
+        // and drop the interface. Do NOT `disconnect()` the interface — that `.shutdown`s
+        // the app's shared CoreBluetooth radio over the seam, which must outlive the NE.
+        bleSeamTransport?.stop()
+        bleSeamTransport = nil
+        bleInterface = nil
         router = nil
         transport = nil
         pathTable = nil
@@ -543,6 +559,19 @@ actor NEReticulumNode {
         }
         return tmpFallbackDirectory(named: "python-\(identityHashHex)")
             .appendingPathComponent("lxmf-swift.db").path
+    }
+
+    /// Path to the App-Group-shared SQLite path table (learned routes) for
+    /// `identityHashHex`, co-located with the LXMF store + ratchets. Persisting
+    /// paths across NE restarts mirrors Python RNS's on-disk `destination_table`;
+    /// without it every boot starts routeless and can't reach a peer until it
+    /// re-announces.
+    static func appGroupPathTableDatabasePath(identityHashHex: String) -> String {
+        if let url = AppGroupPaths.perIdentityDirectoryURL(identityHashHex: identityHashHex) {
+            return url.appendingPathComponent("pathtable.db").path
+        }
+        return tmpFallbackDirectory(named: "python-\(identityHashHex)")
+            .appendingPathComponent("pathtable.db").path
     }
 
     /// Path to the App-Group-shared ratchet storage for `identityHashHex`,
@@ -1009,6 +1038,17 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
     /// acceptable, but kept minimal).
     private static let previewLimit = 80
 
+    /// Read-only handle on the SAME shared App-Group store the router writes to,
+    /// used solely to resolve a sender's display name for inbound notifications
+    /// (the app populates conversation display names from announces). Read-only +
+    /// LXMFDatabase's suspend-clean config means it neither fights the router's
+    /// writer nor 0xDEAD10CC-kills the NE. nil if the open fails → hash fallback.
+    private let lookupDB: LXMFDatabase?
+
+    init(databasePath: String) {
+        self.lookupDB = try? LXMFDatabase(path: databasePath, readonly: true)
+    }
+
     func router(_ router: LXMRouter, didReceiveMessage message: LXMessage) {
         // LXMF-swift already persisted `message` to the shared GRDB store.
         let senderHexPrefix = NEReticulumNode.hashPrefix(message.sourceHash.hexHash)
@@ -1018,13 +1058,18 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
         // detached notification Task (LXMessage is a value type here).
         let contentPreview = Self.previewText(from: message.content)
         let threadId = message.sourceHash.hexHash
+        let sourceHash = message.sourceHash
 
         // Post the local notification honoring system authorization. Fire-and-
         // forget; failures are logged but never propagate (a missed notification
-        // must not destabilize delivery).
+        // must not destabilize delivery). The title is the sender's display name
+        // (resolved from the shared store, like the app's NotificationService),
+        // falling back to the short hash prefix when no name is on record.
         Task {
+            let senderDisplay = await self.resolveSenderDisplayName(sourceHash: sourceHash)
+                ?? "[\(senderHexPrefix)…]"
             await Self.postInboundNotification(
-                senderHexPrefix: senderHexPrefix,
+                senderDisplay: senderDisplay,
                 preview: contentPreview,
                 threadId: threadId
             )
@@ -1034,6 +1079,17 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
         // uses). Posted regardless of notification authorization — the in-app UI
         // refresh is independent of the user's notification permission.
         Self.postNewMessageDarwinNotification()
+    }
+
+    /// Resolve the sender's display name from the shared conversation store (the
+    /// same store the app populates from announces). Returns nil when no name is
+    /// on record — the caller then falls back to the short hash prefix.
+    private func resolveSenderDisplayName(sourceHash: Data) async -> String? {
+        guard let db = lookupDB,
+              let record = try? await db.getConversation(hash: sourceHash),
+              let name = record.displayName,
+              !name.isEmpty else { return nil }
+        return name
     }
 
     func router(_ router: LXMRouter, didUpdateMessage message: LXMessage) {
@@ -1063,10 +1119,11 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
     // MARK: - Notification
 
     /// Post a local notification for an inbound message, gated on the host's
-    /// notification authorization. Title is a short sender-hash prefix; body is a
-    /// truncated content preview. Grouped per-conversation via `threadIdentifier`.
+    /// notification authorization. Title is the resolved sender display name (the
+    /// caller falls back to a short hash prefix); body is a truncated content
+    /// preview. Grouped per-conversation via `threadIdentifier`.
     private static func postInboundNotification(
-        senderHexPrefix: String,
+        senderDisplay: String,
         preview: String,
         threadId: String
     ) async {
@@ -1084,7 +1141,7 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
         }
 
         let content = UNMutableNotificationContent()
-        content.title = "[\(senderHexPrefix)…]"
+        content.title = senderDisplay
         content.body = preview.isEmpty ? "New message" : preview
         content.threadIdentifier = threadId
         content.sound = .default
