@@ -119,6 +119,21 @@ actor NEReticulumNode {
     /// (`"network.columba.newMessage"`).
     private static let newMessageDarwinName = "network.columba.newMessage"
 
+    /// Must equal `NotificationObserver.networkStateChangedNotification`. Posted when
+    /// BLE/interface state changes (peer connect/disconnect, interface up/down) so the
+    /// app's status/connection UIs refresh ONCE instead of polling the NE on a 1-2s
+    /// timer — which produced a ~10/s app<->NE IPC flood. Event-driven, not polled.
+    private static let networkStateChangedDarwinName = "network.columba.networkStateChanged"
+
+    /// Post the network/BLE-state-changed Darwin notification to the app.
+    static func postNetworkStateChangedDarwinNotification() {
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(networkStateChangedDarwinName as CFString),
+            nil, nil, true
+        )
+    }
+
     // MARK: - Local-notification identifiers
 
     /// `UNUserNotificationCenter` request identifier prefix for inbound-message
@@ -184,11 +199,20 @@ actor NEReticulumNode {
         ExtensionDiagLog.log("NEReticulumNode: starting (identity=\(Self.hashPrefix(id.hexHash)))")
 
         // 3. Path table + transport (mirror SwiftRNSBackend.start step 2).
-        //    NOTE: path-table persistence reverted to in-memory pending a fix — the
-        //    App-Group SQLite path table must be opened suspend-safe (like the LXMF
-        //    store) or iOS 0xDEAD10CC-kills the NE while it holds the file lock,
-        //    flapping BLE. `appGroupPathTableDatabasePath` is kept for the rework.
-        let pt = PathTable()
+        //    Persist learned routes to the App-Group container so they survive NE
+        //    restarts — Python RNS persists its `destination_table` the same way; without
+        //    it every boot starts routeless and can't reach a peer until it re-announces.
+        //    `PathTable(databasePath:)` opens this DB NE-safe on iOS (WAL + busy_timeout +
+        //    data-protection CompleteUntilFirstUserAuthentication on the db/-wal/-shm),
+        //    matching the LXMF store. Degrade to in-memory if the store can't be opened.
+        let pathDbPath = Self.appGroupPathTableDatabasePath(identityHashHex: id.hexHash)
+        let pt: PathTable
+        if let persistent = try? PathTable(databasePath: pathDbPath) {
+            pt = persistent
+        } else {
+            ExtensionDiagLog.log("NEReticulumNode: path table persistence unavailable — using in-memory")
+            pt = PathTable()
+        }
         self.pathTable = pt
         let tp = ReticulumTransport(pathTable: pt)
         self.transport = tp
@@ -263,8 +287,14 @@ actor NEReticulumNode {
             // node-actor's executor, which is kept continuously busy servicing the
             // app's proxy IPC — so the registration would starve and never run.
             await bleIface.setPeerCallbacks(
-                onPeerAdded: { peer in Task.detached { try? await tp.addInterface(peer) } },
-                onPeerRemoved: { peerId in Task.detached { await tp.removeInterface(id: peerId) } }
+                onPeerAdded: { peer in
+                    NEReticulumNode.postNetworkStateChangedDarwinNotification()
+                    Task.detached { try? await tp.addInterface(peer) }
+                },
+                onPeerRemoved: { peerId in
+                    NEReticulumNode.postNetworkStateChangedDarwinNotification()
+                    Task.detached { await tp.removeInterface(id: peerId) }
+                }
             )
             self.bleInterface = bleIface
             ExtensionDiagLog.log("NEReticulumNode: BLE interface built; registering off the critical path")
