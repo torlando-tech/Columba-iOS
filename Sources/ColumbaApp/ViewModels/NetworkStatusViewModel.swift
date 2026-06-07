@@ -3,7 +3,8 @@
 //  ColumbaApp
 //
 //  ViewModel for the Network Status screen.
-//  Polls transport for all registered interfaces and exposes them as observable state.
+//  Reads a snapshot of all registered interfaces and exposes them as observable state,
+//  refreshing in response to the NE's pushed network-state-changed notification.
 //
 
 import Foundation
@@ -28,8 +29,10 @@ struct InterfaceInfo: Identifiable {
 
 /// ViewModel for the Network Status screen.
 ///
-/// Polls ReticulumTransport every second to get a snapshot of all registered
-/// interfaces, including AutoInterfacePeers, and exposes them as observable state.
+/// Reads a snapshot of all registered interfaces, including AutoInterfacePeers, and
+/// exposes them as observable state. Event-driven: refreshes once on init and then
+/// once per `NotificationObserver.networkStateChangedInApp` push (peer
+/// connect/disconnect, interface up/down) rather than polling on a timer.
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
 final class NetworkStatusViewModel {
@@ -56,29 +59,42 @@ final class NetworkStatusViewModel {
 
     // MARK: - Internal
 
-    private var pollTask: Task<Void, Never>?
+    /// In-process observer token for `networkStateChangedInApp`. The NE pushes this
+    /// on BLE/interface state change (peer connect/disconnect, interface up/down);
+    /// we refresh once per push instead of polling the NE on a timer.
+    private var inProcessObserver: NSObjectProtocol?
 
     // MARK: - Init
 
     init(appServices: AppServices) {
         self.appServices = appServices
-        startPolling()
+        startObserving()
     }
 
     deinit {
-        pollTask?.cancel()
+        if let observer = inProcessObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
-    // MARK: - Polling
+    // MARK: - State updates
 
-    private func startPolling() {
-        pollTask?.cancel()
-        pollTask = Task.detached { [weak self] in
-            while !Task.isCancelled {
-                guard let self = self else { break }
-                await self.refresh()
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+    /// Refresh once on each pushed network-state change, plus one initial refresh so
+    /// the first state loads immediately (it can change before the first push).
+    private func startObserving() {
+        inProcessObserver = NotificationCenter.default.addObserver(
+            forName: NotificationObserver.networkStateChangedInApp,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { [weak self] in
+                await self?.refresh()
             }
+        }
+
+        // Initial load — state can change before the first push arrives.
+        Task { [weak self] in
+            await self?.refresh()
         }
     }
 
