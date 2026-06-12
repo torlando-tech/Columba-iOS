@@ -65,11 +65,29 @@ public enum SharedDefaultsConstants {
     /// app→NE BLE-seam queue (`bleSeamA2N`). The NE's seam transport observes it.
     public static let bleSeamA2NNotificationName = "network.columba.bleSeam.a2n"
 
+    /// Darwin notification posted when an `RNodeSeamMessage` is written to the
+    /// NE→app RNode-seam queue (`rnodeSeamN2A`). The app's RNode server observes it.
+    public static let rnodeSeamN2ANotificationName = "network.columba.rnodeSeam.n2a"
+    /// Darwin notification posted when an `RNodeSeamMessage` is written to the
+    /// app→NE RNode-seam queue (`rnodeSeamA2N`). The NE's seam transport observes it.
+    public static let rnodeSeamA2NNotificationName = "network.columba.rnodeSeam.a2n"
+
     /// Shared UserDefaults key holding the JSON-encoded interface
     /// configuration array (full `InterfaceEntity` objects). Both the
     /// app's `InterfaceRepository` and the extension's
     /// `loadInterfaceConfigs` read from this key.
     public static let interfacesKey = "com.columba.interfaces"
+
+    /// Shared UserDefaults key holding the JSON-encoded `RNodeSeamConfig` for the
+    /// Model B RNode interface (device name + radio params), or absent when no RNode
+    /// is enabled. Written by the app (which owns the full `RNodeConfig`), read by the
+    /// NE (which is RNSAPI-free and maps it to reticulum-swift's `RadioConfig`).
+    public static let rnodeConfigKey = "com.columba.rnodeConfig"
+
+    /// Darwin notification posted by the app when the RNode config (`rnodeConfigKey`)
+    /// changes (enabled / disabled / re-tuned). The NE observes it to (re)build or tear
+    /// down its `RNodeInterface`.
+    public static let rnodeConfigChangedNotificationName = "network.columba.rnodeConfigChanged"
 }
 
 /// Interface tag identifying which network interface a frame is associated with.
@@ -88,6 +106,9 @@ public enum FrameInterfaceTag: UInt8 {
     /// A codec'd `BLEDriverSeamMessage` on the Model B BLE driver seam (the
     /// dedicated `bleSeam*` queues carry only these, so the tag is uniform).
     case bleControl = 0x20
+    /// A codec'd `RNodeSeamMessage` on the Model B RNode serial seam (the dedicated
+    /// `rnodeSeam*` queues carry only these, so the tag is uniform).
+    case rnodeControl = 0x21
 }
 
 /// File names for the two directional App-Group frame queues.
@@ -108,6 +129,13 @@ public enum SharedFrameQueueName {
     public static let bleSeamN2A = "ble_seam_n2a"
     /// app→NE: driver stream events + `receivedFragment` + reqId results (NE drains).
     public static let bleSeamA2N = "ble_seam_a2n"
+
+    // Model B RNode serial seam (dedicated queues, separate from the BLE seam above
+    // and the radio-frame a2e/e2a).
+    /// NE→app: RNode transport commands (connect / send / disconnect). App drains.
+    public static let rnodeSeamN2A = "rnode_seam_n2a"
+    /// app→NE: RNode transport events (dataReceived / stateChanged). NE drains.
+    public static let rnodeSeamA2N = "rnode_seam_a2n"
 }
 
 /// A frame read from the shared queue, tagged with its source interface.

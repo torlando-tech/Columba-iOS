@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/torlando-tech/reticulum-swift.git",
       "state" : {
-        "branch" : "perf/resource-disk-streaming",
-        "revision" : "7f5006f0523d646cbb57afcede7e2d1caf938f8f"
+        "branch" : "feat/rnode-over-ble-ios",
+        "revision" : "54bed8d661af653a024023290595f2aa0ac9ef69"
       }
     },
     {

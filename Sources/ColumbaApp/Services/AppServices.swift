@@ -3021,50 +3021,63 @@ public final class AppServices {
     ///   - config: RNode radio configuration (device name, frequency, etc.)
     ///   - name: Display name for the interface
     public func startRNodeInterface(config rnodeConfig: RNodeConfig, name: String) async throws {
-        // Stop existing RNode interface if running
-        await stopRNodeInterface()
+        // Model B: the RNode protocol stack (RNodeInterface + KISS framing) runs in the
+        // Network Extension — the app hosts ONLY the CoreBluetooth NUS radio. Start the
+        // app-side seam server FIRST (so it's listening when the NE responds), then
+        // persist the radio config for the NE, which (re)builds its RNodeInterface on
+        // the change notification and drives connect/send/disconnect over the seam.
+        // UI-facing Compat interface object; its `.state` is driven by the app-side
+        // radio's BLE link state via the onLinkStateChange callback below (the NE owns
+        // the authoritative RNodeInterface, but the BLE link state is a good proxy and
+        // the app has it directly).
+        let uiInterface = RNodeInterface(config: rnodeConfig, name: name)
+        uiInterface.state = .connecting
+        self.rnodeInterface = uiInterface
 
-        // Ensure base stack exists
-        if transport == nil {
-            try await initializeBaseStack()
-        }
+        ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState in
+            self?.applyRNodeLinkState(linkState)
+        })
 
-        guard let transport = transport else {
-            throw AppServicesError.transportNotConnected
-        }
-
-        let transportConfig = InterfaceConfig(
-            id: "rnode0",
-            name: name,
-            type: .rnode,
-            enabled: true,
-            mode: .full,
-            host: rnodeConfig.deviceName,  // BLE device name in "host" field
-            port: 0
+        let seamConfig = RNodeSeamConfig(
+            deviceName: rnodeConfig.deviceName,
+            frequency: rnodeConfig.frequency,
+            bandwidth: rnodeConfig.bandwidth,
+            txPower: rnodeConfig.txPower,
+            spreadingFactor: rnodeConfig.spreadingFactor,
+            codingRate: rnodeConfig.codingRate,
+            stAlock: rnodeConfig.stAlock,
+            ltAlock: rnodeConfig.ltAlock
         )
+        seamConfig.saveToAppGroup()  // posts rnodeConfigChanged → NE (re)builds its RNodeInterface
 
-        let newRNodeInterface = try RNodeInterface(config: transportConfig)
-
-        // Configure radio BEFORE connecting (critical ordering)
-        let radioConfig = rnodeConfig.toRadioConfig()
-        try await newRNodeInterface.configureRadio(radioConfig)
-
-        self.rnodeInterface = newRNodeInterface
-
-        // Register with transport — this calls connect() which starts BLE scan
-        try await transport.addInterface(newRNodeInterface)
-        logger.info("RNodeInterface started: \(name)")
+        logger.info("RNodeInterface (Model B) started: \(name)")
     }
 
-    /// Stop the RNode interface.
+    /// Stop the RNode interface (Model B).
     public func stopRNodeInterface() async {
-        guard let rnode = rnodeInterface else { return }
-        await rnode.disconnect()
-        if let transport = transport {
-            await transport.removeInterface(id: rnode.id)
-        }
+        // Clear the NE's RNode config (→ it tears down its RNodeInterface) and stop the
+        // app-side radio server.
+        RNodeSeamConfig.clearFromAppGroup()
+        ModelBRNodeService.shared.stop()
         rnodeInterface = nil
-        logger.info("RNodeInterface stopped")
+        logger.info("RNodeInterface (Model B) stopped")
+    }
+
+    /// Reflect the app-side RNode radio's BLE link state onto the UI-facing Compat
+    /// interface object + refresh the UI. The NE owns the authoritative `RNodeInterface`;
+    /// the BLE link state is a good-enough proxy for the Settings "connected" indicator.
+    private func applyRNodeLinkState(_ linkState: RNodeLinkState) {
+        let mapped: InterfaceState
+        switch linkState {
+        case .disconnected: mapped = .disconnected
+        case .connecting:   mapped = .connecting
+        case .connected:    mapped = .connected
+        case .failed:       mapped = .connectionFailed(underlying: "RNode radio link failed")
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.rnodeInterface?.state = mapped
+            NotificationObserver.postNetworkStateChanged()
+        }
     }
 
     /// Resolve a peer's LXST **telephony** destination hash from their LXMF

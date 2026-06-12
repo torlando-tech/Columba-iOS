@@ -155,6 +155,12 @@ actor NEReticulumNode {
     private var bleSeamTransport: AppGroupBLESeamTransport?
     private var bleInterface: BLEInterface?
 
+    /// Model B RNode: reticulum-swift's `RNodeInterface` runs here over an App-Group
+    /// seam transport (the CoreBluetooth NUS radio runs in the app). Rebuilt when the
+    /// app-written `RNodeSeamConfig` changes.
+    private var rnodeInterface: RNodeInterface?
+    private var rnodeConfigObserverRegistered = false
+
     /// Retained so the @MainActor delegate isn't deallocated while the router
     /// holds it weakly.
     private var delegate: NEDeliveryDelegate?
@@ -369,6 +375,14 @@ actor NEReticulumNode {
         // path-monitor does. Acceptable for device-testing; wire a path-change
         // rebind here if interface switches prove flaky under Model B.
 
+        // Model B RNode: run reticulum-swift's `RNodeInterface` (KISS framing) here,
+        // over an `AppGroupRNodeSeamTransport` that marshals the raw serial stream to
+        // the app's real `BLETransport` (NUS radio) — the NE sandbox can't drive
+        // CoreBluetooth. Built from the App-Group `RNodeSeamConfig` the app writes;
+        // rebuilt when that config changes (enable / disable / re-tune).
+        await setupRNodeInterface()
+        startRNodeConfigObserver()
+
         isRunning = true
         ExtensionDiagLog.log("NEReticulumNode: started (delivery dest=\(Self.hashPrefix(dest.hexHash)))")
 
@@ -406,6 +420,82 @@ actor NEReticulumNode {
         await drainOutbox()
 
         return true
+    }
+
+    // MARK: - Model B RNode
+
+    /// (Re)build the NE-side `RNodeInterface` from the app-written `RNodeSeamConfig`.
+    /// Idempotent: tears down any existing RNode interface first, then rebuilds if a
+    /// config is present (enabled) or leaves it torn down if absent (disabled).
+    private func setupRNodeInterface() async {
+        guard let tp = transport else { return }
+
+        // Tear down any existing RNode interface (reload / disable).
+        if let existing = rnodeInterface {
+            await existing.disconnect()
+            await tp.removeInterface(id: existing.id)
+            rnodeInterface = nil
+            NEReticulumNode.postNetworkStateChangedDarwinNotification()
+        }
+
+        guard let cfg = RNodeSeamConfig.loadFromAppGroup() else {
+            ExtensionDiagLog.log("NEReticulumNode: no RNode configured")
+            return
+        }
+
+        do {
+            let ifaceCfg = InterfaceConfig(
+                id: "ne-rnode", name: "RNode", type: .rnode,
+                enabled: true, mode: .full, host: cfg.deviceName, port: 0
+            )
+            let radio = RadioConfig(
+                frequency: cfg.frequency,
+                bandwidth: cfg.bandwidth,
+                txPower: cfg.txPower,
+                spreadingFactor: cfg.spreadingFactor,
+                codingRate: cfg.codingRate,
+                stAlock: cfg.stAlock,
+                ltAlock: cfg.ltAlock
+            )
+            let iface = try RNodeInterface(config: ifaceCfg, transportFactory: { deviceName in
+                AppGroupRNodeSeamTransport(deviceName: deviceName)
+            })
+            try await iface.configureRadio(radio)
+            rnodeInterface = iface
+            ExtensionDiagLog.log("NEReticulumNode: RNode interface built (device set, registering off critical path)")
+            NEReticulumNode.postNetworkStateChangedDarwinNotification()
+            // OFF THE CRITICAL PATH: addInterface → RNodeInterface.connect() must not gate setup.
+            Task.detached {
+                do {
+                    try await tp.addInterface(iface)
+                    ExtensionDiagLog.log("NEReticulumNode: RNode interface registered (seam transport)")
+                } catch {
+                    ExtensionDiagLog.log("NEReticulumNode: RNode addInterface failed (non-fatal): \(String(describing: error))")
+                }
+            }
+        } catch {
+            ExtensionDiagLog.log("NEReticulumNode: RNode setup failed (non-fatal): \(String(describing: error))")
+        }
+    }
+
+    /// Observe the app's `rnodeConfigChanged` Darwin notification → rebuild the RNode
+    /// interface so enabling / disabling / re-tuning the RNode takes effect without a
+    /// tunnel restart.
+    private func startRNodeConfigObserver() {
+        guard !rnodeConfigObserverRegistered else { return }
+        rnodeConfigObserverRegistered = true
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center, observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let node = Unmanaged<NEReticulumNode>.fromOpaque(observer).takeUnretainedValue()
+                Task { await node.setupRNodeInterface() }
+            },
+            SharedDefaultsConstants.rnodeConfigChangedNotificationName as CFString,
+            nil, .deliverImmediately
+        )
     }
 
     /// Replay every entry the app persisted to the durable App-Group outbox while
