@@ -1543,6 +1543,22 @@ public final class AppServices {
             guard let self else { return }
             let node = (note.userInfo?["node"] as? String) ?? ""
             Task { @MainActor in
+                // Model B: the LXMF router lives in the NE — `backend.propagationSync`
+                // is a no-op proxy stub. Route through the propagation manager so the
+                // PN crosses the App-Group seam and the NE runs the sync (this mirrors
+                // the production Sync Now path).
+                if BackendPreference.modelB {
+                    guard let propManager = self.propagationManager else {
+                        DiagLog.log("[TEST-PROP-SYNC] modelB: no propagation manager")
+                        return
+                    }
+                    if !node.isEmpty, let hash = Data(hexString: node) {
+                        await propManager.selectNode(hash: hash)
+                    }
+                    await propManager.syncNow()
+                    DiagLog.log("[TEST-PROP-SYNC] modelB sync-now posted to NE, state=\(propManager.syncState.state)")
+                    return
+                }
                 guard let backend = self.backend else {
                     DiagLog.log("[TEST-PROP-SYNC] no backend")
                     return

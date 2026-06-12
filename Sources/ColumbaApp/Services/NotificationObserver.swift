@@ -35,6 +35,17 @@ public final class NotificationObserver: @unchecked Sendable {
     /// refresh once on change instead of polling the NE on a timer.
     public static let networkStateChangedInApp = Notification.Name("network.columba.networkStateChanged.inapp")
 
+    /// Posted by the NE (Model B) as a propagation sync advances. The snapshot
+    /// (`PropagationSyncStateSnapshot`) rides the App-Group, since Darwin carries no
+    /// payload.
+    public static let propagationSyncStateChangedNotification =
+        SharedDefaultsConstants.propagationSyncStateChangedNotificationName as CFString
+
+    /// In-process re-post of `propagationSyncStateChangedNotification`, observed by
+    /// `PropagationNodeManager` to drive the in-app sync sheet.
+    public static let propagationSyncStateChangedInApp =
+        Notification.Name("network.columba.propagationSyncStateChanged.inapp")
+
     // MARK: - Properties
 
     /// Callback invoked when a new-message notification is received.
@@ -92,6 +103,23 @@ public final class NotificationObserver: @unchecked Sendable {
             nil,
             .deliverImmediately
         )
+
+        // Propagation sync-state channel (Model B) → bridge to
+        // `propagationSyncStateChangedInApp`. `PropagationNodeManager` reads the
+        // App-Group snapshot in response and updates its `syncState` for the sheet.
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            { _, _, _, _, _ in
+                NotificationCenter.default.post(
+                    name: NotificationObserver.propagationSyncStateChangedInApp,
+                    object: nil
+                )
+            },
+            Self.propagationSyncStateChangedNotification,
+            nil,
+            .deliverImmediately
+        )
     }
 
     deinit {
@@ -102,6 +130,9 @@ public final class NotificationObserver: @unchecked Sendable {
         )
         CFNotificationCenterRemoveObserver(
             center, observer, CFNotificationName(Self.networkStateChangedNotification), nil
+        )
+        CFNotificationCenterRemoveObserver(
+            center, observer, CFNotificationName(Self.propagationSyncStateChangedNotification), nil
         )
     }
 

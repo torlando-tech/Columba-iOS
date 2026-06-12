@@ -161,6 +161,13 @@ actor NEReticulumNode {
     private var rnodeInterface: RNodeInterface?
     private var rnodeConfigObserverRegistered = false
 
+    /// Model B propagation: the app writes the selected propagation node + sync settings
+    /// to `PropagationSeamConfig`; the NE wires them onto `router` and runs the periodic
+    /// sync here (the in-NE router owns delivery, so the app can't sync directly).
+    private var propagationObserversRegistered = false
+    private var propagationSyncTask: Task<Void, Never>?
+    private var syncInFlight = false
+
     /// Retained so the @MainActor delegate isn't deallocated while the router
     /// holds it weakly.
     private var delegate: NEDeliveryDelegate?
@@ -403,6 +410,14 @@ actor NEReticulumNode {
         }
         startAnnounceScheduler()
 
+        // Model B propagation: wire the app-selected propagation node onto the router +
+        // run periodic sync here (the in-NE router owns delivery; the app can't sync
+        // directly). Built from the App-Group `PropagationSeamConfig`; re-applied when
+        // that config changes, and synced on demand via the sync-now Darwin notification.
+        await applyPropagationConfig()
+        startPropagationObservers()
+        startPropagationSyncScheduler()
+
         // 8. A5c — drain the durable App-Group outbox. While the NE was down the
         //    app persisted any outbound LXMF sends here (ProxyRnsBackend on IPC
         //    failure); now that transport + router + delivery destination are up,
@@ -498,6 +513,106 @@ actor NEReticulumNode {
         )
     }
 
+    // MARK: - Model B propagation (LXMF)
+
+    /// Wire the app-selected propagation node onto the router (Model B). The app writes
+    /// `PropagationSeamConfig`; we apply it on start + whenever it changes. NO-PII: logs
+    /// a short dest-hash prefix only.
+    private func applyPropagationConfig() async {
+        guard let router else { return }
+        guard let cfg = PropagationSeamConfig.loadFromAppGroup() else {
+            await router.setOutboundPropagationNode(nil)
+            await router.setPropagationStampCost(0)
+            ExtensionDiagLog.log("NEReticulumNode: no propagation node configured")
+            return
+        }
+        await router.setOutboundPropagationNode(cfg.propagationNodeHash)
+        await router.setPropagationStampCost(cfg.stampCost)
+        let pn = cfg.propagationNodeHash.map { (h: Data) in
+            Self.hashPrefix(h.map { String(format: "%02x", $0) }.joined())
+        } ?? "nil"
+        ExtensionDiagLog.log("NEReticulumNode: PN set (\(pn)) stamp=\(cfg.stampCost) interval=\(Int(cfg.syncInterval))s periodic=\(cfg.periodicSyncEnabled)")
+    }
+
+    /// Observe the app's propagation Darwin notifications: config-changed (re-apply +
+    /// restart the sync loop) and sync-now (run one immediate sync).
+    private func startPropagationObservers() {
+        guard !propagationObserversRegistered else { return }
+        propagationObserversRegistered = true
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center, observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let node = Unmanaged<NEReticulumNode>.fromOpaque(observer).takeUnretainedValue()
+                Task {
+                    await node.applyPropagationConfig()
+                    await node.startPropagationSyncScheduler()   // interval/enabled may have changed
+                }
+            },
+            SharedDefaultsConstants.propagationConfigChangedNotificationName as CFString,
+            nil, .deliverImmediately
+        )
+        CFNotificationCenterAddObserver(
+            center, observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let node = Unmanaged<NEReticulumNode>.fromOpaque(observer).takeUnretainedValue()
+                Task { await node.runOneSyncFireAndForget() }
+            },
+            SharedDefaultsConstants.propagationSyncNowNotificationName as CFString,
+            nil, .deliverImmediately
+        )
+    }
+
+    /// Periodic propagation sync loop. Mirrors `startAnnounceScheduler`: wait for the
+    /// relay, then sync every `syncInterval`. A SEPARATE task from the announce loop;
+    /// each sync is fire-and-forget (see `runOneSyncFireAndForget`) so the 120s
+    /// SYNC_TIMEOUT never blocks the loop or IPC.
+    private func startPropagationSyncScheduler() {
+        propagationSyncTask?.cancel()
+        propagationSyncTask = Task { [weak self] in
+            guard let self else { return }
+            _ = await self.waitForRelayConnected(timeoutMs: 15_000)
+            while !Task.isCancelled {
+                guard let cfg = PropagationSeamConfig.loadFromAppGroup(),
+                      cfg.propagationNodeHash != nil,
+                      cfg.periodicSyncEnabled else {
+                    // No PN / periodic disabled → idle-poll; the config observer
+                    // restarts this task when the selection or interval changes.
+                    do { try await Task.sleep(for: .seconds(300)) } catch { return }
+                    continue
+                }
+                do { try await Task.sleep(for: .seconds(cfg.syncInterval)) } catch { return }
+                if Task.isCancelled { return }
+                await self.runOneSyncFireAndForget()
+            }
+        }
+    }
+
+    /// Run one propagation sync without ever blocking the caller/loop: a detached child
+    /// task does the work, a 150s watchdog (> the 120s SYNC_TIMEOUT) cancels a wedged
+    /// transfer, and `syncInFlight` prevents overlap.
+    private func runOneSyncFireAndForget() async {
+        guard isRunning, !syncInFlight else { return }
+        guard await waitForRelayConnected(timeoutMs: 2_000) else {
+            ExtensionDiagLog.log("NEReticulumNode: propagation sync skipped — relay down")
+            return
+        }
+        guard let router else { return }
+        syncInFlight = true
+        defer { syncInFlight = false }
+        ExtensionDiagLog.log("NEReticulumNode: propagation sync starting")
+        let work = Task.detached { try? await router.syncFromPropagationNode() }
+        let watchdog = Task.detached {
+            try? await Task.sleep(for: .seconds(150))
+            if !Task.isCancelled { work.cancel() }
+        }
+        _ = await work.value
+        watchdog.cancel()
+    }
+
     /// Replay every entry the app persisted to the durable App-Group outbox while
     /// the NE was down (A5c). Called at the end of `start()`. NO-PII: logs counts
     /// and dest-hash short prefixes only.
@@ -534,6 +649,8 @@ actor NEReticulumNode {
         isRunning = false
         announceTask?.cancel()
         announceTask = nil
+        propagationSyncTask?.cancel()
+        propagationSyncTask = nil
         if let br = bridge {
             await br.disconnect()
         }
@@ -872,6 +989,8 @@ actor NEReticulumNode {
         guard isRunning else { return }
         ExtensionDiagLog.log("NEReticulumNode: relay (re)connected — re-announcing delivery dest")
         await selfAnnounce()
+        // Pull any propagated mail queued at the PN while we were disconnected.
+        await runOneSyncFireAndForget()
     }
 
     /// Poll the transport's interface snapshots until the relay (`ne-tcp-relay`)
@@ -1233,8 +1352,49 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
         Self.postNewMessageDarwinNotification()
     }
 
-    // didUpdateSyncState / didCompleteSyncWithNewMessages: use the protocol's
-    // default no-op implementations (no propagation sync in A5a).
+    // Model B propagation sync state → app. Darwin carries no payload, so the
+    // snapshot rides the App-Group `propagationSyncStateKey`; the app's observer
+    // reads it on `propagationSyncStateChanged` and drives the in-app sync sheet.
+    // NO push for sync progress — message-arrival push stays on the inbound path.
+
+    func router(_ router: LXMRouter, didUpdateSyncState state: PropagationTransferState) {
+        PropagationSyncStateSnapshot(
+            phase: Self.phase(for: state.state),
+            progress: state.progress,
+            received: state.receivedMessages,
+            total: state.totalMessages,
+            errorDescription: state.errorDescription
+        ).saveToAppGroup()
+    }
+
+    func router(_ router: LXMRouter, didCompleteSyncWithNewMessages newMessages: Int) {
+        ExtensionDiagLog.log("NEReticulumNode: propagation sync complete, \(newMessages) new")
+        PropagationSyncStateSnapshot(
+            phase: .complete,
+            progress: 1.0,
+            received: newMessages,
+            total: newMessages
+        ).saveToAppGroup()
+        // Belt-and-suspenders UI refresh; the per-message inbound path already
+        // posts this + the local notification as each synced message persists.
+        if newMessages > 0 {
+            Self.postNewMessageDarwinNotification()
+        }
+    }
+
+    /// Map the lib's fine-grained `PropagationState` onto the coarse phases the
+    /// app's sync sheet renders.
+    private static func phase(for s: PropagationState) -> PropagationSyncStateSnapshot.Phase {
+        switch s {
+        case .idle: return .idle
+        case .pathRequested, .linkEstablishing: return .linking
+        case .linkEstablished: return .linked
+        case .requestSent: return .requesting
+        case .receiving, .responseReceived: return .receiving
+        case .complete: return .complete
+        case .noPath, .linkFailed, .transferFailed: return .failed
+        }
+    }
 
     // MARK: - Notification
 

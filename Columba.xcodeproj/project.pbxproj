@@ -16,6 +16,7 @@
 		007 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007 /* MainTabView.swift */; };
 		008 /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* ChatsView.swift */; };
 		009 /* ConversationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F009 /* ConversationRow.swift */; };
+		00C7D4D86301E2E6D027DE0A /* PropagationSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */; };
 		010 /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F010 /* ContactsView.swift */; };
 		011 /* ContactCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011 /* ContactCard.swift */; };
 		012 /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012 /* NetworkAnnouncesTab.swift */; };
@@ -112,6 +113,7 @@
 		0BSV /* AppGroupBLEServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBSV /* AppGroupBLEServer.swift */; };
 		0MBS /* ModelBBLEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FMBS /* ModelBBLEService.swift */; };
 		13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */; };
+		1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
 		238336F8024494A8B57F9419 /* CeaseTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF48C97880B30682DC35613C /* CeaseTelemetry.swift */; };
 		266929D6972E8D373E7A926D /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 021FA3D73B6F8B711A97D40F /* ReticulumSwift */; };
 		2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */; };
@@ -151,6 +153,7 @@
 		A6EA4093A9929FCEAB44C4B6 /* AppGroupRNodeSeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */; };
 		A746EE4A4494C45D97908924 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
 		A9DB03705BE9BA74A494310C /* AppGroupRNodeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E36D94E7D28E35241C46426 /* AppGroupRNodeServer.swift */; };
+		AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */; };
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		AGB1B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
 		AGB2B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
@@ -249,6 +252,8 @@
 		4E36D94E7D28E35241C46426 /* AppGroupRNodeServer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppGroupRNodeServer.swift; sourceTree = "<group>"; };
 		51D8CBCF7E546028A043E1C7 /* PyConversation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyConversation.swift; path = Python/Models/PyConversation.swift; sourceTree = "<group>"; };
 		550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppGroupRNodeSeamTransport.swift; sourceTree = "<group>"; };
+		55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PropagationSeam.swift; sourceTree = "<group>"; };
+		67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncStatusBottomSheet.swift; sourceTree = "<group>"; };
 		6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
 		710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
 		71922EC204982A357F814F23 /* CallControlButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
@@ -569,6 +574,7 @@
 				F036 /* MaterialDesignIcons.swift */,
 				F037 /* ProfileIcon.swift */,
 				DA586EB5F8EB62D2579CEAAB /* Lucide.swift */,
+				67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -727,6 +733,7 @@
 				34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */,
 				550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */,
 				4E36D94E7D28E35241C46426 /* AppGroupRNodeServer.swift */,
+				55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */,
 			);
 			path = Sources/Shared;
 			sourceTree = "<group>";
@@ -1058,6 +1065,7 @@
 				FDE0DB7957C9D877D3E67367 /* AppGroupRNodeSeamWire.swift in Sources */,
 				BB2453727F7CFDAF2E0B196F /* AppGroupRNodeSeamTransport.swift in Sources */,
 				9E99C06B5658EA687323CF82 /* AppGroupRNodeServer.swift in Sources */,
+				00C7D4D86301E2E6D027DE0A /* PropagationSeam.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1205,6 +1213,8 @@
 				A9DB03705BE9BA74A494310C /* AppGroupRNodeServer.swift in Sources */,
 				4120DE0B1AC043758779DD40 /* ModelBRNodeService.swift in Sources */,
 				F4E9991226B4D464017DA247 /* Lucide.swift in Sources */,
+				AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */,
+				1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

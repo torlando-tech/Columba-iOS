@@ -676,6 +676,10 @@ public final class SettingsViewModel {
             } else {
                 propManager.stopPeriodicSync()
             }
+            // Persist + (Model B) republish the seam so interval/periodic edits reach
+            // the NE — including an interval-only change or disabling periodic sync,
+            // which the start/stop calls above don't push on their own.
+            await propManager.savePreferences()
         }
     }
 

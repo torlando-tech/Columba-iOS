@@ -62,6 +62,11 @@ public final class PropagationNodeManager {
     /// Display name of the selected relay node.
     public var selectedNodeName: String?
 
+    /// Proof-of-work stamp cost the selected relay requires for uploads. Tracked
+    /// here (not just computed locally) so the Model B App-Group seam can carry the
+    /// correct cost to the NE; persisted across cold starts via SettingsRepository.
+    public private(set) var selectedNodeStampCost: Int = 0
+
     /// Whether to automatically select the best relay based on hop count.
     public var autoSelectEnabled: Bool = true
 
@@ -94,6 +99,11 @@ public final class PropagationNodeManager {
     /// Task for periodic sync.
     private var periodicSyncTask: Task<Void, Never>?
 
+    /// Observer token for the NE's propagation sync-state channel (Model B). The NE
+    /// owns the router/sync, so live progress arrives as App-Group snapshots bridged
+    /// to `propagationSyncStateChangedInApp`; we mirror them into `syncState`.
+    private var syncStateObserverToken: NSObjectProtocol?
+
     // MARK: - Initialization
 
     public init(appServices: AppServices) {
@@ -104,6 +114,19 @@ public final class PropagationNodeManager {
 
     /// Start listening for propagation node announces on the path table.
     public func startListening() {
+        // Model B: mirror the NE's sync-state snapshots into `syncState` so the in-app
+        // sync sheet reflects live progress (the NE owns the router; the app can't read
+        // its transfer state directly).
+        if syncStateObserverToken == nil {
+            syncStateObserverToken = NotificationCenter.default.addObserver(
+                forName: NotificationObserver.propagationSyncStateChangedInApp,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.applySyncStateSnapshot() }
+            }
+        }
+
         guard let pathTable = appServices?.pathTable else {
             return
         }
@@ -128,6 +151,36 @@ public final class PropagationNodeManager {
     public func stopListening() {
         listenTask?.cancel()
         listenTask = nil
+        if let token = syncStateObserverToken {
+            NotificationCenter.default.removeObserver(token)
+            syncStateObserverToken = nil
+        }
+    }
+
+    /// Read the NE's latest sync-state snapshot (Model B) and mirror it into
+    /// `syncState`, which the in-app sync sheet observes.
+    private func applySyncStateSnapshot() {
+        guard let snap = PropagationSyncStateSnapshot.loadFromAppGroup() else { return }
+        syncState.state = Self.mapSnapshotPhase(snap.phase)
+        syncState.receivedMessages = snap.received
+        syncState.progress = snap.progress
+        syncState.errorDescription = snap.errorDescription
+        if snap.phase == .complete {
+            syncState.lastSync = Date()
+            lastSyncTime = syncState.lastSync
+        }
+    }
+
+    /// Map the NE snapshot's coarse phase to the app's Compat sync state.
+    private static func mapSnapshotPhase(_ phase: PropagationSyncStateSnapshot.Phase) -> PropagationTransferState.State {
+        switch phase {
+        case .idle: return .idle
+        case .linking: return .linking
+        case .linked: return .linked
+        case .requesting, .receiving: return .transferring
+        case .complete: return .complete
+        case .failed: return .transferFailed
+        }
     }
 
     /// Process a path entry to check if it's a propagation node.
@@ -218,6 +271,7 @@ public final class PropagationNodeManager {
         // only — Python's LXMF.LXMRouter.set_outbound_propagation_node
         // is what actually affects delivery.
         let stampCost = node?.info.stampCost ?? 0
+        selectedNodeStampCost = stampCost
         if let backend = appServices?.pythonBackend {
             do {
                 _ = try await backend.setPropagationNode(destHashHex: hash.toHex(), stampCost: stampCost)
@@ -239,6 +293,7 @@ public final class PropagationNodeManager {
         selectedNodeHash = nil
         selectedNodeDeliveryHash = nil
         selectedNodeName = nil
+        selectedNodeStampCost = 0
 
         if let backend = appServices?.pythonBackend {
             do {
@@ -260,6 +315,30 @@ public final class PropagationNodeManager {
     ///
     /// If no propagation node is selected yet, auto-selects the best available node first.
     public func syncNow() async {
+        // Model B: the LXMF router lives in the NE — the app can't sync in-process.
+        // Ensure a PN is selected + its config is in the seam, then fire the sync-now
+        // Darwin trigger. Real progress arrives back via the sync-state channel
+        // (PropagationSyncStateSnapshot → syncState); the NE's overlap guard makes
+        // repeated taps safe.
+        if BackendPreference.modelB {
+            if selectedNodeHash == nil && autoSelectEnabled,
+               let best = knownNodes.first(where: { $0.isOnline }) ?? knownNodes.first {
+                await selectNode(hash: best.hash)
+            }
+            guard selectedNodeHash != nil else {
+                syncState.state = .noPath
+                syncState.errorDescription = "No propagation node available"
+                logger.warning("[SYNC] Model B: no propagation node, sync skipped")
+                return
+            }
+            publishPropagationSeam() // ensure the NE has the latest PN + stamp cost
+            syncState.state = .linking
+            syncState.errorDescription = nil
+            PropagationSeamConfig.postSyncNowNotification()
+            logger.info("[SYNC] Model B: posted sync-now to NE")
+            return
+        }
+
         guard let backend = appServices?.pythonBackend else {
             logger.error("[SYNC] Python backend not available")
             syncState.state = .linkFailed
@@ -328,6 +407,14 @@ public final class PropagationNodeManager {
 
     /// Start periodic sync on the configured interval.
     public func startPeriodicSync() {
+        // Model B: the NE owns the sync cadence (it owns the router). Publish the
+        // current interval/enabled to the seam; the NE's scheduler honors
+        // `periodicSyncEnabled` and re-kicks on the config-changed notification.
+        if BackendPreference.modelB {
+            publishPropagationSeam()
+            return
+        }
+
         guard periodicSyncEnabled else { return }
 
         periodicSyncTask?.cancel()
@@ -375,8 +462,13 @@ public final class PropagationNodeManager {
 
                 DiagLog.log("[PROP_MGR] Restored relay: hash=\(hashHex.prefix(16)), name=\(selectedNodeName ?? "nil"), nodeFound=\(node != nil)")
 
-                // Wire to router (awaited directly, not fire-and-forget)
-                let stampCost = node?.info.stampCost ?? 0
+                // Wire to router (awaited directly, not fire-and-forget). The node
+                // usually isn't in knownNodes yet at load (announce hasn't landed),
+                // so fall back to the persisted stamp cost for a correct cold start;
+                // processPathEntry re-resolves the live cost when the announce arrives.
+                let persistedCost = await settingsRepository.getManualRelayStampCost() ?? 0
+                let stampCost = node?.info.stampCost ?? persistedCost
+                selectedNodeStampCost = stampCost
                 await appServices?.router?.setOutboundPropagationNode(hash)
                 await appServices?.router?.setPropagationStampCost(stampCost)
             }
@@ -387,6 +479,9 @@ public final class PropagationNodeManager {
         }
 
         _ = defaultMethod // Used by SettingsViewModel
+
+        // Model B: hand the restored PN + sync settings to the NE's router.
+        publishPropagationSeam()
     }
 
     /// Save preferences to SettingsRepository.
@@ -399,6 +494,7 @@ public final class PropagationNodeManager {
             let hex = hash.map { String(format: "%02x", $0) }.joined()
             await settingsRepository.setManualRelayHash(hex)
             await settingsRepository.setManualRelayName(selectedNodeName)
+            await settingsRepository.setManualRelayStampCost(selectedNodeStampCost)
             if let deliveryHash = selectedNodeDeliveryHash {
                 let deliveryHex = deliveryHash.map { String(format: "%02x", $0) }.joined()
                 await settingsRepository.setManualRelayDeliveryHash(deliveryHex)
@@ -409,10 +505,33 @@ public final class PropagationNodeManager {
             await settingsRepository.setManualRelayHash(nil)
             await settingsRepository.setManualRelayName(nil)
             await settingsRepository.setManualRelayDeliveryHash(nil)
+            await settingsRepository.setManualRelayStampCost(nil)
         }
 
         if let time = lastSyncTime {
             await settingsRepository.setLastSyncTimestamp(time.timeIntervalSince1970)
+        }
+
+        // Model B: republish the seam so PN selection / sync-setting edits reach the
+        // NE's router. No-op on the python build (the app owns the router there).
+        publishPropagationSeam()
+    }
+
+    /// Model B: cross the App-Group seam to the NE's in-NE `LXMRouter`. The NE wires
+    /// the PN + sync settings onto its router and runs the periodic sync there (the
+    /// app can't call it directly). No-op on the python build, where the app owns the
+    /// router and `selectNode`/`syncNow` drive it in-process.
+    private func publishPropagationSeam() {
+        guard BackendPreference.modelB else { return }
+        if let hash = selectedNodeHash {
+            PropagationSeamConfig(
+                propagationNodeHash: hash,
+                stampCost: selectedNodeStampCost,
+                syncInterval: syncInterval,
+                periodicSyncEnabled: periodicSyncEnabled
+            ).saveToAppGroup()
+        } else {
+            PropagationSeamConfig.clearFromAppGroup()
         }
     }
 }

@@ -88,6 +88,30 @@ public enum SharedDefaultsConstants {
     /// changes (enabled / disabled / re-tuned). The NE observes it to (re)build or tear
     /// down its `RNodeInterface`.
     public static let rnodeConfigChangedNotificationName = "network.columba.rnodeConfigChanged"
+
+    /// Shared UserDefaults key holding the JSON-encoded `PropagationSeamConfig` (the
+    /// selected propagation node hash + stamp cost + sync interval/enabled), or absent
+    /// when none is selected. Written by the app (`PropagationNodeManager`, Model B
+    /// only), read by the NE which wires it onto its in-NE `LXMRouter`.
+    public static let propagationConfigKey = "com.columba.propagationConfig"
+
+    /// Darwin notification posted by the app when `propagationConfigKey` changes (PN
+    /// selected/cleared, interval/enabled edited). The NE observes it to re-apply the PN
+    /// on its router and restart its sync scheduler.
+    public static let propagationConfigChangedNotificationName = "network.columba.propagationConfigChanged"
+
+    /// Darwin notification posted by the app to ask the NE to run one immediate
+    /// propagation sync (the "Sync Now" button — the app can't call the NE's router).
+    public static let propagationSyncNowNotificationName = "network.columba.propagationSyncNow"
+
+    /// Shared UserDefaults key holding the JSON-encoded `PropagationSyncStateSnapshot`
+    /// the NE writes as a sync progresses (phase / progress / counts / error). The app
+    /// reads it to drive the in-app sync UI; Darwin carries no payload, hence this key.
+    public static let propagationSyncStateKey = "com.columba.propagationSyncState"
+
+    /// Darwin notification posted by the NE when `propagationSyncStateKey` updates. The
+    /// app observes it to refresh `PropagationNodeManager.syncState` (the sync sheet).
+    public static let propagationSyncStateChangedNotificationName = "network.columba.propagationSyncStateChanged"
 }
 
 /// Interface tag identifying which network interface a frame is associated with.
