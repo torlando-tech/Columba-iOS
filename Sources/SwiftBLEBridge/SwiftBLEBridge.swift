@@ -97,9 +97,8 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // Keyed by `CBCentral.identifier.uuidString`.
     private var gattServerPeers: [String: BleGattServerPeer] = [:]
 
-    // Cap on a peer's backpressure notify queue (mirrors
-    // SwiftRNodeBridge.maxPendingWrites) so a stuck or vanished subscriber
-    // can't grow pendingNotifies without bound.
+    // Cap on a peer's backpressure notify queue so a stuck or vanished
+    // subscriber can't grow pendingNotifies without bound.
     private let maxPendingNotifies = 128
 
     // Same bound for the central-role per-client outbound write queue.
@@ -200,17 +199,16 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             // Python-coupled: SwiftBLEBridge routes `on_data_received` (and the
             // rest of the BleCallbackSlot callbacks) through `callbackInvoker`
             // into the embedded Python RNS stack (IOSBLEDriver.py /
-            // IOSRNodeInterface.py / PythonBLECallbackBridge). On the SWIFT
-            // backend (Model B's target) there is NO native BLE delivery path
-            // yet, so a background BLE wake only results in a *delivered +
-            // notified* message when the PYTHON backend is the active one and is
-            // (re)started early enough in the relaunch to re-install the
-            // callbackInvoker. Native-Swift BLE delivery is a deliberate
-            // follow-on; until it lands, treat C8's wake as Python-backend-only
-            // for end-to-end delivery. Scope is BLE-direct; RNode-over-iOS wake
-            // (SwiftRNodeBridge owns its own CBCentralManager) is best-effort and
-            // device-unverified — intentionally NOT given a restore identifier
-            // here.
+            // PythonBLECallbackBridge). On the SWIFT backend (Model B's target)
+            // there is NO native BLE delivery path yet, so a background BLE wake
+            // only results in a *delivered + notified* message when the PYTHON
+            // backend is the active one and is (re)started early enough in the
+            // relaunch to re-install the callbackInvoker. Native-Swift BLE
+            // delivery is a deliberate follow-on; until it lands, treat C8's wake
+            // as Python-backend-only for end-to-end delivery. Scope is BLE-direct;
+            // RNode-over-iOS now runs Model B (radio hosted in the app via
+            // reticulum-swift BLETransport with its own CBCentralManager, RNS in
+            // the Network Extension), outside this mesh restore-identifier scope.
             // ────────────────────────────────────────────────────────────────
             if self.centralManager == nil {
                 self.centralManager = CBCentralManager(
