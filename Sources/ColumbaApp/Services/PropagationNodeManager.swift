@@ -161,9 +161,17 @@ public final class PropagationNodeManager {
 
         logger.info("Discovered propagation node: \(node.resolvedDisplayName) (\(hex.prefix(16))) hops=\(node.hopCount)")
 
-        // Auto-select if enabled
+        // Auto-select if enabled.
         if autoSelectEnabled {
             await autoSelectBestNode()
+        } else if let selectedHash = selectedNodeHash, node.hash == selectedHash {
+            // Manually-selected node: re-wire it now that its announce has landed.
+            // At loadPreferences the node isn't in knownNodes yet, so it's wired
+            // with a placeholder stampCost=0; a PROPAGATED upload then carries no
+            // stamp and a stamp-requiring PN rejects it — the message queues
+            // forever (the launch `nodeFound=false` log was the tell). selectNode
+            // re-resolves the node + pushes its real stamp cost to the router.
+            await selectNode(hash: selectedHash)
         }
     }
 
