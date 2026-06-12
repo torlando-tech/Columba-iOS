@@ -670,6 +670,11 @@ struct RootView: View {
         // The NE (sandboxed) writes ext-diag.log to the shared container; the host
         // copies the previous background session's log out here on each launch.
         DiagLog.copyExtensionDiagToDocuments()
+        #if DEBUG
+        // Keep that copy LIVE (not just this launch's snapshot) so on-device NE
+        // diagnostics can be tailed in real time. DEBUG-only.
+        DiagLog.startExtDiagLiveCopy()
+        #endif
 
         // Retry the entire init up to 5 times with increasing delay —
         // the Keychain, file system, or CryptoKit may not be ready

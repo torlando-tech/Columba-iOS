@@ -68,6 +68,21 @@ enum DiagLog {
         try? FileManager.default.removeItem(at: dest)
         try? FileManager.default.copyItem(at: source, to: dest)
     }
+
+    #if DEBUG
+    /// Keep `Documents/ext-diag.log` LIVE (refresh ~every 2s) instead of a single
+    /// launch-time snapshot, so on-device NE diagnostics — including the smoke
+    /// harness — can tail the NE's log in real time. The NE (sandboxed) writes to
+    /// the App-Group container; the app is the only process that can bridge it into
+    /// Documents (the appGroupDataContainer isn't reliably reachable via devicectl).
+    /// DEBUG-only, self-rescheduling; a cheap small-file copy.
+    static func startExtDiagLiveCopy() {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+            copyExtensionDiagToDocuments()
+            startExtDiagLiveCopy()
+        }
+    }
+    #endif
 }
 
 /// Central LXMF service layer for the SwiftUI application.
