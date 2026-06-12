@@ -1433,6 +1433,12 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
         )
         do {
             try await center.add(request)
+            // Success marker: the inbound notification reached the iOS notification
+            // center. Includes the preview so a test (and a human debugging
+            // background delivery) can confirm WHICH message surfaced — this is the
+            // user-visible proof that a message arriving while the host app is
+            // suspended still notifies.
+            ExtensionDiagLog.log("NEReticulumNode: posted inbound notification (sender=\(senderDisplay)) preview=\"\(preview)\"")
         } catch {
             ExtensionDiagLog.log("NEReticulumNode: failed to post local notification: \(String(describing: error))")
         }
