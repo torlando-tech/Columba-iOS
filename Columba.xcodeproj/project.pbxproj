@@ -141,6 +141,7 @@
 		8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
 		886AB689C7699471510BAF9A /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
 		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
+		8A784DFE5A52489803B27984 /* lucide.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FF6CE45231CD48906B9C226D /* lucide.ttf */; };
 		922658C82CEEA53695143F9B /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = DBD8F3A253D413F087742BC0 /* MapLibre */; };
 		92DDF4AE0AB493CC2AA0BA20 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6000D5CED2C3C89F74999BC1 /* LXSTSwift */; };
 		98547ADE9B17DD692240E7F7 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 85B9530D8CAE0E16D5371319 /* LXMFSwift */; };
@@ -176,6 +177,7 @@
 		EDL1B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
 		EDL2B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
 		F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FD6A68A52A54D21FDB70324 /* RNSAPI */; };
+		F4E9991226B4D464017DA247 /* Lucide.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA586EB5F8EB62D2579CEAAB /* Lucide.swift */; };
 		F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
 		FB2F3248AE405614B36BC798 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = E049A7D4D6D58690C0B674CE /* RNSAPI */; };
 		FDE0DB7957C9D877D3E67367 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
@@ -272,6 +274,7 @@
 		CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBLECallbackBridge.swift; sourceTree = "<group>"; };
 		D001472BC7DFD3CD7BF27F0C /* app */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = app; sourceTree = "<group>"; };
 		D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
+		DA586EB5F8EB62D2579CEAAB /* Lucide.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Lucide.swift; sourceTree = "<group>"; };
 		DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioRingBufferTests.swift; sourceTree = "<group>"; };
 		E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
 		EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonConfigWriter.swift; sourceTree = "<group>"; };
@@ -386,6 +389,7 @@
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
+		FF6CE45231CD48906B9C226D /* lucide.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = lucide.ttf; sourceTree = "<group>"; };
 		FMBS /* ModelBBLEService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelBBLEService.swift; sourceTree = "<group>"; };
 		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
 		NERN1 /* NEReticulumNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEReticulumNode.swift; sourceTree = "<group>"; };
@@ -564,6 +568,7 @@
 				F020 /* IdenticonGenerator.swift */,
 				F036 /* MaterialDesignIcons.swift */,
 				F037 /* ProfileIcon.swift */,
+				DA586EB5F8EB62D2579CEAAB /* Lucide.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -663,6 +668,7 @@
 				F075 /* ColumbaApp.entitlements */,
 				E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */,
 				B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */,
+				FF6CE45231CD48906B9C226D /* lucide.ttf */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -1001,6 +1007,7 @@
 				67079BBC2E8309A43DF576E5 /* app in Resources */,
 				DE9220E1D4ABF9A4C2CBA761 /* JetBrainsMono-Regular.ttf in Resources */,
 				5F1FF2954475331208BAAD47 /* JetBrainsMono-Bold.ttf in Resources */,
+				8A784DFE5A52489803B27984 /* lucide.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1197,6 +1204,7 @@
 				A6EA4093A9929FCEAB44C4B6 /* AppGroupRNodeSeamTransport.swift in Sources */,
 				A9DB03705BE9BA74A494310C /* AppGroupRNodeServer.swift in Sources */,
 				4120DE0B1AC043758779DD40 /* ModelBRNodeService.swift in Sources */,
+				F4E9991226B4D464017DA247 /* Lucide.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -294,13 +294,21 @@ struct ContactCard: View {
 
     @ViewBuilder
     private var interfaceIconView: some View {
-        if contact.interfaceIcon == "bluetooth",
-           let ch = MaterialDesignIcons.character(for: "bluetooth") {
+        let icon = contact.interfaceIcon
+        // "lucide:<name>" → Lucide font glyph (e.g. the RNode antenna, matching
+        // Android); "bluetooth" → Material Design Icons glyph; else SF Symbol.
+        if icon.hasPrefix("lucide:"),
+           let ch = Lucide.character(for: String(icon.dropFirst("lucide:".count))) {
+            Text(String(ch))
+                .font(.custom(Lucide.fontName, size: 13))
+                .foregroundStyle(Theme.textDisabled)
+        } else if icon == "bluetooth",
+                  let ch = MaterialDesignIcons.character(for: "bluetooth") {
             Text(String(ch))
                 .font(.custom(MaterialDesignIcons.fontName, size: 12))
                 .foregroundStyle(.blue.opacity(0.7))
         } else {
-            Image(systemName: contact.interfaceIcon)
+            Image(systemName: icon)
                 .font(.caption)
                 .foregroundStyle(Theme.textDisabled)
         }

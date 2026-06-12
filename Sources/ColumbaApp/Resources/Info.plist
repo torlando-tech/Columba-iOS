@@ -34,6 +34,7 @@
 		<string>materialdesignicons.ttf</string>
 		<string>JetBrainsMono-Regular.ttf</string>
 		<string>JetBrainsMono-Bold.ttf</string>
+		<string>lucide.ttf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
