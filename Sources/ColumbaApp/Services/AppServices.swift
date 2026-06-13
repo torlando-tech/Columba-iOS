@@ -928,11 +928,13 @@ public final class AppServices {
 
     // MARK: - Python backend
 
+    #if DEBUG
     /// Register a block-based NotificationCenter observer and retain its token
     /// in `pythonNotificationObservers` so `shutdown()` can remove it. Use this
     /// for every observer added by `startPythonBackend()` — keeping the tokens
     /// is what lets a restart cycle tear the old observers down instead of
-    /// stacking duplicates.
+    /// stacking duplicates. DEBUG-only: its sole callers are the `lxma://test-*`
+    /// observers (`shutdown()` still tears down the array unconditionally).
     private func addPythonObserver(
         _ name: String,
         _ block: @escaping @Sendable (Notification) -> Void
@@ -943,6 +945,7 @@ public final class AppServices {
             )
         )
     }
+    #endif
 
     /// Boot the embedded Python RNS stack and hook `LXMRouter.sendHook` so
     /// outbound LXMF sends go through Python. Spawns a Task that drains
@@ -1137,6 +1140,14 @@ public final class AppServices {
             }
             DiagLog.log("[RNS-POLL] task exiting (cancelled)")
         }
+
+        #if DEBUG
+        // Test-only deep-link observers (the `lxma://test-*` surface used by the
+        // interop / smoke harnesses). The matching `onOpenURL` trigger in
+        // ColumbaApp is itself `#if DEBUG`, so nothing posts these notifications in
+        // release — gate the registrations too so they don't compile into release
+        // builds (no inert listeners, smaller binary, no latent footgun if some
+        // other code ever posts a `ColumbaTest*` name).
 
         // Listen for test-send deep links (lxma://test-send?to=HEX&content=…
         // [&method=…][&image_hex=…&image_format=…][&file_hex=…&file_name=…]).
@@ -1610,6 +1621,7 @@ public final class AppServices {
                 }
             }
         }
+        #endif // DEBUG — test-only deep-link observers
     }
 
     /// Look up the matching Python interface for each user `InterfaceEntity`
