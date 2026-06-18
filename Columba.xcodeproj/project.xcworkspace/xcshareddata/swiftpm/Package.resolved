@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/torlando-tech/reticulum-swift.git",
       "state" : {
-        "branch" : "feat/rnode-over-ble-ios",
-        "revision" : "54bed8d661af653a024023290595f2aa0ac9ef69"
+        "branch" : "main",
+        "revision" : "b366f29365232c9ee62462619f3411171bd7341b"
       }
     },
     {

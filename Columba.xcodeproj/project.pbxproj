@@ -1924,7 +1924,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/torlando-tech/reticulum-swift.git";
 			requirement = {
-				branch = "feat/rnode-over-ble-ios";
+				branch = "main";
 				kind = branch;
 			};
 		};
