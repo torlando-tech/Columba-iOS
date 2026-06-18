@@ -592,7 +592,7 @@ actor NEReticulumNode {
         let pn = cfg.propagationNodeHash.map { (h: Data) in
             Self.hashPrefix(h.map { String(format: "%02x", $0) }.joined())
         } ?? "nil"
-        ExtensionDiagLog.log("NEReticulumNode: PN set (\(pn)) stamp=\(cfg.stampCost) interval=\(Int(cfg.syncInterval))s periodic=\(cfg.periodicSyncEnabled)")
+        ExtensionDiagLog.log("NEReticulumNode: PN set (\(pn)) stamp=\(cfg.stampCost) interval=\(Int(cfg.effectiveSyncInterval))s periodic=\(cfg.periodicSyncEnabled)")
     }
 
     /// Observe the app's propagation Darwin notifications: config-changed (re-apply +
@@ -645,7 +645,9 @@ actor NEReticulumNode {
                     do { try await Task.sleep(for: .seconds(300)) } catch { return }
                     continue
                 }
-                do { try await Task.sleep(for: .seconds(cfg.syncInterval)) } catch { return }
+                // Floor the cadence so a 0 / near-0 syncInterval can't busy-loop this
+                // task (continuous IPC + relay traffic); see PropagationSeamConfig.
+                do { try await Task.sleep(for: .seconds(cfg.effectiveSyncInterval)) } catch { return }
                 if Task.isCancelled { return }
                 await self.runOneSyncFireAndForget()
             }

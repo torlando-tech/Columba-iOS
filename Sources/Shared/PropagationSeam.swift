@@ -21,10 +21,24 @@ public struct PropagationSeamConfig: Codable, Equatable, Sendable {
     public var propagationNodeHash: Data?
     /// Proof-of-work cost the PN requires for uploads (from its announce app_data).
     public var stampCost: Int
-    /// Desired periodic-sync interval, in seconds.
+    /// Desired periodic-sync interval, in seconds. Use `effectiveSyncInterval` for the
+    /// scheduler — a raw 0 / near-0 value (default/corrupted App-Group entry) would
+    /// otherwise busy-loop the NE sync task.
     public var syncInterval: TimeInterval
     /// Whether the NE should run periodic sync (vs sync-on-demand only).
     public var periodicSyncEnabled: Bool
+
+    /// Hard floor for the periodic-sync cadence. The NE's `startPropagationSyncScheduler`
+    /// sleeps `syncInterval` between syncs; a zero/near-zero value — reachable via a
+    /// corrupted or unset App-Group entry (Codable decoding bypasses `init`, so an
+    /// init-time clamp would not catch it) — would spin the loop at the ~2s relay-recheck
+    /// floor, generating continuous IPC + relay traffic. Manual "Sync Now" and
+    /// reconnect-triggered syncs are unaffected.
+    public static let minSyncInterval: TimeInterval = 30
+
+    /// `syncInterval` floored to `minSyncInterval`. Always use this for the periodic
+    /// scheduler so no config path (including a direct Codable decode) can busy-loop it.
+    public var effectiveSyncInterval: TimeInterval { Swift.max(Self.minSyncInterval, syncInterval) }
 
     public init(
         propagationNodeHash: Data?,
