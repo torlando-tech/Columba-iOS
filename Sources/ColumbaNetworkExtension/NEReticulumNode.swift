@@ -186,6 +186,12 @@ actor NEReticulumNode {
     /// past the `isRunning` guard during the long init. See `start()`.
     private var isStarting = false
 
+    /// Set by `stop()` even when `isRunning` is still false (i.e. a stop arriving
+    /// mid-`start()`, before `isRunning = true`). `start()` checks it at the end and
+    /// honors the stop with a full teardown, so the node doesn't finish initializing
+    /// into an orphaned-but-observing state. See `start()` / `stop()`.
+    private var stopRequested = false
+
     init() {}
 
     // MARK: - Lifecycle
@@ -217,6 +223,7 @@ actor NEReticulumNode {
         // get `false` until the first start sets `isRunning`.
         guard !isStarting else { return false }
         isStarting = true
+        stopRequested = false   // fresh start cycle; a prior stop doesn't cancel it
         defer { isStarting = false }
 
         // 1. Shared identity from the app's keychain group. Absent ⇒ app hasn't
@@ -454,6 +461,16 @@ actor NEReticulumNode {
         //    started even if the drain is slow.
         await drainOutbox()
 
+        // Honor a stop() that arrived while we were initializing (it was dropped by
+        // stop()'s `guard isRunning` because `isRunning` wasn't set yet). Now that the
+        // node is fully up — observers + schedulers + seam transports registered —
+        // run the full teardown so nothing is left orphaned + observing.
+        if stopRequested {
+            ExtensionDiagLog.log("NEReticulumNode: stop requested during start — tearing down")
+            await stop()
+            return false
+        }
+
         return true
     }
 
@@ -672,6 +689,14 @@ actor NEReticulumNode {
     /// Tear the node down. Mirrors `SwiftRNSBackend.stop()`'s teardown (drop the
     /// stack so the actors deinit). Best-effort and idempotent.
     func stop() async {
+        // Record the stop request unconditionally — even if `isRunning` is still
+        // false because a `start()` is mid-flight (between `isStarting` and the final
+        // `isRunning = true`). Without this the guard below would silently DROP the
+        // stop, `start()` would finish + register Darwin observers, and the orphaned
+        // actor (PacketTunnelProvider already nil'd its ref) would be deallocated with
+        // live `passUnretained(self)` observers → use-after-free. `start()` checks this
+        // at the end and runs a full teardown. (The `deinit` is a final safety net.)
+        stopRequested = true
         guard isRunning else { return }
         isRunning = false
         announceTask?.cancel()
@@ -733,6 +758,21 @@ actor NEReticulumNode {
         delegate = nil
         identity = nil
         ExtensionDiagLog.log("NEReticulumNode: stopped")
+    }
+
+    /// Final safety net for the node's own Darwin observers. `stop()` + the
+    /// `stopRequested` path normally remove them, but if the actor is ever
+    /// deallocated without a clean stop (e.g. an orphaning path we didn't foresee),
+    /// the `Unmanaged.passUnretained(self)` registrations would dangle and the next
+    /// config notification would fire `fromOpaque(...)` on freed memory. Removing
+    /// them here (the same idiom as `NotificationObserver.deinit`) makes that
+    /// impossible: `self` is still a valid pointer during deinit, and
+    /// `RemoveEveryObserver` clears every registration made with it.
+    deinit {
+        CFNotificationCenterRemoveEveryObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque()
+        )
     }
 
     // MARK: - Shared identity (replicates the app's A3 keychain read)
