@@ -159,6 +159,12 @@ actor NEReticulumNode {
     /// seam transport (the CoreBluetooth NUS radio runs in the app). Rebuilt when the
     /// app-written `RNodeSeamConfig` changes.
     private var rnodeInterface: RNodeInterface?
+    /// The detached `addInterface` (→ `RNodeInterface.connect()`, which starts the
+    /// seam wire + its `rnodeSeamA2N` Darwin observer) is kept off the setup critical
+    /// path. Track it so `setupRNodeInterface()` (reconfig) and `stop()` can cancel a
+    /// prior one — otherwise a late `connect()` registers a second observer on an
+    /// orphaned/superseded interface and steals KISS frames. Mirrors `announceTask`.
+    private var rnodeAddInterfaceTask: Task<Void, Never>?
     private var rnodeConfigObserverRegistered = false
 
     /// Model B propagation: the app writes the selected propagation node + sync settings
@@ -482,6 +488,12 @@ actor NEReticulumNode {
     private func setupRNodeInterface() async {
         guard let tp = transport else { return }
 
+        // Cancel any in-flight detached addInterface from a prior setup BEFORE tearing
+        // down the existing interface — otherwise that task's late connect() would
+        // re-register a second rnodeSeamA2N observer on the superseded interface.
+        rnodeAddInterfaceTask?.cancel()
+        rnodeAddInterfaceTask = nil
+
         // Tear down any existing RNode interface (reload / disable).
         if let existing = rnodeInterface {
             await existing.disconnect()
@@ -516,10 +528,22 @@ actor NEReticulumNode {
             rnodeInterface = iface
             ExtensionDiagLog.log("NEReticulumNode: RNode interface built (device set, registering off critical path)")
             NEReticulumNode.postNetworkStateChangedDarwinNotification()
-            // OFF THE CRITICAL PATH: addInterface → RNodeInterface.connect() must not gate setup.
-            Task.detached {
+            // OFF THE CRITICAL PATH: addInterface → RNodeInterface.connect() must not gate
+            // setup. Tracked + cancellable: if stop() or a reconfig supersedes this
+            // interface while we're still connecting, the registered seam observer would
+            // otherwise orphan and steal frames — so check cancellation and UNDO the
+            // connect (disconnect → wire.stop() removes the observer) on the captured
+            // `tp`/`iface` (still valid even after the actor nil'd its own refs).
+            rnodeAddInterfaceTask = Task.detached {
+                guard !Task.isCancelled else { return }
                 do {
                     try await tp.addInterface(iface)
+                    if Task.isCancelled {
+                        await iface.disconnect()
+                        await tp.removeInterface(id: iface.id)
+                        ExtensionDiagLog.log("NEReticulumNode: RNode addInterface superseded — rolled back")
+                        return
+                    }
                     ExtensionDiagLog.log("NEReticulumNode: RNode interface registered (seam transport)")
                 } catch {
                     ExtensionDiagLog.log("NEReticulumNode: RNode addInterface failed (non-fatal): \(String(describing: error))")
@@ -744,6 +768,11 @@ actor NEReticulumNode {
         // the orphaned observer drains the app→NE RNode queue and steals KISS frames from
         // the freshly-started node on NE restart, and dangles once the wire deinits. Do
         // this while `transport` is still alive so `removeInterface` can detach it.
+        // Cancel any in-flight detached addInterface first so a late connect() can't
+        // re-register the seam observer after we tear the interface down (its own
+        // post-connect cancellation check then rolls back via the captured refs).
+        rnodeAddInterfaceTask?.cancel()
+        rnodeAddInterfaceTask = nil
         if let ri = rnodeInterface {
             await ri.disconnect()
             await transport?.removeInterface(id: ri.id)
