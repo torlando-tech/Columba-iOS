@@ -85,6 +85,11 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// app owns no transport to hear announces itself. Guarded by `stateLock`;
     /// cancelled in `stop()`.
     private var announcePoller: Task<Void, Never>?
+    /// Bumped by `stop()` so an in-flight `start()` handshake loop (up to ~12s of
+    /// retries) that completes AFTER a `stop()` does not resurrect `cachedLocalInfo`
+    /// or restart the announce poller. `start()` captures the generation up front and
+    /// re-checks it before committing. Guarded by `stateLock`.
+    private var startGeneration = 0
     private let stateLock = NSLock()
 
     /// The neutral event stream. Under Model B the NE owns inbound delivery and
@@ -144,6 +149,9 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         let stepMs: UInt64 = 400
         let maxAttempts = 30
         var lastError: Error = RNSError.backendNotReady
+        // Snapshot the generation up front; if stop() bumps it while we're still
+        // handshaking, abandon the result instead of resurrecting cleared state.
+        stateLock.lock(); let myGeneration = startGeneration; stateLock.unlock()
         for attempt in 0..<maxAttempts {
             do {
                 let response = try await roundTrip(.start(displayName: params.displayName), op: "start")
@@ -154,7 +162,15 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                         throw BackendError.ipcFailed(operation: "start")
                     }
                     let local = LocalInfo(identityHash: info.identityHash, destinationHash: info.destinationHash)
-                    stateLock.lock(); cachedLocalInfo = local; stateLock.unlock()
+                    stateLock.lock()
+                    guard myGeneration == startGeneration else {
+                        // stop() ran while this handshake was in flight — do NOT cache
+                        // or restart the poller; honor the stop.
+                        stateLock.unlock()
+                        throw RNSError.backendNotReady
+                    }
+                    cachedLocalInfo = local
+                    stateLock.unlock()
                     startAnnouncePolling()
                     return local
                 case .error(let message):
@@ -179,6 +195,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     public func stop() async {
         _ = try? await roundTrip(.stop, op: "stop")
         stateLock.lock()
+        startGeneration &+= 1   // invalidate any in-flight start() handshake loop
         cachedLocalInfo = nil
         announcePoller?.cancel()
         announcePoller = nil
@@ -199,8 +216,12 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             var lastSeen: [String: Double] = [:]
             while !Task.isCancelled {
                 // 2.5s: an IPC round-trip each tick, and announces are infrequent;
-                // a few seconds of latency surfacing a heard announce is fine.
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                // a few seconds of latency surfacing a heard announce is fine. Use a
+                // throwing sleep and EXIT on cancellation — a `try?` here would swallow
+                // the CancellationError that stop() triggers and fire one extra
+                // `.heardAnnounces` round-trip before the while-check re-evaluates.
+                do { try await Task.sleep(nanoseconds: 2_500_000_000) }
+                catch { return }
                 guard let self else { return }
                 guard let response = try? await self.roundTrip(.heardAnnounces, op: "heardAnnounces"),
                       case .ok(let payload) = response, let payload,
