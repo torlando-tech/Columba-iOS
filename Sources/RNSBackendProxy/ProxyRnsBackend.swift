@@ -171,7 +171,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                     }
                     cachedLocalInfo = local
                     stateLock.unlock()
-                    startAnnouncePolling()
+                    startAnnouncePolling(expectedGeneration: myGeneration)
                     return local
                 case .error(let message):
                     // A real backend error (not a not-ready condition) — don't retry.
@@ -208,9 +208,19 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// backend.events`) populates the network-announce list even though the app
     /// owns no transport. Mirrors `SwiftRNSBackend.startAnnouncePolling` (diff by
     /// last-heard time) but sources the PathTable from the NE over IPC. Idempotent.
-    private func startAnnouncePolling() {
+    ///
+    /// `expectedGeneration` is the `startGeneration` snapshot taken by the `start()`
+    /// that is spawning this poller. Re-check it UNDER the lock: `start()` releases
+    /// `stateLock` before calling this, so a `stop()` can land in that window —
+    /// bumping the generation and cancelling a still-`nil` poller. Without the
+    /// re-check we'd then create a brand-new Task that `stop()` can never cancel (a
+    /// zombie poller that keeps issuing `.heardAnnounces` forever and, via its stale
+    /// `lastSeen`, silently drops announces after the next start).
+    private func startAnnouncePolling(expectedGeneration: Int) {
         stateLock.lock()
-        guard announcePoller == nil else { stateLock.unlock(); return }
+        guard announcePoller == nil, expectedGeneration == startGeneration else {
+            stateLock.unlock(); return
+        }
         let cont = eventContinuation
         announcePoller = Task { [weak self] in
             var lastSeen: [String: Double] = [:]
