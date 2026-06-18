@@ -268,6 +268,21 @@ public final class TunnelManager: @unchecked Sendable {
         status == .connected
     }
 
+    /// Poll until the tunnel reports `.connected`, up to `timeoutMs`; returns whether
+    /// it connected in time. Used by the Model-B first-launch background-delivery gate
+    /// to confirm the NE is actually up before the app proxies to it (so the proxy's
+    /// `start()` handshake connects in seconds instead of spinning on a dead session).
+    public func waitUntilConnected(timeoutMs: Int) async -> Bool {
+        var waited = 0
+        let step = 200
+        while true {
+            if status == .connected { return true }
+            if waited >= timeoutMs { return false }
+            try? await Task.sleep(for: .milliseconds(step))
+            waited += step
+        }
+    }
+
     /// Remove the VPN configuration entirely.
     public func uninstall() async throws {
         guard let manager else { return }

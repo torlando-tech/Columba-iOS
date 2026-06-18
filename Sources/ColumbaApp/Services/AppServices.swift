@@ -292,6 +292,19 @@ public final class AppServices {
 
     /// Extension frame reader for processing queued frames from the extension.
     private var extensionFrameReader: ExtensionFrameReader?
+
+    /// Model-B first-launch gate. Set true while `startPythonBackend` suspends, before
+    /// `backend.start()`, waiting for the user to approve + enable background delivery
+    /// (the NE owns the node, so its VPN tunnel MUST be up first — on a fresh install it
+    /// isn't, and proxying to it would otherwise spin for minutes). RootView shows
+    /// `BackgroundDeliveryGateView` while this is true; `approveBackgroundDelivery()`
+    /// clears it and resumes init. Persisted approval (returning users) skips the gate.
+    public var needsBackgroundDeliveryApproval = false
+
+    @ObservationIgnored
+    private var backgroundDeliveryApprovalContinuation: CheckedContinuation<Void, Never>?
+
+    private static let backgroundDeliveryEnabledKey = "background_delivery_enabled"
     #endif
 
     /// Darwin notification name used by on-device test instrumentation to
@@ -960,6 +973,67 @@ public final class AppServices {
     /// `InterfaceEntity` records from `InterfaceRepository`). No host/port
     /// is hardcoded — if `interfaces` is empty the app starts offline and
     /// the user adds an interface in Settings → Manage Interfaces.
+    #if ENABLE_NETWORK_EXTENSION
+    /// Ensure the NE/VPN tunnel is connected before the Model-B proxy backend starts.
+    ///
+    /// Returning users (approval persisted) get a SILENT bring-up — `install()` is a
+    /// no-op re-save, `start()` reconnects, iOS does not re-prompt. First run (or if the
+    /// silent bring-up can't connect, e.g. the user revoked the VPN in iOS Settings)
+    /// suspends here and shows `BackgroundDeliveryGateView`; `approveBackgroundDelivery()`
+    /// resumes us once the tunnel is up. This is what keeps `backend.start()` from
+    /// spinning minutes on a fresh install.
+    private func ensureBackgroundDeliveryTunnel() async {
+        guard let tunnel = tunnelManager else {
+            DiagLog.log("[TUNNEL-GATE] no tunnel manager — skipping (degraded)")
+            return
+        }
+        if SharedDefaults.suite.bool(forKey: Self.backgroundDeliveryEnabledKey) {
+            // Returning user: bring the tunnel up without prompting.
+            try? await tunnel.install()
+            try? await tunnel.start()
+            if await tunnel.waitUntilConnected(timeoutMs: 20_000) {
+                DiagLog.log("[TUNNEL-GATE] returning user — tunnel reconnected")
+                return
+            }
+            DiagLog.log("[TUNNEL-GATE] returning user — silent reconnect failed; showing gate")
+        }
+        // First run, or silent reconnect failed → require explicit approval via the gate.
+        DiagLog.log("[TUNNEL-GATE] awaiting background-delivery approval (showing gate)")
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            backgroundDeliveryApprovalContinuation = cont
+            needsBackgroundDeliveryApproval = true
+        }
+        DiagLog.log("[TUNNEL-GATE] approval received — resuming init")
+    }
+
+    /// Called by `BackgroundDeliveryGateView`'s Enable button. Installs + starts the
+    /// tunnel (the first `install()` fires the iOS VPN-approval prompt), waits for it to
+    /// connect, persists the approval, then resumes the suspended init. Returns whether
+    /// the tunnel connected — the gate surfaces an error + retry on `false` (e.g. the
+    /// user tapped "Don't Allow"), WITHOUT resuming init, so the user can try again.
+    @discardableResult
+    public func approveBackgroundDelivery() async -> Bool {
+        guard let tunnel = tunnelManager else { return false }
+        do {
+            try await tunnel.install()
+            try await tunnel.start()
+        } catch {
+            DiagLog.log("[TUNNEL-GATE] enable failed: \(error)")
+            return false
+        }
+        guard await tunnel.waitUntilConnected(timeoutMs: 25_000) else {
+            DiagLog.log("[TUNNEL-GATE] enable: tunnel did not connect (approval denied?)")
+            return false
+        }
+        SharedDefaults.suite.set(true, forKey: Self.backgroundDeliveryEnabledKey)
+        needsBackgroundDeliveryApproval = false
+        backgroundDeliveryApprovalContinuation?.resume()
+        backgroundDeliveryApprovalContinuation = nil
+        DiagLog.log("[TUNNEL-GATE] enable: tunnel connected + approval persisted")
+        return true
+    }
+    #endif
+
     private func startPythonBackend(
         identity: Identity,
         identityHashHex: String,
@@ -1051,6 +1125,18 @@ public final class AppServices {
 
         let identityBytes = try? identity.exportPrivateKeys()
         DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
+
+        #if ENABLE_NETWORK_EXTENSION
+        // Model B: `backend` is the thin-client proxy; `backend.start()` round-trips to
+        // the NE node over the VPN tunnel session, so the tunnel MUST be connected first.
+        // A fresh install has no VPN config at all — without this, start() would spin
+        // ~30×8s on a dead session (the "stuck on Connecting to network… for minutes"
+        // bug). Bring the tunnel up, gating first-run on the background-delivery approval
+        // gate so the iOS VPN prompt is a deliberate user step, not a silent hang.
+        if BackendPreference.modelB {
+            await ensureBackgroundDeliveryTunnel()
+        }
+        #endif
 
         do {
             DiagLog.log("[RNS] calling backend.start()")
