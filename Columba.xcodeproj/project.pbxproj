@@ -146,6 +146,7 @@
 		8A784DFE5A52489803B27984 /* lucide.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FF6CE45231CD48906B9C226D /* lucide.ttf */; };
 		922658C82CEEA53695143F9B /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = DBD8F3A253D413F087742BC0 /* MapLibre */; };
 		92DDF4AE0AB493CC2AA0BA20 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6000D5CED2C3C89F74999BC1 /* LXSTSwift */; };
+		9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */; };
 		98547ADE9B17DD692240E7F7 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 85B9530D8CAE0E16D5371319 /* LXMFSwift */; };
 		9D9069A3F6302111A4727454 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = DD88CFE74E7E22427BC4D163 /* SwiftBLEBridge */; };
 		9E99C06B5658EA687323CF82 /* AppGroupRNodeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E36D94E7D28E35241C46426 /* AppGroupRNodeServer.swift */; };
@@ -273,6 +274,7 @@
 		AGPF /* AppGroupPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupPaths.swift; sourceTree = "<group>"; };
 		B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		B68384C48BFF8F5294340EDB /* PttButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PttButton.swift; sourceTree = "<group>"; };
+		BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageFormattedTimeTests.swift; sourceTree = "<group>"; };
 		BF48C97880B30682DC35613C /* CeaseTelemetry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CeaseTelemetry.swift; sourceTree = "<group>"; };
 		BGTF /* BackgroundTransportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTransportView.swift; sourceTree = "<group>"; };
 		BKF002 /* BackendFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFactory.swift; sourceTree = "<group>"; };
@@ -785,6 +787,7 @@
 				FBDT /* BLESeamDriverTests.swift */,
 				6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */,
 				30A79B9ECDB4166F8A36A670 /* CallManagerCallKitTests.swift */,
+				BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -1227,6 +1230,7 @@
 				TBDT /* BLESeamDriverTests.swift in Sources */,
 				A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */,
 				E49B977D311DA1C9ACE14CAB /* CallManagerCallKitTests.swift in Sources */,
+				9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1321,7 +1325,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = M2977H5PM5;
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
@@ -1343,10 +1347,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.2;
+				MARKETING_VERSION = 0.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1366,7 +1370,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = M2977H5PM5;
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
@@ -1388,11 +1392,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.2;
+				MARKETING_VERSION = 0.0.3;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1407,13 +1411,13 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
@@ -1429,8 +1433,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = M2977H5PM5;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -1440,7 +1443,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.0.2;
+				MARKETING_VERSION = 0.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1513,13 +1516,13 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
@@ -1535,8 +1538,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = M2977H5PM5;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -1546,7 +1548,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.0.2;
+				MARKETING_VERSION = 0.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1626,8 +1628,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = M2977H5PM5;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -1637,7 +1638,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.0.2;
+				MARKETING_VERSION = 0.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1653,8 +1654,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = M2977H5PM5;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -1664,7 +1664,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.0.2;
+				MARKETING_VERSION = 0.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1742,7 +1742,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = M2977H5PM5;
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
@@ -1764,11 +1764,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.2;
+				MARKETING_VERSION = 0.0.3;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
@@ -1787,7 +1787,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = M2977H5PM5;
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
@@ -1809,10 +1809,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.2;
+				MARKETING_VERSION = 0.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
@@ -1826,13 +1826,13 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
@@ -1847,13 +1847,13 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;

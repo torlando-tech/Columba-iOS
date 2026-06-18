@@ -77,8 +77,8 @@ def main() -> int:
                 seen_taps += 1
                 # Print the full source LXMF delivery-destination hash + the
                 # message hash so callers can match against the sender's
-                # `[PY] started identity=… destination=…` log line and the
-                # sender's `[PY] delivery <hash> state=delivered` line — that
+                # `[RNS] started identity=… destination=…` log line and the
+                # sender's `[RNS] delivery <hash> state=delivered` line — that
                 # three-way match is the rigorous "same message, same source,
                 # signature valid" check the harness relies on.
                 src_hex = lxm.source_hash.hex() if lxm.source_hash else "?"
