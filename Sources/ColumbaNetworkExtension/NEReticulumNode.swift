@@ -1478,12 +1478,15 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
         )
         do {
             try await center.add(request)
-            // Success marker: the inbound notification reached the iOS notification
-            // center. Includes the preview so a test (and a human debugging
-            // background delivery) can confirm WHICH message surfaced — this is the
-            // user-visible proof that a message arriving while the host app is
-            // suspended still notifies.
-            ExtensionDiagLog.log("NEReticulumNode: posted inbound notification (sender=\(senderDisplay)) preview=\"\(preview)\"")
+            // Success marker — ENVELOPE ONLY, per ExtensionDiagLog's NO-PII contract.
+            // Log the sender HASH prefix only; do NOT log the resolved display name
+            // (PII) or the decrypted `preview` (message plaintext). `ext-diag.log` is
+            // device-extractable (`devicectl … copy from`), so persisting plaintext
+            // here would defeat LXMF end-to-end encryption. The notification BODY still
+            // shows the preview to the USER — that is the intended UX; only the
+            // persisted diagnostic log must stay envelope-only. Correlate a specific
+            // inbound by its sender-hash prefix (matches the `from=…` marker above).
+            ExtensionDiagLog.log("NEReticulumNode: posted inbound notification (from=\(NEReticulumNode.hashPrefix(threadId)))")
         } catch {
             ExtensionDiagLog.log("NEReticulumNode: failed to post local notification: \(String(describing: error))")
         }
