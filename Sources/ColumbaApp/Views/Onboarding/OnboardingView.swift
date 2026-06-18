@@ -17,8 +17,10 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @State private var viewModel = OnboardingViewModel()
+    #if COLUMBA_MIGRATION_ENABLED
     @State private var showRestoreSheet = false
     @State private var migrationVM: MigrationViewModel?
+    #endif
 
     var body: some View {
         ZStack {
@@ -53,6 +55,7 @@ struct OnboardingView: View {
                 Group {
                     switch viewModel.currentPage {
                     case 0:
+                        #if COLUMBA_MIGRATION_ENABLED
                         WelcomePage(
                             onContinue: { viewModel.nextPage() },
                             onRestoreFile: { data in
@@ -65,6 +68,9 @@ struct OnboardingView: View {
                                 Task { await vm.handleImportFile(data: data) }
                             }
                         )
+                        #else
+                        WelcomePage(onContinue: { viewModel.nextPage() })
+                        #endif
                     case 1:
                         IdentityPage(
                             displayName: $viewModel.displayName,
@@ -73,7 +79,6 @@ struct OnboardingView: View {
                         )
                     case 2:
                         ConnectivityPage(
-                            selectedInterfaces: $viewModel.selectedInterfaces,
                             selectedTcpServer: $viewModel.selectedTcpServer,
                             onBack: { viewModel.previousPage() },
                             onContinue: { viewModel.nextPage() }
@@ -129,6 +134,7 @@ struct OnboardingView: View {
         .task {
             await viewModel.checkNotificationStatus()
         }
+        #if COLUMBA_MIGRATION_ENABLED
         .sheet(isPresented: $showRestoreSheet) {
             if let vm = migrationVM {
                 OnboardingRestoreSheet(viewModel: vm) {
@@ -144,6 +150,7 @@ struct OnboardingView: View {
                 }
             }
         }
+        #endif
     }
 }
 #endif

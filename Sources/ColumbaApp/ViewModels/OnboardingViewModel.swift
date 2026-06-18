@@ -161,11 +161,19 @@ final class OnboardingViewModel {
 
         await settingsRepository.setDisplayName("Anonymous Peer")
 
+        // Model B: the NE node delivers over the first enabled tcpClient relay, so a
+        // skipped setup must still seed one — otherwise the node comes up with no
+        // reachable path and the user can't message anyone. (An AutoInterface-only
+        // seed is a no-op the NE ignores.)
         let interfaceRepo = InterfaceRepository()
+        let server = TcpCommunityServer.defaultServer
         interfaceRepo.addInterface(InterfaceEntity(
-            name: "Auto Discovery",
-            type: .autoInterface,
-            config: .autoInterface(AutoInterfaceConfig())
+            name: server.name,
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
         ))
 
         UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
@@ -193,41 +201,20 @@ final class OnboardingViewModel {
     // MARK: - Private
 
     private func createInterfaces(in repo: InterfaceRepository) {
-        for interfaceType in selectedInterfaces {
-            switch interfaceType {
-            case .auto:
-                repo.addInterface(InterfaceEntity(
-                    name: "Auto Discovery",
-                    type: .autoInterface,
-                    config: .autoInterface(AutoInterfaceConfig())
-                ))
-            case .nearby:
-                repo.addInterface(InterfaceEntity(
-                    name: "Nearby",
-                    type: .multipeer,
-                    config: .multipeer(MultipeerConfig())
-                ))
-            case .ble:
-                repo.addInterface(InterfaceEntity(
-                    name: "Bluetooth LE",
-                    type: .ble,
-                    config: .ble(BLEConfig())
-                ))
-            case .tcp:
-                let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
-                repo.addInterface(InterfaceEntity(
-                    name: server.name,
-                    type: .tcpClient,
-                    config: .tcpClient(TCPClientConfig(
-                        targetHost: server.host,
-                        targetPort: server.port
-                    ))
-                ))
-            case .rnode:
-                // RNode requires separate configuration wizard — skip during onboarding
-                break
-            }
-        }
+        // Model B: the NE node delivers over the first enabled `tcpClient` relay and
+        // IGNORES auto/multipeer/ble entities (those interfaces, where they exist, are
+        // owned by the NE process itself, not configured here). So onboarding seeds
+        // exactly one enabled TCP relay — the user's pick, or the default community
+        // server — guaranteeing a reachable path even if nothing was explicitly chosen.
+        let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
+        repo.addInterface(InterfaceEntity(
+            name: server.name,
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
+        ))
     }
 }
 

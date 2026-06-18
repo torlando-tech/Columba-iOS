@@ -38,7 +38,7 @@ struct PermissionsPage: View {
             // Notification features
             VStack(alignment: .leading, spacing: 14) {
                 notificationRow("New messages arrive")
-                notificationRow("Incoming voice calls")
+                notificationRow("Someone you know comes online")
             }
             .padding(.horizontal, 40)
             .padding(.bottom, 32)

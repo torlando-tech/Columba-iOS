@@ -3,26 +3,25 @@
 //  ConnectivityPage.swift
 //  ColumbaApp
 //
-//  Onboarding page 2: Network interface selection with TCP server picker.
+//  Onboarding page 2 (Model B): pick the community relay the node connects through.
+//
+//  Under Model B the Network Extension owns the node and its interfaces; the only
+//  user-facing first-run choice that matters is which TCP relay to bootstrap from.
+//  (The older multi-interface picker + in-app BLE/Bonjour permission probes were
+//  removed: those interfaces live in the NE's own process, so prompting for them
+//  here was misleading and the entities were ignored by the node.)
 //
 
 import SwiftUI
 import RNSAPI
-import CoreBluetooth
-import Network
 
 @available(iOS 17.0, macOS 14.0, *)
 struct ConnectivityPage: View {
-    @Binding var selectedInterfaces: Set<OnboardingInterfaceType>
     @Binding var selectedTcpServer: TcpCommunityServer?
     let onBack: () -> Void
     let onContinue: () -> Void
 
     @State private var showServerPicker = false
-    @State private var bluetoothAuthorization: CBManagerAuthorization = CBCentralManager.authorization
-    @State private var bluetoothProbe: BluetoothPermissionProbe?
-    @State private var localNetworkProbe: LocalNetworkPermissionProbe?
-    @State private var localNetworkPrompted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,40 +34,24 @@ struct ConnectivityPage: View {
                         .foregroundStyle(Theme.accentColor)
                         .padding(.bottom, 24)
 
-                    Text("How will you connect?")
+                    Text("Choose a relay")
                         .font(.system(size: 28, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(.bottom, 8)
 
-                    Text("Select the networks you'd like to use:")
+                    Text("Columba reaches the wider network through a community relay server. We've picked a good default — you can change it anytime in Settings.")
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 32)
                         .padding(.bottom, 24)
 
-                    // Interface cards
-                    VStack(spacing: 12) {
-                        ForEach(OnboardingInterfaceType.allCases, id: \.self) { type in
-                            interfaceCard(type)
-                        }
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 12)
+                    tcpServerRow
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 12)
 
-                    // TCP server selection
-                    if selectedInterfaces.contains(.tcp) {
-                        tcpServerRow
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 12)
-                    }
-
-                    // Bluetooth permission card
-                    if selectedInterfaces.contains(.ble) {
-                        bluetoothPermissionCard
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 12)
-                    }
-
-                    Text("You can configure these later in Settings")
+                    Text("You can configure connectivity later in Settings")
                         .font(.footnote)
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.bottom, 16)
@@ -110,72 +93,12 @@ struct ConnectivityPage: View {
             serverPickerSheet
         }
         .onAppear {
-            if selectedInterfaces.contains(.auto) && !localNetworkPrompted {
-                requestLocalNetworkPermission()
+            // Preselect the default community server so a user who just taps through
+            // still gets a reachable relay (the NE needs an enabled tcpClient).
+            if selectedTcpServer == nil {
+                selectedTcpServer = TcpCommunityServer.defaultServer
             }
         }
-    }
-
-    // MARK: - Interface Card
-
-    private func interfaceCard(_ type: OnboardingInterfaceType) -> some View {
-        let isSelected = selectedInterfaces.contains(type)
-
-        return Button {
-            if isSelected {
-                selectedInterfaces.remove(type)
-                if type == .tcp { selectedTcpServer = nil }
-            } else {
-                selectedInterfaces.insert(type)
-                if type == .tcp && selectedTcpServer == nil {
-                    selectedTcpServer = TcpCommunityServer.defaultServer
-                }
-                if type == .ble && CBCentralManager.authorization == .notDetermined {
-                    requestBluetoothPermission()
-                }
-                if type == .auto && !localNetworkPrompted {
-                    requestLocalNetworkPermission()
-                }
-            }
-        } label: {
-            HStack(spacing: 14) {
-                // Checkbox
-                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 22))
-                    .foregroundStyle(isSelected ? Theme.accentColor : Theme.textDisabled)
-
-                // Icon
-                Image(systemName: type.icon)
-                    .font(.system(size: 20))
-                    .foregroundStyle(isSelected ? Theme.accentColor : Theme.textSecondary)
-                    .frame(width: 28)
-
-                // Text
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(type.title)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary)
-
-                    Text(type.description)
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-
-                    Text(type.subtitle)
-                        .font(.caption2)
-                        .foregroundStyle(Theme.textDisabled)
-                }
-
-                Spacer()
-            }
-            .padding(14)
-            .background(isSelected ? Theme.accentColor.opacity(0.1) : Theme.backgroundSecondary)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? Theme.accentColor.opacity(0.5) : Theme.divider, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - TCP Server Row
@@ -187,7 +110,7 @@ struct ConnectivityPage: View {
                     .foregroundStyle(Theme.accentColor)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Server")
+                    Text("Relay server")
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
                     Text(selectedTcpServer?.name ?? "Select a server")
@@ -259,105 +182,6 @@ struct ConnectivityPage: View {
                 }
             }
         }
-    }
-
-    // MARK: - Bluetooth Permission Card
-
-    private var bluetoothPermissionCard: some View {
-        let granted = bluetoothAuthorization == .allowedAlways
-
-        return HStack(spacing: 14) {
-            Image(systemName: "wave.3.right")
-                .font(.system(size: 24))
-                .foregroundStyle(granted ? Theme.success : Theme.accentColor)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Bluetooth Access")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(granted ? "Enabled" : "Required for BLE mesh networking")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-
-            Spacer()
-
-            if granted {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundStyle(Theme.success)
-            } else {
-                Button {
-                    requestBluetoothPermission()
-                } label: {
-                    Text("Enable")
-                        .font(.subheadline.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Theme.accentColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            }
-        }
-        .padding(16)
-        .background(Theme.backgroundSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(granted ? Theme.success.opacity(0.5) : Theme.divider, lineWidth: 1)
-        )
-    }
-
-    private func requestBluetoothPermission() {
-        bluetoothProbe = BluetoothPermissionProbe { auth in
-            bluetoothAuthorization = auth
-        }
-    }
-
-    private func requestLocalNetworkPermission() {
-        localNetworkPrompted = true
-        localNetworkProbe = LocalNetworkPermissionProbe()
-    }
-}
-
-/// Triggers the iOS Bluetooth permission dialog by initializing a CBCentralManager.
-/// iOS shows the permission prompt on first CBCentralManager creation if authorization is .notDetermined.
-private class BluetoothPermissionProbe: NSObject, CBCentralManagerDelegate {
-    private var manager: CBCentralManager?
-    private let onAuthorizationChange: (CBManagerAuthorization) -> Void
-
-    init(onAuthorizationChange: @escaping (CBManagerAuthorization) -> Void) {
-        self.onAuthorizationChange = onAuthorizationChange
-        super.init()
-        manager = CBCentralManager(delegate: self, queue: nil, options: [
-            CBCentralManagerOptionShowPowerAlertKey: false
-        ])
-    }
-
-    func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        onAuthorizationChange(CBCentralManager.authorization)
-    }
-}
-
-/// Triggers the iOS local network permission dialog by browsing for a Bonjour service.
-/// iOS shows the prompt on first local network access attempt.
-private class LocalNetworkPermissionProbe {
-    private var browser: NWBrowser?
-
-    init() {
-        let params = NWParameters()
-        params.includePeerToPeer = true
-        browser = NWBrowser(for: .bonjour(type: "_reticulum._tcp", domain: nil), using: params)
-        browser?.stateUpdateHandler = { [weak self] state in
-            if case .cancelled = state { return }
-            // Brief browse is enough to trigger the prompt — cancel after 2s
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                self?.browser?.cancel()
-                self?.browser = nil
-            }
-        }
-        browser?.start(queue: .main)
     }
 }
 #endif
