@@ -181,6 +181,11 @@ actor NEReticulumNode {
     /// `true` once `start()` has fully wired the node. Guards against double-start.
     private(set) var isRunning = false
 
+    /// Synchronous re-entrancy latch for `start()` — set before its first `await` so
+    /// concurrent start attempts (the ProxyRnsBackend `.start` retry storm) can't race
+    /// past the `isRunning` guard during the long init. See `start()`.
+    private var isStarting = false
+
     init() {}
 
     // MARK: - Lifecycle
@@ -198,6 +203,21 @@ actor NEReticulumNode {
     @discardableResult
     func start() async throws -> Bool {
         guard !isRunning else { return true }
+        // Re-entrancy guard. Actors suspend at EVERY `await`, and `isRunning = true`
+        // is not set until the very end of start() — after 10+ awaits (GRDB/LXMRouter
+        // open, path-table, registerDeliveryDestination, addInterface, …). The trigger
+        // is real: PacketTunnelProvider fires `Task { start() }` and the app's
+        // ProxyRnsBackend then retries `.start` up to 30×/400ms (each a fresh
+        // `Task { start() }`); since init takes well over 400ms, a second call would
+        // slip past `!isRunning` mid-init and open the same App-Group GRDB twice +
+        // register a duplicate lxmf.delivery destination on a second transport,
+        // clobbering refs and leaking the orphan. `isStarting` is claimed
+        // SYNCHRONOUSLY here (before the first await); `defer` releases it so a failed
+        // start (e.g. identity not yet created) can be retried. Concurrent entrants
+        // get `false` until the first start sets `isRunning`.
+        guard !isStarting else { return false }
+        isStarting = true
+        defer { isStarting = false }
 
         // 1. Shared identity from the app's keychain group. Absent ⇒ app hasn't
         //    created one yet; bail cleanly (no notification, no crash).
@@ -596,13 +616,20 @@ actor NEReticulumNode {
     /// transfer, and `syncInFlight` prevents overlap.
     private func runOneSyncFireAndForget() async {
         guard isRunning, !syncInFlight else { return }
+        // Claim the in-flight slot SYNCHRONOUSLY (before the first await). The original
+        // order set `syncInFlight = true` only AFTER `await waitForRelayConnected`, so a
+        // second call — the periodic scheduler racing a manual "Sync Now" Darwin trigger,
+        // or two sync-now notifications in quick succession — could slip past the
+        // `!syncInFlight` guard during that 2s await and start an OVERLAPPING sync, the
+        // exact thing the flag exists to prevent. `defer` releases it on every exit
+        // (including the relay-down early return below).
+        syncInFlight = true
+        defer { syncInFlight = false }
         guard await waitForRelayConnected(timeoutMs: 2_000) else {
             ExtensionDiagLog.log("NEReticulumNode: propagation sync skipped — relay down")
             return
         }
         guard let router else { return }
-        syncInFlight = true
-        defer { syncInFlight = false }
         ExtensionDiagLog.log("NEReticulumNode: propagation sync starting")
         let work = Task.detached { try? await router.syncFromPropagationNode() }
         let watchdog = Task.detached {
