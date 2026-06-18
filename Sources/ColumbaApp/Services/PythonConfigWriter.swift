@@ -120,25 +120,16 @@ enum PythonConfigWriter {
             // OS auto-manages duty cycle). Surfaced for parity with
             // Android's BleConnections settings.
             lines.append("    ble_power_preset = balanced")
-        case .rnode(let cfg):
-            // Loaded from <configDir>/interfaces/IOSRNodeInterface.py (copied at
-            // startup by deployIOSRNodePythonFilesIfPossible). That Python
-            // interface runs the KISS / RNode protocol and bridges serial I/O to
-            // Swift's SwiftRNodeBridge (CoreBluetooth Nordic-UART client) via the
-            // ctypes-bound `columba_rnode_*` C-ABI shims (Sources/SwiftBLEBridge/
-            // RNodeNativeBindings.swift). Radio keys are written WITHOUT
-            // underscores (txpower / spreadingfactor / codingrate) to match what
-            // the ported interface parses and upstream RNS's RNodeInterface
-            // convention. iOS is BLE-only — no usb_* / port keys.
-            lines.append("    type = IOSRNodeInterface")
-            appendValue("target_device_name", cfg.deviceName, to: &lines)
-            lines.append("    frequency = \(cfg.frequency)")
-            lines.append("    bandwidth = \(cfg.bandwidth)")
-            lines.append("    txpower = \(cfg.txPower)")
-            lines.append("    spreadingfactor = \(cfg.spreadingFactor)")
-            lines.append("    codingrate = \(cfg.codingRate)")
-            if let st = cfg.stAlock { lines.append("    st_alock = \(st)") }
-            if let lt = cfg.ltAlock { lines.append("    lt_alock = \(lt)") }
+        case .rnode:
+            // RNode runs through the Model B seam on the Swift backend (radio in
+            // the app, RNS + KISS framing in the Network Extension) — the legacy
+            // Python IOSRNodeInterface path was removed. The Python backend has no
+            // RNode implementation, so emit a disabled placeholder: an RNode entry
+            // in a Python-backend config stays valid but inert.
+            lines.append("    type = TCPClientInterface  # RNode moved to Model B (Swift NE); Python path retired")
+            lines.append("    target_host = 127.0.0.1")
+            lines.append("    target_port = 65535")
+            lines.append("    enabled = no")
         case .multipeer:
             // MultipeerConnectivity bridge not yet wired (separate effort, its
             // own branch — see rnode_interface_port_plan.md). Emit a disabled

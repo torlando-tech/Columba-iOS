@@ -17,9 +17,9 @@ import os
 
 /// KISS framing + the subset of RNode command bytes the wizard's BLE probe
 /// needs to verify a peripheral is an RNode. Values are the RNode/KISS
-/// protocol constants — source of truth is `app/rnode/IOSRNodeInterface.py`'s
-/// `KISS` class (and Android's `rnode_interface.py`), kept byte-identical so
-/// the detect handshake interoperates.
+/// protocol constants — source of truth is reticulum-swift's `RNodeInterface`
+/// (and Android's `rnode_interface.py`), kept byte-identical so the detect
+/// handshake interoperates.
 private enum KISS {
     static let FEND: UInt8 = 0xC0
 }

@@ -496,6 +496,118 @@ class Simulator:
         finally:
             flow_path.unlink(missing_ok=True)
 
+    def assert_bubble_visible_via_network(
+        self,
+        *,
+        peer_display_name: str = "Anonymous Peer",
+        content: Optional[str] = None,
+        has_image: bool = False,
+        has_file_name: Optional[str] = None,
+        screenshot: Optional[str] = None,
+        timeout: float = 30.0,
+    ) -> None:
+        """Open the peer's thread via the **Contacts → Network** nav path and
+        assert the bubble renders — the BUG #1 path.
+
+        The Chats path (`assert_bubble_visible`) reaches `MessagingView` from
+        an existing `Conversation` DB row via a `NavigationLink`. This path
+        instead goes Contacts tab → segmented **Network** → tap the peer's
+        announce row → NodeDetails → **Start Chat**, which builds a *fresh*
+        `Conversation(destinationHash: contact.identityHash, …)` and pushes it
+        through the `.chat` `navigationDestination`. `contact.identityHash` is
+        the announce's *destination* hash (`Contact.init(from: PathEntry)` sets
+        `identityHash = entry.destinationHash`), which equals the inbound
+        message's `sourceHash` — so both paths key `loadMessages` on the same
+        conversation hash and should render identically. This pins that they
+        do (BUG #1 = thread empty via Network tab).
+
+        Leaves the app at the Network-tab root (two trailing `back`s pop
+        MessagingView → NodeDetails → Network list) so a follow-on
+        `assert_bubble_visible` (Chats path) can still reach the tab bar.
+        Call this BEFORE the Chats-path assertion for that reason.
+        """
+        lines = [
+            "appId: " + BUNDLE_ID,
+            "---",
+            # First-launch permission alerts can block the first tab tap.
+            "- tapOn: { text: \"Allow\", optional: true }",
+            "- tapOn: { text: \"Don't Allow\", optional: true }",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+            # Defensive pop-to-root: if a prior step left the app inside a
+            # pushed view (a thread / NodeDetails), the tab bar is hidden and
+            # the tab taps below would miss. `back` is a harmless no-op swipe
+            # at a tab root, so this is safe when already there.
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            # Contacts tab → segmented "Network" (label renders "Network (N)";
+            # Maestro substring-matches "Network").
+            "- tapOn:",
+            "    text: \"Contacts\"",
+            "    optional: true",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            # The segmented control renders "Network (N)". Maestro's text
+            # matcher is a FULL-string regex match (not substring), so a bare
+            # "Network" misses "Network (15)" — the trailing `.*` is required.
+            # Non-optional so a selector regression fails loudly here rather
+            # than silently scrolling the wrong (My Contacts) list below.
+            "- tapOn:",
+            "    text: \"Network.*\"",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            # The announce list can be long (every heard peer/relay/site);
+            # scroll the peer's row into view, then open it.
+            "- scrollUntilVisible:",
+            "    element:",
+            f"      text: \"{_yaml_escape(peer_display_name)}\"",
+            "    direction: DOWN",
+            "    timeout: 15000",
+            f"- tapOn: \"{_yaml_escape(peer_display_name)}\"",
+            "- waitForAnimationToEnd: { timeout: 2500 }",
+            # NodeDetails → Start Chat → MessagingView (.chat destination).
+            "- tapOn:",
+            "    text: \"Start Chat\"",
+            "- waitForAnimationToEnd: { timeout: 2500 }",
+        ]
+        if content is not None:
+            lines += [
+                "- assertVisible:",
+                f"    text: \"{_yaml_escape(content)}\"",
+            ]
+        if has_image:
+            lines += [
+                "- assertVisible:",
+                "    id: \"bubble_image\"",
+            ]
+        if has_file_name is not None:
+            lines += [
+                "- assertVisible:",
+                f"    text: \"{_yaml_escape(has_file_name)}\"",
+            ]
+        if screenshot is not None:
+            lines += [f"- takeScreenshot: {screenshot}"]
+        # Pop back to the Network-tab root so the tab bar is reachable again.
+        lines += [
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+        ]
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_assert_net_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        try:
+            _sh(["maestro", "--device", self.udid, "test", str(flow_path)], timeout=timeout + 30)
+        except subprocess.CalledProcessError as e:
+            pytest.fail(
+                f"assert_bubble_visible_via_network failed (peer={peer_display_name!r}, "
+                f"content={content!r}, has_image={has_image}, "
+                f"has_file_name={has_file_name!r}). This is the BUG #1 path "
+                f"(thread empty when opened via Contacts→Network). Maestro stderr:\n"
+                f"{e.stderr or e.stdout}"
+            )
+        finally:
+            flow_path.unlink(missing_ok=True)
+
     def assert_peer_pin_visible(self, *, timeout: float = 40.0) -> None:
         """Navigate to the Map tab and assert a peer location pin rendered.
 

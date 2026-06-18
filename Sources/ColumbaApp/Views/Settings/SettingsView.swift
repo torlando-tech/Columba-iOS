@@ -12,6 +12,10 @@ import RNSAPI
 import CoreLocation
 import UIKit
 #endif
+#if ENABLE_NETWORK_EXTENSION
+// For NEVPNStatus, used by the background-transport status helpers below.
+import NetworkExtension
+#endif
 
 /// Main settings screen view.
 ///
@@ -44,6 +48,10 @@ struct SettingsView: View {
     @State private var showNetworkStatus = false
     @State private var showBLEConnections = false
     @State private var showDataMigration = false
+    #if ENABLE_NETWORK_EXTENSION
+    /// Presents the background-transport explainer / enable sheet.
+    @State private var showBackgroundTransport = false
+    #endif
     @State private var interfaceRepository: InterfaceRepository?
     /// Persisted across body re-evaluations so showRNodeWizard=true is not lost
     /// when SettingsView re-renders due to connection status polling changes.
@@ -432,6 +440,7 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
 
+
             if vm.backendChangePending {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -478,14 +487,22 @@ struct SettingsView: View {
 
                     Spacer()
 
+                    // Quick toggle for users who've already set this up.
+                    // Enabling installs the VPN profile (which also arms
+                    // on-demand connect) before starting, matching the
+                    // explainer screen's Enable path. The full explainer +
+                    // first-time consent lives behind "Learn more & set up".
                     Toggle("", isOn: Binding(
                         get: { tunnel.isRunning },
                         set: { newValue in
                             Task {
                                 if newValue {
+                                    try? await tunnel.install()
                                     try? await tunnel.start()
                                 } else {
-                                    tunnel.stop()
+                                    // disable() clears on-demand so iOS won't
+                                    // auto-reconnect (a bare stop() would).
+                                    try? await tunnel.disable()
                                 }
                             }
                         }
@@ -500,16 +517,59 @@ struct SettingsView: View {
 
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(tunnel.isRunning ? Theme.success : Theme.textSecondary)
+                        .fill(backgroundTransportStatusColor(tunnel))
                         .frame(width: 8, height: 8)
 
-                    Text(tunnel.isRunning ? "Running" : "Stopped")
+                    Text(backgroundTransportStatusLabel(tunnel))
                         .font(.caption)
-                        .foregroundStyle(tunnel.isRunning ? Theme.success : Theme.textSecondary)
+                        .foregroundStyle(backgroundTransportStatusColor(tunnel))
+                }
+
+                Button {
+                    showBackgroundTransport = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("Learn more & set up")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.backgroundTertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                 }
             }
             .padding(16)
             .glassCard()
+            .sheet(isPresented: $showBackgroundTransport) {
+                BackgroundTransportView(tunnel: tunnel) {
+                    showBackgroundTransport = false
+                }
+            }
+        }
+    }
+
+    private func backgroundTransportStatusLabel(_ tunnel: TunnelManager) -> String {
+        switch tunnel.status {
+        case .connected: return "Running"
+        case .connecting: return "Connecting…"
+        case .reasserting: return "Reconnecting…"
+        case .disconnecting: return "Disconnecting…"
+        case .invalid: return "Not configured"
+        case .disconnected: return "Stopped"
+        @unknown default: return tunnel.isEnabled ? "Enabled" : "Stopped"
+        }
+    }
+
+    private func backgroundTransportStatusColor(_ tunnel: TunnelManager) -> Color {
+        switch tunnel.status {
+        case .connected: return Theme.success
+        case .connecting, .reasserting, .disconnecting: return Theme.warning
+        case .invalid: return Theme.error
+        case .disconnected: return Theme.textSecondary
+        @unknown default: return Theme.textSecondary
         }
     }
     #endif

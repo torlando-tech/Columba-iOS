@@ -152,13 +152,27 @@ public struct StatusSnapshot: Decodable, Sendable {
         public let online: Bool
         public let rxBytes: Int
         public let txBytes: Int
+        // Model B enrichment (nil on the Model A local-transport path): lets the
+        // Network Status view reconstruct each row from the NE's interfaces.
+        public let typeRaw: String?
+        public let isBLEPeer: Bool?
+        public let isAutoPeer: Bool?
+        public let peerAddress: String?
+        public let lastError: String?
 
-        public init(sectionName: String, name: String, online: Bool, rxBytes: Int, txBytes: Int) {
+        public init(sectionName: String, name: String, online: Bool, rxBytes: Int, txBytes: Int,
+                    typeRaw: String? = nil, isBLEPeer: Bool? = nil, isAutoPeer: Bool? = nil,
+                    peerAddress: String? = nil, lastError: String? = nil) {
             self.sectionName = sectionName
             self.name = name
             self.online = online
             self.rxBytes = rxBytes
             self.txBytes = txBytes
+            self.typeRaw = typeRaw
+            self.isBLEPeer = isBLEPeer
+            self.isAutoPeer = isAutoPeer
+            self.peerAddress = peerAddress
+            self.lastError = lastError
         }
 
         enum CodingKeys: String, CodingKey {
@@ -166,6 +180,11 @@ public struct StatusSnapshot: Decodable, Sendable {
             case name, online
             case rxBytes = "rx_bytes"
             case txBytes = "tx_bytes"
+            case typeRaw = "type"
+            case isBLEPeer = "is_ble_peer"
+            case isAutoPeer = "is_auto_peer"
+            case peerAddress = "peer_address"
+            case lastError = "last_error"
         }
 
         public init(from decoder: Decoder) throws {
@@ -175,6 +194,11 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.online = (try? c.decode(Bool.self, forKey: .online)) ?? false
             self.rxBytes = (try? c.decode(Int.self, forKey: .rxBytes)) ?? 0
             self.txBytes = (try? c.decode(Int.self, forKey: .txBytes)) ?? 0
+            self.typeRaw = try? c.decode(String.self, forKey: .typeRaw)
+            self.isBLEPeer = try? c.decode(Bool.self, forKey: .isBLEPeer)
+            self.isAutoPeer = try? c.decode(Bool.self, forKey: .isAutoPeer)
+            self.peerAddress = try? c.decode(String.self, forKey: .peerAddress)
+            self.lastError = try? c.decode(String.self, forKey: .lastError)
         }
     }
 
@@ -209,6 +233,25 @@ public protocol RnsCore: AnyObject, Sendable {
     @discardableResult func announceTelephony(displayName: String) async throws -> Bool
     func statusSnapshot() async -> StatusSnapshot?
     @discardableResult func persist() async -> Bool
+
+    /// Lowercase-hex destination hashes this node has actually registered
+    /// (its `lxmf.delivery` destination, plus `lxst.telephony` where the backend
+    /// surfaces it). Backend-neutral so the Network Extension's sniff-only
+    /// destination filter matches the same set both backends register. Empty
+    /// before `start`.
+    func registeredDestinationHashes() async -> [String]
+
+    /// Native Model B BLE peers (reticulum-swift's `BLEInterface` runs in the NE,
+    /// which owns the peers). The dedicated BLE connections screen polls this.
+    /// Backends without a native BLE interface return `[]` (default below) — only
+    /// `ProxyRnsBackend` overrides it to query the NE over the proxy IPC.
+    func bleConnections() async -> [BLEConnectionInfo]
+}
+
+public extension RnsCore {
+    /// Default: no native BLE interface ⇒ no peers. Keeps the non-Model-B backends
+    /// (Swift / Python) conforming without each needing a stub.
+    func bleConnections() async -> [BLEConnectionInfo] { [] }
 }
 
 /// RNS.Link operations backing LXST voice (the Swift state machine drives these;

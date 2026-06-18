@@ -10,7 +10,11 @@ import SwiftUI
 import RNSAPI
 import UserNotifications
 import BackgroundTasks
+import SwiftBLEBridge
 import os
+#if canImport(CoreBluetooth)
+import CoreBluetooth
+#endif
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "ColumbaApp")
 
@@ -45,6 +49,45 @@ struct ColumbaApp: App {
             logger.error("Python runtime failed: \(err.localizedDescription, privacy: .public)")
         }
 
+        #if os(iOS) && canImport(CoreBluetooth)
+        // Track C8 — background BLE wake / CoreBluetooth state restoration.
+        // When iOS RELAUNCHES the app for a preserved BLE event, it sets
+        // UIApplication.LaunchOptionsKey.bluetoothCentrals / .bluetoothPeripherals
+        // and expects the app to RE-CREATE its CBCentralManager /
+        // CBPeripheralManager with the SAME restore identifiers EARLY in launch,
+        // so it can replay the preserved state via `willRestoreState`. This is a
+        // pure-SwiftUI app (`@main struct ColumbaApp: App`) with NO
+        // UIApplicationDelegate, so there is no
+        // `application(_:didFinishLaunchingWithOptions:)` from which to read
+        // `launchOptions` and branch on those keys. `App.init()` is the earliest
+        // app-owned hook and runs before the run loop settles, so we
+        // re-materialise the managers here UNCONDITIONALLY (every launch). That
+        // is cheap and satisfies CoreBluetooth's "re-create promptly with the
+        // same identifier" contract on the relaunch-for-BLE case; on a normal
+        // launch it just pre-creates the managers (the regular
+        // AppServices.startBLEInterface() path reuses them via start()).
+        //
+        // GAP / FOLLOW-ON: this re-arms the wake and re-adopts CoreBluetooth
+        // state, but inbound BLE bytes only become a *delivered + notified*
+        // message through the Python delivery path, which requires the active
+        // backend to be the Python backend AND its BLE bring-up
+        // (startBLEInterface → re-install of SwiftBLEBridge's callbackInvoker) to
+        // run on this relaunch. Native-Swift BLE delivery is a deliberate
+        // follow-on; until it lands, background-wake delivery is
+        // Python-backend-only. See the DELIVERY CAVEAT in SwiftBLEBridge.start().
+        //
+        // Model B follow-on (now landing): reticulum-swift's `CoreBluetoothBLEDriver`
+        // owns CoreBluetooth via `ModelBBLEService` (started from `AppServices` once
+        // the identity is ready). It must be the ONLY CB stack — `SwiftBLEBridge`
+        // creating its own managers would fight over the same GATT service — so we
+        // restore `SwiftBLEBridge` only on the Python-backend (non-Model-B) path.
+        // (Model B background-restore via CoreBluetoothBLEDriver's own restore
+        // identifier is a further follow-on: it needs the identity at launch.)
+        if !BackendPreference.modelB {
+            SwiftBLEBridge.shared.restoreAtLaunch()
+        }
+        #endif
+
         #if os(iOS)
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: "network.columba.Columba.sync",
@@ -56,6 +99,11 @@ struct ColumbaApp: App {
 
         // Install notification delegate early so didReceive (notification tap) works
         UNUserNotificationCenter.current().delegate = NotificationService.delegate
+
+        // Register app-side notification/announce defaults at launch (not lazily on
+        // first Settings open) so the foreground notification path isn't suppressed
+        // on a fresh install that never visits Settings. (ports #57 dc1024b)
+        SettingsViewModel.registerLocalDefaults()
     }
 
     // MARK: - App Body
@@ -622,6 +670,17 @@ struct RootView: View {
     private func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
 
+        // Surface the Network Extension's App-Group diagnostic log into Documents
+        // so it's retrievable via `devicectl ... copy from` alongside diag.log.
+        // The NE (sandboxed) writes ext-diag.log to the shared container; the host
+        // copies the previous background session's log out here on each launch.
+        DiagLog.copyExtensionDiagToDocuments()
+        #if DEBUG
+        // Keep that copy LIVE (not just this launch's snapshot) so on-device NE
+        // diagnostics can be tailed in real time. DEBUG-only.
+        DiagLog.startExtDiagLiveCopy()
+        #endif
+
         // Retry the entire init up to 5 times with increasing delay —
         // the Keychain, file system, or CryptoKit may not be ready
         // immediately after device unlock.
@@ -718,13 +777,18 @@ struct RootView: View {
             )
             DiagLog.log("[STARTUP] Step 5: AppServices initialized OK")
 
-            // 6. Wire up database, message repo, handler
-            guard let db = appServices.database else {
+            // 6. Wire up database, message repo, handler.
+            // `db` is the RNSAPI Compat store IncomingMessageHandler uses for
+            // sender-name lookups. `repo` is the GRDB-backed canonical store
+            // (Track A0) the UI reads — built and held by AppServices during
+            // initialize(), so reuse that single instance rather than opening a
+            // second handle to the same `lxmf-swift.db` (and keeping the
+            // LXMFSwift import walled off in MessageRepository.swift).
+            guard let db = appServices.database,
+                  let repo = appServices.messageRepository else {
                 throw AppServicesError.routerNotInitialized
             }
             self.database = db
-
-            let repo = MessageRepository(database: db)
             self.messageRepository = repo
 
             #if os(iOS)
@@ -751,7 +815,14 @@ struct RootView: View {
                 DiagLog.log("[STARTUP] Starting interface: \(iface.type) name=\(iface.name)")
                 switch iface.type {
                 case .tcpClient:
-                    if case .tcpClient(let config) = iface.config {
+                    if BackendPreference.modelB {
+                        // Model B: the NE owns the single TCP relay interface. The app
+                        // must NOT open a competing/duplicate one — doing so spawns a
+                        // second socket to the relay and surfaces as a stray
+                        // "enabled but disconnected" interface in the UI. The app owns
+                        // only Auto/BLE/RNode in Model B; their frames bridge to the NE.
+                        DiagLog.log("[STARTUP] Model B: skipping app-side TCP interface (NE owns TCP)")
+                    } else if case .tcpClient(let config) = iface.config {
                         let entityId = iface.id
                         Task {
                             DiagLog.log("[STARTUP] TCP interface \(config.targetHost):\(config.targetPort) — registering")
@@ -817,8 +888,14 @@ struct RootView: View {
                 }
             }
 
-            // 8. Request notification permission and install foreground delegate
-            await NotificationService.shared.requestPermission()
+            // 8. Request notification permission WITHOUT blocking init. A blocking
+            // `await` here holds the rest of RootView setup (and `isInitialized`)
+            // hostage behind the OS auth sheet until the user taps Allow/Don't Allow
+            // — and on a fresh-install device the smoke harness (no UI driver) can't
+            // tap it at all, so init never completes. The foreground UN delegate is
+            // already installed eagerly in `init()` (see the delegate assignment in
+            // ColumbaApp.init), so deferring the prompt is safe. (ports #57 fc9b0b8)
+            Task { _ = await NotificationService.shared.requestPermission() }
 
             self.isInitialized = true
 

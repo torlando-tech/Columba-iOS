@@ -25,6 +25,7 @@ public actor SettingsRepository {
         static let manualRelayHash = "manualRelayHash"
         static let manualRelayDeliveryHash = "manualRelayDeliveryHash"
         static let manualRelayName = "manualRelayName"
+        static let manualRelayStampCost = "manualRelayStampCost"
         static let periodicSyncEnabled = "periodicSyncEnabled"
         static let syncIntervalSeconds = "syncIntervalSeconds"
         static let lastSyncTimestamp = "lastSyncTimestamp"
@@ -161,6 +162,22 @@ public actor SettingsRepository {
             defaults.set(name, forKey: Keys.manualRelayName)
         } else {
             defaults.removeObject(forKey: Keys.manualRelayName)
+        }
+    }
+
+    /// Get the saved relay's proof-of-work stamp cost, or nil if none saved.
+    /// Persisted so the Model B App-Group seam carries the correct cost across a
+    /// cold start, before the PN's fresh announce re-resolves it.
+    public func getManualRelayStampCost() -> Int? {
+        defaults.object(forKey: Keys.manualRelayStampCost) as? Int
+    }
+
+    /// Set the saved relay's proof-of-work stamp cost.
+    public func setManualRelayStampCost(_ cost: Int?) {
+        if let cost = cost {
+            defaults.set(cost, forKey: Keys.manualRelayStampCost)
+        } else {
+            defaults.removeObject(forKey: Keys.manualRelayStampCost)
         }
     }
 

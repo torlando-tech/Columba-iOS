@@ -109,13 +109,22 @@ public final class TunnelManager: @unchecked Sendable {
         mgr.localizedDescription = "Columba Background Transport"
         mgr.isEnabled = true
 
+        // On-demand: relaunch the tunnel automatically after iOS terminates it
+        // (jetsam / reboot / user toggle) so background delivery resumes without
+        // the app being foregrounded — the NE can't wake itself, so a connect rule
+        // keeps it up whenever a network path exists (the deliver-while-locked
+        // posture; see Track C2/C4). NEOnDemandRuleConnect with no interface match
+        // applies on every interface (WiFi + cellular).
+        mgr.isOnDemandEnabled = true
+        mgr.onDemandRules = [NEOnDemandRuleConnect()]
+
         try await mgr.saveToPreferences()
         try await mgr.loadFromPreferences()
 
         manager = mgr
         isEnabled = true
         status = mgr.connection.status
-        logger.info("Tunnel config installed")
+        logger.info("Tunnel config installed (on-demand connect enabled)")
     }
 
     /// Start the tunnel extension.
@@ -135,10 +144,36 @@ public final class TunnelManager: @unchecked Sendable {
         logger.info("Tunnel started")
     }
 
-    /// Stop the tunnel extension.
+    /// Stop the tunnel session WITHOUT disarming on-demand.
+    ///
+    /// Note: `install()` arms `isOnDemandEnabled = true` + an
+    /// `NEOnDemandRuleConnect()` rule so iOS relaunches the NE after jetsam /
+    /// reboot. A bare `stopVPNTunnel()` therefore does NOT keep the tunnel down —
+    /// iOS re-connects via the armed rule. For the user-facing "Disable Background
+    /// Transport" affordance use `disable()`, which clears on-demand first. This
+    /// remains for transient internal stops where the auto-reconnect IS wanted.
     public func stop() {
         manager?.connection.stopVPNTunnel()
-        logger.info("Tunnel stopped")
+        logger.info("Tunnel stopped (on-demand still armed)")
+    }
+
+    /// Fully disable background transport: clear the on-demand connect rule and
+    /// the enabled flag, persist, then stop the live session.
+    ///
+    /// Without clearing on-demand, "Disable Background Transport" is a no-op —
+    /// iOS auto-resumes the NE through the `NEOnDemandRuleConnect()` armed in
+    /// `install()`. Clearing `isOnDemandEnabled`/`onDemandRules`/`isEnabled` and
+    /// `saveToPreferences()` is what actually keeps it down. Re-enabling via
+    /// `start()` re-arms everything through `install()`. (ports #57 38f8d2e)
+    public func disable() async throws {
+        guard let manager else { return }
+        manager.isOnDemandEnabled = false
+        manager.onDemandRules = []
+        manager.isEnabled = false
+        try await manager.saveToPreferences()
+        manager.connection.stopVPNTunnel()
+        isEnabled = false
+        logger.info("Tunnel disabled (on-demand cleared)")
     }
 
     /// Send a raw frame to the extension for transmission.
@@ -150,7 +185,16 @@ public final class TunnelManager: @unchecked Sendable {
     ///   - data: Raw frame data (already HDLC-framed for TCP)
     ///   - interfaceTag: Which interface to send on (TCP=0x01, Auto=0x02)
     public func sendFrame(_ data: Data, interfaceTag: UInt8) async {
-        guard let session = manager?.connection as? NETunnelProviderSession else {
+        // Bridge diagnostic: report the frame and whether a live NE session
+        // exists. `session=NIL` here means the frame is DROPPED below (no
+        // NETunnelProviderSession to forward it on). DiagLog is visible from
+        // this module (ColumbaApp), so mirror to it directly. NO-PII: tag +
+        // byte length only. Use the same `as?` the guard uses so the logged
+        // state and the drop decision can't disagree.
+        let session = manager?.connection as? NETunnelProviderSession
+        DiagLog.log("[BRIDGE-OUT] sendFrame tag=\(interfaceTag) len=\(data.count) session=\(session != nil ? "yes" : "NIL")")
+        guard let session else {
+            DiagLog.log("[BRIDGE-OUT] sendFrame DROPPED: no NETunnelProviderSession")
             return
         }
 
@@ -161,6 +205,61 @@ public final class TunnelManager: @unchecked Sendable {
             try session.sendProviderMessage(message) { _ in }
         } catch {
             logger.error("sendProviderMessage failed: \(error)")
+        }
+    }
+
+    /// Track A5b — Model B IPC transport for `ProxyRnsBackend`.
+    ///
+    /// Send a `ProxyRequest` envelope (already magic+version-framed by
+    /// `ProxyIPC.encodeRequest`) to the extension and await its `ProxyResponse`
+    /// bytes, bridging `NETunnelProviderSession.sendProviderMessage`'s
+    /// completion-handler API into `async`. Returns the raw response `Data` the NE
+    /// hands back (an encoded `ProxyResponse`), or `nil` when there's no live
+    /// session or the send throws — the proxy maps `nil` onto an IPC-failure.
+    ///
+    /// `BackendFactory.make(proxySend:)` injects this as the proxy's `send`
+    /// closure when Model B is on (currently never — `BackendPreference.modelB`
+    /// defaults `false`), so this primitive is present + testable but inert until
+    /// A5c wires it live.
+    public func proxySend(_ data: Data) async -> Data? {
+        // The NE may still be coming up when the app first sends: proxy `start`
+        // (and any early announce/status) races the tunnel session reaching
+        // `.connected` at launch. `sendProviderMessage` on a non-`.connected`
+        // session throws → nil → the proxy reports `ipcFailed`, and a one-time
+        // launch race then leaves the proxy backend permanently "not started"
+        // (the announce button later throws `transportNotConnected`). So wait
+        // briefly for a live, connected session first — bounded, so a genuinely
+        // down tunnel still returns nil promptly.
+        guard let session = await connectedSession(timeoutMs: 8000) else {
+            logger.error("proxySend: no connected tunnel session")
+            return nil
+        }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Data?, Never>) in
+            do {
+                try session.sendProviderMessage(data) { response in
+                    continuation.resume(returning: response)
+                }
+            } catch {
+                self.logger.error("proxySend failed: \(error)")
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    /// Await a `.connected` `NETunnelProviderSession`, polling up to `timeoutMs`.
+    /// The NE/tunnel is often still `.connecting` for a moment right after the
+    /// app launches; this lets the first proxy round-trip succeed instead of
+    /// spuriously failing. Returns nil if no connected session appears in time.
+    private func connectedSession(timeoutMs: Int) async -> NETunnelProviderSession? {
+        var waited = 0
+        let step = 200
+        while true {
+            if let s = manager?.connection as? NETunnelProviderSession, s.status == .connected {
+                return s
+            }
+            if waited >= timeoutMs { return nil }
+            try? await Task.sleep(for: .milliseconds(step))
+            waited += step
         }
     }
 

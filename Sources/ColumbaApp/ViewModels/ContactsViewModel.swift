@@ -43,7 +43,9 @@ public struct Contact: Identifiable, Sendable, Hashable {
     public let aspect: String?
 
     /// Icon identifier for the interface this announce was received on.
-    /// Returns "bluetooth" (MDI name) for BLE, SF Symbol names for others.
+    /// Returns "bluetooth" (MDI name) for BLE, "lucide:<name>" for Lucide-font
+    /// glyphs (e.g. the RNode antenna, matching Android), SF Symbol names for others.
+    /// Rendering of each form is handled in ContactCard.interfaceIconView.
     public var interfaceIcon: String {
         guard let iface = interfaceId else { return "globe" }
         let lower = iface.lowercased()
@@ -55,7 +57,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
         // Both forms need recognizing (case-insensitive substring match).
         if lower.contains("bluetooth") || lower.contains("ble")
             || lower.contains("blepeer") { return "bluetooth" }
-        if lower.contains("rnode") { return "antenna.radiowaves.left.and.right" }
+        if lower.contains("rnode") { return "lucide:antenna" }
         if lower.contains("autointerface") || lower.contains("auto_discovery")
             || lower.contains("autointerfacepeer") { return "wifi" }
         if lower.contains("multipeer") || lower.contains("mpc") { return "apple.logo" }

@@ -2,12 +2,19 @@
 //  PacketTunnelProvider.swift
 //  ColumbaNetworkExtension
 //
-//  Minimal NEPacketTunnelProvider that keeps TCP and AutoInterface NWConnections
-//  alive while the main app is backgrounded. No Reticulum protocol knowledge,
-//  no crypto, no LXMF parsing — just raw frame forwarding via a shared queue file.
+//  NEPacketTunnelProvider host for the Model B in-NE Reticulum + LXMF node.
+//  Model B is the SOLE architecture on the build that compiles the NE in
+//  (ENABLE_NETWORK_EXTENSION ⇔ COLUMBA_BACKEND_SWIFT): the extension exists
+//  solely to own and keep alive `NEReticulumNode` — the background LXMF
+//  delivery path — while the main app is backgrounded. It carries NO raw-frame
+//  forwarding: the node owns its own TCP relay interface + the AppGroupBridge,
+//  and the app→NE send path is the `ProxyRequest`/`ProxyResponse` IPC handled in
+//  `handleAppMessage` below.
 //
-//  Inbound: TCP/Auto data → HDLC deframe (TCP only) → SharedFrameQueue → Darwin notif
-//  Outbound: App sends via sendProviderMessage → extension sends on NWConnection
+//  (The earlier "Model A" PoC dumb-pipe — NWConnection TCP/Auto frame forwarding
+//  over a shared HDLC queue, with an NWPathMonitor + a Darwin config-change
+//  observer + exponential reconnect backoff — was removed once Model B became the
+//  only architecture. See git history if that raw-relay code is ever needed.)
 //
 
 import Foundation
@@ -16,72 +23,35 @@ import NetworkExtension
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
-    // MARK: - Constants
+    // MARK: - Model B node
 
-    /// Notification posted to the app when inbound frames are queued.
-    private static let packetReadyNotification = SharedDefaultsConstants.packetReadyNotificationName
-    /// Notification observed when the app writes interface-config
-    /// changes; triggers a reload so unrelated interfaces stay
-    /// connected while a single relay is added/removed/edited.
-    private static let configChangedNotification = SharedDefaultsConstants.configChangedNotificationName
-    private static let interfacesKey = SharedDefaultsConstants.interfacesKey
-
-    // MARK: - Properties
-
-    private var tcpConnection: NWConnection?
-    private var autoListener: NWConnectionGroup?
-    private lazy var frameQueue = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier)
-
-    /// Currently-applied TCP endpoint (used to diff config changes
-    /// from the app). nil when no TCP interface is configured.
-    /// Mutated only on `configQueue` to avoid races with Darwin
-    /// notification callbacks arriving on a Mach-port thread.
-    private var currentTCP: (host: String, port: UInt16)?
-
-    /// Currently-applied AutoInterface group id. nil when no Auto
-    /// interface is configured. Mutated only on `configQueue`.
-    private var currentAutoGroupId: String?
-
-    /// Serial queue serializing all config-state mutations and the
-    /// associated NWConnection lifecycle calls so a Darwin
-    /// notification fired by the app (`configChanged`) can't race
-    /// `startTunnel` / `stopTunnel` / NWConnection state handlers.
-    private let configQueue = DispatchQueue(label: "network.columba.tunnel.config")
-
-    /// HDLC receive buffer for TCP stream framing
-    private var tcpReceiveBuffer = Data()
-
-    /// HDLC constants
-    private static let FLAG: UInt8 = 0x7E
-    private static let ESC: UInt8 = 0x7D
-    private static let ESC_MASK: UInt8 = 0x20
+    /// The in-NE Reticulum + LXMF node — the LIVE background delivery path. It
+    /// owns its own TCP relay interface (read from the shared App-Group config)
+    /// and the AppGroupBridge, and services the app's `ProxyRequest` IPC.
+    /// Constructed + started in `startTunnel`, torn down in `stopTunnel`; `nil`
+    /// only before start / after stop. `NEReticulumNode.modelBNodeEnabled` is
+    /// hardcoded `true` — the NE exists solely to host this node.
+    private var reticulumNode: NEReticulumNode?
 
     // MARK: - Tunnel Lifecycle
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
-        NSLog("[EXT] startTunnel called")
+        ExtensionDiagLog.log("startTunnel called")
 
-        // Apply current interface configs.
-        applyConfigs()
-
-        // Subscribe to live config changes so the user adding /
-        // removing / editing an interface in the app updates the
-        // extension's sockets without a tunnel restart. The handler
-        // diffs and only restarts what actually changed.
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        let observer = Unmanaged.passUnretained(self).toOpaque()
-        CFNotificationCenterAddObserver(
-            center,
-            observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(observer).takeUnretainedValue()
-                provider.applyConfigs()
-            },
-            Self.configChangedNotification as CFString,
-            nil,
-            .deliverImmediately
-        )
+        // Construct + start the in-NE Reticulum + LXMF node (Track A5a + C3). It
+        // owns its own TCP relay interface (read from the same App-Group config)
+        // + the AppGroupBridge. `start()` is a clean no-op if the shared identity
+        // isn't available yet.
+        ExtensionDiagLog.log("startTunnel: Model B — in-NE node owns delivery")
+        let node = NEReticulumNode()
+        self.reticulumNode = node
+        Task {
+            do {
+                _ = try await node.start()
+            } catch {
+                ExtensionDiagLog.log("startTunnel: NEReticulumNode.start failed: \(String(describing: error))")
+            }
+        }
 
         // Set up dummy tunnel settings (required by NEPacketTunnelProvider)
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
@@ -90,416 +60,154 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         setTunnelNetworkSettings(settings) { error in
             if let error {
-                NSLog("[EXT] Failed to set tunnel settings: \(error)")
+                ExtensionDiagLog.log("Failed to set tunnel settings: \(error)")
+            } else {
+                ExtensionDiagLog.log("tunnel settings applied")
             }
             completionHandler(error)
         }
     }
 
-    /// Read the current interface configs from shared UserDefaults
-    /// and bring up / tear down the matching `NWConnection`s.
-    ///
-    /// Diffs against what's already running so a single relay change
-    /// doesn't disrupt unrelated interfaces. Called both on
-    /// `startTunnel` and on the `configChanged` Darwin notification.
-    /// Always serialized onto `configQueue` so a Darwin callback
-    /// arriving on a Mach-port thread can't race `startTunnel` /
-    /// `stopTunnel` / NWConnection state handlers mutating the same
-    /// properties.
-    private func applyConfigs() {
-        configQueue.async { [weak self] in
-            self?.applyConfigsLocked()
-        }
-    }
-
-    /// Tear down the current TCP connection and clear the HDLC
-    /// receive buffer so a reconnect doesn't prepend a partial frame
-    /// from the previous session to the new connection's first
-    /// bytes (which would corrupt the next decoded packet). Always
-    /// called from `configQueue`.
-    private func teardownTCPConnectionLocked() {
-        tcpConnection?.cancel()
-        tcpConnection = nil
-        tcpReceiveBuffer = Data()
-    }
-
-    /// Body of `applyConfigs` — runs on `configQueue`. Mutates
-    /// `currentTCP` / `currentAutoGroupId` / `tcpConnection` /
-    /// `autoListener` only from this serial context.
-    private func applyConfigsLocked() {
-        let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
-        let configs = loadInterfaceConfigs(from: defaults)
-
-        // TCP: bring up if newly configured; tear down if removed;
-        // restart if endpoint changed.
-        if let tcp = configs.tcp {
-            if let existing = currentTCP, existing.host == tcp.host && existing.port == tcp.port {
-                // No change.
-            } else {
-                NSLog("[EXT] TCP config (re)applying: \(tcp.host):\(tcp.port)")
-                teardownTCPConnectionLocked()
-                startTCPConnection(host: tcp.host, port: tcp.port)
-                currentTCP = (tcp.host, tcp.port)
-            }
-        } else if currentTCP != nil {
-            NSLog("[EXT] TCP config removed; tearing down connection")
-            teardownTCPConnectionLocked()
-            currentTCP = nil
-        }
-
-        // Auto: same diff.
-        if let groupId = configs.autoGroupId {
-            if currentAutoGroupId == groupId {
-                // No change.
-            } else {
-                NSLog("[EXT] Auto config (re)applying: groupId=\(groupId)")
-                autoListener?.cancel()
-                autoListener = nil
-                startAutoListener(groupId: groupId)
-                currentAutoGroupId = groupId
-            }
-        } else if currentAutoGroupId != nil {
-            NSLog("[EXT] Auto config removed; tearing down listener")
-            autoListener?.cancel()
-            autoListener = nil
-            currentAutoGroupId = nil
-        }
-    }
-
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
-        NSLog("[EXT] stopTunnel reason=\(reason.rawValue)")
+        ExtensionDiagLog.log("stopTunnel reason=\(reason.rawValue)")
 
-        // Serialize teardown through the same queue `applyConfigs` uses
-        // so we can't race a config-change notification arriving on the
-        // Mach-port thread mid-shutdown. `sync` (rather than `async`)
-        // keeps the existing contract that the completion handler
-        // fires only after teardown has finished.
-        configQueue.sync {
-            teardownTCPConnectionLocked()
-            autoListener?.cancel()
-            autoListener = nil
-            currentTCP = nil
-            currentAutoGroupId = nil
+        // Track C3: tear down the in-NE node. Stopping the node drops its TCP
+        // relay interface + AppGroupBridge. Fire-and-forget — teardown is
+        // best-effort and the completion handler must not block on it.
+        if let node = reticulumNode {
+            reticulumNode = nil
+            Task { await node.stop() }
         }
-
-        // Remove the config-changed observer registered in startTunnel.
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        let observer = Unmanaged.passUnretained(self).toOpaque()
-        CFNotificationCenterRemoveObserver(
-            center,
-            observer,
-            CFNotificationName(Self.configChangedNotification as CFString),
-            nil
-        )
 
         completionHandler()
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
-        // Format: [1-byte interface tag][N-byte HDLC-framed data]
-        guard messageData.count >= 2 else {
-            completionHandler?(nil)
+        // ── Track A5b (Model B app→NE send path) ────────────────────────────────
+        // The app talks to the NE node exclusively via `ProxyRequest` envelopes,
+        // marked by a leading magic byte (`ProxyIPC.magic` = 0xF5). Decode + reply
+        // with an encoded `ProxyResponse`. Any non-ProxyRequest message is ignored
+        // (the PoC raw-frame forwarding it used to carry is gone).
+        if ProxyIPC.isProxyRequest(messageData) {
+            handleProxyRequest(messageData, completionHandler: completionHandler)
+            return
+        }
+        completionHandler?(nil)
+    }
+
+    // MARK: - Track A5b — Model B app→NE IPC dispatch
+
+    /// Decode a `ProxyRequest` envelope and dispatch it to the in-NE
+    /// `NEReticulumNode`, replying through `completionHandler` with an encoded
+    /// `ProxyResponse`. Only called from `handleAppMessage` once the magic prefix
+    /// has matched. If the node isn't running (e.g. not yet started), every op
+    /// replies `.unsupported` so the app degrades gracefully.
+    ///
+    /// `ProxyRequest` / `ProxyResponse` / `ProxyLocalInfo` / `ProxySendOutcome`
+    /// live in the Foundation-only `ProxyIPC` (Shared target, linked into the NE),
+    /// so this honors the NE's RNSAPI-free collision rule.
+    private func handleProxyRequest(_ data: Data, completionHandler: ((Data?) -> Void)?) {
+        // A malformed envelope (magic matched but JSON body undecodable) is a
+        // protocol error, not a PoC frame — reply `.error` rather than falling
+        // through (the magic byte already proved intent).
+        let request: ProxyRequest?
+        do {
+            request = try ProxyIPC.decodeRequest(data)
+        } catch {
+            completionHandler?(ProxyIPC.encodeResponse(.error("malformed ProxyRequest")))
+            return
+        }
+        guard let request else {
+            completionHandler?(ProxyIPC.encodeResponse(.error("unrecognized ProxyRequest envelope")))
             return
         }
 
-        let interfaceTag = messageData[0]
-        let frameData = messageData.dropFirst()
+        // Snapshot the node reference. Nil ⇒ the Model B node isn't running
+        // (not yet started): reply `.unsupported`.
+        guard let node = reticulumNode else {
+            completionHandler?(ProxyIPC.encodeResponse(.unsupported))
+            return
+        }
 
-        // Read the connection / listener under configQueue so we can't
-        // observe a half-mutated state while applyConfigsLocked() is
-        // diffing or stopTunnel() is tearing things down.
-        configQueue.async { [weak self] in
-            guard let self else { completionHandler?(nil); return }
-            switch interfaceTag {
-            case FrameInterfaceTag.tcp.rawValue:
-                self.tcpConnection?.send(content: frameData, completion: .contentProcessed { error in
-                    if let error {
-                        NSLog("[EXT] TCP send error: \(error)")
-                    }
-                })
-            case FrameInterfaceTag.auto.rawValue:
-                // Auto frames are sent as UDP datagrams via the connection group
-                self.autoListener?.send(content: frameData) { error in
-                    if let error {
-                        NSLog("[EXT] Auto send error: \(error)")
-                    }
+        Task {
+            let response = await Self.dispatch(request, to: node)
+            completionHandler?(ProxyIPC.encodeResponse(response))
+        }
+    }
+
+    /// Route a decoded `ProxyRequest` to the node and build its `ProxyResponse`.
+    /// `nonisolated`/`static` so it can be awaited from the detached `Task` above
+    /// without capturing `self`.
+    private static func dispatch(_ request: ProxyRequest, to node: NEReticulumNode) async -> ProxyResponse {
+        switch request {
+        case .start:
+            // The node loads its own shared identity + store path; the display
+            // name isn't needed to *start* (announce carries it). A start that
+            // can't bring up the node (no identity yet) ⇒ `.unsupported`.
+            do {
+                let started = try await node.start()
+                guard started, let info = await node.localInfoForIPC() else {
+                    return .unsupported
                 }
-            default:
-                NSLog("[EXT] Unknown interface tag: \(interfaceTag)")
+                let payload = try? JSONEncoder().encode(info)
+                return .ok(payload)
+            } catch {
+                return .error(String(describing: error))
             }
-            completionHandler?(nil)
+
+        case .stop:
+            await node.stop()
+            return .ok(nil)
+
+        case .announce(let displayName):
+            let ok = await node.announceForIPC(displayName: displayName)
+            return .ok(try? JSONEncoder().encode(ok))
+
+        case .announceTelephony(let displayName):
+            let ok = await node.announceTelephonyForIPC(displayName: displayName)
+            return .ok(try? JSONEncoder().encode(ok))
+
+        case .statusSnapshot:
+            guard let json = await node.statusSnapshotJSONForIPC() else {
+                return .ok(nil)
+            }
+            return .ok(json)
+
+        case .heardAnnounces:
+            guard let json = await node.heardAnnouncesJSONForIPC() else {
+                return .ok(nil)
+            }
+            return .ok(json)
+
+        case .bleConnections:
+            guard let json = await node.bleConnectionsJSONForIPC() else {
+                return .ok(nil)
+            }
+            return .ok(json)
+
+        case .persist:
+            let ok = await node.persistForIPC()
+            return ok ? .ok(nil) : .error("persist failed")
+
+        case .registeredDestinationHashes:
+            let hashes = await node.registeredDestinationHashesForIPC()
+            return .ok(try? JSONEncoder().encode(hashes))
+
+        case .lxmfSend(let destHashHex, let content, let method, let fieldsData):
+            let outcome = await node.sendLxmfForIPC(
+                destHashHex: destHashHex, content: content, method: method, fieldsData: fieldsData)
+            return .ok(try? JSONEncoder().encode(outcome))
         }
     }
 
     override func sleep(completionHandler: @escaping () -> Void) {
-        NSLog("[EXT] sleep")
+        ExtensionDiagLog.log("sleep")
         completionHandler()
     }
 
     override func wake() {
-        NSLog("[EXT] wake")
-        // Re-apply configs through the serial queue so a dropped TCP
-        // connection (cancelled / failed) gets restarted without
-        // racing applyConfigsLocked / stopTunnel writes. The diff
-        // logic in applyConfigsLocked is a no-op when nothing
-        // changed, so re-applying on wake is cheap.
-        configQueue.async { [weak self] in
-            guard let self else { return }
-            // Treat cancelled / failed / nil connections as gone so
-            // applyConfigsLocked starts a fresh one rather than seeing
-            // the cached endpoint as already-applied. Use the helper
-            // so the receive buffer is reset alongside the connection
-            // — see `teardownTCPConnectionLocked`.
-            switch self.tcpConnection?.state {
-            case .cancelled, .failed, .none:
-                self.teardownTCPConnectionLocked()
-                self.currentTCP = nil
-            default:
-                break
-            }
-            self.applyConfigsLocked()
-        }
-    }
-
-    // MARK: - TCP Connection
-
-    private func startTCPConnection(host: String, port: UInt16) {
-        let nwHost = NWEndpoint.Host(host)
-        let nwPort = NWEndpoint.Port(rawValue: port)!
-        let params = NWParameters.tcp
-        params.requiredInterfaceType = .other // Allow any interface
-
-        let connection = NWConnection(host: nwHost, port: nwPort, using: params)
-        self.tcpConnection = connection
-
-        connection.stateUpdateHandler = { [weak self] state in
-            NSLog("[EXT] TCP state: \(state)")
-            switch state {
-            case .ready:
-                self?.receiveTCPData()
-            case .failed(let error):
-                NSLog("[EXT] TCP failed: \(error), reconnecting in 5s")
-                // Reconnect must go through configQueue — otherwise the
-                // .failed handler's main-queue write to `tcpConnection`
-                // would race `applyConfigsLocked` writing the same
-                // property. Routing through `applyConfigs` re-reads the
-                // current config, clears the stale connection, and
-                // starts a fresh one all on the serial queue.
-                guard let self else { return }
-                self.configQueue.async {
-                    self.teardownTCPConnectionLocked()
-                    self.currentTCP = nil
-                }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [weak self] in
-                    self?.applyConfigs()
-                }
-            case .waiting(let error):
-                NSLog("[EXT] TCP waiting: \(error)")
-            default:
-                break
-            }
-        }
-
-        // Run state callbacks AND receive callbacks on configQueue so
-        // the receive buffer (`tcpReceiveBuffer`) and connection
-        // pointer are touched only from one serial context. Without
-        // this, a `.main` receive completion could race
-        // `teardownTCPConnectionLocked` resetting the buffer on
-        // configQueue and the clear would silently lose to a stale
-        // append, corrupting the next session's HDLC framing.
-        connection.start(queue: configQueue)
-    }
-
-    /// Continuation of inbound TCP receive. Must run on `configQueue`
-    /// because it both reads `tcpConnection` and feeds `handleTCPData`
-    /// which touches `tcpReceiveBuffer` — both serialized there.
-    private func receiveTCPData() {
-        tcpConnection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            // Callback runs on the connection's queue (configQueue
-            // since startTCPConnection switched it). No extra dispatch
-            // needed.
-            if let data, !data.isEmpty {
-                self?.handleTCPData(data)
-            }
-
-            if isComplete {
-                NSLog("[EXT] TCP connection complete (EOF)")
-                return
-            }
-
-            if let error {
-                NSLog("[EXT] TCP receive error: \(error)")
-                return
-            }
-
-            // Continue receiving
-            self?.receiveTCPData()
-        }
-    }
-
-    /// Buffer TCP data and extract HDLC frames. Runs on configQueue
-    /// (called from `receiveTCPData`'s completion which now executes
-    /// on configQueue too).
-    private func handleTCPData(_ data: Data) {
-        tcpReceiveBuffer.append(data)
-
-        // Extract complete HDLC frames
-        let frames = extractHDLCFrames(from: &tcpReceiveBuffer)
-
-        for frame in frames {
-            frameQueue.append(frame: frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
-        }
-
-        if !frames.isEmpty {
-            postDarwinNotification()
-        }
-    }
-
-    // MARK: - AutoInterface Multicast Listener
-
-    private func startAutoListener(groupId: String) {
-        // AutoInterface uses link-local multicast on a well-known group/port
-        // The discovery and data ports match ReticulumSwift AutoInterface defaults
-        let discoveryPort: UInt16 = 29716
-        let multicastGroup: NWMulticastGroup
-        do {
-            multicastGroup = try NWMulticastGroup(for: [
-                .hostPort(host: .ipv6(IPv6Address("ff02::1")!), port: NWEndpoint.Port(rawValue: discoveryPort)!)
-            ])
-        } catch {
-            NSLog("[EXT] Failed to create multicast group: %@", "\(error)")
-            return
-        }
-
-        let params = NWParameters.udp
-        params.allowLocalEndpointReuse = true
-        params.requiredInterfaceType = .other
-
-        let group = NWConnectionGroup(with: multicastGroup, using: params)
-        self.autoListener = group
-
-        group.stateUpdateHandler = { state in
-            NSLog("[EXT] Auto multicast state: \(state)")
-        }
-
-        group.setReceiveHandler(maximumMessageSize: 2048, rejectOversizedMessages: false) { [weak self] message, content, isComplete in
-            guard let content, !content.isEmpty else { return }
-
-            // Auto frames are complete UDP datagrams (no HDLC framing needed)
-            self?.frameQueue.append(frame: content, interfaceTag: FrameInterfaceTag.auto.rawValue)
-            self?.postDarwinNotification()
-        }
-
-        group.start(queue: .main)
-    }
-
-    // MARK: - HDLC Frame Extraction
-
-    /// Extract complete HDLC frames from a TCP buffer.
-    /// Mirrors the logic in ReticulumSwift/Protocol/HDLC.swift.
-    private func extractHDLCFrames(from buffer: inout Data) -> [Data] {
-        var frames: [Data] = []
-
-        while true {
-            guard let startIdx = buffer.firstIndex(of: Self.FLAG) else { break }
-
-            let searchStart = buffer.index(after: startIdx)
-            guard searchStart < buffer.endIndex,
-                  let endIdx = buffer[searchStart...].firstIndex(of: Self.FLAG) else { break }
-
-            let frameContent = buffer[(buffer.index(after: startIdx))..<endIdx]
-            buffer.removeSubrange(buffer.startIndex...endIdx)
-
-            if frameContent.isEmpty { continue }
-
-            if let unescaped = hdlcUnescape(Data(frameContent)) {
-                frames.append(unescaped)
-            }
-        }
-
-        return frames
-    }
-
-    /// Unescape HDLC frame content.
-    private func hdlcUnescape(_ data: Data) -> Data? {
-        var result = Data()
-        result.reserveCapacity(data.count)
-        var escapeNext = false
-
-        for byte in data {
-            if escapeNext {
-                result.append(byte ^ Self.ESC_MASK)
-                escapeNext = false
-            } else if byte == Self.ESC {
-                escapeNext = true
-            } else {
-                result.append(byte)
-            }
-        }
-
-        return escapeNext ? nil : result
-    }
-
-    // MARK: - Darwin Notifications
-
-    private func postDarwinNotification() {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        CFNotificationCenterPostNotification(
-            center,
-            CFNotificationName(Self.packetReadyNotification as CFString),
-            nil,
-            nil,
-            true
-        )
-    }
-
-    // MARK: - Config Loading
-
-    private struct InterfaceConfigs {
-        var tcp: (host: String, port: UInt16)?
-        var autoGroupId: String?
-    }
-
-    /// Load interface configs from shared UserDefaults.
-    /// Parses the same JSON format as InterfaceRepository.
-    private func loadInterfaceConfigs(from defaults: UserDefaults) -> InterfaceConfigs {
-        var result = InterfaceConfigs()
-
-        guard let data = defaults.data(forKey: Self.interfacesKey) else {
-            NSLog("[EXT] No interface configs found")
-            return result
-        }
-
-        // Parse the JSON array — we only need type + config fields
-        guard let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            NSLog("[EXT] Failed to parse interface configs")
-            return result
-        }
-
-        for entity in array {
-            guard let enabled = entity["enabled"] as? Bool, enabled,
-                  let configWrapper = entity["config"] as? [String: Any],
-                  let type = configWrapper["type"] as? String,
-                  let config = configWrapper["config"] as? [String: Any] else {
-                continue
-            }
-
-            switch type {
-            case "tcpClient":
-                if let host = config["targetHost"] as? String,
-                   let port = config["targetPort"] as? Int {
-                    result.tcp = (host: host, port: UInt16(port))
-                    NSLog("[EXT] Found TCP config: \(host):\(port)")
-                }
-            case "autoInterface":
-                let groupId = config["groupId"] as? String ?? "reticulum"
-                result.autoGroupId = groupId
-                NSLog("[EXT] Found Auto config: groupId=\(groupId)")
-            default:
-                break
-            }
-        }
-
-        return result
+        ExtensionDiagLog.log("wake")
+        // Model B: the in-NE node owns the relay and its `TCPInterface`
+        // self-reconnects, so there's nothing to re-apply on wake.
     }
 }

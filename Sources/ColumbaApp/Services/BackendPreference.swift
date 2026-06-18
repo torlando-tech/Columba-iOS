@@ -26,6 +26,32 @@ import Foundation
 enum BackendPreference {
     private static let key = "useSwiftBackend"
 
+    /// Whether the app runs as the thin **Model B** proxy — the Network
+    /// Extension owns the `lxmf.delivery` node and the app marshals node-owning
+    /// ops to it over IPC (`ProxyRnsBackend`) — rather than a destination-owning
+    /// local backend.
+    ///
+    /// This is **not** a user setting. It's tied to the build: the NE is only
+    /// compiled in on the Swift build (`ENABLE_NETWORK_EXTENSION`, the same
+    /// `Debug-Swift` / `Release-Swift` configs that define `COLUMBA_BACKEND_SWIFT`),
+    /// and on that build Model B is the *sole* architecture — there is no toggle
+    /// and no opt-out. On the standard build the NE isn't present, so the app runs
+    /// a foreground node (embedded-Python or local Swift).
+    ///
+    /// INVARIANT: when `true`, the NE is the SINGLE owner of `lxmf.delivery`
+    /// (see `BackendFactory.make()` / `ProxyRnsBackend`). The NE mirrors this via
+    /// `NEReticulumNode.modelBNodeEnabled`, which is likewise hardcoded `true`
+    /// (the extension only exists to be the node). Hardcoding both sides also
+    /// removes the cross-process flag race that used to leave the NE in sniff
+    /// mode while the app came up as the proxy.
+    static var modelB: Bool {
+        #if COLUMBA_BACKEND_SWIFT
+        return true
+        #else
+        return false
+        #endif
+    }
+
     /// Default when the user has never chosen explicitly. The `Columba-Swift`
     /// scheme (`COLUMBA_BACKEND_SWIFT`) starts on the Swift backend; the stock
     /// scheme starts on embedded Python.

@@ -65,7 +65,16 @@ struct BLEConnectionsView: View {
             isLoading = false
             startPeriodicRefresh()
         }
+        // Event-driven: the NE pushes `networkStateChangedInApp` when a BLE peer
+        // connects/disconnects, so the connection LIST updates immediately instead
+        // of waiting for the poll. `onReceive` delivers on the main run loop and its
+        // subscription is auto-cancelled when the view disappears (no observer leak).
+        .onReceive(NotificationCenter.default.publisher(for: NotificationObserver.networkStateChangedInApp)) { _ in
+            Task { await refresh() }
+        }
         .onDisappear {
+            // Tear down the live-metrics poll. The `onReceive` subscription above is
+            // torn down automatically by SwiftUI when the view disappears.
             refreshTimer?.invalidate()
             refreshTimer = nil
         }
@@ -338,8 +347,12 @@ struct BLEConnectionsView: View {
         connections = await appServices.getBLEConnectionInfos()
     }
 
+    /// Slow while-visible poll for the live per-peer metrics (bytes / RSSI), which
+    /// change continuously with no discrete event to push. The connection list itself
+    /// is event-driven via `networkStateChangedInApp`; this only keeps the live
+    /// counters ticking, so 4s is plenty. Started on appear, invalidated on disappear.
     private func startPeriodicRefresh() {
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { _ in
             Task { @MainActor in
                 await refresh()
             }

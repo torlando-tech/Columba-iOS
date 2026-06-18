@@ -6,6 +6,13 @@
 	<array>
 		<string>group.network.columba.Columba</string>
 	</array>
+	<!-- Shared keychain group so the Network Extension can load the SAME RNS
+	     identity (Model B): the NE signs delivery proofs / decrypts inbound LXMF
+	     while the host app is suspended. $(AppIdentifierPrefix) = team-id prefix. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)network.columba.Columba.shared</string>
+	</array>
 	<key>com.apple.developer.networking.networkextension</key>
 	<array>
 		<string>packet-tunnel-provider</string>

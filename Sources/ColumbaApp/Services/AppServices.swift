@@ -49,6 +49,40 @@ enum DiagLog {
             }
         }
     }
+
+    /// Copy the Network Extension's App-Group diagnostic log
+    /// (`ExtensionDiagLog`'s `ext-diag.log`) into the app's Documents directory
+    /// as `ext-diag.log` so it's retrievable alongside `diag.log` via
+    /// `devicectl ... copy from --domain-type appDataContainer`. The NE is
+    /// sandboxed and can only write to the shared App-Group container; the host
+    /// surfaces it on launch. No-op when the App-Group container or source file
+    /// is unavailable. NO-PII: the source carries envelope/metadata only — see
+    /// `ExtensionDiagLog`'s contract.
+    static func copyExtensionDiagToDocuments() {
+        guard let source = ExtensionDiagLog.fileURL,
+              FileManager.default.fileExists(atPath: source.path) else {
+            return
+        }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let dest = docs.appendingPathComponent("ext-diag.log")
+        try? FileManager.default.removeItem(at: dest)
+        try? FileManager.default.copyItem(at: source, to: dest)
+    }
+
+    #if DEBUG
+    /// Keep `Documents/ext-diag.log` LIVE (refresh ~every 2s) instead of a single
+    /// launch-time snapshot, so on-device NE diagnostics — including the smoke
+    /// harness — can tail the NE's log in real time. The NE (sandboxed) writes to
+    /// the App-Group container; the app is the only process that can bridge it into
+    /// Documents (the appGroupDataContainer isn't reliably reachable via devicectl).
+    /// DEBUG-only, self-rescheduling; a cheap small-file copy.
+    static func startExtDiagLiveCopy() {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+            copyExtensionDiagToDocuments()
+            startExtDiagLiveCopy()
+        }
+    }
+    #endif
 }
 
 /// Central LXMF service layer for the SwiftUI application.
@@ -135,8 +169,25 @@ public final class AppServices {
     /// LXMF delivery destination for receiving messages.
     public private(set) var deliveryDestination: Destination?
 
-    /// LXMF database for message persistence.
+    /// RNSAPI Compat LXMF database — still used by `IncomingMessageHandler`
+    /// for sender-name lookups and by `CallManager`. NOT the canonical message
+    /// store any more (that's the GRDB store behind `messageRepository`); kept
+    /// because those collaborators take an `RNSAPI.LXMFDatabase`.
     public private(set) var database: LXMFDatabase?
+
+    /// Filesystem path of the GRDB-backed canonical LXMF store
+    /// (`<configDir>/lxmf-swift.db`) the Swift / NE backend writes. Set during
+    /// `initialize(...)`. External call sites (ColumbaApp / MapView) read this
+    /// and pass it to `MessageRepository(grdbPath:)` so they don't have to
+    /// import LXMFSwift or re-derive the path.
+    public private(set) var grdbDatabasePath: String?
+
+    /// The repository over the GRDB canonical store, built once during
+    /// `initialize(...)`. Held so the Python inbound-persist path
+    /// (`persistInboundFromPython`) and delivery-state updates route their
+    /// writes through the SAME store the UI reads, instead of constructing a
+    /// throwaway repo or touching a separate store.
+    public private(set) var messageRepository: MessageRepository?
 
     /// Propagation node manager for relay discovery and sync.
     public private(set) var propagationManager: PropagationNodeManager?
@@ -243,6 +294,19 @@ public final class AppServices {
     private var extensionFrameReader: ExtensionFrameReader?
     #endif
 
+    /// Darwin notification name used by on-device test instrumentation to
+    /// trigger a manual announce. Posted from the host via
+    /// `xcrun devicectl device notification post network.columba.test.announce`,
+    /// since Maestro/idb can't drive the physical device. Not gated behind the
+    /// Network Extension flag — the handler only calls `sendAllAnnounces`, which
+    /// is meaningful regardless of the background-transport posture.
+    private static let testAnnounceNotification = "network.columba.test.announce"
+
+    /// Whether the test-announce Darwin observer has been registered. Guards
+    /// against double-registration across the two `initialize` overloads /
+    /// re-init cycles (the observer is process-global, keyed by `self`).
+    private var testAnnounceObserverRegistered = false
+
     // MARK: - Interface Lookup
 
     /// Get a human-readable name for an interface ID.
@@ -329,6 +393,61 @@ public final class AppServices {
     /// Keychain account identifier for storing identity.
     private static let keychainAccount = "reticulum-identity"
 
+    /// Suffix of the shared keychain access group (app + Network Extension). The full
+    /// group is `<team-id-prefix>.<suffix>` — see ColumbaApp.entitlements.
+    private static let keychainGroupSuffix = "network.columba.Columba.shared"
+
+    /// The shared keychain access group, resolved at runtime so the team-id prefix is
+    /// NOT hardcoded in source (no deployment-identifying PII). Returns nil on unsigned /
+    /// simulator builds where the keychain-access-groups entitlement isn't enforced; in
+    /// that case identity ops fall back to the app's default (unshared) keychain group.
+    private static func sharedKeychainAccessGroup() -> String? {
+        guard let prefix = keychainAccessGroupPrefix() else { return nil }
+        return "\(prefix).\(keychainGroupSuffix)"
+    }
+
+    /// Resolve the app-identifier (team-id) prefix by reading the access group the system
+    /// assigns to a fresh generic-password item (the standard "bundle seed id" probe).
+    private static func keychainAccessGroupPrefix() -> String? {
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: "columba.bundleSeedProbe",
+            kSecAttrService as String: "columba.bundleSeedProbe",
+        ]
+        // Ensure the probe item exists. Add WITH a value (a value-less generic-
+        // password Add can fail) and tolerate an existing item; the system assigns
+        // the app's default keychain access group ("<teamPrefix>.<bundle-id>").
+        // NB: the previous code read the group from SecItemAdd's RESULT, which
+        // omits kSecAttrAccessGroup — so the probe always returned nil and the
+        // shared group was never resolved (A3 silently fell back to the default
+        // group, unreachable by the NE). Read it back via CopyMatching instead.
+        var addDict = base
+        addDict[kSecValueData as String] = Data()
+        let addStatus = SecItemAdd(addDict as CFDictionary, nil)
+        guard addStatus == errSecSuccess || addStatus == errSecDuplicateItem else {
+            DiagLog.log("[IDENTITY] bundleSeedProbe add failed: \(addStatus)")
+            return nil
+        }
+        var query = base
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let copyStatus = SecItemCopyMatching(query as CFDictionary, &result)
+        // The probe item exists ONLY to read the system-assigned access group; delete it
+        // now (regardless of the read result) so it doesn't accumulate in the user's
+        // keychain for the lifetime of the install. Re-resolution re-adds it cheaply.
+        SecItemDelete(base as CFDictionary)
+        guard copyStatus == errSecSuccess,
+              let attrs = result as? [String: Any],
+              let group = attrs[kSecAttrAccessGroup as String] as? String,
+              let prefix = group.components(separatedBy: ".").first,
+              !prefix.isEmpty else {
+            DiagLog.log("[IDENTITY] bundleSeedProbe read failed: \(copyStatus)")
+            return nil
+        }
+        return prefix
+    }
+
     /// File path for identity persistence (fallback when Keychain unavailable).
     private static var identityFilePath: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -354,6 +473,127 @@ public final class AppServices {
         let filename = identityHash.map { "lxmf_\($0).db" } ?? "lxmf.db"
         return columbaDir.appendingPathComponent(filename).path
     }
+
+    /// File path for the GRDB-backed canonical LXMF store (`lxmf-swift.db`).
+    ///
+    /// Under Model B this store lives in the SHARED App-Group container so the app
+    /// and the Network Extension converge on ONE store, computed via the shared
+    /// `AppGroupPaths` helper (the single source of truth both sides delegate to —
+    /// see `AppGroupPaths.swift`). The layout is
+    /// `<App-Group container>/Columba/python-<identityHashHex>/lxmf-swift.db`, and
+    /// `identityHashHex` is `identity.hexHash` (the raw identity hash — NOT the
+    /// lxmf.delivery destination hash).
+    ///
+    /// Falls back to the legacy process-local Application Support path
+    /// (`<appSupport>/Columba/python-<hash>/lxmf-swift.db`) ONLY when the App-Group
+    /// container is unavailable (unsigned / simulator builds with no App-Group
+    /// entitlement); on such builds the NE isn't running anyway, so there is no
+    /// store to converge with. One-time migration of an existing process-local
+    /// store into the App-Group container is handled by
+    /// `migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex:)`, which callers run
+    /// before opening the store.
+    ///
+    /// - Parameter identityHashHex: Hex of the raw identity hash (`identity.hexHash`).
+    /// - Returns: Full path to `lxmf-swift.db` for that identity.
+    static func grdbDatabaseFilePath(for identityHashHex: String) -> String {
+        if let url = AppGroupPaths.lxmfDatabaseURL(identityHashHex: identityHashHex) {
+            return url.path
+        }
+        return legacyProcessLocalGRDBDatabaseFilePath(for: identityHashHex)
+    }
+
+    /// Legacy process-local path for `lxmf-swift.db`
+    /// (`<Application Support>/Columba/python-<identityHashHex>/lxmf-swift.db`).
+    /// This is the location the store lived at BEFORE the A2 move to the App-Group
+    /// container; retained as (a) the fallback when the App-Group container is
+    /// unavailable and (b) the migration source in
+    /// `migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex:)`.
+    private static func legacyProcessLocalGRDBDatabaseFilePath(for identityHashHex: String) -> String {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
+        return pyDir.appendingPathComponent("lxmf-swift.db").path
+    }
+
+    /// One-time migration of the canonical LXMF GRDB store from the legacy
+    /// process-local Application Support path to the SHARED App-Group container, so
+    /// an existing install's message history carries over when the store relocates
+    /// for Model B (A2). Idempotent and guarded by a `SharedDefaults` flag.
+    ///
+    /// Behavior: if the flag is unset AND the OLD process-local `lxmf-swift.db`
+    /// exists AND the NEW App-Group `lxmf-swift.db` does NOT exist, copy all three
+    /// SQLite WAL-mode files (`lxmf-swift.db`, `-wal`, `-shm`) into the App-Group
+    /// container, then set the flag. The old files are LEFT in place as a fallback
+    /// (we only flip the flag). Must be called BEFORE the store is opened
+    /// (`MessageRepository(grdbPath:)`), so the copied files are in place when GRDB
+    /// first attaches. No-op (just flips the flag, if not already set) when there's
+    /// nothing to migrate or when the App-Group container is unavailable.
+    ///
+    /// - Parameter identityHashHex: Hex of the raw identity hash (`identity.hexHash`).
+    static func migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: String) {
+        // Idempotent: once migrated (or determined a no-op), never run again.
+        guard !SharedDefaults.suite.bool(forKey: lxmfDatabaseMigratedToAppGroupKey) else {
+            return
+        }
+
+        // New (App-Group) destination. nil ⇒ container unavailable (unsigned /
+        // simulator): nothing to migrate to; leave the flag unset so a later
+        // signed run can still migrate.
+        guard let newURL = AppGroupPaths.lxmfDatabaseURL(identityHashHex: identityHashHex) else {
+            return
+        }
+
+        let fm = FileManager.default
+        let oldPath = legacyProcessLocalGRDBDatabaseFilePath(for: identityHashHex)
+        let oldURL = URL(fileURLWithPath: oldPath)
+
+        // If the old store doesn't exist, there's nothing to copy (fresh install,
+        // or already running on the App-Group store). Mark migrated so we don't
+        // re-check on every launch.
+        guard fm.fileExists(atPath: oldURL.path) else {
+            SharedDefaults.suite.set(true, forKey: lxmfDatabaseMigratedToAppGroupKey)
+            return
+        }
+
+        // If the new store already exists, do NOT clobber it — the App-Group store
+        // is authoritative. Just flip the flag.
+        guard !fm.fileExists(atPath: newURL.path) else {
+            SharedDefaults.suite.set(true, forKey: lxmfDatabaseMigratedToAppGroupKey)
+            return
+        }
+
+        // Copy the main DB plus the WAL sidecar files. Copying -wal/-shm matters
+        // for a WAL-mode SQLite DB: recent committed pages may live only in the
+        // WAL until a checkpoint folds them into the main file, so omitting them
+        // could silently drop the newest messages.
+        for suffix in ["", "-wal", "-shm"] {
+            let src = URL(fileURLWithPath: oldURL.path + suffix)
+            let dst = URL(fileURLWithPath: newURL.path + suffix)
+            guard fm.fileExists(atPath: src.path) else { continue }
+            do {
+                // Destination dir already created by AppGroupPaths.lxmfDatabaseURL.
+                if fm.fileExists(atPath: dst.path) {
+                    try fm.removeItem(at: dst)
+                }
+                try fm.copyItem(at: src, to: dst)
+            } catch {
+                // Best-effort: log and continue. We deliberately do NOT set the
+                // flag on a copy failure so a subsequent launch can retry. The old
+                // files are untouched, so the worst case is the app opens an empty
+                // App-Group store this run and retries the copy next launch.
+                sLogger.warning("[A2-MIGRATE] copy of lxmf-swift.db\(suffix, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+        }
+
+        SharedDefaults.suite.set(true, forKey: lxmfDatabaseMigratedToAppGroupKey)
+        sLogger.info("[A2-MIGRATE] migrated lxmf-swift.db to the App-Group container")
+    }
+
+    /// `SharedDefaults` flag key recording that the one-time A2 migration of
+    /// `lxmf-swift.db` into the App-Group container has run (see
+    /// `migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex:)`).
+    private static let lxmfDatabaseMigratedToAppGroupKey = "lxmf_db_migrated_to_appgroup"
 
     /// File path for ratchet key storage for a specific identity.
     ///
@@ -384,43 +624,93 @@ public final class AppServices {
     /// 2. File-based storage (fallback for unsigned builds)
     /// 3. Creates new identity and saves it
     ///
+    /// Model B: make the active identity reachable by the in-NE node, regardless of
+    /// which init path established it. Resolve the shared keychain group (the app
+    /// runs unlocked, so its probe works), share it via the App Group (the NE can't
+    /// reliably probe while locked), and persist the identity into that shared group
+    /// so the NE can load it (`...AfterFirstUnlockThisDeviceOnly`, NE-readable while
+    /// locked after first unlock). No-op on unsigned/simulator builds (group == nil).
+    private static func shareIdentityForModelB(_ identity: Identity) {
+        guard let group = sharedKeychainAccessGroup() else {
+            DiagLog.log("[IDENTITY] Model B share: shared keychain group unresolved")
+            return
+        }
+        SharedDefaults.suite.set(group, forKey: "resolvedSharedKeychainGroup")
+        do {
+            try identity.saveToKeychain(service: keychainService, account: keychainAccount, accessGroup: group)
+            DiagLog.log("[IDENTITY] Model B share: group resolved + identity persisted to shared keychain")
+        } catch {
+            DiagLog.log("[IDENTITY] Model B share: keychain save failed: \(error.localizedDescription)")
+        }
+    }
+
     /// - Returns: The loaded or newly created identity
     private static func loadOrCreateIdentity() -> Identity {
-        // Try Keychain first (most secure)
+        // Shared group so the Network Extension reads the SAME identity (Model B).
+        // nil on unsigned/simulator builds → falls back to the app's default group.
+        let group = sharedKeychainAccessGroup()
+        DiagLog.log("[IDENTITY] shared keychain group resolved=\(group != nil)")
+        // Hand the resolved group to the NE via the App Group: the in-NE keychain
+        // probe is unreliable while the device is locked (exactly when background
+        // delivery must run) and before the app has ever launched, so the NE reads
+        // this app-resolved value instead of probing.
+        if let group {
+            SharedDefaults.suite.set(group, forKey: "resolvedSharedKeychainGroup")
+        }
+
+        // 1. Keychain, shared group (the group the NE also reads).
         do {
             if let stored = try Identity.loadFromKeychain(
-                service: keychainService,
-                account: keychainAccount
+                service: keychainService, account: keychainAccount, accessGroup: group
             ) {
-                sLogger.info("[IDENTITY] Loaded from Keychain")
+                sLogger.info("[IDENTITY] Loaded from Keychain (shared group)")
                 return stored
             }
         } catch {
             sLogger.warning("[IDENTITY] Keychain load error: \(error.localizedDescription)")
         }
 
-        // Try file-based storage (fallback)
+        // 1b. One-time migration: an identity stored before the shared-group change lives
+        //     in the app's DEFAULT keychain group, unreachable by the NE. Move it into the
+        //     shared group, then delete the legacy copy. Only meaningful on signed builds
+        //     (group != nil).
+        if group != nil {
+            if let legacy = try? Identity.loadFromKeychain(
+                service: keychainService, account: keychainAccount, accessGroup: nil
+            ) {
+                try? legacy.saveToKeychain(
+                    service: keychainService, account: keychainAccount, accessGroup: group
+                )
+                _ = Identity.deleteFromKeychain(
+                    service: keychainService, account: keychainAccount, accessGroup: nil
+                )
+                sLogger.info("[IDENTITY] Migrated identity into the shared keychain group")
+                return legacy
+            }
+        }
+
+        // 2. File-based storage (fallback for unsigned builds where keychain is unavailable).
         if let stored = loadIdentityFromFile() {
             sLogger.info("[IDENTITY] Loaded from file")
             return stored
         }
 
-        // Create new identity
+        // 3. Create a new identity and save it to the shared keychain group.
         let created = Identity()
         sLogger.info("[IDENTITY] Created new identity")
-
-        // Save to Keychain (try first, more secure)
         do {
             try created.saveToKeychain(
-                service: keychainService,
-                account: keychainAccount
+                service: keychainService, account: keychainAccount, accessGroup: group
             )
+            // Keychain is the source of truth on signed builds; remove any stale plaintext
+            // fallback file so an unencrypted private key never lingers at rest.
+            removeIdentityFile()
             return created
         } catch {
             sLogger.warning("[IDENTITY] Keychain save failed: \(error.localizedDescription)")
         }
 
-        // Fall back to file storage
+        // Fall back to file storage (dev/unsigned only).
         _ = saveIdentityToFile(created)
         return created
     }
@@ -440,16 +730,31 @@ public final class AppServices {
         }
     }
 
-    /// Save identity to file.
+    /// Save identity to file (dev/unsigned fallback only).
     private static func saveIdentityToFile(_ identity: Identity) -> Bool {
         do {
             let data = try identity.exportPrivateKeys()
             try data.write(to: identityFilePath, options: .atomic)
+            #if os(iOS)
+            // Even the fallback must not leave the private key at default protection;
+            // require at least first-unlock so it isn't readable on a locked cold device.
+            try? FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: identityFilePath.path
+            )
+            #endif
             return true
         } catch {
             sLogger.warning("[IDENTITY] File save error: \(error.localizedDescription)")
             return false
         }
+    }
+
+    /// Remove the plaintext identity fallback file (called once the keychain — the
+    /// source of truth on signed builds — holds the identity, so an unencrypted private
+    /// key doesn't linger at rest).
+    private static func removeIdentityFile() {
+        try? FileManager.default.removeItem(at: identityFilePath)
     }
 
     // MARK: - Initialization
@@ -500,10 +805,22 @@ public final class AppServices {
         await configureTransportCallbacks(newTransport)
         await newTransport.registerPathRequestHandler()
 
-        // 4. Create persistent LXMF database
+        // 4. Create persistent LXMF database (RNSAPI Compat store — sender-name
+        //    lookups for IncomingMessageHandler / CallManager).
         let dbPath = Self.databaseFilePath
         let newDatabase = try LXMFDatabase(path: dbPath)
         self.database = newDatabase
+
+        // 4b. Open the GRDB canonical store the Swift/NE backend writes, so the
+        //     UI reads the same messages. Keyed by the raw identity hash (the
+        //     same `identity.hexHash` startPythonBackend derives configDir from).
+        //     The store now lives in the shared App-Group container so the app and
+        //     the NE converge on ONE store (Model B / A2); migrate any pre-existing
+        //     process-local store over BEFORE opening it.
+        Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: newIdentity.hexHash)
+        let grdbPath = Self.grdbDatabaseFilePath(for: newIdentity.hexHash)
+        self.grdbDatabasePath = grdbPath
+        self.messageRepository = try MessageRepository(grdbPath: grdbPath)
 
         // 5. Create LXMRouter with identity and database path
         let newRouter = try await LXMRouter(identity: newIdentity, databasePath: dbPath)
@@ -606,16 +923,22 @@ public final class AppServices {
             displayName: ""
         )
 
+        // On-device test instrumentation: listen for the test-announce Darwin
+        // notification now that the backend is up (see helper docs). Idempotent.
+        registerTestAnnounceObserver()
+
         logger.info("Initialization complete")
     }
 
     // MARK: - Python backend
 
+    #if DEBUG
     /// Register a block-based NotificationCenter observer and retain its token
     /// in `pythonNotificationObservers` so `shutdown()` can remove it. Use this
     /// for every observer added by `startPythonBackend()` — keeping the tokens
     /// is what lets a restart cycle tear the old observers down instead of
-    /// stacking duplicates.
+    /// stacking duplicates. DEBUG-only: its sole callers are the `lxma://test-*`
+    /// observers (`shutdown()` still tears down the array unconditionally).
     private func addPythonObserver(
         _ name: String,
         _ block: @escaping @Sendable (Notification) -> Void
@@ -626,6 +949,7 @@ public final class AppServices {
             )
         )
     }
+    #endif
 
     /// Boot the embedded Python RNS stack and hook `LXMRouter.sendHook` so
     /// outbound LXMF sends go through Python. Spawns a Task that drains
@@ -653,8 +977,47 @@ public final class AppServices {
         self.pythonStartIdentity = identity
         self.pythonStartDisplayName = displayName
 
+        // Model B (Track C3): when `BackendPreference.modelB` is on,
+        // `BackendFactory.make` returns the thin-client `ProxyRnsBackend`, which
+        // needs a live IPC transport to the NE's `NEReticulumNode`. Inject
+        // `TunnelManager.proxySend` (wraps `sendProviderMessage`). Resolved LAZILY
+        // (read `self.tunnelManager` at send-time, not make-time) so it works even
+        // though one of the two init paths creates the tunnel after this call. The
+        // closure is `@Sendable`; it hops to the @MainActor `AppServices` to read
+        // the tunnel, then calls the non-isolated async `proxySend`. When Model B
+        // is off (the default) `make` ignores `proxySend` and returns the
+        // Swift/Python backend, so this wiring is inert until the flag is flipped.
+        #if ENABLE_NETWORK_EXTENSION
+        let proxySend: @Sendable (Data) async -> Data? = { [weak self] data in
+            // Read the @MainActor-isolated `tunnelManager` via `MainActor.run`
+            // (the established pattern in this file for crossing into MainActor
+            // state from a Sendable async context — see `applyPythonInterfaceStatus`
+            // callers). `TunnelManager` is Sendable and `proxySend` is non-isolated,
+            // so the IPC call itself needs no hop.
+            guard let tunnel = await MainActor.run(body: { self?.tunnelManager }) else {
+                return nil
+            }
+            return await tunnel.proxySend(data)
+        }
+        let backend = BackendFactory.make(proxySend: proxySend)
+        #else
         let backend = BackendFactory.make()
+        #endif
         self.backend = backend
+
+        #if ENABLE_NETWORK_EXTENSION
+        // Model B: bring up the app-side BLE host — reticulum-swift's
+        // `CoreBluetoothBLEDriver` (CoreBluetooth can't run in the NE) + the
+        // `AppGroupBLEServer` that bridges it to the NE's `BLEInterface` over the
+        // App-Group seam. The NE drives scan/advertise/connect through the seam.
+        // Idempotent; uses the SAME 16-byte identity the NE's BLEInterface uses.
+        // (ModelBBLEService lives in its own file because it `import ReticulumSwift`
+        // for the REAL driver — here `CoreBluetoothBLEDriver` would be the RNSAPI
+        // Compat stub.) `SwiftBLEBridge` is gated off under Model B at launch.
+        if BackendPreference.modelB {
+            ModelBBLEService.shared.start(identityHash: identity.hash)
+        }
+        #endif
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
@@ -669,11 +1032,6 @@ public final class AppServices {
         // current config) so a later restart with BLE-enabled config finds
         // them without an extra deployment step.
         deployIOSBLEPythonFilesIfPossible(configDir: pyDir)
-        // Likewise deploy the RNode (LoRa) custom interface so RNS can load a
-        // `type = IOSRNodeInterface` section if the config has one. Always
-        // copied — cheap, and a later RNode-enabled restart then needs no extra
-        // deploy step (mirrors the BLE case).
-        deployIOSRNodePythonFilesIfPossible(configDir: pyDir)
 
         // Generate the RNS config from user-saved interface entities. The
         // file lands at `<configDir>/config` where Python's
@@ -712,21 +1070,6 @@ public final class AppServices {
             self.backend = nil
             return
         }
-
-        // Install the Swift→Python RNode callback bridge. Unlike BLE (which has
-        // an explicit startBLEInterface()), an RNode interface is instantiated
-        // by RNS's config loader, whose _RNodeBLEBridge registers callbacks via
-        // rns_bridge as soon as it loads — so the invoker must already be in
-        // place. Cheap to install unconditionally: it only stores a ref; the
-        // CBCentralManager isn't created until Python calls columba_rnode_start.
-        #if canImport(CoreBluetooth)
-        if let py = backend as? PythonRNSBackend {
-            SwiftRNodeBridge.shared.setCallbackInvoker(
-                PythonRNodeCallbackBridge(pythonBridge: py.pythonBridge)
-            )
-            DiagLog.log("[RNODE] PythonRNodeCallbackBridge installed")
-        }
-        #endif
 
         // Outbound LXMF now goes directly through `backend.lxmf.sendLxmfMessage`
         // (MessagingViewModel + RnsLxmf) with TYPED fields, so the old Compat
@@ -801,6 +1144,14 @@ public final class AppServices {
             }
             DiagLog.log("[RNS-POLL] task exiting (cancelled)")
         }
+
+        #if DEBUG
+        // Test-only deep-link observers (the `lxma://test-*` surface used by the
+        // interop / smoke harnesses). The matching `onOpenURL` trigger in
+        // ColumbaApp is itself `#if DEBUG`, so nothing posts these notifications in
+        // release — gate the registrations too so they don't compile into release
+        // builds (no inert listeners, smaller binary, no latent footgun if some
+        // other code ever posts a `ColumbaTest*` name).
 
         // Listen for test-send deep links (lxma://test-send?to=HEX&content=…
         // [&method=…][&image_hex=…&image_format=…][&file_hex=…&file_name=…]).
@@ -1207,6 +1558,22 @@ public final class AppServices {
             guard let self else { return }
             let node = (note.userInfo?["node"] as? String) ?? ""
             Task { @MainActor in
+                // Model B: the LXMF router lives in the NE — `backend.propagationSync`
+                // is a no-op proxy stub. Route through the propagation manager so the
+                // PN crosses the App-Group seam and the NE runs the sync (this mirrors
+                // the production Sync Now path).
+                if BackendPreference.modelB {
+                    guard let propManager = self.propagationManager else {
+                        DiagLog.log("[TEST-PROP-SYNC] modelB: no propagation manager")
+                        return
+                    }
+                    if !node.isEmpty, let hash = Data(hexString: node) {
+                        await propManager.selectNode(hash: hash)
+                    }
+                    await propManager.syncNow()
+                    DiagLog.log("[TEST-PROP-SYNC] modelB sync-now posted to NE, state=\(propManager.syncState.state)")
+                    return
+                }
                 guard let backend = self.backend else {
                     DiagLog.log("[TEST-PROP-SYNC] no backend")
                     return
@@ -1258,6 +1625,7 @@ public final class AppServices {
                 }
             }
         }
+        #endif // DEBUG — test-only deep-link observers
     }
 
     /// Look up the matching Python interface for each user `InterfaceEntity`
@@ -1365,12 +1733,10 @@ public final class AppServices {
                     ble.online = status.online
                 }
             case .rnode:
-                // The real RNode runs as the Python IOSRNodeInterface; the Swift
-                // RNodeInterface stub never reaches .connected on its own, so the
-                // Network Interfaces row sat at "disconnected" even while the
-                // backend reported the interface online. Mirror Python's state
-                // onto the stub the UI polls — same as Auto/BLE above. (Was
-                // missing here, hence the gap.)
+                // RNode now runs through the Model B seam on the Swift backend
+                // (UI state applied via applyRNodeLinkState). The Python backend
+                // no longer has an RNode interface, so this status mirror is inert
+                // there — kept for switch exhaustiveness + parity with Auto/BLE.
                 if let rnode = self.rnodeInterface, rnode.state != newState {
                     DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (RNode, rx=\(status.rxBytes) tx=\(status.txBytes))")
                     rnode.state = newState
@@ -1542,6 +1908,18 @@ public final class AppServices {
             await hotAddInterface(entity, backend: backend)
         }
 
+        #if ENABLE_NETWORK_EXTENSION
+        // 4. Newly hot-added interfaces are created in normal (local-socket) mode.
+        // The tunnel-mode coordinator (`applyTunnelModeToInterfaces`) only fires on
+        // VPN *status* changes, not interface changes — so if background transport
+        // is already up, an interface added afterward (e.g. switching Auto -> a TCP
+        // relay after enabling background transport) would never enter tunnel mode,
+        // and with the packet tunnel active its own socket is black-holed
+        // (connected, rx=0 tx=0). Re-assert tunnel mode so anything added while the
+        // tunnel is up is bridged through the extension.
+        await reapplyTunnelModeIfActive()
+        #endif
+
         // 5. Keep the status-poll's matching set in sync with what's live.
         pythonInterfaceEntities = freshById
     }
@@ -1708,11 +2086,16 @@ public final class AppServices {
     /// IncomingMessageHandler. Returns nil if blocked or persistence failed.
     @discardableResult
     private func persistInboundFromPython(sourceHash: Data, content: String, title: String, fields: [UInt8: Any]?, timestamp: Date) async -> LXMessage? {
-        guard let database = self.database else {
-            DiagLog.log("[RNS] persistInbound: no database")
+        // Route Python-path inbound persistence through the GRDB canonical
+        // store (the same one the UI reads and the Swift/NE path writes), via
+        // the shared MessageRepository's RNSAPI-typed methods — NOT the
+        // RNSAPI Compat `database`. (The Swift backend already persists its own
+        // inbound to GRDB through its LXMRouter, so this AppServices write is
+        // only for the Python backend path.)
+        guard let repo = self.messageRepository else {
+            DiagLog.log("[RNS] persistInbound: no messageRepository")
             return nil
         }
-        let repo = MessageRepository(database: database)
         let sourceHashHex = sourceHash.map { String(format: "%02x", $0) }.joined()
 
         // Privacy: block_unknown_senders drops messages from anyone the
@@ -1722,7 +2105,7 @@ public final class AppServices {
         if UserDefaults.standard.bool(forKey: "block_unknown_senders") {
             let isKnownContact: Bool
             do {
-                let conversation = try await database.getConversation(hash: sourceHash)
+                let conversation = try await repo.fetchConversation(sourceHash)
                 isKnownContact = (conversation?.isFavorite ?? 0) != 0
             } catch {
                 // Fail open: surface the message if the DB check itself
@@ -1830,6 +2213,23 @@ public final class AppServices {
                     "timestamp": t,
                 ]
             )
+
+            // Stamp the announced display name onto an EXISTING conversation
+            // that still lacks one. Under Model B the NE persists an inbound
+            // message — creating the conversation row with a nil display name —
+            // BEFORE this announce is heard, and the app's inbound-side name
+            // backfill (IncomingMessageHandler) never runs in that path, so the
+            // conversation title would otherwise stay stuck on the "Peer <hash>"
+            // fallback even though the announce tells us the real name. This is
+            // UPDATE-only (never creates a conversation for a bare announce) and
+            // only fills an empty/nil name (never clobbers one we already have).
+            if !displayName.isEmpty, let repo = self.messageRepository,
+               let convo = try? await repo.fetchConversation(data) {
+                if (convo.displayName ?? "").isEmpty {
+                    try? await repo.updateDisplayName(data, displayName: displayName)
+                    DiagLog.log("[RNS] stamped display name onto convo \(data.map { String(format: "%02x", $0) }.joined().prefix(8))")
+                }
+            }
         case .inbound(let sourceHash, let content, let title, let fieldsPacked, let t):
             DiagLog.log("[RNS] inbound source=\(sourceHash) content=\"\(content)\" fields=\(fieldsPacked.count)B")
             guard let data = Data(hexString: sourceHash) else { return }
@@ -1860,8 +2260,11 @@ public final class AppServices {
             DiagLog.log("[RNS] delivery \(messageHash.prefix(16)) state=\(state)")
             guard let hashData = Data(hexString: messageHash) else { return }
             let newState: LXMessageState = (state == "delivered") ? .delivered : .failed
-            if let database = self.database {
-                try? database.updateMessageState(id: hashData, state: newState)
+            // Update the GRDB canonical store (where outbound messages are
+            // persisted and the UI reads from), via the shared repository's
+            // RNSAPI-typed method — not the Compat `database`.
+            if let repo = self.messageRepository {
+                try? await repo.updateMessageState(id: hashData, state: newState)
             }
             // Notify the open chat so it can flip the bubble's indicator
             // (double-check for delivered / failed) without a full reload.
@@ -1935,6 +2338,10 @@ public final class AppServices {
 
         self.identity = identity
         self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
+        // Model B: make this identity reachable by the in-NE node. This overload
+        // receives the identity pre-loaded (multi-identity path) and never calls
+        // loadOrCreateIdentity, so do the NE-sharing here.
+        Self.shareIdentityForModelB(identity)
 
         // 2. Create path table for routing with persistence
         let pathDbPath = Self.pathTableFilePath
@@ -1947,10 +2354,21 @@ public final class AppServices {
         await configureTransportCallbacks(newTransport)
         await newTransport.registerPathRequestHandler()
 
-        // 4. Create persistent LXMF database (per-identity)
+        // 4. Create persistent LXMF database (per-identity; RNSAPI Compat store
+        //    used for IncomingMessageHandler / CallManager sender lookups).
         let dbPath = Self.databaseFilePath(for: identityHash)
         let newDatabase = try LXMFDatabase(path: dbPath)
         self.database = newDatabase
+
+        // 4b. Open the GRDB canonical store the Swift/NE backend writes (keyed
+        //     by the same identity hash startPythonBackend uses for configDir),
+        //     so the UI reads the same messages. Store lives in the shared
+        //     App-Group container (Model B / A2); migrate any pre-existing
+        //     process-local store over BEFORE opening it.
+        Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: identityHash)
+        let grdbPath = Self.grdbDatabaseFilePath(for: identityHash)
+        self.grdbDatabasePath = grdbPath
+        self.messageRepository = try MessageRepository(grdbPath: grdbPath)
 
         // 5. Create LXMRouter with identity and database path
         let newRouter = try await LXMRouter(identity: identity, databasePath: dbPath)
@@ -2033,8 +2451,12 @@ public final class AppServices {
         self.autoAnnounceManager = announceManager
         announceManager.start()
 
-        // Dump all registered destinations and link callbacks for diagnostics
-        let regDests = await newTransport.registeredDestinationHashes()
+        // Dump all registered destinations and link callbacks for diagnostics.
+        // Registered destinations now come from the active backend's neutral
+        // `RnsCore` seam (the backend-agnostic source of truth both backends
+        // share — the same set the NE's destination filter matches), not the
+        // dead Compat-layer transport stub which always returned [].
+        let regDests = await self.backend?.core.registeredDestinationHashes() ?? []
         let regCallbacks = await newTransport.registeredLinkCallbackHashes()
         DiagLog.log("[INIT2] Registered destinations: \(regDests)")
         DiagLog.log("[INIT2] Registered link callbacks: \(regCallbacks)")
@@ -2102,6 +2524,10 @@ public final class AppServices {
             displayName: ""
         )
 
+        // On-device test instrumentation: listen for the test-announce Darwin
+        // notification now that the backend is up (see helper docs). Idempotent.
+        registerTestAnnounceObserver()
+
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
 
@@ -2117,28 +2543,44 @@ public final class AppServices {
     @MainActor
     private func applyTunnelModeToInterfaces(active: Bool) async {
         guard let tunnel = tunnelManager else { return }
+        tunnelModeActive = active
 
+        // Tunnel mode is TCP-only. The AutoInterface is deliberately NOT bridged:
+        // forwarding its frames to `tunnel.sendFrame(tag: .auto)` black-holes them
+        // — PacketTunnelProvider drops every non-ProxyRequest frame, and the NE
+        // node has no UDP/Auto path to send them on anyway. Leaving Auto in its
+        // local mode keeps its own foreground LAN socket working; tunneling it can
+        // only break background Auto outbound. (ports #57 d3719c2 fix #3)
         if active {
             for (_, iface) in tcpInterfaces {
                 await iface.beginTunnelMode { [weak tunnel] frame in
+                    DiagLog.log("[BRIDGE-OUT] iface->sendFrame tag=tcp len=\(frame.count)")
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
                 }
             }
-            if let auto = autoInterface {
-                await auto.beginTunnelMode { [weak tunnel] frame in
-                    await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.auto.rawValue)
-                }
-            }
-            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP + \(self.autoInterface != nil ? 1 : 0) Auto interface(s)")
+            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s); Auto stays local")
         } else {
             for (_, iface) in tcpInterfaces {
                 await iface.endTunnelMode()
             }
-            if let auto = autoInterface {
-                await auto.endTunnelMode()
-            }
             DiagLog.log("[TUNNEL] disabled tunnel mode; interfaces resuming local connections")
         }
+    }
+
+    /// Whether tunnel mode is currently active (background-transport tunnel
+    /// connected + interfaces bridged through the extension). Tracked so
+    /// `applyInterfaceChanges` can bring interfaces hot-added *after* the tunnel
+    /// came up into tunnel mode — `onStatusChange` only fires on VPN state changes,
+    /// not on interface changes.
+    @MainActor private var tunnelModeActive = false
+
+    /// Re-assert tunnel mode on the current interface set if the tunnel is up.
+    /// Called after a hot-reload so a freshly added interface doesn't get stranded
+    /// in local-socket mode (black-holed by the active packet tunnel).
+    @MainActor
+    private func reapplyTunnelModeIfActive() async {
+        guard tunnelModeActive else { return }
+        await applyTunnelModeToInterfaces(active: true)
     }
     #endif
 
@@ -2356,6 +2798,12 @@ public final class AppServices {
 
         try await transport.addAutoInterface(newAutoInterface)
         logger.info("AutoInterface started with group: \(groupId)")
+
+        #if ENABLE_NETWORK_EXTENSION
+        // Same launch-race fix as connectTCPInterface: if the tunnel is already up,
+        // bring this freshly-registered interface into tunnel mode.
+        await reapplyTunnelModeIfActive()
+        #endif
     }
 
     /// Stop the AutoInterface.
@@ -2479,48 +2927,6 @@ public final class AppServices {
         }
     }
 
-    /// Copy `IOSRNodeInterface.py` from `<bundle>/app/rnode/` to
-    /// `<configDir>/interfaces/` so RNS's external-interface loader can `exec()`
-    /// it for a `type = IOSRNodeInterface` config section. Idempotent —
-    /// overwrites each call so build-time updates ship without manual cleanup.
-    /// Called eagerly during `startPythonBackend` (before `backend.start()`),
-    /// regardless of whether the current config has an RNode interface, so a
-    /// later RNode-enabled restart finds the file. Mirror of the BLE deploy.
-    private func deployIOSRNodePythonFilesIfPossible(configDir: URL) {
-        let fm = FileManager.default
-        guard let bundleAppDir = Bundle.main.url(forResource: "app", withExtension: nil) else {
-            DiagLog.log("[RNODE] app/ bundle resource missing — skipping deploy")
-            return
-        }
-        let srcDir = bundleAppDir.appendingPathComponent("rnode", isDirectory: true)
-        guard fm.fileExists(atPath: srcDir.path) else {
-            DiagLog.log("[RNODE] app/rnode/ missing in bundle at \(srcDir.path) — skipping deploy")
-            return
-        }
-
-        let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
-        do {
-            try fm.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
-        } catch {
-            DiagLog.log("[RNODE] failed to create interfaces dir: \(error)")
-            return
-        }
-
-        for name in ["IOSRNodeInterface.py"] {
-            let src = srcDir.appendingPathComponent(name)
-            let dst = interfacesDir.appendingPathComponent(name)
-            if fm.fileExists(atPath: dst.path) {
-                try? fm.removeItem(at: dst)
-            }
-            do {
-                try fm.copyItem(at: src, to: dst)
-                DiagLog.log("[RNODE] Deployed \(name) to \(dst.path)")
-            } catch {
-                DiagLog.log("[RNODE] Failed to copy \(name): \(error)")
-            }
-        }
-    }
-
     /// Stop the BLE interface.
     public func stopBLEInterface() async {
         guard let ble = bleInterface else { return }
@@ -2595,50 +3001,63 @@ public final class AppServices {
     ///   - config: RNode radio configuration (device name, frequency, etc.)
     ///   - name: Display name for the interface
     public func startRNodeInterface(config rnodeConfig: RNodeConfig, name: String) async throws {
-        // Stop existing RNode interface if running
-        await stopRNodeInterface()
+        // Model B: the RNode protocol stack (RNodeInterface + KISS framing) runs in the
+        // Network Extension — the app hosts ONLY the CoreBluetooth NUS radio. Start the
+        // app-side seam server FIRST (so it's listening when the NE responds), then
+        // persist the radio config for the NE, which (re)builds its RNodeInterface on
+        // the change notification and drives connect/send/disconnect over the seam.
+        // UI-facing Compat interface object; its `.state` is driven by the app-side
+        // radio's BLE link state via the onLinkStateChange callback below (the NE owns
+        // the authoritative RNodeInterface, but the BLE link state is a good proxy and
+        // the app has it directly).
+        let uiInterface = RNodeInterface(config: rnodeConfig, name: name)
+        uiInterface.state = .connecting
+        self.rnodeInterface = uiInterface
 
-        // Ensure base stack exists
-        if transport == nil {
-            try await initializeBaseStack()
-        }
+        ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState in
+            self?.applyRNodeLinkState(linkState)
+        })
 
-        guard let transport = transport else {
-            throw AppServicesError.transportNotConnected
-        }
-
-        let transportConfig = InterfaceConfig(
-            id: "rnode0",
-            name: name,
-            type: .rnode,
-            enabled: true,
-            mode: .full,
-            host: rnodeConfig.deviceName,  // BLE device name in "host" field
-            port: 0
+        let seamConfig = RNodeSeamConfig(
+            deviceName: rnodeConfig.deviceName,
+            frequency: rnodeConfig.frequency,
+            bandwidth: rnodeConfig.bandwidth,
+            txPower: rnodeConfig.txPower,
+            spreadingFactor: rnodeConfig.spreadingFactor,
+            codingRate: rnodeConfig.codingRate,
+            stAlock: rnodeConfig.stAlock,
+            ltAlock: rnodeConfig.ltAlock
         )
+        seamConfig.saveToAppGroup()  // posts rnodeConfigChanged → NE (re)builds its RNodeInterface
 
-        let newRNodeInterface = try RNodeInterface(config: transportConfig)
-
-        // Configure radio BEFORE connecting (critical ordering)
-        let radioConfig = rnodeConfig.toRadioConfig()
-        try await newRNodeInterface.configureRadio(radioConfig)
-
-        self.rnodeInterface = newRNodeInterface
-
-        // Register with transport — this calls connect() which starts BLE scan
-        try await transport.addInterface(newRNodeInterface)
-        logger.info("RNodeInterface started: \(name)")
+        logger.info("RNodeInterface (Model B) started: \(name)")
     }
 
-    /// Stop the RNode interface.
+    /// Stop the RNode interface (Model B).
     public func stopRNodeInterface() async {
-        guard let rnode = rnodeInterface else { return }
-        await rnode.disconnect()
-        if let transport = transport {
-            await transport.removeInterface(id: rnode.id)
-        }
+        // Clear the NE's RNode config (→ it tears down its RNodeInterface) and stop the
+        // app-side radio server.
+        RNodeSeamConfig.clearFromAppGroup()
+        ModelBRNodeService.shared.stop()
         rnodeInterface = nil
-        logger.info("RNodeInterface stopped")
+        logger.info("RNodeInterface (Model B) stopped")
+    }
+
+    /// Reflect the app-side RNode radio's BLE link state onto the UI-facing Compat
+    /// interface object + refresh the UI. The NE owns the authoritative `RNodeInterface`;
+    /// the BLE link state is a good-enough proxy for the Settings "connected" indicator.
+    private func applyRNodeLinkState(_ linkState: RNodeLinkState) {
+        let mapped: InterfaceState
+        switch linkState {
+        case .disconnected: mapped = .disconnected
+        case .connecting:   mapped = .connecting
+        case .connected:    mapped = .connected
+        case .failed:       mapped = .connectionFailed(underlying: "RNode radio link failed")
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.rnodeInterface?.state = mapped
+            NotificationObserver.postNetworkStateChanged()
+        }
     }
 
     /// Resolve a peer's LXST **telephony** destination hash from their LXMF
@@ -2698,11 +3117,21 @@ public final class AppServices {
             await configureTransportCallbacks(newTransport)
         }
 
-        // 4. Database
+        // 4. Database (RNSAPI Compat store)
         if database == nil {
             let dbPath = Self.databaseFilePath
             let newDatabase = try LXMFDatabase(path: dbPath)
             self.database = newDatabase
+        }
+
+        // 4b. GRDB canonical store (matches the Swift/NE backend path). Store lives
+        //     in the shared App-Group container (Model B / A2); migrate any
+        //     pre-existing process-local store over BEFORE opening it.
+        if messageRepository == nil {
+            Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: existingIdentity.hexHash)
+            let grdbPath = Self.grdbDatabaseFilePath(for: existingIdentity.hexHash)
+            self.grdbDatabasePath = grdbPath
+            self.messageRepository = try MessageRepository(grdbPath: grdbPath)
         }
 
         // 5. Router
@@ -2783,6 +3212,13 @@ public final class AppServices {
     /// `BleConnectionDetails` → `BLEConnectionInfo` here so the dedicated
     /// connections screen renders real peers.
     public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
+        // Model B: the BLE radio + reticulum-swift `BLEInterface` run across the NE
+        // seam, NOT `SwiftBLEBridge` (the Model A Python-path CoreBluetooth
+        // singleton). Query the NE's native peers over the proxy IPC. The Model A
+        // `SwiftBLEBridge` path below only applies when Model B is off.
+        if BackendPreference.modelB {
+            return await backend?.bleConnections() ?? []
+        }
         guard bleInterface != nil else { return [] }
         let details = SwiftBLEBridge.shared.getConnectionDetails()
         // Group by identity. When a peer is connected via BOTH central
@@ -2905,6 +3341,9 @@ public final class AppServices {
             NotificationCenter.default.removeObserver(token)
         }
         pythonNotificationObservers.removeAll()
+        // Remove the test-announce Darwin observer so a re-init re-registers
+        // cleanly instead of stacking callbacks (no-op if never registered).
+        unregisterTestAnnounceObserver()
         // Drop stale Compat Link records. Python assigns link IDs sequentially
         // from 0 on each fresh backend, so without this a post-restart inbound
         // link (id 0, 1, …) would collide with a dead entry and dispatchInbound
@@ -3027,6 +3466,16 @@ public final class AppServices {
         }
 
         startStateObserver()
+
+        #if ENABLE_NETWORK_EXTENSION
+        // Launch-race fix: the persistent background-transport tunnel can already be
+        // `.connected` when the app cold-starts, so `onStatusChange` fires (and tunnel
+        // mode is applied) BEFORE this interface is registered — leaving it in
+        // local-socket mode, black-holed by the active packet tunnel (connected,
+        // rx=0 tx=0, no announces). Re-assert tunnel mode now that this interface
+        // exists so it's bridged through the extension.
+        await reapplyTunnelModeIfActive()
+        #endif
     }
 
     /// Stop a specific TCP interface by entity ID.
@@ -3198,6 +3647,17 @@ public final class AppServices {
         DiagLog.log("[ANNOUNCE] sent via Python (name=\"\(displayName)\")")
     }
 
+    /// Model B UI helper: the NE owns the TCP relay, so the app has no local
+    /// `TCPInterface` to report — the interface card would otherwise show a
+    /// permanent "disconnected". Query the NE (via the proxy `statusSnapshot`)
+    /// for the relay's connected state so the card reflects reality. Returns
+    /// `false` off Model B or when the NE isn't reachable.
+    public func neTcpRelayOnline() async -> Bool {
+        guard BackendPreference.modelB, let backend = backend else { return false }
+        let snap = await backend.statusSnapshot()
+        return snap?.interfaces.first { $0.sectionName == "ne-tcp-relay" }?.online ?? false
+    }
+
     /// Send both the LXMF delivery announce and the LXST telephony announce.
     ///
     /// This is the single entry point for all announce triggers (app start,
@@ -3231,6 +3691,63 @@ public final class AppServices {
         #endif
 
         if let firstError { throw firstError }
+    }
+
+    // MARK: - Test instrumentation (Darwin-notification trigger)
+
+    /// Register a Darwin-notification observer for `network.columba.test.announce`
+    /// so an on-device test harness can drive a manual announce on a physical
+    /// device that Maestro/idb can't automate. The host posts the notification
+    /// via `xcrun devicectl device notification post network.columba.test.announce`;
+    /// on receipt this fires `sendAllAnnounces(displayName:)` (the same entry point
+    /// the auto-announce path uses), passing the empty string the backend resolves
+    /// to the configured display name.
+    ///
+    /// Idempotent: registers at most once (see `testAnnounceObserverRegistered`).
+    /// Call only AFTER the backend is started, so the announce has a live stack to
+    /// route through. The C callback can't capture `self`, so we pass the opaque
+    /// pointer and resolve it back, then hop to the `@MainActor` to call the async
+    /// announce inside a `Task` (the callback runs on a Mach-port thread).
+    private func registerTestAnnounceObserver() {
+        guard !testAnnounceObserverRegistered else { return }
+        testAnnounceObserverRegistered = true
+
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let self_ = Unmanaged<AppServices>
+                    .fromOpaque(observer)
+                    .takeUnretainedValue()
+                DiagLog.log("[TEST-TRIGGER] test-announce Darwin notification received -> sendAllAnnounces")
+                Task { @MainActor in
+                    // Empty string -> backend resolves the configured display name,
+                    // matching the auto-announce path.
+                    try? await self_.sendAllAnnounces(displayName: "")
+                }
+            },
+            Self.testAnnounceNotification as CFString,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    /// Remove the test-announce Darwin observer. Called from `shutdown()` so a
+    /// re-init cycle re-registers cleanly rather than stacking callbacks.
+    private func unregisterTestAnnounceObserver() {
+        guard testAnnounceObserverRegistered else { return }
+        testAnnounceObserverRegistered = false
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterRemoveObserver(
+            center,
+            observer,
+            CFNotificationName(Self.testAnnounceNotification as CFString),
+            nil
+        )
     }
 
     /// Wire transport callbacks that need app-layer context.

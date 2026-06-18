@@ -45,6 +45,9 @@ struct ChatsView: View {
     /// Conversation pending deletion (confirmation alert).
     @State private var deletingConversation: Conversation?
 
+    /// Controls the propagation-sync status sheet (auto-shown while a sync is active).
+    @State private var isSyncSheetPresented: Bool = false
+
     // MARK: - Theme Colors
 
     private var backgroundColor: Color { Theme.backgroundPrimary }
@@ -162,6 +165,15 @@ struct ChatsView: View {
             }
         } message: {
             Text("This will permanently delete the conversation and all its messages.")
+        }
+        // Auto-show the sync status sheet while a propagation sync is active (manual
+        // Sync Now / pull-to-refresh, or — under Model B — an NE-driven periodic sync).
+        // The sheet stays up through the terminal phase so the user sees the result.
+        .onChange(of: appServices.propagationManager?.syncState.isSyncing ?? false) { _, active in
+            if active { isSyncSheetPresented = true }
+        }
+        .sheet(isPresented: $isSyncSheetPresented) {
+            SyncStatusBottomSheet(state: appServices.propagationManager?.syncState ?? PropagationTransferState())
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in

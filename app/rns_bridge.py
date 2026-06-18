@@ -908,10 +908,9 @@ def stop() -> None:
         _links.clear()
         _telephony_destination = None
 
-        # Drop registered BLE + RNode callbacks so a subsequent start() doesn't
+        # Drop registered BLE callbacks so a subsequent start() doesn't
         # invoke closures bound to the previous driver / Swift bridge.
         clear_ble_callbacks()
-        clear_rnode_callbacks()
         global _ble_bridge_handle, _announce_generation
         _ble_bridge_handle = None
         # Supersede any in-flight delayed re-announce thread (see start()).
@@ -1426,11 +1425,10 @@ def reset_identity(identity_path: str) -> None:
         links_to_teardown = list(_links.values())
         _links.clear()
         _telephony_destination = None
-        # Drop registered BLE + RNode callbacks + the BLE bridge handle so the
+        # Drop registered BLE callbacks + the BLE bridge handle so the
         # start() this function's docstring requires doesn't invoke closures
         # bound to the torn-down driver / Swift bridge (mirrors stop()).
         clear_ble_callbacks()
-        clear_rnode_callbacks()
         global _ble_bridge_handle, _announce_generation
         _ble_bridge_handle = None
         # Supersede any in-flight delayed re-announce thread (see start()).
@@ -1586,34 +1584,6 @@ def clear_ble_callbacks() -> None:
     """Drop every registered BLE callback. Called from `stop()` / restart so
     we don't keep references to closures bound to a torn-down driver."""
     _ble_callbacks.clear()
-
-
-# ── RNode bridge callback registry (mirrors the BLE one above) ──
-# Swift's SwiftRNodeBridge pushes Nordic-UART TX bytes + connection-state
-# changes into the Python IOSRNodeInterface through these. Slots:
-#   "data"  → cb(data: bytes)            — decrypted NUS TX payload
-#   "state" → cb(connected: bool, name)  — link up/down + device name
-_rnode_callbacks: dict[str, Any] = {}
-
-
-def set_rnode_callback(slot: str, callable_: Any) -> None:
-    """Register a Python callable for an RNode bridge event slot ("data" /
-    "state"). Used by IOSRNodeInterface's _RNodeBLEBridge. Pass None to clear."""
-    if callable_ is None:
-        _rnode_callbacks.pop(slot, None)
-    else:
-        _rnode_callbacks[slot] = callable_
-
-
-def _rnode_get_callback(slot: str) -> Any:
-    """Swift-called lookup (PythonRNodeCallbackBridge) for the RNode "data" /
-    "state" handler. Returns the stored callable, or None."""
-    return _rnode_callbacks.get(slot)
-
-
-def clear_rnode_callbacks() -> None:
-    """Drop every registered RNode callback (stop()/restart)."""
-    _rnode_callbacks.clear()
 
 
 # Smoke-test entry point: register a callable that doubles its arg. The

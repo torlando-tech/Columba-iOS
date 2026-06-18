@@ -1608,7 +1608,6 @@ public final class ReticulumTransport: @unchecked Sendable {
     public var initiateLinkHook:
         (@Sendable (Destination, Identity) async throws -> Link)?
 
-    public func registeredDestinationHashes() -> [String] { [] }
     public func registeredLinkCallbackHashes() -> [String] { [] }
     public func registerDestination(_ destination: Destination) async {
         await registerDestinationHook?(destination)
@@ -1932,6 +1931,15 @@ public final class AutoInterface: NetworkInterface, @unchecked Sendable {
 
     public func connect() async throws {}
     public func disconnect() async {}
+
+    // No-op tunnel-mode stubs, mirroring TCPInterface (Compat.swift:1916-1917).
+    // The Compat façade has no underlying ReticulumSwift interface to install the
+    // outbound hook on — the real tunnel-mode wiring (routing interface outbound
+    // through the App-Group NE bridge) lives on the Swift backend's ReticulumSwift
+    // interfaces and is wired NE-side (Track A5 / the app<->NE seam in C3). Present
+    // so the ENABLE_NETWORK_EXTENSION-gated applyTunnelModeToInterfaces compiles.
+    public func beginTunnelMode(send hook: @escaping @Sendable (Data) async -> Void) async {}
+    public func endTunnelMode() async {}
 }
 
 /// Stub BLE driver — full implementation lands when BLE comes back online.

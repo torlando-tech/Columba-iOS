@@ -375,12 +375,22 @@ public final class SettingsViewModel {
     }
 
     /// Load local settings from UserDefaults.
-    private func loadLocalSettings() {
-        let defaults = UserDefaults.standard
-
-        // Register sane defaults so bool(forKey:) returns true for notifications
-        // even if the key was never explicitly written (e.g. pre-existing installs).
-        defaults.register(defaults: [
+    /// Register app-side `UserDefaults.standard` defaults at process launch.
+    ///
+    /// `NotificationService` (the foreground notification path) gates on
+    /// `bool(forKey: "notifications_enabled")`, which returns `false` unless the
+    /// key is registered. Registration used to live ONLY in `loadLocalSettings()`,
+    /// which runs lazily the first time Settings is opened — so on a fresh install
+    /// that never visits Settings, `notifications_enabled` stayed unregistered and
+    /// the foreground notification path was silently suppressed. Call this from
+    /// `App.init()` so the defaults exist before any reader runs. Registration is
+    /// idempotent and process-wide. (ports #57 dc1024b)
+    ///
+    /// (Background notifications under Model B are posted by the Network Extension,
+    /// which gates only on system authorization — not this default — so it is
+    /// unaffected; this fixes the in-app/foreground path and is correct hygiene.)
+    static func registerLocalDefaults() {
+        UserDefaults.standard.register(defaults: [
             "notifications_enabled": true,
             "show_message_previews": true,
             "play_sounds": true,
@@ -390,6 +400,15 @@ public final class SettingsViewModel {
             "auto_announce_on_tcp_reconnect": true,
             "auto_announce_on_peer_spawned": true
         ])
+    }
+
+    private func loadLocalSettings() {
+        let defaults = UserDefaults.standard
+
+        // Defaults are registered at launch (App.init → registerLocalDefaults);
+        // re-register here too since registration is idempotent and this VM may
+        // be exercised in isolation (previews / tests).
+        Self.registerLocalDefaults()
 
         blockUnknownSenders = defaults.bool(forKey: "block_unknown_senders")
         isNotificationsEnabled = defaults.bool(forKey: "notifications_enabled")
@@ -480,13 +499,24 @@ public final class SettingsViewModel {
     /// Called from loadSettings() and periodically by the view.
     @MainActor
     public func refreshConnectionState() async {
-        isConnected = appServices.isConnected
-        isReconnecting = appServices.isReconnecting
-        reconnectError = appServices.connectionError
+        // In Model B the NE owns the TCP relay and the app owns no local TCP
+        // interface, so reading app interfaces would always report
+        // "disconnected". Reflect the NE relay's state (via the proxy) for TCP;
+        // app-owned radios (Auto / BLE / RNode) are read locally in both models.
+        let modelB = BackendPreference.modelB
+
+        let tcpConnected: Bool
+        if modelB {
+            tcpConnected = await appServices.neTcpRelayOnline()
+        } else if let tcp = appServices.tcpInterface {
+            tcpConnected = await tcp.state == .connected
+        } else {
+            tcpConnected = false
+        }
 
         // Build connected interface string from all active interfaces
         var activeInterfaces: [String] = []
-        if let tcp = appServices.tcpInterface, await tcp.state == .connected {
+        if tcpConnected {
             let interfaceRepo = InterfaceRepository()
             if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
                case .tcpClient(let config) = tcpEntity.config {
@@ -502,7 +532,14 @@ public final class SettingsViewModel {
         if let rnode = appServices.rnodeInterface, await rnode.state == .connected {
             activeInterfaces.append("RNode")
         }
-        if let ble = appServices.bleInterface, await ble.state == .connected {
+        if modelB {
+            // Model B: BLE runs in the NE — count its native peers (over the proxy
+            // IPC) rather than the app's Compat `bleInterface`, which never has peers.
+            let bleCount = await appServices.getBLEConnectionInfos().count
+            if bleCount > 0 {
+                activeInterfaces.append("Bluetooth LE (\(bleCount) peer\(bleCount == 1 ? "" : "s"))")
+            }
+        } else if let ble = appServices.bleInterface, await ble.state == .connected {
             let count = await ble.peerCount
             if count > 0 {
                 activeInterfaces.append("Bluetooth LE (\(count) peer\(count == 1 ? "" : "s"))")
@@ -511,6 +548,13 @@ public final class SettingsViewModel {
             }
         }
         connectedInterface = activeInterfaces.isEmpty ? "No active interface" : activeInterfaces.joined(separator: ", ")
+
+        // Overall state: in Model B "connected" = at least one active interface
+        // (the NE relay or an app-owned radio); otherwise defer to the app's own
+        // connection tracking (which owns the interfaces in Model A).
+        isConnected = modelB ? !activeInterfaces.isEmpty : appServices.isConnected
+        isReconnecting = modelB ? false : appServices.isReconnecting
+        reconnectError = modelB ? nil : appServices.connectionError
     }
 
     /// Sync auto-announce manager state with current settings.
@@ -536,6 +580,10 @@ public final class SettingsViewModel {
         BackendPreference.isSwift = useSwiftBackend
         backendChangePending = true
     }
+
+    // Model B is no longer a user toggle — it's the sole architecture on the
+    // Swift build (see `BackendPreference.modelB`). `applyModelBSelection` and
+    // the `modelBEnabled` state were removed with the Settings toggle.
 
     /// Update icon appearance and persist.
     @MainActor
@@ -647,6 +695,10 @@ public final class SettingsViewModel {
             } else {
                 propManager.stopPeriodicSync()
             }
+            // Persist + (Model B) republish the seam so interval/periodic edits reach
+            // the NE — including an interval-only change or disabling periodic sync,
+            // which the start/stop calls above don't push on their own.
+            await propManager.savePreferences()
         }
     }
 

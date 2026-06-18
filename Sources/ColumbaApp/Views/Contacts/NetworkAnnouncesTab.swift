@@ -150,6 +150,7 @@ struct NetworkAnnouncesTab: View {
                             label: filter.rawValue,
                             icon: interfaceIcon(for: filter),
                             mdiIcon: filter == .ble ? "bluetooth" : nil,
+                            lucideIcon: filter == .rnode ? "antenna" : nil,
                             isSelected: viewModel.interfaceFilter == filter
                         ) {
                             withAnimation(.easeInOut(duration: 0.2)) {
@@ -165,10 +166,13 @@ struct NetworkAnnouncesTab: View {
         .padding(.top, 8)
     }
 
-    private func filterCapsule(label: String, icon: String?, mdiIcon: String? = nil, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func filterCapsule(label: String, icon: String?, mdiIcon: String? = nil, lucideIcon: String? = nil, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                if let mdiIcon, let ch = MaterialDesignIcons.character(for: mdiIcon) {
+                if let lucideIcon, let ch = Lucide.character(for: lucideIcon) {
+                    Text(String(ch))
+                        .font(.custom(Lucide.fontName, size: 12))
+                } else if let mdiIcon, let ch = MaterialDesignIcons.character(for: mdiIcon) {
                     Text(String(ch))
                         .font(.custom(MaterialDesignIcons.fontName, size: 12))
                 } else if let icon = icon {
@@ -209,7 +213,7 @@ struct NetworkAnnouncesTab: View {
         case .tcp: return "globe"
         case .wifi: return "wifi"
         case .ble: return nil // MDI bluetooth icon used instead
-        case .rnode: return "antenna.radiowaves.left.and.right"
+        case .rnode: return nil // Lucide antenna glyph used instead
         }
     }
 

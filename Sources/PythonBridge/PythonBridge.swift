@@ -973,28 +973,9 @@ public extension PythonBridge {
         }
     }
 
-    /// Fire a Python RNode bridge callback ("data" / "state"). Fire-and-forget,
-    /// same machinery as `invokeBLECallback` but resolves the callable through
-    /// rns_bridge's `_rnode_get_callback`. Called by `PythonRNodeCallbackBridge`
-    /// from SwiftRNodeBridge's CoreBluetooth delegate; safe from any queue.
-    func invokeRNodeCallback(slot: String, args: [BLEArg]) {
-        queue.async { [self] in
-            _ = PythonRuntime.shared.withGIL { () -> Int in
-                self.invokeBLECallbackLocked(
-                    slot: slot,
-                    args: args,
-                    getterName: "_rnode_get_callback"
-                )
-                return 0
-            }
-        }
-    }
-
     /// MUST be called with the GIL held. Returns the raw `PyObject*` result if
     /// `wantResult` is true (caller owns the ref), else nil. `getterName` selects
-    /// the rns_bridge slot-lookup function — `_ble_get_callback` for the mesh,
-    /// `_rnode_get_callback` for the RNode NUS client (same invocation machinery,
-    /// different registry).
+    /// the rns_bridge slot-lookup function (`_ble_get_callback` for the mesh).
     @discardableResult
     private func invokeBLECallbackLocked(
         slot: String,

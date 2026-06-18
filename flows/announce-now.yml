@@ -1,0 +1,60 @@
+appId: network.columba.Columba
+name: announce-now
+tags:
+  - smoke
+  - connectivity
+---
+# Drives a MANUAL announce to test outbound connectivity end-to-end (app -> the
+# active interface -> [if background transport is on] the extension -> relay).
+# Does NOT clearState/clearKeychain — relies on the already-configured identity,
+# TCP relay interface, and background-transport setting on the device.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 6000
+# Dismiss onboarding if it somehow appears (configured device: shouldn't).
+- runFlow:
+    when:
+      visible: "Skip"
+    commands:
+      - tapOn: "Skip"
+      - waitForAnimationToEnd:
+          timeout: 2000
+- runFlow:
+    when:
+      visible: "Get Started"
+    commands:
+      - tapOn: "Get Started"
+      - waitForAnimationToEnd:
+          timeout: 2000
+# Go to the Settings tab.
+- tapOn:
+    text: "Settings"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+# Expand the Auto Announce card (it's an ExpandableSettingsCard; collapsed by default).
+- scrollUntilVisible:
+    element:
+      text: "Auto Announce"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "Auto Announce"
+- waitForAnimationToEnd:
+    timeout: 2000
+# Tap the manual "Announce Now" button inside the expanded card.
+- scrollUntilVisible:
+    element:
+      text: "Announce Now"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "Announce Now"
+- waitForAnimationToEnd:
+    timeout: 5000
+# Confirmation toast (optional — log capture is the real verification).
+- assertVisible:
+    text: "Announce sent!"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
