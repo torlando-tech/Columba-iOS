@@ -651,6 +651,24 @@ actor NEReticulumNode {
         announceTask = nil
         propagationSyncTask?.cancel()
         propagationSyncTask = nil
+
+        // Remove EVERY Darwin observer this node registered directly with
+        // `Unmanaged.passUnretained(self)` — the RNode-config observer
+        // (startRNodeConfigObserver) and BOTH propagation observers
+        // (startPropagationObservers: config-changed + sync-now). They hold a RAW,
+        // non-owning pointer to `self`. PacketTunnelProvider builds a fresh node per
+        // `startTunnel` but iOS REUSES the process, so any surviving observer would,
+        // on the next `rnodeConfigChanged`/`propagationConfigChanged`/`syncNow`
+        // notification, call `fromOpaque(...).takeUnretainedValue()` on the deinited
+        // actor — a use-after-free. `RemoveEveryObserver` clears all of them in one
+        // call (and is robust to any future self-registered observer); reset the
+        // guards so a subsequent `start()` re-registers cleanly. (The BLE and RNode
+        // SEAM observers are owned by their seam wires, torn down separately below.)
+        let darwinCenter = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterRemoveEveryObserver(darwinCenter, Unmanaged.passUnretained(self).toOpaque())
+        rnodeConfigObserverRegistered = false
+        propagationObserversRegistered = false
+
         if let br = bridge {
             await br.disconnect()
         }
@@ -666,6 +684,20 @@ actor NEReticulumNode {
         bleSeamTransport?.stop()
         bleSeamTransport = nil
         bleInterface = nil
+
+        // Tear down the RNode seam the same way — identical frame-stealing / dangling
+        // hazard. `rnodeInterface` wraps an `AppGroupRNodeSeamTransport` whose
+        // `AppGroupRNodeSeamWire` registers a `rnodeSeamA2N` Darwin observer in start();
+        // `disconnect()` → wire.stop() → CFNotificationCenterRemoveObserver. Without it
+        // the orphaned observer drains the app→NE RNode queue and steals KISS frames from
+        // the freshly-started node on NE restart, and dangles once the wire deinits. Do
+        // this while `transport` is still alive so `removeInterface` can detach it.
+        if let ri = rnodeInterface {
+            await ri.disconnect()
+            await transport?.removeInterface(id: ri.id)
+            rnodeInterface = nil
+        }
+
         router = nil
         transport = nil
         pathTable = nil
@@ -759,6 +791,14 @@ actor NEReticulumNode {
         if status == errSecItemNotFound {
             status = SecItemAdd(probe as CFDictionary, &result)
         }
+        // The probe item exists ONLY to read the system-assigned access group; delete it
+        // now so it doesn't accumulate in the keychain for the install's lifetime (mirror
+        // of AppServices.keychainAccessGroupPrefix). Re-resolution re-adds it cheaply.
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: "columba.bundleSeedProbe",
+            kSecAttrService as String: "columba.bundleSeedProbe",
+        ] as CFDictionary)
         guard status == errSecSuccess,
               let attrs = result as? [String: Any],
               let group = attrs[kSecAttrAccessGroup as String] as? String,
@@ -863,10 +903,15 @@ actor NEReticulumNode {
                   let type = configWrapper["type"] as? String, type == "tcpClient",
                   let config = configWrapper["config"] as? [String: Any],
                   let host = config["targetHost"] as? String,
-                  let port = config["targetPort"] as? Int else {
+                  let port = config["targetPort"] as? Int,
+                  // Bound the port: `UInt16(truncatingIfNeeded:)` would silently WRAP an
+                  // out-of-range value (65536 → 0, 131071 → 65535), so a misconfigured
+                  // relay would dial port 0 / a wrong port instead of being skipped.
+                  // Skip bad entries (and 0) so a later valid relay can still win.
+                  port > 0, port <= 65535 else {
                 continue
             }
-            return (host: host, port: UInt16(truncatingIfNeeded: port))
+            return (host: host, port: UInt16(port))
         }
         return nil
     }

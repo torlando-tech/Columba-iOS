@@ -433,6 +433,10 @@ public final class AppServices {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let copyStatus = SecItemCopyMatching(query as CFDictionary, &result)
+        // The probe item exists ONLY to read the system-assigned access group; delete it
+        // now (regardless of the read result) so it doesn't accumulate in the user's
+        // keychain for the lifetime of the install. Re-resolution re-adds it cheaply.
+        SecItemDelete(base as CFDictionary)
         guard copyStatus == errSecSuccess,
               let attrs = result as? [String: Any],
               let group = attrs[kSecAttrAccessGroup as String] as? String,
