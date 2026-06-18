@@ -239,10 +239,13 @@ struct BackgroundTransportView: View {
     @ViewBuilder
     private var actionButton: some View {
         if isEnabledState {
-            // Disable: stop the running tunnel.
+            // Disable: clear on-demand + stop (a bare stop() would auto-reconnect).
             Button {
                 errorMessage = nil
-                tunnel.stop()
+                Task {
+                    do { try await tunnel.disable() }
+                    catch { errorMessage = error.localizedDescription }
+                }
             } label: {
                 Text("Disable Background Transport")
                     .font(.headline)

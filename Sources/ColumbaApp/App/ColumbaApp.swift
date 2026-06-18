@@ -99,6 +99,11 @@ struct ColumbaApp: App {
 
         // Install notification delegate early so didReceive (notification tap) works
         UNUserNotificationCenter.current().delegate = NotificationService.delegate
+
+        // Register app-side notification/announce defaults at launch (not lazily on
+        // first Settings open) so the foreground notification path isn't suppressed
+        // on a fresh install that never visits Settings. (ports #57 dc1024b)
+        SettingsViewModel.registerLocalDefaults()
     }
 
     // MARK: - App Body
@@ -883,8 +888,14 @@ struct RootView: View {
                 }
             }
 
-            // 8. Request notification permission and install foreground delegate
-            await NotificationService.shared.requestPermission()
+            // 8. Request notification permission WITHOUT blocking init. A blocking
+            // `await` here holds the rest of RootView setup (and `isInitialized`)
+            // hostage behind the OS auth sheet until the user taps Allow/Don't Allow
+            // — and on a fresh-install device the smoke harness (no UI driver) can't
+            // tap it at all, so init never completes. The foreground UN delegate is
+            // already installed eagerly in `init()` (see the delegate assignment in
+            // ColumbaApp.init), so deferring the prompt is safe. (ports #57 fc9b0b8)
+            Task { _ = await NotificationService.shared.requestPermission() }
 
             self.isInitialized = true
 

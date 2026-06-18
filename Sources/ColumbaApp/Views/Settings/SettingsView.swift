@@ -500,7 +500,9 @@ struct SettingsView: View {
                                     try? await tunnel.install()
                                     try? await tunnel.start()
                                 } else {
-                                    tunnel.stop()
+                                    // disable() clears on-demand so iOS won't
+                                    // auto-reconnect (a bare stop() would).
+                                    try? await tunnel.disable()
                                 }
                             }
                         }

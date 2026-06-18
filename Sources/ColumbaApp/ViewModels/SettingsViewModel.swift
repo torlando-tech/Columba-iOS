@@ -375,12 +375,22 @@ public final class SettingsViewModel {
     }
 
     /// Load local settings from UserDefaults.
-    private func loadLocalSettings() {
-        let defaults = UserDefaults.standard
-
-        // Register sane defaults so bool(forKey:) returns true for notifications
-        // even if the key was never explicitly written (e.g. pre-existing installs).
-        defaults.register(defaults: [
+    /// Register app-side `UserDefaults.standard` defaults at process launch.
+    ///
+    /// `NotificationService` (the foreground notification path) gates on
+    /// `bool(forKey: "notifications_enabled")`, which returns `false` unless the
+    /// key is registered. Registration used to live ONLY in `loadLocalSettings()`,
+    /// which runs lazily the first time Settings is opened — so on a fresh install
+    /// that never visits Settings, `notifications_enabled` stayed unregistered and
+    /// the foreground notification path was silently suppressed. Call this from
+    /// `App.init()` so the defaults exist before any reader runs. Registration is
+    /// idempotent and process-wide. (ports #57 dc1024b)
+    ///
+    /// (Background notifications under Model B are posted by the Network Extension,
+    /// which gates only on system authorization — not this default — so it is
+    /// unaffected; this fixes the in-app/foreground path and is correct hygiene.)
+    static func registerLocalDefaults() {
+        UserDefaults.standard.register(defaults: [
             "notifications_enabled": true,
             "show_message_previews": true,
             "play_sounds": true,
@@ -390,6 +400,15 @@ public final class SettingsViewModel {
             "auto_announce_on_tcp_reconnect": true,
             "auto_announce_on_peer_spawned": true
         ])
+    }
+
+    private func loadLocalSettings() {
+        let defaults = UserDefaults.standard
+
+        // Defaults are registered at launch (App.init → registerLocalDefaults);
+        // re-register here too since registration is idempotent and this VM may
+        // be exercised in isolation (previews / tests).
+        Self.registerLocalDefaults()
 
         blockUnknownSenders = defaults.bool(forKey: "block_unknown_senders")
         isNotificationsEnabled = defaults.bool(forKey: "notifications_enabled")

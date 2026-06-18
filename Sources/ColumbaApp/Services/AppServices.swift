@@ -2541,6 +2541,12 @@ public final class AppServices {
         guard let tunnel = tunnelManager else { return }
         tunnelModeActive = active
 
+        // Tunnel mode is TCP-only. The AutoInterface is deliberately NOT bridged:
+        // forwarding its frames to `tunnel.sendFrame(tag: .auto)` black-holes them
+        // — PacketTunnelProvider drops every non-ProxyRequest frame, and the NE
+        // node has no UDP/Auto path to send them on anyway. Leaving Auto in its
+        // local mode keeps its own foreground LAN socket working; tunneling it can
+        // only break background Auto outbound. (ports #57 d3719c2 fix #3)
         if active {
             for (_, iface) in tcpInterfaces {
                 await iface.beginTunnelMode { [weak tunnel] frame in
@@ -2548,19 +2554,10 @@ public final class AppServices {
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
                 }
             }
-            if let auto = autoInterface {
-                await auto.beginTunnelMode { [weak tunnel] frame in
-                    DiagLog.log("[BRIDGE-OUT] iface->sendFrame tag=auto len=\(frame.count)")
-                    await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.auto.rawValue)
-                }
-            }
-            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP + \(self.autoInterface != nil ? 1 : 0) Auto interface(s)")
+            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s); Auto stays local")
         } else {
             for (_, iface) in tcpInterfaces {
                 await iface.endTunnelMode()
-            }
-            if let auto = autoInterface {
-                await auto.endTunnelMode()
             }
             DiagLog.log("[TUNNEL] disabled tunnel mode; interfaces resuming local connections")
         }

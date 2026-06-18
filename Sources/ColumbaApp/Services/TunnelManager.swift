@@ -144,10 +144,36 @@ public final class TunnelManager: @unchecked Sendable {
         logger.info("Tunnel started")
     }
 
-    /// Stop the tunnel extension.
+    /// Stop the tunnel session WITHOUT disarming on-demand.
+    ///
+    /// Note: `install()` arms `isOnDemandEnabled = true` + an
+    /// `NEOnDemandRuleConnect()` rule so iOS relaunches the NE after jetsam /
+    /// reboot. A bare `stopVPNTunnel()` therefore does NOT keep the tunnel down —
+    /// iOS re-connects via the armed rule. For the user-facing "Disable Background
+    /// Transport" affordance use `disable()`, which clears on-demand first. This
+    /// remains for transient internal stops where the auto-reconnect IS wanted.
     public func stop() {
         manager?.connection.stopVPNTunnel()
-        logger.info("Tunnel stopped")
+        logger.info("Tunnel stopped (on-demand still armed)")
+    }
+
+    /// Fully disable background transport: clear the on-demand connect rule and
+    /// the enabled flag, persist, then stop the live session.
+    ///
+    /// Without clearing on-demand, "Disable Background Transport" is a no-op —
+    /// iOS auto-resumes the NE through the `NEOnDemandRuleConnect()` armed in
+    /// `install()`. Clearing `isOnDemandEnabled`/`onDemandRules`/`isEnabled` and
+    /// `saveToPreferences()` is what actually keeps it down. Re-enabling via
+    /// `start()` re-arms everything through `install()`. (ports #57 38f8d2e)
+    public func disable() async throws {
+        guard let manager else { return }
+        manager.isOnDemandEnabled = false
+        manager.onDemandRules = []
+        manager.isEnabled = false
+        try await manager.saveToPreferences()
+        manager.connection.stopVPNTunnel()
+        isEnabled = false
+        logger.info("Tunnel disabled (on-demand cleared)")
     }
 
     /// Send a raw frame to the extension for transmission.
