@@ -3779,21 +3779,6 @@ public final class AppServices {
         DiagLog.log("[ANNOUNCE] sent via Python (name=\"\(displayName)\")")
     }
 
-    /// Model B UI helper: the NE owns the TCP relay, so the app has no local
-    /// `TCPInterface` to report — the interface card would otherwise show a
-    /// permanent "disconnected". Query the NE (via the proxy `statusSnapshot`)
-    /// for the relay's connected state so the card reflects reality. Returns
-    /// `false` off Model B or when the NE isn't reachable.
-    public func neTcpRelayOnline() async -> Bool {
-        guard BackendPreference.modelB, let backend = backend else { return false }
-        let snap = await backend.statusSnapshot()
-        // The NE registers one interface per relay with id `ne-tcp-relay-<entityId>`
-        // (multi-relay), so match the PREFIX — an exact `== "ne-tcp-relay"` never matches
-        // and made the UI always read "not connected" even with a relay up. `&& online`
-        // is required so a registered-but-down relay doesn't false-positive.
-        return snap?.interfaces.contains { $0.sectionName.hasPrefix("ne-tcp-relay") && $0.online } ?? false
-    }
-
     /// Per-relay status for the Interface UI. Maps each registered `ne-tcp-relay-<id>`
     /// interface back to its entity id (the suffix), with online + last error so the
     /// card can show connected / unreachable / connecting per relay.
