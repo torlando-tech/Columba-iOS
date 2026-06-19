@@ -488,6 +488,7 @@ struct RootView: View {
                 OnboardingView(
                     identityManager: identityManager,
                     settingsRepository: settingsRepository,
+                    appServices: appServices,
                     onComplete: {
                         showOnboarding = false
                         identitySwitchTrigger = UUID()

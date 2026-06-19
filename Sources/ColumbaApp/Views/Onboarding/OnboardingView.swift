@@ -14,6 +14,7 @@ import RNSAPI
 struct OnboardingView: View {
     let identityManager: IdentityManager
     let settingsRepository: SettingsRepository
+    let appServices: AppServices
     let onComplete: () -> Void
 
     @State private var viewModel = OnboardingViewModel()
@@ -93,6 +94,22 @@ struct OnboardingView: View {
                             onContinue: { viewModel.nextPage() }
                         )
                     case 4:
+                        BackgroundDeliveryPage(
+                            onEnable: {
+                                // Create the identity now (idempotent) so the NE can
+                                // load it from the shared keychain, activate it, then
+                                // bring the tunnel up. Only advance on success.
+                                await viewModel.prepareIdentity(identityManager: identityManager)
+                                guard let local = viewModel.createdIdentity,
+                                      let result = try? await identityManager.switchToIdentity(local.identityHash)
+                                else { return false }
+                                let ok = await appServices.enableBackgroundDeliveryForOnboarding(identity: result.1)
+                                if ok { viewModel.nextPage() }
+                                return ok
+                            },
+                            onBack: { viewModel.previousPage() }
+                        )
+                    case 5:
                         CompletePage(
                             displayName: viewModel.effectiveDisplayName,
                             interfaceNames: viewModel.selectedInterfaceNames,

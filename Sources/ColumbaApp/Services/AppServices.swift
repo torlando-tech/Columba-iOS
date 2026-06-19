@@ -974,6 +974,58 @@ public final class AppServices {
     /// is hardcoded — if `interfaces` is empty the app starts offline and
     /// the user adds an interface in Settings → Manage Interfaces.
     #if ENABLE_NETWORK_EXTENSION
+    /// Create + wire the tunnel manager exactly once (idempotent). Called by
+    /// `initialize()` and by the onboarding background-delivery step, which may bring
+    /// the tunnel up before `initialize()` runs.
+    private func ensureTunnelManager() async {
+        guard tunnelManager == nil else { return }
+        let tunnel = TunnelManager()
+        self.tunnelManager = tunnel
+        // Wire tunnel state -> per-interface tunnel-mode coordination (see initialize()).
+        tunnel.onStatusChange = { [weak self] newStatus in
+            guard let self else { return }
+            Task { @MainActor in
+                switch newStatus {
+                case .connected:
+                    await self.applyTunnelModeToInterfaces(active: true)
+                case .disconnected, .invalid:
+                    await self.applyTunnelModeToInterfaces(active: false)
+                default:
+                    break
+                }
+            }
+        }
+        await tunnel.load()
+    }
+
+    /// Onboarding's in-flow "Enable Background Delivery" step (Model B). Shares the
+    /// active identity into the NE-readable keychain, brings the VPN tunnel up (the
+    /// iOS "Allow" prompt fires here), and persists approval so the post-onboarding
+    /// init takes the silent-reconnect path (no second gate). Returns whether the
+    /// tunnel connected; the page surfaces an error + retry on `false`. No-op-ish on
+    /// simulator/unsigned builds (the shared-keychain group is nil and the tunnel
+    /// won't truly connect there).
+    @discardableResult
+    public func enableBackgroundDeliveryForOnboarding(identity: Identity) async -> Bool {
+        Self.shareIdentityForModelB(identity)
+        await ensureTunnelManager()
+        guard let tunnel = tunnelManager else { return false }
+        do {
+            try await tunnel.install()
+            try await tunnel.start()
+        } catch {
+            DiagLog.log("[TUNNEL-GATE] onboarding enable failed: \(error)")
+            return false
+        }
+        guard await tunnel.waitUntilConnected(timeoutMs: 25_000) else {
+            DiagLog.log("[TUNNEL-GATE] onboarding enable: tunnel did not connect (approval denied?)")
+            return false
+        }
+        SharedDefaults.suite.set(true, forKey: Self.backgroundDeliveryEnabledKey)
+        DiagLog.log("[TUNNEL-GATE] onboarding enable: tunnel connected + approval persisted")
+        return true
+    }
+
     /// Ensure the NE/VPN tunnel is connected before the Model-B proxy backend starts.
     ///
     /// Returning users (approval persisted) get a SILENT bring-up — `install()` is a
@@ -2573,32 +2625,9 @@ public final class AppServices {
 
         reader.startListening()
 
-        // 13. Load tunnel manager
-        let tunnel = TunnelManager()
-        self.tunnelManager = tunnel
-
-        // Wire tunnel state -> per-interface tunnel-mode coordination.
-        // When the VPN extension reports `.connected`, switch each
-        // TCPInterface / AutoInterface into tunnel mode so its
-        // outbound traffic flows through the extension's authoritative
-        // socket instead of through a duplicate local NWConnection.
-        // When the extension goes back to `.disconnected`, restore the
-        // local NWConnection-managed path. The closure is invoked on
-        // the main actor by TunnelManager.
-        tunnel.onStatusChange = { [weak self] newStatus in
-            guard let self else { return }
-            Task { @MainActor in
-                switch newStatus {
-                case .connected:
-                    await self.applyTunnelModeToInterfaces(active: true)
-                case .disconnected, .invalid:
-                    await self.applyTunnelModeToInterfaces(active: false)
-                default:
-                    break
-                }
-            }
-        }
-        await tunnel.load()
+        // 13. Tunnel manager (idempotent — the onboarding background-delivery step may
+        //     have already created it and brought the tunnel up).
+        await ensureTunnelManager()
         #endif
 
         // Start Python RNS backend on the multi-identity path too.

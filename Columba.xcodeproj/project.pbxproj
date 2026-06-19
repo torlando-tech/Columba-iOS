@@ -140,6 +140,7 @@
 		71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
 		779118E89F4D38BF960DB3D0 /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
 		7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */; };
+		80D0868B2491DB301F772D63 /* BackgroundDeliveryPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */; };
 		8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
 		886AB689C7699471510BAF9A /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
 		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
@@ -262,6 +263,7 @@
 		71922EC204982A357F814F23 /* CallControlButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
 		7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecSelectionSheet.swift; sourceTree = "<group>"; };
 		86E428836698BA8A8973A92F /* CallManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
+		894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundDeliveryPage.swift; sourceTree = "<group>"; };
 		8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNSBackend.swift; sourceTree = "<group>"; };
 		8CBD293157E715F490613984 /* PyMessage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyMessage.swift; path = Python/Models/PyMessage.swift; sourceTree = "<group>"; };
 		9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DiscoveredDevice.swift; sourceTree = "<group>"; };
@@ -666,6 +668,7 @@
 				F051 /* CompletePage.swift */,
 				F079 /* OnboardingRestoreSheet.swift */,
 				56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */,
+				894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -1222,6 +1225,7 @@
 				AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */,
 				1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */,
 				F83A2212E43B329830919AFF /* BackgroundDeliveryGateView.swift in Sources */,
+				80D0868B2491DB301F772D63 /* BackgroundDeliveryPage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

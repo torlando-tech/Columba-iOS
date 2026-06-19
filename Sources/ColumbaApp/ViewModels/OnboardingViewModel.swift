@@ -31,7 +31,7 @@ final class OnboardingViewModel {
     var qrCodeString: String = ""
 
     /// Total number of onboarding pages.
-    static let pageCount = 5
+    static let pageCount = 6
 
     // MARK: - Computed
 
