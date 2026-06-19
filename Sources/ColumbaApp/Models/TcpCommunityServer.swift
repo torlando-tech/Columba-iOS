@@ -33,7 +33,13 @@ extension TcpCommunityServer {
         // Bootstrap-class servers (well-established, reliable nodes).
         // Reticulum-Swift does not yet support the bootstrap interface mode,
         // so the iOS UI surfaces these alongside other community servers.
-        TcpCommunityServer(name: "Beleth RNS Hub", host: "rns.beleth.net", port: 4242, isBootstrap: true),
+        // NOTE: Beleth's :4242 is currently unreachable (host up, but the RNS
+        // port drops connections), so it is NOT flagged bootstrap — otherwise
+        // `defaultServer` would seed it as the SOLE TCP path on a skipped/empty
+        // onboarding and the node would come up with no reachable relay. It
+        // stays in the directory as a selectable option in case it recovers.
+        // (Diverges intentionally from Android's list until Beleth is back.)
+        TcpCommunityServer(name: "Beleth RNS Hub", host: "rns.beleth.net", port: 4242, isBootstrap: false),
         TcpCommunityServer(name: "Quad4 TCP Node 1", host: "rns.quad4.io", port: 4242, isBootstrap: true),
         TcpCommunityServer(name: "FireZen", host: "firezen.com", port: 4242, isBootstrap: true),
 

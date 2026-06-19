@@ -2013,6 +2013,19 @@ public final class AppServices {
     /// TCP is unaffected.
     @MainActor
     public func applyInterfaceChanges() async {
+        // Model B: the NE owns the RNS node + all interfaces; the app's `backend` here is
+        // the thin `ProxyRnsBackend`, whose `addInterface` throws `unsupportedInProxy`. The
+        // python-shaped hot-add/-remove path below is therefore both wrong (it would error
+        // on every relay) AND unnecessary — `InterfaceRepository.saveInterfaces()` already
+        // wrote the shared `interfacesKey` and posted `configChanged`, which the NE observes
+        // (`startTCPRelayConfigObserver` → `reconcileTCPRelays`) to live-reconcile its
+        // `ne-tcp-relay-*` interfaces. So a relay add/edit/remove takes effect with NO VPN
+        // restart. Nothing more to do app-side; bail before the python path.
+        if BackendPreference.modelB {
+            DiagLog.log("[RNS-HOT] modelB: interface change handed to NE via configChanged (no app-side hot-add)")
+            return
+        }
+
         let fresh = InterfaceRepository().getEnabledInterfaces()
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
 
@@ -3774,7 +3787,24 @@ public final class AppServices {
     public func neTcpRelayOnline() async -> Bool {
         guard BackendPreference.modelB, let backend = backend else { return false }
         let snap = await backend.statusSnapshot()
-        return snap?.interfaces.first { $0.sectionName == "ne-tcp-relay" }?.online ?? false
+        // The NE registers one interface per relay with id `ne-tcp-relay-<entityId>`
+        // (multi-relay), so match the PREFIX — an exact `== "ne-tcp-relay"` never matches
+        // and made the UI always read "not connected" even with a relay up. `&& online`
+        // is required so a registered-but-down relay doesn't false-positive.
+        return snap?.interfaces.contains { $0.sectionName.hasPrefix("ne-tcp-relay") && $0.online } ?? false
+    }
+
+    /// Per-relay status for the Interface UI. Maps each registered `ne-tcp-relay-<id>`
+    /// interface back to its entity id (the suffix), with online + last error so the
+    /// card can show connected / unreachable / connecting per relay.
+    public func neTcpRelayStatuses() async -> [(entityId: String, online: Bool, lastError: String?)] {
+        guard BackendPreference.modelB, let backend = backend else { return [] }
+        let snap = await backend.statusSnapshot()
+        return (snap?.interfaces ?? []).compactMap { iface in
+            guard iface.sectionName.hasPrefix("ne-tcp-relay-") else { return nil }
+            let entityId = String(iface.sectionName.dropFirst("ne-tcp-relay-".count))
+            return (entityId: entityId, online: iface.online, lastError: iface.lastError)
+        }
     }
 
     /// Send both the LXMF delivery announce and the LXST telephony announce.
