@@ -383,28 +383,37 @@ actor NEReticulumNode {
         // before the interface connects.
         TCPTransport.bypassTunnelEgress = true
 
-        if let tcp = Self.loadTCPRelayConfig() {
-            do {
-                let cfg = InterfaceConfig(
-                    id: "ne-tcp-relay",
-                    name: "NE TCP Relay",
-                    type: .tcp,
-                    enabled: true,
-                    mode: .full,
-                    host: tcp.host,
-                    port: tcp.port
-                )
-                let tcpIface = try TCPInterface(config: cfg)
-                try await tp.addInterface(tcpIface)
-                // NO-PII: never log tcp.host / tcp.port (the relay endpoint).
-                ExtensionDiagLog.log("NEReticulumNode: TCP relay interface registered")
-            } catch {
-                // Non-fatal: the node can still deliver over the AppGroupBridge
-                // (radio) even if the relay socket can't be brought up.
-                ExtensionDiagLog.log("NEReticulumNode: TCP relay addInterface failed (non-fatal): \(String(describing: error))")
-            }
-        } else {
+        // Register EVERY enabled tcpClient relay (not just the first). The node
+        // delivers over whichever connects, so one dead/unreachable relay (e.g. a
+        // down community server) doesn't strand the user when they've also configured
+        // a reachable one (e.g. their own LAN transport node). Each gets a distinct
+        // `ne-tcp-relay-<n>` id; the reconnect/announce hooks match on the prefix.
+        let relays = Self.loadTCPRelayConfigs()
+        if relays.isEmpty {
             ExtensionDiagLog.log("NEReticulumNode: no TCP relay configured — node running on AppGroupBridge only")
+        } else {
+            for (index, tcp) in relays.enumerated() {
+                let ifaceId = "ne-tcp-relay-\(index)"
+                do {
+                    let cfg = InterfaceConfig(
+                        id: ifaceId,
+                        name: "NE TCP Relay \(index)",
+                        type: .tcp,
+                        enabled: true,
+                        mode: .full,
+                        host: tcp.host,
+                        port: tcp.port
+                    )
+                    let tcpIface = try TCPInterface(config: cfg)
+                    try await tp.addInterface(tcpIface)
+                    // NO-PII: never log tcp.host / tcp.port (the relay endpoint).
+                    ExtensionDiagLog.log("NEReticulumNode: TCP relay interface registered (\(ifaceId))")
+                } catch {
+                    // Non-fatal: the node can still deliver over the AppGroupBridge
+                    // (radio) or another relay even if this socket can't be brought up.
+                    ExtensionDiagLog.log("NEReticulumNode: TCP relay \(ifaceId) addInterface failed (non-fatal): \(String(describing: error))")
+                }
+            }
         }
 
         // TODO(C3-followup): reconnect parity. The PoC path
@@ -438,7 +447,7 @@ actor NEReticulumNode {
         //     AutoAnnounceManager "on TCP reconnect" trigger; reticulum-swift
         //     rate-limits announces per interface, so a flapping link can't spam.
         await tp.setOnInterfaceConnected { [weak self] interfaceId in
-            guard interfaceId == "ne-tcp-relay" else { return }
+            guard interfaceId.hasPrefix("ne-tcp-relay") else { return }
             await self?.onRelayReconnected()
         }
         startAnnounceScheduler()
@@ -985,16 +994,18 @@ actor NEReticulumNode {
     /// Read the enabled `tcpClient` relay endpoint from the SHARED App-Group
     /// UserDefaults (the same `SharedDefaultsConstants.interfacesKey` JSON the PoC
     /// dumb-pipe parses in `PacketTunnelProvider.loadInterfaceConfigs`). Returns
-    /// the first enabled TCP relay's `(host, port)`, or `nil` if none is
-    /// configured. Foundation-only JSON parse — the node does NOT import `Network`
-    /// (collision rule), so it surfaces a plain `(String, UInt16)` that `start()`
-    /// feeds to a reticulum-swift `TCPInterface`. NO-PII: never logs host/port.
-    static func loadTCPRelayConfig() -> (host: String, port: UInt16)? {
+    /// ALL enabled TCP relays' `(host, port)` (the node brings up an interface per
+    /// relay so one dead endpoint doesn't strand a configured-and-reachable one).
+    /// Foundation-only JSON parse — the node does NOT import `Network` (collision
+    /// rule), so it surfaces plain `(String, UInt16)`s that `start()` feeds to
+    /// reticulum-swift `TCPInterface`s. NO-PII: never logs host/port.
+    static func loadTCPRelayConfigs() -> [(host: String, port: UInt16)] {
         let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
         guard let data = defaults.data(forKey: SharedDefaultsConstants.interfacesKey),
               let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return nil
+            return []
         }
+        var relays: [(host: String, port: UInt16)] = []
         for entity in array {
             guard let enabled = entity["enabled"] as? Bool, enabled,
                   let configWrapper = entity["config"] as? [String: Any],
@@ -1004,14 +1015,13 @@ actor NEReticulumNode {
                   let port = config["targetPort"] as? Int,
                   // Bound the port: `UInt16(truncatingIfNeeded:)` would silently WRAP an
                   // out-of-range value (65536 → 0, 131071 → 65535), so a misconfigured
-                  // relay would dial port 0 / a wrong port instead of being skipped.
-                  // Skip bad entries (and 0) so a later valid relay can still win.
+                  // relay would dial port 0 / a wrong port. Skip bad entries (and 0).
                   port > 0, port <= 65535 else {
                 continue
             }
-            return (host: host, port: UInt16(port))
+            relays.append((host: host, port: UInt16(port)))
         }
-        return nil
+        return relays
     }
 
     /// Short, NO-PII hash prefix (≤ 8 hex chars) for logging.
@@ -1144,7 +1154,7 @@ actor NEReticulumNode {
         let stepMs = 500
         while waited < timeoutMs {
             let snaps = await transport.getInterfaceSnapshots()
-            if snaps.contains(where: { $0.id == "ne-tcp-relay" && $0.state == .connected }) {
+            if snaps.contains(where: { $0.id.hasPrefix("ne-tcp-relay") && $0.state == .connected }) {
                 return true
             }
             do {
