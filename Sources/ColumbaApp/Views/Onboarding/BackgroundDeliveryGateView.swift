@@ -21,7 +21,7 @@
 import SwiftUI
 
 struct BackgroundDeliveryGateView: View {
-    @Bindable var appServices: AppServices
+    let appServices: AppServices
 
     @State private var isWorking = false
     @State private var errorMessage: String?

@@ -1058,13 +1058,17 @@ public final class AppServices {
         DiagLog.log("[TUNNEL-GATE] approval received — resuming init")
     }
 
-    /// Called by `BackgroundDeliveryGateView`'s Enable button. Installs + starts the
-    /// tunnel (the first `install()` fires the iOS VPN-approval prompt), waits for it to
-    /// connect, persists the approval, then resumes the suspended init. Returns whether
-    /// the tunnel connected — the gate surfaces an error + retry on `false` (e.g. the
-    /// user tapped "Don't Allow"), WITHOUT resuming init, so the user can try again.
+    /// Gate-flow entry point ONLY (called by `BackgroundDeliveryGateView`'s Enable
+    /// button — `internal` to keep it out of the public API so it can't be invoked
+    /// outside the gate, where the suspended-init continuation it resumes wouldn't
+    /// exist). Installs + starts the tunnel (the first `install()` fires the iOS
+    /// VPN-approval prompt), waits for it to connect, persists the approval, then
+    /// resumes the suspended init. Returns whether the tunnel connected — the gate
+    /// surfaces an error + retry on `false` (e.g. the user tapped "Don't Allow"),
+    /// WITHOUT resuming init, so the user can try again. (The non-gate "enable
+    /// background delivery" path is the separate `enableBackgroundDeliveryForOnboarding`.)
     @discardableResult
-    public func approveBackgroundDelivery() async -> Bool {
+    func approveBackgroundDelivery() async -> Bool {
         guard let tunnel = tunnelManager else { return false }
         do {
             try await tunnel.install()
