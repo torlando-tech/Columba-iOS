@@ -210,12 +210,18 @@ final class NetworkStatusViewModel {
             else { typeName = Self.displayType(forRaw: iface.typeRaw) }
             let addr = (iface.peerAddress?.isEmpty == false) ? iface.peerAddress : nil
             let err = (iface.lastError?.isEmpty == false) ? iface.lastError : nil
+            // An offline relay that reported an error is `.connectionFailed` (the row shows
+            // the reason), not a bland `.disconnected` — so a relay that can't reach its
+            // host is honestly surfaced instead of looking idle. No error yet ⇒ disconnected.
+            let mappedState: InterfaceState = iface.online
+                ? .connected
+                : (err != nil ? .connectionFailed(underlying: err!) : .disconnected)
             return InterfaceInfo(
                 id: iface.sectionName,
                 name: iface.name,
                 type: typeName,
                 online: iface.online,
-                state: iface.online ? .connected : .disconnected,
+                state: mappedState,
                 isAutoInterfacePeer: isAutoPeer,
                 peerAddress: addr,
                 lastErrorDescription: err

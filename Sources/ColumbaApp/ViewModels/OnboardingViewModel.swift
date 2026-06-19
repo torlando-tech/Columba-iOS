@@ -10,6 +10,7 @@ import Foundation
 import RNSAPI
 import Observation
 import UserNotifications
+import CoreBluetooth
 
 /// Manages onboarding flow state and persists selections on completion.
 @available(iOS 17.0, macOS 14.0, *)
@@ -23,6 +24,13 @@ final class OnboardingViewModel {
     var selectedInterfaces: Set<OnboardingInterfaceType> = []
     var selectedTcpServer: TcpCommunityServer? = nil
     var notificationsGranted: Bool = false
+    /// Current CoreBluetooth authorization. Under Model B the APP runs the CoreBluetooth
+    /// host (the NE can't), so the BLE prompt would otherwise fire un-guided after
+    /// onboarding when `ModelBBLEService` starts — surfacing it on the Permissions page
+    /// keeps it inside the flow.
+    var bluetoothAuthorization: CBManagerAuthorization = CBCentralManager.authorization
+    var bluetoothGranted: Bool { bluetoothAuthorization == .allowedAlways }
+    @ObservationIgnored private var bluetoothProbe: BluetoothPermissionProbe?
     var isSaving: Bool = false
 
     /// Identity created during onboarding (set by prepareIdentity).
@@ -31,7 +39,7 @@ final class OnboardingViewModel {
     var qrCodeString: String = ""
 
     /// Total number of onboarding pages.
-    static let pageCount = 5
+    static let pageCount = 6
 
     // MARK: - Computed
 
@@ -77,6 +85,21 @@ final class OnboardingViewModel {
     func checkNotificationStatus() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         notificationsGranted = settings.authorizationStatus == .authorized
+    }
+
+    // MARK: - Bluetooth Permission
+
+    /// Trigger the iOS Bluetooth prompt now (creating a CBCentralManager is what fires
+    /// it) so the user grants/denies it INSIDE onboarding instead of being surprised by
+    /// it after, when `ModelBBLEService` starts the app-side CoreBluetooth host.
+    func requestBluetoothPermission() {
+        bluetoothProbe = BluetoothPermissionProbe { [weak self] auth in
+            Task { @MainActor in self?.bluetoothAuthorization = auth }
+        }
+    }
+
+    func checkBluetoothStatus() {
+        bluetoothAuthorization = CBCentralManager.authorization
     }
 
     // MARK: - Identity Preparation
@@ -161,11 +184,19 @@ final class OnboardingViewModel {
 
         await settingsRepository.setDisplayName("Anonymous Peer")
 
+        // Model B: the NE node delivers over the first enabled tcpClient relay, so a
+        // skipped setup must still seed one — otherwise the node comes up with no
+        // reachable path and the user can't message anyone. (An AutoInterface-only
+        // seed is a no-op the NE ignores.)
         let interfaceRepo = InterfaceRepository()
+        let server = TcpCommunityServer.defaultServer
         interfaceRepo.addInterface(InterfaceEntity(
-            name: "Auto Discovery",
-            type: .autoInterface,
-            config: .autoInterface(AutoInterfaceConfig())
+            name: server.name,
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
         ))
 
         UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
@@ -192,42 +223,39 @@ final class OnboardingViewModel {
 
     // MARK: - Private
 
+    /// Seed the chosen TCP relay into the SHARED interface store. MUST run before the
+    /// NE is started (on the Background-Delivery step) — the in-NE node reads its relay
+    /// from this store ONCE at start (`loadTCPRelayConfig`) and has no observer to pick
+    /// up a later write, so seeding after the NE boots leaves it "AppGroupBridge only"
+    /// with no TCP path. Idempotent (it also runs again from completeOnboarding).
+    func seedInterfaces() {
+        createInterfaces(in: InterfaceRepository())
+    }
+
     private func createInterfaces(in repo: InterfaceRepository) {
-        for interfaceType in selectedInterfaces {
-            switch interfaceType {
-            case .auto:
-                repo.addInterface(InterfaceEntity(
-                    name: "Auto Discovery",
-                    type: .autoInterface,
-                    config: .autoInterface(AutoInterfaceConfig())
-                ))
-            case .nearby:
-                repo.addInterface(InterfaceEntity(
-                    name: "Nearby",
-                    type: .multipeer,
-                    config: .multipeer(MultipeerConfig())
-                ))
-            case .ble:
-                repo.addInterface(InterfaceEntity(
-                    name: "Bluetooth LE",
-                    type: .ble,
-                    config: .ble(BLEConfig())
-                ))
-            case .tcp:
-                let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
-                repo.addInterface(InterfaceEntity(
-                    name: server.name,
-                    type: .tcpClient,
-                    config: .tcpClient(TCPClientConfig(
-                        targetHost: server.host,
-                        targetPort: server.port
-                    ))
-                ))
-            case .rnode:
-                // RNode requires separate configuration wizard — skip during onboarding
-                break
+        // Model B: the NE node delivers over the first enabled `tcpClient` relay and
+        // IGNORES auto/multipeer/ble entities (those interfaces, where they exist, are
+        // owned by the NE process itself, not configured here). So onboarding seeds
+        // exactly one enabled TCP relay — the user's pick, or the default community
+        // server — guaranteeing a reachable path even if nothing was explicitly chosen.
+        let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
+        // Idempotent: seedInterfaces() (pre-NE) and completeOnboarding both call this;
+        // don't add a duplicate relay if it's already present.
+        let alreadySeeded = repo.getEnabledInterfaces().contains { entity in
+            if case .tcpClient(let cfg) = entity.config {
+                return cfg.targetHost == server.host && cfg.targetPort == server.port
             }
+            return false
         }
+        guard !alreadySeeded else { return }
+        repo.addInterface(InterfaceEntity(
+            name: server.name,
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
+        ))
     }
 }
 
@@ -289,5 +317,26 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
         case .tcp: return "Requires internet connection"
         case .rnode: return "Configure in Settings after setup"
         }
+    }
+}
+
+/// Triggers the iOS Bluetooth permission dialog by initializing a CBCentralManager
+/// (iOS prompts on first creation when authorization is `.notDetermined`) and reports
+/// the resulting authorization. Used by onboarding's Permissions page so the Model-B
+/// app-side CoreBluetooth host doesn't surprise-prompt after setup.
+private final class BluetoothPermissionProbe: NSObject, CBCentralManagerDelegate {
+    private var manager: CBCentralManager?
+    private let onAuthorizationChange: (CBManagerAuthorization) -> Void
+
+    init(onAuthorizationChange: @escaping (CBManagerAuthorization) -> Void) {
+        self.onAuthorizationChange = onAuthorizationChange
+        super.init()
+        manager = CBCentralManager(delegate: self, queue: nil, options: [
+            CBCentralManagerOptionShowPowerAlertKey: false
+        ])
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        onAuthorizationChange(CBCentralManager.authorization)
     }
 }

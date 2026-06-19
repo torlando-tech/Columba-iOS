@@ -292,6 +292,19 @@ public final class AppServices {
 
     /// Extension frame reader for processing queued frames from the extension.
     private var extensionFrameReader: ExtensionFrameReader?
+
+    /// Model-B first-launch gate. Set true while `startPythonBackend` suspends, before
+    /// `backend.start()`, waiting for the user to approve + enable background delivery
+    /// (the NE owns the node, so its VPN tunnel MUST be up first — on a fresh install it
+    /// isn't, and proxying to it would otherwise spin for minutes). RootView shows
+    /// `BackgroundDeliveryGateView` while this is true; `approveBackgroundDelivery()`
+    /// clears it and resumes init. Persisted approval (returning users) skips the gate.
+    public var needsBackgroundDeliveryApproval = false
+
+    @ObservationIgnored
+    private var backgroundDeliveryApprovalContinuation: CheckedContinuation<Void, Never>?
+
+    private static let backgroundDeliveryEnabledKey = "background_delivery_enabled"
     #endif
 
     /// Darwin notification name used by on-device test instrumentation to
@@ -960,6 +973,123 @@ public final class AppServices {
     /// `InterfaceEntity` records from `InterfaceRepository`). No host/port
     /// is hardcoded — if `interfaces` is empty the app starts offline and
     /// the user adds an interface in Settings → Manage Interfaces.
+    #if ENABLE_NETWORK_EXTENSION
+    /// Create + wire the tunnel manager exactly once (idempotent). Called by
+    /// `initialize()` and by the onboarding background-delivery step, which may bring
+    /// the tunnel up before `initialize()` runs.
+    private func ensureTunnelManager() async {
+        guard tunnelManager == nil else { return }
+        let tunnel = TunnelManager()
+        self.tunnelManager = tunnel
+        // Wire tunnel state -> per-interface tunnel-mode coordination (see initialize()).
+        tunnel.onStatusChange = { [weak self] newStatus in
+            guard let self else { return }
+            Task { @MainActor in
+                switch newStatus {
+                case .connected:
+                    await self.applyTunnelModeToInterfaces(active: true)
+                case .disconnected, .invalid:
+                    await self.applyTunnelModeToInterfaces(active: false)
+                default:
+                    break
+                }
+            }
+        }
+        await tunnel.load()
+    }
+
+    /// Onboarding's in-flow "Enable Background Delivery" step (Model B). Shares the
+    /// active identity into the NE-readable keychain, brings the VPN tunnel up (the
+    /// iOS "Allow" prompt fires here), and persists approval so the post-onboarding
+    /// init takes the silent-reconnect path (no second gate). Returns whether the
+    /// tunnel connected; the page surfaces an error + retry on `false`. No-op-ish on
+    /// simulator/unsigned builds (the shared-keychain group is nil and the tunnel
+    /// won't truly connect there).
+    @discardableResult
+    public func enableBackgroundDeliveryForOnboarding(identity: Identity) async -> Bool {
+        Self.shareIdentityForModelB(identity)
+        await ensureTunnelManager()
+        guard let tunnel = tunnelManager else { return false }
+        do {
+            try await tunnel.install()
+            try await tunnel.start()
+        } catch {
+            DiagLog.log("[TUNNEL-GATE] onboarding enable failed: \(error)")
+            return false
+        }
+        guard await tunnel.waitUntilConnected(timeoutMs: 25_000) else {
+            DiagLog.log("[TUNNEL-GATE] onboarding enable: tunnel did not connect (approval denied?)")
+            return false
+        }
+        SharedDefaults.suite.set(true, forKey: Self.backgroundDeliveryEnabledKey)
+        DiagLog.log("[TUNNEL-GATE] onboarding enable: tunnel connected + approval persisted")
+        return true
+    }
+
+    /// Ensure the NE/VPN tunnel is connected before the Model-B proxy backend starts.
+    ///
+    /// Returning users (approval persisted) get a SILENT bring-up — `install()` is a
+    /// no-op re-save, `start()` reconnects, iOS does not re-prompt. First run (or if the
+    /// silent bring-up can't connect, e.g. the user revoked the VPN in iOS Settings)
+    /// suspends here and shows `BackgroundDeliveryGateView`; `approveBackgroundDelivery()`
+    /// resumes us once the tunnel is up. This is what keeps `backend.start()` from
+    /// spinning minutes on a fresh install.
+    private func ensureBackgroundDeliveryTunnel() async {
+        guard let tunnel = tunnelManager else {
+            DiagLog.log("[TUNNEL-GATE] no tunnel manager — skipping (degraded)")
+            return
+        }
+        if SharedDefaults.suite.bool(forKey: Self.backgroundDeliveryEnabledKey) {
+            // Returning user: bring the tunnel up without prompting.
+            try? await tunnel.install()
+            try? await tunnel.start()
+            if await tunnel.waitUntilConnected(timeoutMs: 20_000) {
+                DiagLog.log("[TUNNEL-GATE] returning user — tunnel reconnected")
+                return
+            }
+            DiagLog.log("[TUNNEL-GATE] returning user — silent reconnect failed; showing gate")
+        }
+        // First run, or silent reconnect failed → require explicit approval via the gate.
+        DiagLog.log("[TUNNEL-GATE] awaiting background-delivery approval (showing gate)")
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            backgroundDeliveryApprovalContinuation = cont
+            needsBackgroundDeliveryApproval = true
+        }
+        DiagLog.log("[TUNNEL-GATE] approval received — resuming init")
+    }
+
+    /// Gate-flow entry point ONLY (called by `BackgroundDeliveryGateView`'s Enable
+    /// button — `internal` to keep it out of the public API so it can't be invoked
+    /// outside the gate, where the suspended-init continuation it resumes wouldn't
+    /// exist). Installs + starts the tunnel (the first `install()` fires the iOS
+    /// VPN-approval prompt), waits for it to connect, persists the approval, then
+    /// resumes the suspended init. Returns whether the tunnel connected — the gate
+    /// surfaces an error + retry on `false` (e.g. the user tapped "Don't Allow"),
+    /// WITHOUT resuming init, so the user can try again. (The non-gate "enable
+    /// background delivery" path is the separate `enableBackgroundDeliveryForOnboarding`.)
+    @discardableResult
+    func approveBackgroundDelivery() async -> Bool {
+        guard let tunnel = tunnelManager else { return false }
+        do {
+            try await tunnel.install()
+            try await tunnel.start()
+        } catch {
+            DiagLog.log("[TUNNEL-GATE] enable failed: \(error)")
+            return false
+        }
+        guard await tunnel.waitUntilConnected(timeoutMs: 25_000) else {
+            DiagLog.log("[TUNNEL-GATE] enable: tunnel did not connect (approval denied?)")
+            return false
+        }
+        SharedDefaults.suite.set(true, forKey: Self.backgroundDeliveryEnabledKey)
+        needsBackgroundDeliveryApproval = false
+        backgroundDeliveryApprovalContinuation?.resume()
+        backgroundDeliveryApprovalContinuation = nil
+        DiagLog.log("[TUNNEL-GATE] enable: tunnel connected + approval persisted")
+        return true
+    }
+    #endif
+
     private func startPythonBackend(
         identity: Identity,
         identityHashHex: String,
@@ -1051,6 +1181,18 @@ public final class AppServices {
 
         let identityBytes = try? identity.exportPrivateKeys()
         DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
+
+        #if ENABLE_NETWORK_EXTENSION
+        // Model B: `backend` is the thin-client proxy; `backend.start()` round-trips to
+        // the NE node over the VPN tunnel session, so the tunnel MUST be connected first.
+        // A fresh install has no VPN config at all — without this, start() would spin
+        // ~30×8s on a dead session (the "stuck on Connecting to network… for minutes"
+        // bug). Bring the tunnel up, gating first-run on the background-delivery approval
+        // gate so the iOS VPN prompt is a deliberate user step, not a silent hang.
+        if BackendPreference.modelB {
+            await ensureBackgroundDeliveryTunnel()
+        }
+        #endif
 
         do {
             DiagLog.log("[RNS] calling backend.start()")
@@ -1871,6 +2013,19 @@ public final class AppServices {
     /// TCP is unaffected.
     @MainActor
     public func applyInterfaceChanges() async {
+        // Model B: the NE owns the RNS node + all interfaces; the app's `backend` here is
+        // the thin `ProxyRnsBackend`, whose `addInterface` throws `unsupportedInProxy`. The
+        // python-shaped hot-add/-remove path below is therefore both wrong (it would error
+        // on every relay) AND unnecessary — `InterfaceRepository.saveInterfaces()` already
+        // wrote the shared `interfacesKey` and posted `configChanged`, which the NE observes
+        // (`startTCPRelayConfigObserver` → `reconcileTCPRelays`) to live-reconcile its
+        // `ne-tcp-relay-*` interfaces. So a relay add/edit/remove takes effect with NO VPN
+        // restart. Nothing more to do app-side; bail before the python path.
+        if BackendPreference.modelB {
+            DiagLog.log("[RNS-HOT] modelB: interface change handed to NE via configChanged (no app-side hot-add)")
+            return
+        }
+
         let fresh = InterfaceRepository().getEnabledInterfaces()
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
 
@@ -2487,32 +2642,9 @@ public final class AppServices {
 
         reader.startListening()
 
-        // 13. Load tunnel manager
-        let tunnel = TunnelManager()
-        self.tunnelManager = tunnel
-
-        // Wire tunnel state -> per-interface tunnel-mode coordination.
-        // When the VPN extension reports `.connected`, switch each
-        // TCPInterface / AutoInterface into tunnel mode so its
-        // outbound traffic flows through the extension's authoritative
-        // socket instead of through a duplicate local NWConnection.
-        // When the extension goes back to `.disconnected`, restore the
-        // local NWConnection-managed path. The closure is invoked on
-        // the main actor by TunnelManager.
-        tunnel.onStatusChange = { [weak self] newStatus in
-            guard let self else { return }
-            Task { @MainActor in
-                switch newStatus {
-                case .connected:
-                    await self.applyTunnelModeToInterfaces(active: true)
-                case .disconnected, .invalid:
-                    await self.applyTunnelModeToInterfaces(active: false)
-                default:
-                    break
-                }
-            }
-        }
-        await tunnel.load()
+        // 13. Tunnel manager (idempotent — the onboarding background-delivery step may
+        //     have already created it and brought the tunnel up).
+        await ensureTunnelManager()
         #endif
 
         // Start Python RNS backend on the multi-identity path too.
@@ -3647,15 +3779,17 @@ public final class AppServices {
         DiagLog.log("[ANNOUNCE] sent via Python (name=\"\(displayName)\")")
     }
 
-    /// Model B UI helper: the NE owns the TCP relay, so the app has no local
-    /// `TCPInterface` to report — the interface card would otherwise show a
-    /// permanent "disconnected". Query the NE (via the proxy `statusSnapshot`)
-    /// for the relay's connected state so the card reflects reality. Returns
-    /// `false` off Model B or when the NE isn't reachable.
-    public func neTcpRelayOnline() async -> Bool {
-        guard BackendPreference.modelB, let backend = backend else { return false }
+    /// Per-relay status for the Interface UI. Maps each registered `ne-tcp-relay-<id>`
+    /// interface back to its entity id (the suffix), with online + last error so the
+    /// card can show connected / unreachable / connecting per relay.
+    public func neTcpRelayStatuses() async -> [(entityId: String, online: Bool, lastError: String?)] {
+        guard BackendPreference.modelB, let backend = backend else { return [] }
         let snap = await backend.statusSnapshot()
-        return snap?.interfaces.first { $0.sectionName == "ne-tcp-relay" }?.online ?? false
+        return (snap?.interfaces ?? []).compactMap { iface in
+            guard iface.sectionName.hasPrefix("ne-tcp-relay-") else { return nil }
+            let entityId = String(iface.sectionName.dropFirst("ne-tcp-relay-".count))
+            return (entityId: entityId, online: iface.online, lastError: iface.lastError)
+        }
     }
 
     /// Send both the LXMF delivery announce and the LXST telephony announce.

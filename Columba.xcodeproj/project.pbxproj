@@ -140,6 +140,7 @@
 		71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
 		779118E89F4D38BF960DB3D0 /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
 		7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */; };
+		80D0868B2491DB301F772D63 /* BackgroundDeliveryPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */; };
 		8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
 		886AB689C7699471510BAF9A /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
 		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
@@ -183,6 +184,7 @@
 		F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FD6A68A52A54D21FDB70324 /* RNSAPI */; };
 		F4E9991226B4D464017DA247 /* Lucide.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA586EB5F8EB62D2579CEAAB /* Lucide.swift */; };
 		F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
+		F83A2212E43B329830919AFF /* BackgroundDeliveryGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */; };
 		FB2F3248AE405614B36BC798 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = E049A7D4D6D58690C0B674CE /* RNSAPI */; };
 		FDE0DB7957C9D877D3E67367 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
 		NERN2 /* NEReticulumNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = NERN1 /* NEReticulumNode.swift */; };
@@ -254,12 +256,14 @@
 		51D8CBCF7E546028A043E1C7 /* PyConversation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyConversation.swift; path = Python/Models/PyConversation.swift; sourceTree = "<group>"; };
 		550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppGroupRNodeSeamTransport.swift; sourceTree = "<group>"; };
 		55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PropagationSeam.swift; sourceTree = "<group>"; };
+		56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundDeliveryGateView.swift; sourceTree = "<group>"; };
 		67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncStatusBottomSheet.swift; sourceTree = "<group>"; };
 		6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
 		710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
 		71922EC204982A357F814F23 /* CallControlButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
 		7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecSelectionSheet.swift; sourceTree = "<group>"; };
 		86E428836698BA8A8973A92F /* CallManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
+		894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundDeliveryPage.swift; sourceTree = "<group>"; };
 		8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNSBackend.swift; sourceTree = "<group>"; };
 		8CBD293157E715F490613984 /* PyMessage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyMessage.swift; path = Python/Models/PyMessage.swift; sourceTree = "<group>"; };
 		9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DiscoveredDevice.swift; sourceTree = "<group>"; };
@@ -663,6 +667,8 @@
 				F050 /* PermissionsPage.swift */,
 				F051 /* CompletePage.swift */,
 				F079 /* OnboardingRestoreSheet.swift */,
+				56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */,
+				894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -1218,6 +1224,8 @@
 				F4E9991226B4D464017DA247 /* Lucide.swift in Sources */,
 				AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */,
 				1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */,
+				F83A2212E43B329830919AFF /* BackgroundDeliveryGateView.swift in Sources */,
+				80D0868B2491DB301F772D63 /* BackgroundDeliveryPage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1352,7 +1360,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION COLUMBA_ONBOARDING_ENABLED";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -1398,7 +1406,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION COLUMBA_ONBOARDING_ENABLED";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -1924,7 +1932,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/torlando-tech/reticulum-swift.git";
 			requirement = {
-				branch = "main";
+				branch = main;
 				kind = branch;
 			};
 		};

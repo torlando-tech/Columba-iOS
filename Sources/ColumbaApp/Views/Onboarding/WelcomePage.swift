@@ -13,7 +13,9 @@ import UniformTypeIdentifiers
 @available(iOS 17.0, macOS 14.0, *)
 struct WelcomePage: View {
     let onContinue: () -> Void
-    let onRestoreFile: (Data) -> Void
+    /// Optional — only wired (and the "Restore from backup" affordance only shown)
+    /// when the migration/restore path is compiled in (`COLUMBA_MIGRATION_ENABLED`).
+    var onRestoreFile: ((Data) -> Void)? = nil
 
     @State private var showingFileImporter = false
 
@@ -72,17 +74,22 @@ struct WelcomePage: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
 
-                Button {
-                    showingFileImporter = true
-                } label: {
-                    Text("Restore from backup")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
+                #if COLUMBA_MIGRATION_ENABLED
+                if onRestoreFile != nil {
+                    Button {
+                        showingFileImporter = true
+                    } label: {
+                        Text("Restore from backup")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
                 }
+                #endif
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
         }
+        #if COLUMBA_MIGRATION_ENABLED
         .fileImporter(
             isPresented: $showingFileImporter,
             allowedContentTypes: [
@@ -95,10 +102,11 @@ struct WelcomePage: View {
                 let accessing = url.startAccessingSecurityScopedResource()
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
                 if let data = try? Data(contentsOf: url) {
-                    onRestoreFile(data)
+                    onRestoreFile?(data)
                 }
             }
         }
+        #endif
     }
 
     private func privacyRow(_ text: String) -> some View {

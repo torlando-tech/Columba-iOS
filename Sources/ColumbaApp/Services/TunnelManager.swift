@@ -268,6 +268,19 @@ public final class TunnelManager: @unchecked Sendable {
         status == .connected
     }
 
+    /// Poll until the tunnel is `.connected`, up to `timeoutMs`; returns whether it
+    /// connected in time. Used by the Model-B first-launch background-delivery gate to
+    /// confirm the NE is actually up before the app proxies to it (so the proxy's
+    /// `start()` handshake connects in seconds instead of spinning on a dead session).
+    ///
+    /// Delegates to `connectedSession(timeoutMs:)` so the polling logic AND the status
+    /// source are shared — reading the live `manager.connection.status` rather than the
+    /// cached `self.status` (which lags one main-actor hop behind the
+    /// `NEVPNStatusDidChange` observer).
+    public func waitUntilConnected(timeoutMs: Int) async -> Bool {
+        await connectedSession(timeoutMs: timeoutMs) != nil
+    }
+
     /// Remove the VPN configuration entirely.
     public func uninstall() async throws {
         guard let manager else { return }

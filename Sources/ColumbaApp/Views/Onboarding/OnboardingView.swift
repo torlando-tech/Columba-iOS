@@ -14,11 +14,14 @@ import RNSAPI
 struct OnboardingView: View {
     let identityManager: IdentityManager
     let settingsRepository: SettingsRepository
+    let appServices: AppServices
     let onComplete: () -> Void
 
     @State private var viewModel = OnboardingViewModel()
+    #if COLUMBA_MIGRATION_ENABLED
     @State private var showRestoreSheet = false
     @State private var migrationVM: MigrationViewModel?
+    #endif
 
     var body: some View {
         ZStack {
@@ -53,6 +56,7 @@ struct OnboardingView: View {
                 Group {
                     switch viewModel.currentPage {
                     case 0:
+                        #if COLUMBA_MIGRATION_ENABLED
                         WelcomePage(
                             onContinue: { viewModel.nextPage() },
                             onRestoreFile: { data in
@@ -65,6 +69,9 @@ struct OnboardingView: View {
                                 Task { await vm.handleImportFile(data: data) }
                             }
                         )
+                        #else
+                        WelcomePage(onContinue: { viewModel.nextPage() })
+                        #endif
                     case 1:
                         IdentityPage(
                             displayName: $viewModel.displayName,
@@ -73,7 +80,6 @@ struct OnboardingView: View {
                         )
                     case 2:
                         ConnectivityPage(
-                            selectedInterfaces: $viewModel.selectedInterfaces,
                             selectedTcpServer: $viewModel.selectedTcpServer,
                             onBack: { viewModel.previousPage() },
                             onContinue: { viewModel.nextPage() }
@@ -84,10 +90,43 @@ struct OnboardingView: View {
                             onRequestNotifications: {
                                 Task { await viewModel.requestNotificationPermission() }
                             },
+                            bluetoothGranted: viewModel.bluetoothGranted,
+                            onRequestBluetooth: { viewModel.requestBluetoothPermission() },
                             onBack: { viewModel.previousPage() },
-                            onContinue: { viewModel.nextPage() }
+                            onContinue: {
+                                // Guarantee the BLE prompt happens IN-FLOW: the Model-B
+                                // app-side CoreBluetooth host (ModelBBLEService) prompts
+                                // unconditionally after onboarding, so if the user didn't
+                                // tap the card's Enable, fire it now as they leave the
+                                // permissions step rather than surprising them later.
+                                if viewModel.bluetoothAuthorization == .notDetermined {
+                                    viewModel.requestBluetoothPermission()
+                                }
+                                viewModel.nextPage()
+                            }
                         )
                     case 4:
+                        BackgroundDeliveryPage(
+                            onEnable: {
+                                // Create the identity now (idempotent) so the NE can
+                                // load it from the shared keychain, activate it, then
+                                // bring the tunnel up. Only advance on success.
+                                await viewModel.prepareIdentity(identityManager: identityManager)
+                                guard let local = viewModel.createdIdentity,
+                                      let result = try? await identityManager.switchToIdentity(local.identityHash)
+                                else { return false }
+                                // Seed the TCP relay into the shared store BEFORE the NE
+                                // is started below — the in-NE node reads its relay once
+                                // at start and won't pick up a later write, so seeding
+                                // after would leave it with no TCP path.
+                                viewModel.seedInterfaces()
+                                let ok = await appServices.enableBackgroundDeliveryForOnboarding(identity: result.1)
+                                if ok { viewModel.nextPage() }
+                                return ok
+                            },
+                            onBack: { viewModel.previousPage() }
+                        )
+                    case 5:
                         CompletePage(
                             displayName: viewModel.effectiveDisplayName,
                             interfaceNames: viewModel.selectedInterfaceNames,
@@ -128,7 +167,9 @@ struct OnboardingView: View {
         .animation(.easeInOut(duration: 0.25), value: viewModel.currentPage)
         .task {
             await viewModel.checkNotificationStatus()
+            viewModel.checkBluetoothStatus()
         }
+        #if COLUMBA_MIGRATION_ENABLED
         .sheet(isPresented: $showRestoreSheet) {
             if let vm = migrationVM {
                 OnboardingRestoreSheet(viewModel: vm) {
@@ -144,6 +185,7 @@ struct OnboardingView: View {
                 }
             }
         }
+        #endif
     }
 }
 #endif

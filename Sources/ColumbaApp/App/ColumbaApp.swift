@@ -488,6 +488,7 @@ struct RootView: View {
                 OnboardingView(
                     identityManager: identityManager,
                     settingsRepository: settingsRepository,
+                    appServices: appServices,
                     onComplete: {
                         showOnboarding = false
                         identitySwitchTrigger = UUID()
@@ -521,7 +522,19 @@ struct RootView: View {
                 // Voice / CallKit removed in the Python RNS migration (Phase 0).
                 // Will return in v2 once canonical Python LXST is ported to iOS audio.
             } else {
+                // Not yet initialized. Under Model B, init suspends before the proxy
+                // backend starts until the NE/VPN tunnel is up; on first launch that
+                // means showing the background-delivery gate instead of an indefinite
+                // "Connecting to network…" spinner on a tunnel that doesn't exist yet.
+                #if ENABLE_NETWORK_EXTENSION
+                if appServices.needsBackgroundDeliveryApproval {
+                    BackgroundDeliveryGateView(appServices: appServices)
+                } else {
+                    loadingView
+                }
+                #else
                 loadingView
+                #endif
             }
         }
         .onChange(of: colorScheme) { _, newScheme in

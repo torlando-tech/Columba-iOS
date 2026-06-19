@@ -505,18 +505,24 @@ public final class SettingsViewModel {
         // app-owned radios (Auto / BLE / RNode) are read locally in both models.
         let modelB = BackendPreference.modelB
 
-        let tcpConnected: Bool
-        if modelB {
-            tcpConnected = await appServices.neTcpRelayOnline()
-        } else if let tcp = appServices.tcpInterface {
-            tcpConnected = await tcp.state == .connected
-        } else {
-            tcpConnected = false
-        }
-
-        // Build connected interface string from all active interfaces
+        // Build connected interface string from all active interfaces.
         var activeInterfaces: [String] = []
-        if tcpConnected {
+
+        if modelB {
+            // Model B: the NE owns MULTIPLE relays (one `ne-tcp-relay-<entityId>` per
+            // enabled tcpClient). Label the card with the relays that are ACTUALLY online,
+            // matched by entity id via the per-relay snapshot — NOT the first-configured
+            // one. The old code labeled with `.first(tcpClient)` whenever ANY relay was up
+            // (a coarse any-online bool), so a down first relay (e.g. a dead community hub)
+            // was shown as the connected interface while a different relay carried traffic.
+            let onlineIds = Set(await appServices.neTcpRelayStatuses().filter { $0.online }.map { $0.entityId })
+            let interfaceRepo = InterfaceRepository()
+            for entity in interfaceRepo.getEnabledInterfaces() where entity.type == .tcpClient {
+                guard onlineIds.contains(entity.id), case .tcpClient(let config) = entity.config else { continue }
+                activeInterfaces.append("TCP (\(config.targetHost):\(String(config.targetPort)))")
+            }
+        } else if let tcp = appServices.tcpInterface, await tcp.state == .connected {
+            // Model A: the app owns a single local TCP interface.
             let interfaceRepo = InterfaceRepository()
             if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
                case .tcpClient(let config) = tcpEntity.config {

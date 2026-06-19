@@ -167,6 +167,16 @@ actor NEReticulumNode {
     private var rnodeAddInterfaceTask: Task<Void, Never>?
     private var rnodeConfigObserverRegistered = false
 
+    /// Model B TCP relays: the app writes the enabled `tcpClient` relays to the shared
+    /// `interfacesKey`; the NE brings up one `ne-tcp-relay-<entityId>` interface each and
+    /// LIVE-RECONCILES them when the app posts `tcpRelayConfigChanged` (add / edit / remove
+    /// a relay) — so changing interfaces takes effect WITHOUT a VPN restart. We track the
+    /// applied endpoint per entity id (the snapshot doesn't expose host/port) so the diff
+    /// can tell an endpoint EDIT (remove + re-add) from an unchanged relay. Keyed by the
+    /// stable entity id; the interface id is `ne-tcp-relay-<entityId>`.
+    private var registeredRelayEndpoints: [String: (host: String, port: UInt16)] = [:]
+    private var tcpRelayConfigObserverRegistered = false
+
     /// Model B propagation: the app writes the selected propagation node + sync settings
     /// to `PropagationSeamConfig`; the NE wires them onto `router` and runs the periodic
     /// sync here (the in-NE router owns delivery, so the app can't sync directly).
@@ -383,28 +393,18 @@ actor NEReticulumNode {
         // before the interface connects.
         TCPTransport.bypassTunnelEgress = true
 
-        if let tcp = Self.loadTCPRelayConfig() {
-            do {
-                let cfg = InterfaceConfig(
-                    id: "ne-tcp-relay",
-                    name: "NE TCP Relay",
-                    type: .tcp,
-                    enabled: true,
-                    mode: .full,
-                    host: tcp.host,
-                    port: tcp.port
-                )
-                let tcpIface = try TCPInterface(config: cfg)
-                try await tp.addInterface(tcpIface)
-                // NO-PII: never log tcp.host / tcp.port (the relay endpoint).
-                ExtensionDiagLog.log("NEReticulumNode: TCP relay interface registered")
-            } catch {
-                // Non-fatal: the node can still deliver over the AppGroupBridge
-                // (radio) even if the relay socket can't be brought up.
-                ExtensionDiagLog.log("NEReticulumNode: TCP relay addInterface failed (non-fatal): \(String(describing: error))")
-            }
-        } else {
+        // Register EVERY enabled tcpClient relay (not just the first). The node
+        // delivers over whichever connects, so one dead/unreachable relay (e.g. a
+        // down community server) doesn't strand the user when they've also configured
+        // a reachable one (e.g. their own LAN transport node). Each gets a distinct
+        // `ne-tcp-relay-<n>` id; the reconnect/announce hooks match on the prefix.
+        let relays = Self.loadTCPRelayConfigs()
+        if relays.isEmpty {
             ExtensionDiagLog.log("NEReticulumNode: no TCP relay configured — node running on AppGroupBridge only")
+        } else {
+            for tcp in relays {
+                await registerTCPRelay(tcp, on: tp)
+            }
         }
 
         // TODO(C3-followup): reconnect parity. The PoC path
@@ -423,6 +423,9 @@ actor NEReticulumNode {
         await setupRNodeInterface()
         startRNodeConfigObserver()
 
+        // Live-reconcile TCP relays when the app edits its interface set — no VPN restart.
+        startTCPRelayConfigObserver()
+
         isRunning = true
         ExtensionDiagLog.log("NEReticulumNode: started (delivery dest=\(Self.hashPrefix(dest.hexHash)))")
 
@@ -438,7 +441,7 @@ actor NEReticulumNode {
         //     AutoAnnounceManager "on TCP reconnect" trigger; reticulum-swift
         //     rate-limits announces per interface, so a flapping link can't spam.
         await tp.setOnInterfaceConnected { [weak self] interfaceId in
-            guard interfaceId == "ne-tcp-relay" else { return }
+            guard interfaceId.hasPrefix("ne-tcp-relay") else { return }
             await self?.onRelayReconnected()
         }
         startAnnounceScheduler()
@@ -572,6 +575,96 @@ actor NEReticulumNode {
             SharedDefaultsConstants.rnodeConfigChangedNotificationName as CFString,
             nil, .deliverImmediately
         )
+    }
+
+    // MARK: - Model B TCP relays
+
+    /// Register one enabled `tcpClient` relay as a reticulum-swift `TCPInterface`, keyed by
+    /// its stable entity id (`ne-tcp-relay-<entityId>`). The interface owns its own socket +
+    /// `ExponentialBackoff` auto-reconnect; we add it to the transport and record the applied
+    /// endpoint so `reconcileTCPRelays()` can diff later. NO-PII: never logs host/port.
+    private func registerTCPRelay(_ relay: (id: String, host: String, port: UInt16), on tp: ReticulumTransport) async {
+        let ifaceId = "ne-tcp-relay-\(relay.id)"
+        let cfg = InterfaceConfig(
+            id: ifaceId,
+            name: "TCP Relay",
+            type: .tcp,
+            enabled: true,
+            mode: .full,
+            host: relay.host,
+            port: relay.port
+        )
+        do {
+            let iface = try TCPInterface(config: cfg)
+            try await tp.addInterface(iface)
+            registeredRelayEndpoints[relay.id] = (host: relay.host, port: relay.port)
+            ExtensionDiagLog.log("NEReticulumNode: TCP relay registered (\(ifaceId))")
+        } catch {
+            ExtensionDiagLog.log("NEReticulumNode: TCP relay \(ifaceId) registration failed (non-fatal): \(String(describing: error))")
+        }
+    }
+
+    /// Observe the app's `configChanged` Darwin notification → reconcile the live relay
+    /// set so adding / editing / removing a TCP interface takes effect WITHOUT a tunnel
+    /// restart (the prior behavior threw `unsupportedInProxy` and required a manual VPN
+    /// toggle). `InterfaceRepository.saveInterfaces()` is the SINGLE write chokepoint —
+    /// every add/update/delete/toggle posts this — so observing it here can't miss a
+    /// mutation path. Reconcile only touches `ne-tcp-relay-*` interfaces, so a non-TCP
+    /// change (BLE/RNode toggle) fires a harmless no-op diff. Mirrors `startRNodeConfigObserver`.
+    private func startTCPRelayConfigObserver() {
+        guard !tcpRelayConfigObserverRegistered else { return }
+        tcpRelayConfigObserverRegistered = true
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center, observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let node = Unmanaged<NEReticulumNode>.fromOpaque(observer).takeUnretainedValue()
+                Task { await node.reconcileTCPRelays() }
+            },
+            SharedDefaultsConstants.configChangedNotificationName as CFString,
+            nil, .deliverImmediately
+        )
+    }
+
+    /// Bring the live TCP relay set in line with the app's current `interfacesKey`: add
+    /// newly-enabled relays, remove deleted/disabled ones, and remove+re-add a relay whose
+    /// host/port was edited. Idempotent and safe to call repeatedly (the config observer
+    /// fires it on every interface change). No-op until the node is running.
+    private func reconcileTCPRelays() async {
+        guard isRunning, let tp = transport else { return }
+        let desired = Self.loadTCPRelayConfigs()
+        let desiredById = Dictionary(desired.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+
+        // Remove relays that are gone OR whose endpoint changed (so the edited one is
+        // torn down before the re-add below). `removeInterface` disconnects the socket.
+        // Collect the doomed entries FIRST (into a copy) — mutating
+        // `registeredRelayEndpoints` while iterating it is undefined behavior in Swift.
+        let toRemove = registeredRelayEndpoints.filter { entityId, endpoint in
+            guard let wanted = desiredById[entityId] else { return true }
+            return wanted.host != endpoint.host || wanted.port != endpoint.port
+        }
+        for (entityId, _) in toRemove {
+            let ifaceId = "ne-tcp-relay-\(entityId)"
+            await tp.removeInterface(id: ifaceId)
+            registeredRelayEndpoints.removeValue(forKey: entityId)
+            ExtensionDiagLog.log("NEReticulumNode: TCP relay removed (\(ifaceId))")
+        }
+
+        // Add newly-desired relays (and re-add endpoint-edited ones removed just above).
+        for relay in desired where registeredRelayEndpoints[relay.id] == nil {
+            await registerTCPRelay(relay, on: tp)
+        }
+
+        // Re-assert the reconnect/announce hook (idempotent setter) so a freshly added
+        // relay re-announces our delivery dest the moment it connects.
+        await tp.setOnInterfaceConnected { [weak self] interfaceId in
+            guard interfaceId.hasPrefix("ne-tcp-relay") else { return }
+            await self?.onRelayReconnected()
+        }
+        // Nudge the app UI to re-read network state now that the relay set changed.
+        NEReticulumNode.postNetworkStateChangedDarwinNotification()
     }
 
     // MARK: - Model B propagation (LXMF)
@@ -746,6 +839,10 @@ actor NEReticulumNode {
         CFNotificationCenterRemoveEveryObserver(darwinCenter, Unmanaged.passUnretained(self).toOpaque())
         rnodeConfigObserverRegistered = false
         propagationObserversRegistered = false
+        tcpRelayConfigObserverRegistered = false
+        // Drop the applied-endpoint map; a subsequent start() re-registers from scratch and
+        // a stale entry would otherwise make reconcileTCPRelays() skip a needed re-add.
+        registeredRelayEndpoints.removeAll()
 
         if let br = bridge {
             await br.disconnect()
@@ -985,18 +1082,21 @@ actor NEReticulumNode {
     /// Read the enabled `tcpClient` relay endpoint from the SHARED App-Group
     /// UserDefaults (the same `SharedDefaultsConstants.interfacesKey` JSON the PoC
     /// dumb-pipe parses in `PacketTunnelProvider.loadInterfaceConfigs`). Returns
-    /// the first enabled TCP relay's `(host, port)`, or `nil` if none is
-    /// configured. Foundation-only JSON parse — the node does NOT import `Network`
-    /// (collision rule), so it surfaces a plain `(String, UInt16)` that `start()`
-    /// feeds to a reticulum-swift `TCPInterface`. NO-PII: never logs host/port.
-    static func loadTCPRelayConfig() -> (host: String, port: UInt16)? {
+    /// ALL enabled TCP relays' `(host, port)` (the node brings up an interface per
+    /// relay so one dead endpoint doesn't strand a configured-and-reachable one).
+    /// Foundation-only JSON parse — the node does NOT import `Network` (collision
+    /// rule), so it surfaces plain `(String, UInt16)`s that `start()` feeds to
+    /// reticulum-swift `TCPInterface`s. NO-PII: never logs host/port.
+    static func loadTCPRelayConfigs() -> [(id: String, host: String, port: UInt16)] {
         let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
         guard let data = defaults.data(forKey: SharedDefaultsConstants.interfacesKey),
               let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return nil
+            return []
         }
+        var relays: [(id: String, host: String, port: UInt16)] = []
         for entity in array {
-            guard let enabled = entity["enabled"] as? Bool, enabled,
+            guard let id = entity["id"] as? String,
+                  let enabled = entity["enabled"] as? Bool, enabled,
                   let configWrapper = entity["config"] as? [String: Any],
                   let type = configWrapper["type"] as? String, type == "tcpClient",
                   let config = configWrapper["config"] as? [String: Any],
@@ -1004,14 +1104,15 @@ actor NEReticulumNode {
                   let port = config["targetPort"] as? Int,
                   // Bound the port: `UInt16(truncatingIfNeeded:)` would silently WRAP an
                   // out-of-range value (65536 → 0, 131071 → 65535), so a misconfigured
-                  // relay would dial port 0 / a wrong port instead of being skipped.
-                  // Skip bad entries (and 0) so a later valid relay can still win.
+                  // relay would dial port 0 / a wrong port. Skip bad entries (and 0).
                   port > 0, port <= 65535 else {
                 continue
             }
-            return (host: host, port: UInt16(port))
+            // Key by the stable entity id (not positional index) so the live-reload
+            // diff can target a specific relay across add/remove without index shift.
+            relays.append((id: id, host: host, port: UInt16(port)))
         }
-        return nil
+        return relays
     }
 
     /// Short, NO-PII hash prefix (≤ 8 hex chars) for logging.
@@ -1130,6 +1231,9 @@ actor NEReticulumNode {
     /// delivery destination promptly. No-op once the node is torn down.
     private func onRelayReconnected() async {
         guard isRunning else { return }
+        // Push network-state to the app so the UI flips to "connected" promptly (the
+        // BLE/RNode seams already do this on connect; the TCP relay didn't).
+        NEReticulumNode.postNetworkStateChangedDarwinNotification()
         ExtensionDiagLog.log("NEReticulumNode: relay (re)connected — re-announcing delivery dest")
         await selfAnnounce()
         // Pull any propagated mail queued at the PN while we were disconnected.
@@ -1144,7 +1248,7 @@ actor NEReticulumNode {
         let stepMs = 500
         while waited < timeoutMs {
             let snaps = await transport.getInterfaceSnapshots()
-            if snaps.contains(where: { $0.id == "ne-tcp-relay" && $0.state == .connected }) {
+            if snaps.contains(where: { $0.id.hasPrefix("ne-tcp-relay") && $0.state == .connected }) {
                 return true
             }
             do {

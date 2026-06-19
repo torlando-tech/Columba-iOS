@@ -136,12 +136,19 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     private var networkStateChangedObserver: NSObjectProtocol?
 
     /// Latest NE-derived BLE badge values (Model B only), populated by the
-    /// event-driven `refreshNEBackedBLEStatus()` and consumed by the status
+    /// event-driven `refreshNEBackedStatus()` and consumed by the status
     /// loop / `interfaceStatus` write. Under Model B the BLE radio + interface
     /// live across the NE seam, so these are the only source of truth for the
     /// badge; the 1s loop must NOT round-trip the NE to derive them.
     @MainActor private var modelBBLEPeerCount: Int = 0
     @MainActor private var modelBBLEState: InterfaceState = .disconnected
+
+    /// Latest NE-derived PER-RELAY status (Model B only), keyed by interface entity id,
+    /// populated by the event-driven `refreshNEBackedStatus()` and read back by the 1s
+    /// status loop. Each `ne-tcp-relay-<id>` interface maps to its own badge so one dead
+    /// relay shows "Unreachable" while a reachable one shows "Connected" — the coarse
+    /// any-relay-online bool can't express that. NE-push driven (no per-second round-trip).
+    @MainActor private var modelBRelayStatuses: [String: InterfaceStatus] = [:]
 
     // MARK: - Computed Properties
 
@@ -414,14 +421,15 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 // Read TCP interface states off main thread
                 var tcpUpdates: [(String, InterfaceStatus, String?)] = []
                 if BackendPreference.modelB {
-                    // Model B: the app owns no local TCP interface — the NE owns
-                    // the relay socket. Reflect the NE's relay status (via the
-                    // proxy statusSnapshot) so the card isn't stuck "disconnected"
-                    // while the NE relay is actually connected.
-                    let relayOnline = await appSvc.neTcpRelayOnline()
-                    let neStatus: InterfaceStatus = relayOnline ? .connected : .connecting
+                    // Model B: the app owns no local TCP interface — the NE owns each
+                    // relay socket. Read back the PER-RELAY status cached by the
+                    // event-driven `refreshNEBackedStatus()` (NE-push, not a per-second
+                    // round-trip) so each relay's badge reflects its own reachability and
+                    // the card isn't stuck "disconnected" while a relay is actually up. A
+                    // relay the NE hasn't registered yet (just added) defaults to connecting.
+                    let cached = await MainActor.run { self.modelBRelayStatuses }
                     for entity in tcpEntities {
-                        tcpUpdates.append((entity.id, neStatus, nil))
+                        tcpUpdates.append((entity.id, cached[entity.id] ?? .connecting, nil))
                     }
                 } else {
                     for entity in tcpEntities {
@@ -459,7 +467,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                     // 1s (`appSvc.getBLEConnectionInfos()`) — part of the ~10/s app↔NE
                     // IPC flood we're eliminating. The badge is now EVENT-DRIVEN: the
                     // NE pushes `networkStateChangedInApp` on change and
-                    // `refreshNEBackedBLEStatus()` fetches once into these cached
+                    // `refreshNEBackedStatus()` fetches once into these cached
                     // values, which we just read back here (no NE I/O on the timer).
                     blePeerCount = await MainActor.run { self.modelBBLEPeerCount }
                     bleState = await MainActor.run { self.modelBBLEState }
@@ -593,7 +601,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     private func startNetworkStateObserver() {
         // One initial refresh so the badge is correct before the first push.
         Task { @MainActor [weak self] in
-            await self?.refreshNEBackedBLEStatus()
+            await self?.refreshNEBackedStatus()
         }
 
         // Refresh once per NE push. The NE coalesces state changes and posts
@@ -604,38 +612,56 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                await self?.refreshNEBackedBLEStatus()
+                await self?.refreshNEBackedStatus()
             }
         }
     }
 
-    /// Fetch the NE-derived BLE badge (`blePeerCount` / `bleState`) exactly once
-    /// and publish it to `interfaceStatus`. This is the ONLY place that calls the
-    /// NE's `getBLEConnectionInfos()`; it runs on NE push, never on a timer.
+    /// Fetch the NE-derived interface badges (BLE peer count + per-relay TCP status)
+    /// exactly once and publish them to `interfaceStatus`. This is the ONLY place that
+    /// round-trips the NE for these; it runs on NE push, never on a timer.
     ///
-    /// Under Model A the NE doesn't own the BLE interface, so there's nothing to
-    /// pull over the seam — the local `bleIf` actor read in `startStatusObserver`
-    /// remains the source of truth and this returns early.
+    /// Under Model A the NE doesn't own these interfaces, so there's nothing to pull over
+    /// the seam — the local actors read in `startStatusObserver` remain the source of
+    /// truth and this returns early.
     @MainActor
-    private func refreshNEBackedBLEStatus() async {
+    private func refreshNEBackedStatus() async {
         guard BackendPreference.modelB else { return }
 
-        // Single NE round-trip (event-driven, replaces the per-second poll).
+        // --- BLE badge (single NE round-trip; replaces the per-second poll). ---
         let count = await appServices.getBLEConnectionInfos().count
         let state: InterfaceState = count > 0 ? .connected : .disconnected
-
-        // Cache for the status loop's BLE-badge write (Model B branch reads these
-        // back instead of round-tripping the NE).
+        // Cache for the status loop's BLE-badge write (Model B branch reads these back).
         modelBBLEPeerCount = count
         modelBBLEState = state
-
-        // Publish immediately too, so the badge updates on the push rather than
-        // waiting up to ~1s for the next loop tick. Mirrors the loop's mapping:
-        // a live BLE peer ⇒ .connected, else .disconnected.
+        // Publish immediately too, so the badge updates on the push rather than waiting
+        // up to ~1s for the next loop tick.
         if let bleEntity = repository.getEnabledInterfaces().first(where: { $0.type == .ble }) {
-            // `interfaceStatus` values are `InterfaceStatus` (not `InterfaceState`);
-            // map the same way the status loop does: a live BLE peer ⇒ .connected.
             interfaceStatus[bleEntity.id] = count > 0 ? .connected : .disconnected
+        }
+
+        // --- Per-relay TCP status (one snapshot covering every `ne-tcp-relay-<id>`). ---
+        // Map the NE's online + lastError to a per-relay badge: online ⇒ connected; down
+        // with an error ⇒ error ("Unreachable", honest about a relay that won't connect);
+        // down with no error yet ⇒ connecting. No per-relay toast — the badge carries it
+        // (a global error toast flapped between relays every second).
+        let relayStatuses = await appServices.neTcpRelayStatuses()
+        var fresh: [String: InterfaceStatus] = [:]
+        for relay in relayStatuses {
+            let status: InterfaceStatus
+            if relay.online {
+                status = .connected
+            } else if let err = relay.lastError, !err.isEmpty {
+                status = .error
+            } else {
+                status = .connecting
+            }
+            fresh[relay.entityId] = status
+        }
+        modelBRelayStatuses = fresh
+        // Publish immediately so the badges update on the push, not the next tick.
+        for entity in repository.getEnabledInterfaces() where entity.type == .tcpClient {
+            interfaceStatus[entity.id] = fresh[entity.id] ?? .connecting
         }
     }
 
