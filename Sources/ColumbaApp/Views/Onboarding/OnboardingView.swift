@@ -115,6 +115,11 @@ struct OnboardingView: View {
                                 guard let local = viewModel.createdIdentity,
                                       let result = try? await identityManager.switchToIdentity(local.identityHash)
                                 else { return false }
+                                // Seed the TCP relay into the shared store BEFORE the NE
+                                // is started below — the in-NE node reads its relay once
+                                // at start and won't pick up a later write, so seeding
+                                // after would leave it with no TCP path.
+                                viewModel.seedInterfaces()
                                 let ok = await appServices.enableBackgroundDeliveryForOnboarding(identity: result.1)
                                 if ok { viewModel.nextPage() }
                                 return ok

@@ -223,6 +223,15 @@ final class OnboardingViewModel {
 
     // MARK: - Private
 
+    /// Seed the chosen TCP relay into the SHARED interface store. MUST run before the
+    /// NE is started (on the Background-Delivery step) — the in-NE node reads its relay
+    /// from this store ONCE at start (`loadTCPRelayConfig`) and has no observer to pick
+    /// up a later write, so seeding after the NE boots leaves it "AppGroupBridge only"
+    /// with no TCP path. Idempotent (it also runs again from completeOnboarding).
+    func seedInterfaces() {
+        createInterfaces(in: InterfaceRepository())
+    }
+
     private func createInterfaces(in repo: InterfaceRepository) {
         // Model B: the NE node delivers over the first enabled `tcpClient` relay and
         // IGNORES auto/multipeer/ble entities (those interfaces, where they exist, are
@@ -230,6 +239,15 @@ final class OnboardingViewModel {
         // exactly one enabled TCP relay — the user's pick, or the default community
         // server — guaranteeing a reachable path even if nothing was explicitly chosen.
         let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
+        // Idempotent: seedInterfaces() (pre-NE) and completeOnboarding both call this;
+        // don't add a duplicate relay if it's already present.
+        let alreadySeeded = repo.getEnabledInterfaces().contains { entity in
+            if case .tcpClient(let cfg) = entity.config {
+                return cfg.targetHost == server.host && cfg.targetPort == server.port
+            }
+            return false
+        }
+        guard !alreadySeeded else { return }
         repo.addInterface(InterfaceEntity(
             name: server.name,
             type: .tcpClient,
