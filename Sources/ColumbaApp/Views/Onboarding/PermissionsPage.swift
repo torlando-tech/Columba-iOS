@@ -13,6 +13,8 @@ import RNSAPI
 struct PermissionsPage: View {
     let notificationsGranted: Bool
     let onRequestNotifications: () -> Void
+    let bluetoothGranted: Bool
+    let onRequestBluetooth: () -> Void
     let onBack: () -> Void
     let onContinue: () -> Void
 
@@ -86,7 +88,52 @@ struct PermissionsPage: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 12)
 
-            Text("You can change notification settings anytime in iOS Settings")
+            // Bluetooth permission card — Model B runs the CoreBluetooth host in the
+            // app, so granting here avoids a surprise prompt after onboarding. Optional:
+            // the app still works over the relay without it (BLE adds offline/nearby mesh).
+            HStack(spacing: 14) {
+                Image(systemName: "wave.3.right")
+                    .font(.system(size: 24))
+                    .foregroundStyle(bluetoothGranted ? Theme.success : Theme.accentColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bluetooth")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(bluetoothGranted ? "Enabled" : "Optional — for nearby / offline mesh")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+
+                Spacer()
+
+                if bluetoothGranted {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(Theme.success)
+                } else {
+                    Button(action: onRequestBluetooth) {
+                        Text("Enable")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Theme.accentColor)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+            .padding(16)
+            .background(Theme.backgroundSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(bluetoothGranted ? Theme.success.opacity(0.5) : Theme.divider, lineWidth: 1)
+            )
+            .padding(.horizontal, 24)
+            .padding(.bottom, 12)
+
+            Text("You can change these anytime in iOS Settings")
                 .font(.footnote)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)

@@ -10,6 +10,7 @@ import Foundation
 import RNSAPI
 import Observation
 import UserNotifications
+import CoreBluetooth
 
 /// Manages onboarding flow state and persists selections on completion.
 @available(iOS 17.0, macOS 14.0, *)
@@ -23,6 +24,13 @@ final class OnboardingViewModel {
     var selectedInterfaces: Set<OnboardingInterfaceType> = []
     var selectedTcpServer: TcpCommunityServer? = nil
     var notificationsGranted: Bool = false
+    /// Current CoreBluetooth authorization. Under Model B the APP runs the CoreBluetooth
+    /// host (the NE can't), so the BLE prompt would otherwise fire un-guided after
+    /// onboarding when `ModelBBLEService` starts — surfacing it on the Permissions page
+    /// keeps it inside the flow.
+    var bluetoothAuthorization: CBManagerAuthorization = CBCentralManager.authorization
+    var bluetoothGranted: Bool { bluetoothAuthorization == .allowedAlways }
+    @ObservationIgnored private var bluetoothProbe: BluetoothPermissionProbe?
     var isSaving: Bool = false
 
     /// Identity created during onboarding (set by prepareIdentity).
@@ -77,6 +85,21 @@ final class OnboardingViewModel {
     func checkNotificationStatus() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         notificationsGranted = settings.authorizationStatus == .authorized
+    }
+
+    // MARK: - Bluetooth Permission
+
+    /// Trigger the iOS Bluetooth prompt now (creating a CBCentralManager is what fires
+    /// it) so the user grants/denies it INSIDE onboarding instead of being surprised by
+    /// it after, when `ModelBBLEService` starts the app-side CoreBluetooth host.
+    func requestBluetoothPermission() {
+        bluetoothProbe = BluetoothPermissionProbe { [weak self] auth in
+            Task { @MainActor in self?.bluetoothAuthorization = auth }
+        }
+    }
+
+    func checkBluetoothStatus() {
+        bluetoothAuthorization = CBCentralManager.authorization
     }
 
     // MARK: - Identity Preparation
@@ -276,5 +299,26 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
         case .tcp: return "Requires internet connection"
         case .rnode: return "Configure in Settings after setup"
         }
+    }
+}
+
+/// Triggers the iOS Bluetooth permission dialog by initializing a CBCentralManager
+/// (iOS prompts on first creation when authorization is `.notDetermined`) and reports
+/// the resulting authorization. Used by onboarding's Permissions page so the Model-B
+/// app-side CoreBluetooth host doesn't surprise-prompt after setup.
+private final class BluetoothPermissionProbe: NSObject, CBCentralManagerDelegate {
+    private var manager: CBCentralManager?
+    private let onAuthorizationChange: (CBManagerAuthorization) -> Void
+
+    init(onAuthorizationChange: @escaping (CBManagerAuthorization) -> Void) {
+        self.onAuthorizationChange = onAuthorizationChange
+        super.init()
+        manager = CBCentralManager(delegate: self, queue: nil, options: [
+            CBCentralManagerOptionShowPowerAlertKey: false
+        ])
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        onAuthorizationChange(CBCentralManager.authorization)
     }
 }

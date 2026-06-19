@@ -90,8 +90,20 @@ struct OnboardingView: View {
                             onRequestNotifications: {
                                 Task { await viewModel.requestNotificationPermission() }
                             },
+                            bluetoothGranted: viewModel.bluetoothGranted,
+                            onRequestBluetooth: { viewModel.requestBluetoothPermission() },
                             onBack: { viewModel.previousPage() },
-                            onContinue: { viewModel.nextPage() }
+                            onContinue: {
+                                // Guarantee the BLE prompt happens IN-FLOW: the Model-B
+                                // app-side CoreBluetooth host (ModelBBLEService) prompts
+                                // unconditionally after onboarding, so if the user didn't
+                                // tap the card's Enable, fire it now as they leave the
+                                // permissions step rather than surprising them later.
+                                if viewModel.bluetoothAuthorization == .notDetermined {
+                                    viewModel.requestBluetoothPermission()
+                                }
+                                viewModel.nextPage()
+                            }
                         )
                     case 4:
                         BackgroundDeliveryPage(
@@ -150,6 +162,7 @@ struct OnboardingView: View {
         .animation(.easeInOut(duration: 0.25), value: viewModel.currentPage)
         .task {
             await viewModel.checkNotificationStatus()
+            viewModel.checkBluetoothStatus()
         }
         #if COLUMBA_MIGRATION_ENABLED
         .sheet(isPresented: $showRestoreSheet) {
