@@ -12,6 +12,12 @@
 //  connected (iOS shows its "Allow" VPN prompt during it); on failure the page shows
 //  an error and lets the user retry rather than advancing.
 //
+//  The "Not a commercial VPN" + "VPN badge" explainer cards reuse the shared
+//  `VPNNotCommercialExplainer` / `VPNBadgeExplainer` content (see
+//  BackgroundVPNExplainer.swift) — the same copy shown on the settings Background
+//  Transport screen — so users understand up front that this isn't a traditional /
+//  commercial VPN, just Apple's VPN mechanism hosting the on-device mesh node.
+//
 
 import SwiftUI
 
@@ -54,6 +60,9 @@ struct BackgroundDeliveryPage: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 28)
                         .padding(.bottom, 16)
+
+                    privacyCard
+                    badgeCard
 
                     if let errorMessage {
                         Text(errorMessage)
@@ -125,6 +134,45 @@ struct BackgroundDeliveryPage: View {
             }
             // On success the caller advances to the next page.
         }
+    }
+
+    // MARK: - Explainer Cards
+
+    /// "Not a commercial VPN" reassurance — the core message that this isn't a
+    /// traditional VPN. Content is shared with the settings Background Transport
+    /// screen via `VPNNotCommercialExplainer`; only the card chrome differs (onboarding
+    /// `explainerCardStyle` here vs the settings `glassCard()`).
+    private var privacyCard: some View {
+        VPNNotCommercialExplainer()
+            .explainerCardStyle()
+    }
+
+    /// "The VPN badge" note, shared with settings via `VPNBadgeExplainer`. The feature
+    /// name reads "background delivery" to match this flow (settings says "background
+    /// transport").
+    private var badgeCard: some View {
+        VPNBadgeExplainer(featureName: "background delivery")
+            .explainerCardStyle()
+    }
+}
+
+/// Shared card chrome for the onboarding explainer cards — matches the
+/// `Theme.backgroundSecondary` card style used elsewhere in onboarding
+/// (e.g. `PermissionsPage`) rather than the settings `glassCard()`.
+@available(iOS 17.0, macOS 14.0, *)
+private extension View {
+    func explainerCardStyle() -> some View {
+        self
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.backgroundSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Theme.divider, lineWidth: 1)
+            )
+            .padding(.horizontal, 24)
+            .padding(.bottom, 12)
     }
 }
 #endif
