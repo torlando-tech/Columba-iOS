@@ -1940,7 +1940,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/torlando-tech/LXMF-swift.git";
 			requirement = {
-				branch = "feat/lxmfdb-appgroup-sharing";
+				branch = main;
 				kind = branch;
 			};
 		};
