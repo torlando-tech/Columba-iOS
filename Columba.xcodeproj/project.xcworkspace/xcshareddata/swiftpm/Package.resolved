@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/torlando-tech/LXMF-swift.git",
       "state" : {
-        "branch" : "feat/lxmfdb-appgroup-sharing",
-        "revision" : "b2611b385d53eadc40e618821ebb5f2c171f9b2b"
+        "branch" : "main",
+        "revision" : "60186710b9891d35dfb54e636935ddb506b581e6"
       }
     },
     {
