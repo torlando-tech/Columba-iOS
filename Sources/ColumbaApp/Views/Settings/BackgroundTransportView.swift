@@ -139,17 +139,17 @@ struct BackgroundTransportView: View {
 
     private var explainerCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(icon: "questionmark.circle", title: "What it does")
+            VPNExplainerUI.sectionHeader(icon: "questionmark.circle", title: "What it does")
 
-            explainerRow(
+            VPNExplainerUI.explainerRow(
                 icon: "tray.and.arrow.down.fill",
                 text: "Receives messages, calls, and announcements even when Columba isn't open."
             )
-            explainerRow(
+            VPNExplainerUI.explainerRow(
                 icon: "point.3.connected.trianglepath.dotted",
                 text: "Keeps your TCP and local-network (LAN) links connected to the Reticulum mesh in the background."
             )
-            explainerRow(
+            VPNExplainerUI.explainerRow(
                 icon: "bolt.fill",
                 text: "Uses more battery and data than running only in the foreground."
             )
@@ -161,55 +161,17 @@ struct BackgroundTransportView: View {
     // MARK: - Status-Bar Badge Card
 
     private var badgeCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(icon: "rectangle.topthird.inset.filled", title: "The VPN badge")
-
-            HStack(spacing: 10) {
-                Text("VPN")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Theme.accentColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                Text("While this is on, iOS shows a VPN badge in your status bar.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Text("The badge is iOS telling you a packet tunnel is active. It stays visible the whole time background transport is enabled.")
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .glassCard()
+        VPNBadgeExplainer(featureName: "background transport")
+            .padding(16)
+            .glassCard()
     }
 
     // MARK: - Privacy Card
 
     private var privacyCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(icon: "lock.shield.fill", title: "Not a commercial VPN")
-
-            Text("Columba uses Apple's VPN mechanism only as the way to run a background packet tunnel for the mesh. It is not a commercial VPN service.")
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            explainerRow(
-                icon: "checkmark.shield.fill",
-                text: "Your internet traffic is not proxied, routed through, or monetized by Columba."
-            )
-            explainerRow(
-                icon: "iphone",
-                text: "The tunnel runs entirely on your device to carry Reticulum traffic. Nothing else is intercepted."
-            )
-        }
-        .padding(16)
-        .glassCard()
+        VPNNotCommercialExplainer()
+            .padding(16)
+            .glassCard()
     }
 
     // MARK: - Error Card
@@ -362,32 +324,5 @@ struct BackgroundTransportView: View {
         }
     }
 
-    // MARK: - Reusable Bits
-
-    private func sectionHeader(icon: String, title: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.accentColor)
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(Theme.textPrimary)
-            Spacer()
-        }
-    }
-
-    private func explainerRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.accentColor)
-                .frame(width: 24)
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(Theme.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-    }
 }
 #endif

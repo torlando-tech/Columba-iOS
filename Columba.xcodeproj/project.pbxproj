@@ -114,6 +114,7 @@
 		0MBS /* ModelBBLEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FMBS /* ModelBBLEService.swift */; };
 		13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */; };
 		1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
+		2B502D5AFE0E2C0D54CC144C /* BackgroundVPNExplainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */; };
 		238336F8024494A8B57F9419 /* CeaseTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF48C97880B30682DC35613C /* CeaseTelemetry.swift */; };
 		266929D6972E8D373E7A926D /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 021FA3D73B6F8B711A97D40F /* ReticulumSwift */; };
 		2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */; };
@@ -258,6 +259,7 @@
 		55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PropagationSeam.swift; sourceTree = "<group>"; };
 		56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundDeliveryGateView.swift; sourceTree = "<group>"; };
 		67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncStatusBottomSheet.swift; sourceTree = "<group>"; };
+		E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundVPNExplainer.swift; sourceTree = "<group>"; };
 		6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
 		710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
 		71922EC204982A357F814F23 /* CallControlButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
@@ -581,6 +583,7 @@
 				F037 /* ProfileIcon.swift */,
 				DA586EB5F8EB62D2579CEAAB /* Lucide.swift */,
 				67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */,
+				E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -1224,6 +1227,7 @@
 				F4E9991226B4D464017DA247 /* Lucide.swift in Sources */,
 				AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */,
 				1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */,
+				2B502D5AFE0E2C0D54CC144C /* BackgroundVPNExplainer.swift in Sources */,
 				F83A2212E43B329830919AFF /* BackgroundDeliveryGateView.swift in Sources */,
 				80D0868B2491DB301F772D63 /* BackgroundDeliveryPage.swift in Sources */,
 			);
