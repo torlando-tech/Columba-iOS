@@ -314,7 +314,21 @@ public final class PropagationNodeManager {
     /// Trigger an immediate sync from the propagation node.
     ///
     /// If no propagation node is selected yet, auto-selects the best available node first.
-    public func syncNow() async {
+    /// - Parameter userInitiated: `true` when the user explicitly triggered the sync (a
+    ///   refresh button, pull-to-refresh, or a Sync Now action) — i.e. the cases that may
+    ///   present the status sheet. Only these reset the displayed transfer state up front
+    ///   (see below). Background, periodic, and on-foreground auto-syncs pass `false`.
+    public func syncNow(userInitiated: Bool = false) async {
+        // For user-initiated syncs only, reset transfer state up front so a freshly-opened
+        // status sheet shows THIS sync's progress from a clean "connecting" slate, not the
+        // previous run's stale "Download complete / N new messages". Background / periodic
+        // / on-foreground syncs skip this so they never clobber a status sheet the user may
+        // have left open on a prior result. Early-return guards below overwrite this with
+        // the appropriate terminal state (e.g. .noPath).
+        if userInitiated {
+            syncState = PropagationTransferState(state: .linking)
+        }
+
         // Model B: the LXMF router lives in the NE — the app can't sync in-process.
         // Ensure a PN is selected + its config is in the seam, then fire the sync-now
         // Darwin trigger. Real progress arrives back via the sync-state channel

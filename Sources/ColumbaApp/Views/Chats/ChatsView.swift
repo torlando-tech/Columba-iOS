@@ -45,7 +45,8 @@ struct ChatsView: View {
     /// Conversation pending deletion (confirmation alert).
     @State private var deletingConversation: Conversation?
 
-    /// Controls the propagation-sync status sheet (auto-shown while a sync is active).
+    /// Controls the propagation-sync status sheet. Presented only for user-initiated
+    /// syncs (tapping the refresh button); background / periodic syncs run silently.
     @State private var isSyncSheetPresented: Bool = false
 
     // MARK: - Theme Colors
@@ -97,9 +98,11 @@ struct ChatsView: View {
                     // Refresh button — syncs from propagation node then reloads DB
                     Button {
                         guard viewModel?.isRefreshing != true else { return }
+                        // User explicitly asked to sync → surface the status sheet.
+                        isSyncSheetPresented = true
                         Task {
                             viewModel?.isRefreshing = true
-                            await appServices.propagationManager?.syncNow()
+                            await appServices.propagationManager?.syncNow(userInitiated: true)
                             await viewModel?.refreshConversations()
                             viewModel?.isRefreshing = false
                         }
@@ -166,14 +169,16 @@ struct ChatsView: View {
         } message: {
             Text("This will permanently delete the conversation and all its messages.")
         }
-        // Auto-show the sync status sheet while a propagation sync is active (manual
-        // Sync Now / pull-to-refresh, or — under Model B — an NE-driven periodic sync).
-        // The sheet stays up through the terminal phase so the user sees the result.
-        .onChange(of: appServices.propagationManager?.syncState.isSyncing ?? false) { _, active in
-            if active { isSyncSheetPresented = true }
-        }
+        // Show the sync status sheet only for user-initiated syncs — the refresh button
+        // sets `isSyncSheetPresented`. Background / periodic syncs (including Model B's
+        // NE-driven periodic sync) update `syncState` silently without popping the sheet.
+        // Once presented, the sheet observes `syncState` for live progress and stays up
+        // through the terminal phase so the user sees the result, then dismisses manually.
         .sheet(isPresented: $isSyncSheetPresented) {
-            SyncStatusBottomSheet(state: appServices.propagationManager?.syncState ?? PropagationTransferState())
+            // Container reads `syncState` in its own view body (not just inside this
+            // closure) so SwiftUI Observation reliably re-renders the sheet on every
+            // transfer-state change — live progress and the terminal result.
+            SyncStatusSheetContainer(manager: appServices.propagationManager)
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
@@ -332,7 +337,7 @@ struct ChatsView: View {
                 // Sync with timeout so pull-to-refresh doesn't hang
                 await withTaskGroup(of: Void.self) { group in
                     group.addTask {
-                        await appServices.propagationManager?.syncNow()
+                        await appServices.propagationManager?.syncNow(userInitiated: true)
                     }
                     group.addTask {
                         try? await Task.sleep(for: .seconds(15))
@@ -377,8 +382,10 @@ struct ChatsView: View {
 
             // Refresh button — syncs from propagation node then reloads DB
             Button {
+                // User explicitly asked to sync → surface the status sheet.
+                isSyncSheetPresented = true
                 Task {
-                    await appServices.propagationManager?.syncNow()
+                    await appServices.propagationManager?.syncNow(userInitiated: true)
                     await viewModel?.refreshConversations()
                 }
             } label: {
@@ -408,6 +415,22 @@ struct ChatsView: View {
                 .scaleEffect(1.2)
         }
         .ignoresSafeArea()
+    }
+}
+
+// MARK: - Sync Status Sheet Container
+
+/// Bridges the app's `@Observable` `PropagationNodeManager` to the pure, value-typed
+/// `SyncStatusBottomSheet`. Reading `manager.syncState` inside this view's `body`
+/// (rather than only inside the parent's `.sheet` content closure) guarantees SwiftUI
+/// Observation re-renders the sheet whenever the transfer state changes, so live
+/// progress and the terminal result always appear.
+@available(iOS 17.0, macOS 14.0, *)
+private struct SyncStatusSheetContainer: View {
+    let manager: PropagationNodeManager?
+
+    var body: some View {
+        SyncStatusBottomSheet(state: manager?.syncState ?? PropagationTransferState())
     }
 }
 

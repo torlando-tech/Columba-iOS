@@ -533,7 +533,7 @@ struct MessagingView: View {
                     Task {
                         isSyncing = true
                         defer { isSyncing = false }
-                        await appServices.propagationManager?.syncNow()
+                        await appServices.propagationManager?.syncNow(userInitiated: true)
                         await viewModel?.loadMessages()
                     }
                 } label: {
