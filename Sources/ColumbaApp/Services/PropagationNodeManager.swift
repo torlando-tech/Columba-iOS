@@ -315,6 +315,12 @@ public final class PropagationNodeManager {
     ///
     /// If no propagation node is selected yet, auto-selects the best available node first.
     public func syncNow() async {
+        // Reset transfer state up front so any observer (the in-app status sheet) shows
+        // THIS sync's progress from a clean "connecting" slate, not the previous run's
+        // stale "Download complete / N new messages". Early-return guards below overwrite
+        // this with the appropriate terminal state (e.g. .noPath).
+        syncState = PropagationTransferState(state: .linking)
+
         // Model B: the LXMF router lives in the NE — the app can't sync in-process.
         // Ensure a PN is selected + its config is in the seam, then fire the sync-now
         // Darwin trigger. Real progress arrives back via the sync-state channel

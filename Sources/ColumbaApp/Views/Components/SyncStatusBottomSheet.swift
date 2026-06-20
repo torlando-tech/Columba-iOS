@@ -20,40 +20,50 @@ struct SyncStatusBottomSheet: View {
     let state: PropagationTransferState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack(spacing: 12) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundColor(Theme.accentColor)
-                Text("Propagation Node Sync")
-                    .font(.title3.weight(.bold))
-                    .foregroundColor(Theme.textPrimary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                // Header
+                HStack(spacing: 12) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundColor(Theme.accentColor)
+                    Text("Propagation Node Sync")
+                        .font(.title3.weight(.bold))
+                        .foregroundColor(Theme.textPrimary)
+                }
+
+                Spacer().frame(height: 24)
+
+                // Status row
+                statusRow
+
+                // Progress bar (only while actively receiving with known progress)
+                if showProgressBar {
+                    Spacer().frame(height: 16)
+                    ProgressView(value: min(max(state.progress, 0), 1))
+                        .tint(Theme.accentColor)
+                    Spacer().frame(height: 8)
+                    Text("\(Int((min(max(state.progress, 0), 1)) * 100))%")
+                        .font(.subheadline)
+                        .foregroundColor(Theme.textSecondary)
+                }
             }
-
-            Spacer().frame(height: 24)
-
-            // Status row
-            statusRow
-
-            // Progress bar (only while actively receiving with known progress)
-            if showProgressBar {
-                Spacer().frame(height: 16)
-                ProgressView(value: min(max(state.progress, 0), 1))
-                    .tint(Theme.accentColor)
-                Spacer().frame(height: 8)
-                Text("\(Int((min(max(state.progress, 0), 1)) * 100))%")
-                    .font(.subheadline)
-                    .foregroundColor(Theme.textSecondary)
-            }
+            .padding(.horizontal, 24)
+            .padding(.top, 28)
+            .padding(.bottom, 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 28)
-        .padding(.bottom, 36)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.backgroundPrimary.ignoresSafeArea())
+        // Scrolls only when content exceeds the detent (e.g. at large Dynamic Type);
+        // otherwise behaves like a static view, so the progress bar and percentage are
+        // never clipped at the bottom of the fixed-height sheet.
+        .scrollBounceBehavior(.basedOnSize)
         .presentationDetents([.height(220)])
         .presentationDragIndicator(.visible)
+        // Color the entire sheet, not just the content. Using `.background(...)` on the
+        // content paints an opaque band sized to the VStack inside the system's default
+        // glass sheet chrome; `.presentationBackground` is the SwiftUI-correct way to set
+        // a sheet's backing surface (iOS 16.4+).
+        .presentationBackground(Theme.backgroundPrimary)
     }
 
     // MARK: - Status row
