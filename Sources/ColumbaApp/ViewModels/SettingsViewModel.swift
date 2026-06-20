@@ -719,7 +719,7 @@ public final class SettingsViewModel {
         isSyncing = true
         syncError = nil
 
-        await propManager.syncNow()
+        await propManager.syncNow(userInitiated: true)
 
         syncProgress = propManager.syncState.progress
         lastSyncTime = propManager.lastSyncTime

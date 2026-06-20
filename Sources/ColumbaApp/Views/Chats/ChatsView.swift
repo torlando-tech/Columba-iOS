@@ -102,7 +102,7 @@ struct ChatsView: View {
                         isSyncSheetPresented = true
                         Task {
                             viewModel?.isRefreshing = true
-                            await appServices.propagationManager?.syncNow()
+                            await appServices.propagationManager?.syncNow(userInitiated: true)
                             await viewModel?.refreshConversations()
                             viewModel?.isRefreshing = false
                         }
@@ -337,7 +337,7 @@ struct ChatsView: View {
                 // Sync with timeout so pull-to-refresh doesn't hang
                 await withTaskGroup(of: Void.self) { group in
                     group.addTask {
-                        await appServices.propagationManager?.syncNow()
+                        await appServices.propagationManager?.syncNow(userInitiated: true)
                     }
                     group.addTask {
                         try? await Task.sleep(for: .seconds(15))
@@ -385,7 +385,7 @@ struct ChatsView: View {
                 // User explicitly asked to sync → surface the status sheet.
                 isSyncSheetPresented = true
                 Task {
-                    await appServices.propagationManager?.syncNow()
+                    await appServices.propagationManager?.syncNow(userInitiated: true)
                     await viewModel?.refreshConversations()
                 }
             } label: {
