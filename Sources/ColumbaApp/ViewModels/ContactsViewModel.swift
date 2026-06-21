@@ -717,6 +717,26 @@ public final class ContactsViewModel {
         }
     }
 
+    /// Toggle favorite/contact membership when the full `Contact` is known
+    /// (e.g. from NodeDetailsView's toolbar star).
+    ///
+    /// Behaves like `toggleFavorite(for: contactId)` for the remove case, but
+    /// when the peer is not currently in `myContacts` it adds it directly via
+    /// `addToContacts(_:)` rather than relying on the peer also being present in
+    /// `networkAnnounces`. This keeps the detail-screen star correct for a
+    /// My-Contacts-only peer that was just removed and re-added, or any peer
+    /// reached by a route that hasn't populated the announce arrays.
+    @MainActor
+    public func toggleFavorite(for contact: Contact) {
+        if myContacts.contains(where: { $0.id == contact.id }) {
+            // Already a saved contact — reuse the id-based remove path.
+            toggleFavorite(for: contact.id)
+        } else {
+            // Not saved yet — add (creates conversation + setFavorite(true)).
+            Task { await addToContacts(contact) }
+        }
+    }
+
     /// Toggle pin status for a contact and persist to database.
     @MainActor
     public func togglePin(for contactId: String) {

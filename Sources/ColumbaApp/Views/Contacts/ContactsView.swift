@@ -135,7 +135,16 @@ public struct ContactsView: View {
                             },
                             onBrowseSite: contact.badgeType == .node ? { contact in
                                 browseSite(for: contact)
-                            } : nil
+                            } : nil,
+                            // Star = add-to-contacts / favorite, mirroring
+                            // Android's add (from a network announce) and remove
+                            // (already a contact) semantics. The Contact-typed
+                            // overload reuses the same persistence as the other
+                            // stars while staying correct even when the peer
+                            // isn't currently in the in-memory announce arrays.
+                            onToggleFavorite: { contact in
+                                vm.toggleFavorite(for: contact)
+                            }
                         )
                     case .chat(let conversation):
                         MessagingView(
