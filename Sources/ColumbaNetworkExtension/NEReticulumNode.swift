@@ -1428,7 +1428,9 @@ actor NEReticulumNode {
             )
             return ProxyNomadNetOutcome(ok: r.ok, status: r.status.rawValue, data: r.data, contentType: r.contentType)
         } catch {
-            return fail("unknown")
+            // NomadNetFetch only throws from link.request (all other failures
+            // return a Result), so a throw here is a request failure.
+            return fail("request-failed")
         }
     }
 

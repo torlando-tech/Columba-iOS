@@ -120,23 +120,13 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             throw BackendError.ipcFailed(operation: op)
         }
         // The seam imposes no timeout of its own — `send` (proxySend) awaits the
-        // NE's completionHandler indefinitely. For long ops, race the send against
-        // a deadline so a dropped / wedged / jetsammed NE reply degrades to
-        // `ipcFailed` instead of hanging the continuation forever. Default `nil`
-        // keeps every existing caller byte-identical.
+        // NE's completionHandler indefinitely. For long ops, bound the wait so a
+        // dropped / wedged / jetsammed NE reply degrades to `ipcFailed` instead
+        // of hanging forever. Default `nil` keeps every existing caller
+        // byte-identical.
         let reply: Data?
         if let deadline {
-            let sendClosure = send
-            reply = await withTaskGroup(of: Data?.self) { group in
-                group.addTask { await sendClosure(wire) }
-                group.addTask {
-                    try? await Task.sleep(nanoseconds: UInt64(max(1, deadline) * 1_000_000_000))
-                    return nil
-                }
-                let first = await group.next() ?? nil
-                group.cancelAll()
-                return first
-            }
+            reply = await sendWithDeadline(wire, deadline: deadline)
         } else {
             reply = await send(wire)
         }
@@ -144,6 +134,46 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             throw BackendError.ipcFailed(operation: op)
         }
         return response
+    }
+
+    /// Send `wire` and await the NE reply, returning `nil` once `deadline`
+    /// elapses **even if** the underlying `sendProviderMessage` continuation is
+    /// still suspended (e.g. the NE was jetsammed and iOS hasn't delivered the
+    /// failure callback yet).
+    ///
+    /// `withTaskGroup` can't give this guarantee: it awaits ALL child tasks
+    /// before returning, and `cancelAll()` is only cooperative — a
+    /// non-cancellable `send` continuation would keep the group suspended past
+    /// the deadline, defeating the whole point. So this races two unstructured
+    /// tasks through one continuation and abandons the loser (its later
+    /// resolution is gated to a no-op). The caller is never blocked past
+    /// `deadline`.
+    private func sendWithDeadline(_ wire: Data, deadline: TimeInterval) async -> Data? {
+        let sendClosure = send
+        let gate = ResumeOnce()
+        return await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
+            Task {
+                let reply = await sendClosure(wire)
+                if gate.claim() { cont.resume(returning: reply) }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(max(1, deadline) * 1_000_000_000))
+                if gate.claim() { cont.resume(returning: nil) }
+            }
+        }
+    }
+
+    /// One-shot latch so exactly one racer resumes the continuation (resuming a
+    /// `CheckedContinuation` twice traps).
+    private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var fired = false
+        func claim() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if fired { return false }
+            fired = true
+            return true
+        }
     }
 
     // MARK: - RnsCore
