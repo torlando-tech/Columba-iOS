@@ -1409,6 +1409,31 @@ actor NEReticulumNode {
         }
     }
 
+    /// Fetch a NomadNet page on the NE node (mirrors
+    /// `SwiftRNSBackend.fetchNomadNetPage`) using the shared `NomadNetFetch`
+    /// helper — in Model B the NE owns transport/identity/pathTable, so the
+    /// fetch runs here and the result is marshaled back to the app proxy. Never
+    /// throws across the IPC seam: every failure maps to a Foundation-only
+    /// `ProxyNomadNetOutcome` the app reconstructs into a `NomadNetFetchResult`.
+    func fetchNomadNetPageForIPC(destHashHex: String, path: String, timeoutSeconds: Double, formFields: [String: String]?) async -> ProxyNomadNetOutcome {
+        func fail(_ status: String) -> ProxyNomadNetOutcome {
+            ProxyNomadNetOutcome(ok: false, status: status, data: Data(), contentType: "")
+        }
+        guard let transport, let identity, let pathTable else { return fail("not-started") }
+        guard let destHash = Self.hexToData(destHashHex), !destHash.isEmpty else { return fail("bad-hash") }
+        do {
+            let r = try await NomadNetFetch.fetch(
+                transport: transport, identity: identity, pathTable: pathTable,
+                destHash: destHash, path: path, timeout: timeoutSeconds, formFields: formFields
+            )
+            return ProxyNomadNetOutcome(ok: r.ok, status: r.status.rawValue, data: r.data, contentType: r.contentType)
+        } catch {
+            // NomadNetFetch only throws from link.request (all other failures
+            // return a Result), so a throw here is a request failure.
+            return fail("request-failed")
+        }
+    }
+
     // MARK: - A5b dispatch helpers
 
     /// Map the `RNSAPI.LXDeliveryMethod` raw value string to LXMF-swift's enum.

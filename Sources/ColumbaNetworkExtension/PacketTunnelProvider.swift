@@ -197,6 +197,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             let outcome = await node.sendLxmfForIPC(
                 destHashHex: destHashHex, content: content, method: method, fieldsData: fieldsData)
             return .ok(try? JSONEncoder().encode(outcome))
+
+        case .nomadnetFetch(let destHashHex, let path, let timeoutSeconds, let formFields):
+            let outcome = await node.fetchNomadNetPageForIPC(
+                destHashHex: destHashHex, path: path, timeoutSeconds: timeoutSeconds, formFields: formFields)
+            return .ok(try? JSONEncoder().encode(outcome))
         }
     }
 

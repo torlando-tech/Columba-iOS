@@ -195,6 +195,8 @@
 		PRB001 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
 		PXI1B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
+		NMF1B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
+		NMF2B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
 		SRB001 /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
 		ACT02 /* AnnounceClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACT01 /* AnnounceClassificationTests.swift */; };
@@ -413,6 +415,7 @@
 		PRB002 /* ProxyRnsBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProxyRnsBackend.swift; path = Sources/RNSBackendProxy/ProxyRnsBackend.swift; sourceTree = SOURCE_ROOT; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		PXIF /* ProxyIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyIPC.swift; sourceTree = "<group>"; };
+		NMFF /* NomadNetFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NomadNetFetch.swift; sourceTree = "<group>"; };
 		SRB002 /* SwiftRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwiftRNSBackend.swift; path = Sources/RNSBackendSwift/SwiftRNSBackend.swift; sourceTree = SOURCE_ROOT; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -741,6 +744,7 @@
 				EDLF /* ExtensionDiagLog.swift */,
 				AGPF /* AppGroupPaths.swift */,
 				PXIF /* ProxyIPC.swift */,
+				NMFF /* NomadNetFetch.swift */,
 				OBQF /* OutboxQueue.swift */,
 				43A7FF6A056815712B1D13D9 /* RNodeSeam.swift */,
 				34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */,
@@ -1075,6 +1079,7 @@
 				AGB2B /* AppGroupBridgeInterface.swift in Sources */,
 				NERN2 /* NEReticulumNode.swift in Sources */,
 				PXI2B /* ProxyIPC.swift in Sources */,
+				NMF2B /* NomadNetFetch.swift in Sources */,
 				OBQ2B /* OutboxQueue.swift in Sources */,
 				45C9E9AFAC34D61BFB3797AA /* RNodeSeam.swift in Sources */,
 				FDE0DB7957C9D877D3E67367 /* AppGroupRNodeSeamWire.swift in Sources */,
@@ -1178,6 +1183,7 @@
 				EDL1B /* ExtensionDiagLog.swift in Sources */,
 				AGP1B /* AppGroupPaths.swift in Sources */,
 				PXI1B /* ProxyIPC.swift in Sources */,
+				NMF1B /* NomadNetFetch.swift in Sources */,
 				OBQ1B /* OutboxQueue.swift in Sources */,
 				077B /* TunnelManager.swift in Sources */,
 				BGTB /* BackgroundTransportView.swift in Sources */,

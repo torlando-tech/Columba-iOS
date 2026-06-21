@@ -186,10 +186,19 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// `[BLEPeerSnapshot]`.
     case bleConnections
 
+    /// Fetch a NomadNet page over a one-shot RNS Link (mirrors
+    /// `RnsNomadnet.fetchNomadNetPage`). Model B runs the fetch NE-side via the
+    /// shared `NomadNetFetch` helper (the NE owns transport/identity/pathTable);
+    /// the app is the proxy. `timeoutSeconds` bounds each per-step wait NE-side;
+    /// the app applies a slightly larger IPC deadline on top so a never-arriving
+    /// reply can't hang. Response payload: JSON-encoded `ProxyNomadNetOutcome`.
+    case nomadnetFetch(destHashHex: String, path: String, timeoutSeconds: Double, formFields: [String: String]?)
+
     // MARK: Codable (discriminated union)
 
     private enum CodingKeys: String, CodingKey {
         case op, displayName, destHashHex, content, method, fieldsData
+        case path, timeoutSeconds, formFields
     }
 
     /// Stable discriminator strings (decoupled from the Swift case names so a
@@ -197,7 +206,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     private enum Op: String, Codable {
         case start, stop, announce, announceTelephony, statusSnapshot
         case persist, registeredDestinationHashes, lxmfSend, heardAnnounces
-        case bleConnections
+        case bleConnections, nomadnetFetch
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -230,6 +239,12 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(fieldsData, forKey: .fieldsData)
         case .bleConnections:
             try c.encode(Op.bleConnections, forKey: .op)
+        case .nomadnetFetch(let destHashHex, let path, let timeoutSeconds, let formFields):
+            try c.encode(Op.nomadnetFetch, forKey: .op)
+            try c.encode(destHashHex, forKey: .destHashHex)
+            try c.encode(path, forKey: .path)
+            try c.encode(timeoutSeconds, forKey: .timeoutSeconds)
+            try c.encodeIfPresent(formFields, forKey: .formFields)
         }
     }
 
@@ -262,6 +277,13 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             )
         case .bleConnections:
             self = .bleConnections
+        case .nomadnetFetch:
+            self = .nomadnetFetch(
+                destHashHex: try c.decode(String.self, forKey: .destHashHex),
+                path: try c.decode(String.self, forKey: .path),
+                timeoutSeconds: try c.decode(Double.self, forKey: .timeoutSeconds),
+                formFields: try c.decodeIfPresent([String: String].self, forKey: .formFields)
+            )
         }
     }
 }
@@ -379,6 +401,25 @@ public struct ProxySendOutcome: Codable, Sendable, Equatable {
     public init(kind: Kind, detail: String? = nil) {
         self.kind = kind
         self.detail = detail
+    }
+}
+
+/// `Codable` mirror of a NomadNet fetch result for the `.nomadnetFetch` response
+/// payload. The NE encodes the `NomadNetFetch.Result` it produced; the app maps
+/// it back onto `RNSAPI.NomadNetFetchResult`. `status` is the
+/// `NomadNetFetchResult.Status` raw value; `data` (the page bytes) rides as
+/// base64 JSON.
+public struct ProxyNomadNetOutcome: Codable, Sendable, Equatable {
+    public let ok: Bool
+    public let status: String
+    public let data: Data
+    public let contentType: String
+
+    public init(ok: Bool, status: String, data: Data, contentType: String) {
+        self.ok = ok
+        self.status = status
+        self.data = data
+        self.contentType = contentType
     }
 }
 

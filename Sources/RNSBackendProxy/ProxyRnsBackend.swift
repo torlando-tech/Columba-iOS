@@ -112,18 +112,68 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// response comes back; returns the `ProxyResponse` (including `.error` /
     /// `.unsupported`) otherwise so callers can map those onto their own return
     /// shapes.
-    private func roundTrip(_ request: ProxyRequest, op: String) async throws -> ProxyResponse {
+    private func roundTrip(_ request: ProxyRequest, op: String, deadline: TimeInterval? = nil) async throws -> ProxyResponse {
         let wire: Data
         do {
             wire = try ProxyIPC.encodeRequest(request)
         } catch {
             throw BackendError.ipcFailed(operation: op)
         }
-        let reply = await send(wire)
+        // The seam imposes no timeout of its own — `send` (proxySend) awaits the
+        // NE's completionHandler indefinitely. For long ops, bound the wait so a
+        // dropped / wedged / jetsammed NE reply degrades to `ipcFailed` instead
+        // of hanging forever. Default `nil` keeps every existing caller
+        // byte-identical.
+        let reply: Data?
+        if let deadline {
+            reply = await sendWithDeadline(wire, deadline: deadline)
+        } else {
+            reply = await send(wire)
+        }
         guard let response = ProxyIPC.decodeResponse(reply) else {
             throw BackendError.ipcFailed(operation: op)
         }
         return response
+    }
+
+    /// Send `wire` and await the NE reply, returning `nil` once `deadline`
+    /// elapses **even if** the underlying `sendProviderMessage` continuation is
+    /// still suspended (e.g. the NE was jetsammed and iOS hasn't delivered the
+    /// failure callback yet).
+    ///
+    /// `withTaskGroup` can't give this guarantee: it awaits ALL child tasks
+    /// before returning, and `cancelAll()` is only cooperative — a
+    /// non-cancellable `send` continuation would keep the group suspended past
+    /// the deadline, defeating the whole point. So this races two unstructured
+    /// tasks through one continuation and abandons the loser (its later
+    /// resolution is gated to a no-op). The caller is never blocked past
+    /// `deadline`.
+    private func sendWithDeadline(_ wire: Data, deadline: TimeInterval) async -> Data? {
+        let sendClosure = send
+        let gate = ResumeOnce()
+        return await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
+            Task {
+                let reply = await sendClosure(wire)
+                if gate.claim() { cont.resume(returning: reply) }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(max(1, deadline) * 1_000_000_000))
+                if gate.claim() { cont.resume(returning: nil) }
+            }
+        }
+    }
+
+    /// One-shot latch so exactly one racer resumes the continuation (resuming a
+    /// `CheckedContinuation` twice traps).
+    private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var fired = false
+        func claim() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if fired { return false }
+            fired = true
+            return true
+        }
     }
 
     // MARK: - RnsCore
@@ -456,8 +506,49 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         timeout: TimeInterval,
         formFields: [String: String]?
     ) async throws -> NomadNetFetchResult {
-        // Model B: runs NE-side / not proxied yet.
-        NomadNetFetchResult(ok: false, status: .notStarted, data: Data(), contentType: "")
+        // Model B: the NE owns transport/identity/pathTable, so the fetch runs
+        // NE-side via the shared `NomadNetFetch` helper and the result is
+        // marshaled back over the seam. The NE self-bounds every step (path 15s,
+        // link/request/response timeouts) so it always replies; we add an IPC
+        // deadline of `timeout + slack` as a backstop against a never-arriving
+        // reply (the seam has no timeout of its own).
+        func fail(_ s: NomadNetFetchResult.Status) -> NomadNetFetchResult {
+            NomadNetFetchResult(ok: false, status: s, data: Data(), contentType: "")
+        }
+        // The NE self-bounds the fetch at roughly awaitPath(15) + link(timeout)
+        // + response(timeout + 2) ≈ 2·timeout + 17s, and it ALWAYS replies. The
+        // app deadline must comfortably exceed that so it only fires when the NE
+        // has truly wedged/died — never pre-empting a legitimately slow mesh-path
+        // fetch (which would surface a false "timeout"). Slack added on top.
+        let ipcDeadline = 2 * timeout + 30
+        let response: ProxyResponse
+        do {
+            response = try await roundTrip(
+                .nomadnetFetch(destHashHex: destHashHex, path: path, timeoutSeconds: timeout, formFields: formFields),
+                op: "nomadnetFetch",
+                deadline: ipcDeadline
+            )
+        } catch {
+            // IPC failure / deadline hit — the user was actively waiting on this
+            // page, so surface a timeout rather than a misleading "not started".
+            return fail(.timeout)
+        }
+        switch response {
+        case .ok(let payload):
+            guard let payload,
+                  let outcome = try? JSONDecoder().decode(ProxyNomadNetOutcome.self, from: payload) else {
+                return fail(.unknown)
+            }
+            return NomadNetFetchResult(
+                ok: outcome.ok,
+                status: NomadNetFetchResult.Status(rawValue: outcome.status) ?? .unknown,
+                data: outcome.data,
+                contentType: outcome.contentType
+            )
+        case .error, .unsupported:
+            // NE node not running / op not handled — degrade like a stopped backend.
+            return fail(.notStarted)
+        }
     }
 
     // MARK: - RnsTelephony
