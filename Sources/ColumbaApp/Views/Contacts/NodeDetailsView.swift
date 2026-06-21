@@ -37,6 +37,15 @@ struct NodeDetailsView: View {
     /// Only rendered for `.node` badge contacts when this callback is non-nil.
     var onBrowseSite: ((Contact) -> Void)?
 
+    /// Called when the top-right star is tapped; receives the displayed contact
+    /// and returns the **authoritative** favorite/saved state after persistence
+    /// completes. The view reconciles its optimistic star to this return value,
+    /// so a failed save (no rollback) or a rapid double-tap can't leave the star
+    /// out of sync with what was actually persisted. The star is only rendered
+    /// when this callback is non-nil, so each parent decides which ViewModel
+    /// persists the change — mirroring `onStartChat`/`onBrowseSite`.
+    var onToggleFavorite: ((Contact) async -> Bool)?
+
     // MARK: - State
 
     @State private var expiresDate: Date?
@@ -48,6 +57,15 @@ struct NodeDetailsView: View {
     /// All bindings in the view read from this so the badge transitions from
     /// "Expired" to "Online" the moment an announce arrives.
     @State private var liveContact: Contact?
+    /// Source of truth for the toolbar star, kept separate from `liveContact`
+    /// because `mergedContact`/`applyOfflineState` always re-derive
+    /// `isFavorite` from the original seed; binding the star to
+    /// `displayedContact.isFavorite` would make it snap back on the next path
+    /// poll. Seeded in `.task` and toggled optimistically.
+    @State private var isFavorite: Bool = false
+    /// Guards against rapid double-taps: the star is disabled while a toggle is
+    /// in flight, so two queued persistence tasks can't race the optimistic flip.
+    @State private var isTogglingFavorite: Bool = false
     @Environment(\.dismiss) private var dismiss
 
     /// Effective contact for view bindings: live snapshot if available,
@@ -87,6 +105,34 @@ struct NodeDetailsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            if onToggleFavorite != nil {
+                // `.primaryAction` renders top-right on iOS (like Android's
+                // TopAppBar star) while staying valid on the macOS target;
+                // `.topBarTrailing` is iOS-only.
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        guard !isTogglingFavorite, let onToggleFavorite else { return }
+                        // Flip optimistically for snappiness, then reconcile to
+                        // the authoritative persisted state the callback returns
+                        // (covers add-failure rollback + double-tap races).
+                        isFavorite.toggle()
+                        isTogglingFavorite = true
+                        let c = displayedContact
+                        Task {
+                            let persisted = await onToggleFavorite(c)
+                            isFavorite = persisted
+                            isTogglingFavorite = false
+                        }
+                    } label: {
+                        Image(systemName: isFavorite ? "star.fill" : "star")
+                            .foregroundStyle(isFavorite ? Theme.accentColor : Theme.textSecondary)
+                    }
+                    .disabled(isTogglingFavorite)
+                    .accessibilityLabel(isFavorite ? "Remove from contacts" : "Save contact")
+                }
+            }
+        }
         .refreshable {
             await refreshFromNetwork()
         }
@@ -98,6 +144,9 @@ struct NodeDetailsView: View {
             // `liveContact` still holds the previous contact's data and would
             // bleed through until the polling loop's first apply.
             liveContact = contact
+            // Seed the toolbar star from the parent-supplied contact. Keyed on
+            // `contact.id`, so navigating to a different node re-seeds it.
+            isFavorite = contact.isFavorite
             // Also reset auxiliary state so the previous contact's metadata
             // (relay button, interface name, expiry date) doesn't render for
             // contact B during the first path-table lookup.
