@@ -112,14 +112,34 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// response comes back; returns the `ProxyResponse` (including `.error` /
     /// `.unsupported`) otherwise so callers can map those onto their own return
     /// shapes.
-    private func roundTrip(_ request: ProxyRequest, op: String) async throws -> ProxyResponse {
+    private func roundTrip(_ request: ProxyRequest, op: String, deadline: TimeInterval? = nil) async throws -> ProxyResponse {
         let wire: Data
         do {
             wire = try ProxyIPC.encodeRequest(request)
         } catch {
             throw BackendError.ipcFailed(operation: op)
         }
-        let reply = await send(wire)
+        // The seam imposes no timeout of its own — `send` (proxySend) awaits the
+        // NE's completionHandler indefinitely. For long ops, race the send against
+        // a deadline so a dropped / wedged / jetsammed NE reply degrades to
+        // `ipcFailed` instead of hanging the continuation forever. Default `nil`
+        // keeps every existing caller byte-identical.
+        let reply: Data?
+        if let deadline {
+            let sendClosure = send
+            reply = await withTaskGroup(of: Data?.self) { group in
+                group.addTask { await sendClosure(wire) }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: UInt64(max(1, deadline) * 1_000_000_000))
+                    return nil
+                }
+                let first = await group.next() ?? nil
+                group.cancelAll()
+                return first
+            }
+        } else {
+            reply = await send(wire)
+        }
         guard let response = ProxyIPC.decodeResponse(reply) else {
             throw BackendError.ipcFailed(operation: op)
         }
@@ -456,8 +476,43 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         timeout: TimeInterval,
         formFields: [String: String]?
     ) async throws -> NomadNetFetchResult {
-        // Model B: runs NE-side / not proxied yet.
-        NomadNetFetchResult(ok: false, status: .notStarted, data: Data(), contentType: "")
+        // Model B: the NE owns transport/identity/pathTable, so the fetch runs
+        // NE-side via the shared `NomadNetFetch` helper and the result is
+        // marshaled back over the seam. The NE self-bounds every step (path 15s,
+        // link/request/response timeouts) so it always replies; we add an IPC
+        // deadline of `timeout + slack` as a backstop against a never-arriving
+        // reply (the seam has no timeout of its own).
+        func fail(_ s: NomadNetFetchResult.Status) -> NomadNetFetchResult {
+            NomadNetFetchResult(ok: false, status: s, data: Data(), contentType: "")
+        }
+        let response: ProxyResponse
+        do {
+            response = try await roundTrip(
+                .nomadnetFetch(destHashHex: destHashHex, path: path, timeoutSeconds: timeout, formFields: formFields),
+                op: "nomadnetFetch",
+                deadline: timeout + 8
+            )
+        } catch {
+            // IPC failure / deadline hit — the user was actively waiting on this
+            // page, so surface a timeout rather than a misleading "not started".
+            return fail(.timeout)
+        }
+        switch response {
+        case .ok(let payload):
+            guard let payload,
+                  let outcome = try? JSONDecoder().decode(ProxyNomadNetOutcome.self, from: payload) else {
+                return fail(.unknown)
+            }
+            return NomadNetFetchResult(
+                ok: outcome.ok,
+                status: NomadNetFetchResult.Status(rawValue: outcome.status) ?? .unknown,
+                data: outcome.data,
+                contentType: outcome.contentType
+            )
+        case .error, .unsupported:
+            // NE node not running / op not handled — degrade like a stopped backend.
+            return fail(.notStarted)
+        }
     }
 
     // MARK: - RnsTelephony
