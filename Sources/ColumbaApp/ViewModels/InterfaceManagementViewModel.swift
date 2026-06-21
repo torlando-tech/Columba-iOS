@@ -60,6 +60,22 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Whether changes are being applied
     public var isApplyingChanges: Bool = false
 
+    /// Whether interface edits require an explicit "Apply" tap to take effect.
+    ///
+    /// On the Swift / Model B build the NE live-reconciles every change the
+    /// instant it's saved — `InterfaceRepository.saveInterfaces()` posts
+    /// `configChanged` on each edit, which the NE observes (and
+    /// `AppServices.applyInterfaceChanges()` is a deliberate no-op on Model B).
+    /// So there is no Apply step: the toolbar omits the button and edit toasts
+    /// don't prompt for it. On the Python build, edits are staged and pushed to
+    /// the running stack only on Apply.
+    public var requiresExplicitApply: Bool { !BackendPreference.modelB }
+
+    /// Trailing hint for edit toasts — prompt to Apply only when an explicit
+    /// Apply is required; on the live (Model B) path the change is already in
+    /// effect, so no prompt is shown.
+    private var applyHint: String { requiresExplicitApply ? " — tap Apply to take effect" : "" }
+
     // MARK: - Dialog State
 
     /// Whether the add/edit dialog is shown
@@ -207,21 +223,21 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         isLoading = false
     }
 
-    /// Toggle interface enabled state. Marks dirty; the user taps "Apply" in
-    /// the toolbar to push the change through to the running stack, which
-    /// applies it live (hot add/remove, no restart — see `applyChanges()`).
+    /// Toggle interface enabled state. On Model B the change is live the moment
+    /// it's saved; on Python it's staged until the user taps "Apply"
+    /// (see `requiresExplicitApply` / `applyChanges()`).
     public func toggleInterface(_ interface: InterfaceEntity, enabled: Bool) {
         repository.toggleInterface(id: interface.id, enabled: enabled)
         hasPendingChanges = true
-        showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled") — tap Apply to take effect")
+        showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled")\(applyHint)")
     }
 
-    /// Delete an interface. Marks dirty; the running stack keeps the old
-    /// interface alive until "Apply" is tapped (which removes it live).
+    /// Delete an interface. On Model B it's removed live; on Python the running
+    /// stack keeps the old interface alive until "Apply" is tapped.
     public func deleteInterface(_ interface: InterfaceEntity) {
         repository.deleteInterface(id: interface.id)
         hasPendingChanges = true
-        showSuccess("Interface deleted — tap Apply to take effect")
+        showSuccess("Interface deleted\(applyHint)")
     }
 
     /// Confirm and delete the pending interface.
@@ -296,7 +312,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             updated.config = config
 
             repository.updateInterface(updated)
-            showSuccess("Interface updated — tap Apply to take effect")
+            showSuccess("Interface updated\(applyHint)")
         } else {
             // Create new
             let newInterface = InterfaceEntity(
@@ -308,13 +324,15 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             )
 
             repository.addInterface(newInterface)
-            showSuccess("Interface added — tap Apply to take effect")
+            showSuccess("Interface added\(applyHint)")
         }
 
         hasPendingChanges = true
         dismissConfigSheet()
-        // Don't auto-apply — the user taps "Apply" explicitly so a mid-edit
-        // change isn't pushed to the live stack until they're ready.
+        // On Python, don't auto-apply — the user taps "Apply" explicitly so a
+        // mid-edit change isn't pushed to the live stack until they're ready.
+        // On Model B there's no Apply step; the change is already live (the NE
+        // reconciles on save), so `requiresExplicitApply` hides the button.
     }
 
     /// Save a TCP client interface from the wizard flow.

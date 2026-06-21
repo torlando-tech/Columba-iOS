@@ -84,7 +84,11 @@ struct InterfaceManagementScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if viewModel.hasPendingChanges || viewModel.isApplyingChanges {
+                // Only shown when an explicit Apply is required (Python backend).
+                // On the Swift / Model B build the NE reconciles each change live
+                // on save, so there's nothing to apply and the button is omitted.
+                if viewModel.requiresExplicitApply,
+                   viewModel.hasPendingChanges || viewModel.isApplyingChanges {
                     Button {
                         Task {
                             await viewModel.applyChanges()
