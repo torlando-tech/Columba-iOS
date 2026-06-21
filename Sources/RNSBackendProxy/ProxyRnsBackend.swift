@@ -515,12 +515,18 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         func fail(_ s: NomadNetFetchResult.Status) -> NomadNetFetchResult {
             NomadNetFetchResult(ok: false, status: s, data: Data(), contentType: "")
         }
+        // The NE self-bounds the fetch at roughly awaitPath(15) + link(timeout)
+        // + response(timeout + 2) ≈ 2·timeout + 17s, and it ALWAYS replies. The
+        // app deadline must comfortably exceed that so it only fires when the NE
+        // has truly wedged/died — never pre-empting a legitimately slow mesh-path
+        // fetch (which would surface a false "timeout"). Slack added on top.
+        let ipcDeadline = 2 * timeout + 30
         let response: ProxyResponse
         do {
             response = try await roundTrip(
                 .nomadnetFetch(destHashHex: destHashHex, path: path, timeoutSeconds: timeout, formFields: formFields),
                 op: "nomadnetFetch",
-                deadline: timeout + 8
+                deadline: ipcDeadline
             )
         } catch {
             // IPC failure / deadline hit — the user was actively waiting on this
