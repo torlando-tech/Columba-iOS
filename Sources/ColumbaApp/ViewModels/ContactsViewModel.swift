@@ -394,7 +394,11 @@ public final class ContactsViewModel {
             // filter and .relays and showed up under the default Peers view.
             results = results.filter { $0.badgeType == .peer }
         case .audio:
-            results = results.filter { $0.isAudio }
+            // Keyed on badgeType (== .audio iff aspect "lxst.telephony"),
+            // symmetric with .peers / .relays / .sites so all four filters
+            // discriminate on the single mutually-exclusive node type rather
+            // than a mix of badgeType and the aspect-derived isAudio.
+            results = results.filter { $0.badgeType == .audio }
         case .sites:
             results = results.filter { $0.badgeType == .node }
         case .relays:
