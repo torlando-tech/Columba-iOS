@@ -143,7 +143,7 @@ public struct ContactsView: View {
                             // stars while staying correct even when the peer
                             // isn't currently in the in-memory announce arrays.
                             onToggleFavorite: { contact in
-                                vm.toggleFavorite(for: contact)
+                                await vm.toggleFavorite(for: contact)
                             }
                         )
                     case .chat(let conversation):

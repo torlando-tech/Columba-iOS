@@ -726,15 +726,23 @@ public final class ContactsViewModel {
     /// `networkAnnounces`. This keeps the detail-screen star correct for a
     /// My-Contacts-only peer that was just removed and re-added, or any peer
     /// reached by a route that hasn't populated the announce arrays.
-    @MainActor
-    public func toggleFavorite(for contact: Contact) {
+    ///
+    /// Returns the authoritative saved state after persistence completes (true =
+    /// the peer is now in `myContacts`). Callers with optimistic UI (e.g. the
+    /// NodeDetailsView star) reconcile to this so a failed `addToContacts` or a
+    /// rapid double-tap can't leave the UI showing "saved" when it isn't.
+    @MainActor @discardableResult
+    public func toggleFavorite(for contact: Contact) async -> Bool {
         if myContacts.contains(where: { $0.id == contact.id }) {
             // Already a saved contact — reuse the id-based remove path.
             toggleFavorite(for: contact.id)
         } else {
             // Not saved yet — add (creates conversation + setFavorite(true)).
-            Task { await addToContacts(contact) }
+            // addToContacts leaves myContacts untouched and sets errorMessage on
+            // failure, so the membership check below reflects the real outcome.
+            await addToContacts(contact)
         }
+        return myContacts.contains(where: { $0.id == contact.id })
     }
 
     /// Toggle pin status for a contact and persist to database.

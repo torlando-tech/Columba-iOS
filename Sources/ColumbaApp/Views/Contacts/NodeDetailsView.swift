@@ -37,11 +37,14 @@ struct NodeDetailsView: View {
     /// Only rendered for `.node` badge contacts when this callback is non-nil.
     var onBrowseSite: ((Contact) -> Void)?
 
-    /// Called when the top-right star is tapped; receives the displayed contact.
-    /// The star (and its add-to-contacts/favorite behaviour) is only rendered
+    /// Called when the top-right star is tapped; receives the displayed contact
+    /// and returns the **authoritative** favorite/saved state after persistence
+    /// completes. The view reconciles its optimistic star to this return value,
+    /// so a failed save (no rollback) or a rapid double-tap can't leave the star
+    /// out of sync with what was actually persisted. The star is only rendered
     /// when this callback is non-nil, so each parent decides which ViewModel
     /// persists the change — mirroring `onStartChat`/`onBrowseSite`.
-    var onToggleFavorite: ((Contact) -> Void)?
+    var onToggleFavorite: ((Contact) async -> Bool)?
 
     // MARK: - State
 
@@ -60,6 +63,9 @@ struct NodeDetailsView: View {
     /// `displayedContact.isFavorite` would make it snap back on the next path
     /// poll. Seeded in `.task` and toggled optimistically.
     @State private var isFavorite: Bool = false
+    /// Guards against rapid double-taps: the star is disabled while a toggle is
+    /// in flight, so two queued persistence tasks can't race the optimistic flip.
+    @State private var isTogglingFavorite: Bool = false
     @Environment(\.dismiss) private var dismiss
 
     /// Effective contact for view bindings: live snapshot if available,
@@ -106,14 +112,23 @@ struct NodeDetailsView: View {
                 // `.topBarTrailing` is iOS-only.
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        // Optimistic flip — mirrors the in-place mutation in
-                        // ContactsViewModel.toggleFavorite. The parent persists.
+                        guard !isTogglingFavorite, let onToggleFavorite else { return }
+                        // Flip optimistically for snappiness, then reconcile to
+                        // the authoritative persisted state the callback returns
+                        // (covers add-failure rollback + double-tap races).
                         isFavorite.toggle()
-                        onToggleFavorite?(displayedContact)
+                        isTogglingFavorite = true
+                        let c = displayedContact
+                        Task {
+                            let persisted = await onToggleFavorite(c)
+                            isFavorite = persisted
+                            isTogglingFavorite = false
+                        }
                     } label: {
                         Image(systemName: isFavorite ? "star.fill" : "star")
                             .foregroundStyle(isFavorite ? Theme.accentColor : Theme.textSecondary)
                     }
+                    .disabled(isTogglingFavorite)
                     .accessibilityLabel(isFavorite ? "Remove from contacts" : "Save contact")
                 }
             }
