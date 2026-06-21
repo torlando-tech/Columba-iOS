@@ -207,21 +207,21 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         isLoading = false
     }
 
-    /// Toggle interface enabled state. Marks dirty; user must tap
-    /// "Apply & Restart" in the toolbar to push the change through to
-    /// Reticulum (which has no hot-reload — see `applyChanges()`).
+    /// Toggle interface enabled state. Marks dirty; the user taps "Apply" in
+    /// the toolbar to push the change through to the running stack, which
+    /// applies it live (hot add/remove, no restart — see `applyChanges()`).
     public func toggleInterface(_ interface: InterfaceEntity, enabled: Bool) {
         repository.toggleInterface(id: interface.id, enabled: enabled)
         hasPendingChanges = true
-        showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled") — tap Apply to restart")
+        showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled") — tap Apply to take effect")
     }
 
-    /// Delete an interface. Marks dirty; the running Reticulum stack keeps
-    /// the old interface alive until "Apply & Restart" is tapped.
+    /// Delete an interface. Marks dirty; the running stack keeps the old
+    /// interface alive until "Apply" is tapped (which removes it live).
     public func deleteInterface(_ interface: InterfaceEntity) {
         repository.deleteInterface(id: interface.id)
         hasPendingChanges = true
-        showSuccess("Interface deleted — tap Apply to restart")
+        showSuccess("Interface deleted — tap Apply to take effect")
     }
 
     /// Confirm and delete the pending interface.
@@ -296,7 +296,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             updated.config = config
 
             repository.updateInterface(updated)
-            showSuccess("Interface updated — tap Apply to restart")
+            showSuccess("Interface updated — tap Apply to take effect")
         } else {
             // Create new
             let newInterface = InterfaceEntity(
@@ -308,13 +308,13 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             )
 
             repository.addInterface(newInterface)
-            showSuccess("Interface added — tap Apply to restart")
+            showSuccess("Interface added — tap Apply to take effect")
         }
 
         hasPendingChanges = true
         dismissConfigSheet()
-        // Don't auto-apply — user taps "Apply & Restart" explicitly so
-        // they're not surprised by a Reticulum restart while editing.
+        // Don't auto-apply — the user taps "Apply" explicitly so a mid-edit
+        // change isn't pushed to the live stack until they're ready.
     }
 
     /// Save a TCP client interface from the wizard flow.
