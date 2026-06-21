@@ -2329,6 +2329,19 @@ public final class AppServices {
             let displayName = AppDataParser.displayName(from: appData, aspect: aspect)
             DiagLog.log("[RNS] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\" hops=\(hops)")
 
+            // Aspect is now the SOLE signal Contact.init uses to type an
+            // announce (peer / relay / audio / site) — the old app_data-shape
+            // relay heuristic was removed. Both backends are expected to emit
+            // one of the four known aspects (Python via per-aspect RNS
+            // handlers, native via cryptographic detectedAspect). If an empty
+            // or unrecognized aspect ever slips through, the announce silently
+            // becomes a .peer with no fallback, so surface it loudly rather
+            // than misclassifying in silence.
+            let knownAspects: Set<String> = ["lxmf.delivery", "lxmf.propagation", "lxst.telephony", "nomadnetwork.node"]
+            if !knownAspects.contains(aspect) {
+                DiagLog.log("[RNS] WARNING: announce dest=\(destHash) has empty/unrecognized aspect=\"\(aspect)\" — will be classified as a peer. Expected one of \(knownAspects.sorted()).")
+            }
+
             // Insert the announce into the Compat PathTable so the Contacts
             // tab's networkAnnounces list picks it up via the pathUpdates
             // AsyncStream subscription in ContactsViewModel.

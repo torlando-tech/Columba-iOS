@@ -162,12 +162,26 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.interfaceId = entry.interfaceId
         self.aspect = entry.detectedAspect
 
-        // Detect announce type via aspect check or appData parsing
+        // Detect announce type purely from the aspect. This mirrors the
+        // reference clients exactly: Sideband types each announce by which RNS
+        // aspect handler received it (aspect_filter "lxmf.propagation" vs
+        // "lxmf.delivery"), and Android does the same via NodeType.fromAspect.
+        // `entry.isLXMFPropagationNode` is itself derived solely from
+        // aspect == "lxmf.propagation" (the Python bridge sets it via a
+        // cryptographic per-aspect handler match; the native backends compute
+        // detectedAspect cryptographically), so aspect is the SOLE relay
+        // signal. An unrecognized / empty aspect defaults to .peer, matching
+        // NodeType.fromAspect's default.
+        //
+        // The previous `PropagationNodeInfo.parse(app_data)` fallback was
+        // removed: it accepted any >=3-element msgpack app_data without
+        // verifying the destination was a propagation node, so a delivery /
+        // audio / site announce carrying such app_data was mis-flagged as a
+        // relay (leaking into the Peers filter). Both backends already
+        // guarantee a genuine propagation node arrives tagged
+        // "lxmf.propagation" or is dropped before reaching here, so the
+        // fallback only ever caught false positives.
         if entry.isLXMFPropagationNode {
-            self.badgeType = .relay
-            self.isRelay = true
-        } else if let appData = entry.appData,
-                  let _ = PropagationNodeInfo.parse(from: appData) {
             self.badgeType = .relay
             self.isRelay = true
         } else if entry.isLXSTTelephony {
@@ -177,6 +191,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
             self.badgeType = .node
             self.isRelay = false
         } else {
+            // lxmf.delivery and any unrecognized/empty aspect → peer.
             self.badgeType = .peer
             self.isRelay = false
         }
@@ -370,13 +385,27 @@ public final class ContactsViewModel {
         case .all:
             break
         case .peers:
-            results = results.filter { $0.aspect == "lxmf.delivery" || $0.aspect == nil }
+            // Peers == the peer node-type only. Mirrors Android's
+            // `nodeType == PEER` (a mutually-exclusive enum): keying on
+            // badgeType excludes relays / audio / sites by construction, so a
+            // relay can't leak in. The previous aspect-only predicate
+            // (aspect == "lxmf.delivery" || aspect == nil) ignored isRelay, so
+            // a relay carrying aspect "lxmf.delivery"/nil matched both this
+            // filter and .relays and showed up under the default Peers view.
+            results = results.filter { $0.badgeType == .peer }
         case .audio:
             results = results.filter { $0.isAudio }
         case .sites:
             results = results.filter { $0.badgeType == .node }
         case .relays:
-            results = results.filter { $0.isRelay }
+            // Relays == the propagation-node type only, i.e. aspect
+            // "lxmf.propagation" (Android's nodeType == PROPAGATION_NODE,
+            // Sideband's aspect_filter == "lxmf.propagation"). Keyed on
+            // badgeType so the four node types stay mutually exclusive on a
+            // single discriminator, symmetric with .peers / .sites. Equivalent
+            // to `$0.isRelay` today (Contact.init sets them in lockstep) but
+            // removes the footgun of an entry being isRelay && badgeType != .relay.
+            results = results.filter { $0.badgeType == .relay }
         }
 
         // Apply interface filter

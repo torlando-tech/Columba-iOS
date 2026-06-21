@@ -1,0 +1,140 @@
+import XCTest
+@testable import ColumbaApp
+import RNSAPI
+
+/// Tests for `Contact.init(from: PathEntry)` announce classification — the
+/// single backend-independent point where every networkAnnounces entry gets
+/// its `badgeType` / `isRelay`. The Network tab's aspect filter keys on these:
+/// `.peers` shows `badgeType == .peer`, `.relays` shows `badgeType == .relay`.
+///
+/// Contract: the aspect string is the SOLE relay signal, exactly like the
+/// reference clients — Sideband types announces by which RNS aspect handler
+/// received them, and Android via NodeType.fromAspect. A propagation node is
+/// `aspect == "lxmf.propagation"` (surfaced as `entry.isLXMFPropagationNode`);
+/// every other aspect, including an unrecognized/empty one, is NOT a relay.
+///
+/// Regression target: the "Peers" filter (the default) also showed relays.
+/// The old `PropagationNodeInfo.parse(appData)` heuristic accepted ANY
+/// >=3-element msgpack array without verifying the destination was a
+/// propagation node, so a delivery peer (or audio/site announce) carrying such
+/// app_data was flagged `isRelay = true` and leaked into Peers. That heuristic
+/// has been removed; classification is now driven purely by the aspect.
+///
+/// app_data is packed with the production `packMsgPack` so the encoding matches
+/// what the device decodes off the wire. Lives in Tests/ColumbaAppTests (runs
+/// via the Columba.xcodeproj scheme) because `Contact` lives in the ColumbaApp
+/// module.
+final class AnnounceClassificationTests: XCTestCase {
+
+    private let pnMetaName: UInt64 = 0x01
+
+    // Canonical LXMF delivery app_data: [display_name, stamp_cost] — 2 elements.
+    private func deliveryAppData(name: String?) -> Data {
+        let nameVal: MessagePackValue = name.map { .binary(Data($0.utf8)) } ?? .nil
+        return packMsgPack(.array([nameVal, .nil]))
+    }
+
+    // Canonical LXMF propagation-node app_data: 7 elements, name in metadata[6].
+    private func propagationAppData(name: String? = nil, nodeState: Bool = true) -> Data {
+        var metadata: [MessagePackValue: MessagePackValue] = [:]
+        if let name { metadata[.uint(pnMetaName)] = .binary(Data(name.utf8)) }
+        return packMsgPack(.array([
+            .bool(false),                           // 0: legacy LXMF PN flag
+            .uint(1_700_000_000),                   // 1: timebase
+            .bool(nodeState),                       // 2: node state (enabled)
+            .uint(50_000),                          // 3: per-transfer limit
+            .uint(50_000),                          // 4: per-sync limit
+            .array([.uint(0), .uint(0), .uint(0)]), // 5: stamp cost
+            .map(metadata),                         // 6: metadata (name lives here)
+        ]))
+    }
+
+    // A non-propagation announce whose app_data is nonetheless a >=3-element
+    // msgpack array — the exact shape that used to fool the relay heuristic.
+    private func threeElementAppData() -> Data {
+        packMsgPack(.array([.binary(Data("Carol".utf8)), .uint(0), .uint(0)]))
+    }
+
+    private func entry(
+        aspect: String?,
+        appData: Data?,
+        isPropagation: Bool = false,
+        isTelephony: Bool = false
+    ) -> PathEntry {
+        PathEntry(
+            destinationHash: Data([0xde, 0xad, 0xbe, 0xef]),
+            displayName: "Test",
+            appData: appData,
+            detectedAspect: aspect,
+            isLXMFPropagationNode: isPropagation,
+            isLXSTTelephony: isTelephony,
+            isKnownDestination: true
+        )
+    }
+
+    // MARK: - The leak (regression)
+
+    /// A delivery peer carrying a >=3-element app_data must classify as a peer,
+    /// NOT a relay — this is the exact entry that leaked into the Peers filter.
+    func testDeliveryPeerWithThreeElementAppDataIsPeerNotRelay() {
+        let c = Contact(from: entry(aspect: "lxmf.delivery", appData: threeElementAppData()))
+        XCTAssertEqual(c.badgeType, .peer)
+        XCTAssertFalse(c.isRelay)
+    }
+
+    func testCanonicalDeliveryPeerIsPeer() {
+        let c = Contact(from: entry(aspect: "lxmf.delivery", appData: deliveryAppData(name: "Alice")))
+        XCTAssertEqual(c.badgeType, .peer)
+        XCTAssertFalse(c.isRelay)
+    }
+
+    // MARK: - Relays stay relays
+
+    /// A propagation node tagged with the propagation aspect is a relay.
+    func testTaggedPropagationNodeIsRelay() {
+        let c = Contact(from: entry(
+            aspect: "lxmf.propagation",
+            appData: propagationAppData(name: "Hub"),
+            isPropagation: true
+        ))
+        XCTAssertEqual(c.badgeType, .relay)
+        XCTAssertTrue(c.isRelay)
+    }
+
+    /// Aspect is the sole relay signal: an UNTAGGED announce (no aspect) whose
+    /// app_data happens to be propagation-shaped is NOT promoted to a relay.
+    /// (Both backends guarantee a genuine propagation node arrives tagged
+    /// "lxmf.propagation" or is dropped before reaching here, so the removed
+    /// app_data heuristic only ever caught false positives.)
+    func testUntaggedPropagationShapedAppDataIsPeerNotRelay() {
+        let c = Contact(from: entry(aspect: nil, appData: propagationAppData(name: "Hub")))
+        XCTAssertEqual(c.badgeType, .peer)
+        XCTAssertFalse(c.isRelay)
+    }
+
+    /// An unrecognized/future aspect defaults to peer (matches Android
+    /// NodeType.fromAspect's default), never a relay.
+    func testUnknownAspectIsPeerNotRelay() {
+        let c = Contact(from: entry(aspect: "some.future.aspect", appData: threeElementAppData()))
+        XCTAssertEqual(c.badgeType, .peer)
+        XCTAssertFalse(c.isRelay)
+    }
+
+    // MARK: - Audio / Site no longer mis-flagged as relays
+
+    func testTelephonyWithThreeElementAppDataIsAudioNotRelay() {
+        let c = Contact(from: entry(
+            aspect: "lxst.telephony",
+            appData: threeElementAppData(),
+            isTelephony: true
+        ))
+        XCTAssertEqual(c.badgeType, .audio)
+        XCTAssertFalse(c.isRelay)
+    }
+
+    func testNomadnetSiteWithThreeElementAppDataIsNodeNotRelay() {
+        let c = Contact(from: entry(aspect: "nomadnetwork.node", appData: threeElementAppData()))
+        XCTAssertEqual(c.badgeType, .node)
+        XCTAssertFalse(c.isRelay)
+    }
+}

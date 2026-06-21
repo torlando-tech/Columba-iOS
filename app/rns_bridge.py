@@ -6,7 +6,11 @@ LXMF run on the RNS worker threads; rather than wire C-callable function pointer
 across the Swift/Python boundary, we drop events onto a thread-safe queue that
 Swift drains on a timer. Single-threaded simple, no GIL juggling for callbacks.
 
-Scope: TCPClientInterface only, lxmf.delivery announces, opportunistic LXMF only.
+Scope: TCPClientInterface only, opportunistic LXMF only. Announces are tracked
+for all aspects in `_TRACKED_ASPECTS` (lxmf.delivery, lxmf.propagation,
+lxst.telephony, nomadnetwork.node) via one per-aspect RNS announce handler each
+— do NOT narrow this to lxmf.delivery: Swift relies on the emitted aspect as the
+sole signal for typing peers vs relays vs audio vs sites.
 """
 
 from __future__ import annotations
