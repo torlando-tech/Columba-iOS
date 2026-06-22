@@ -11,6 +11,9 @@
 import SwiftUI
 import RNSAPI
 import CoreBluetooth
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Step 1: Scan for and select an RNode BLE device.
 @available(iOS 17.0, macOS 14.0, *)
@@ -28,6 +31,9 @@ struct DeviceDiscoveryStep: View {
     // Verification state
     @State private var pairingDeviceName: String?
     @State private var pairingError: String?
+    /// Set when CoreBluetooth is off / unauthorized / unsupported so the step can show
+    /// an actionable recovery banner instead of spinning "Scanning…" forever.
+    @State private var btUnavailable: CBManagerState?
     @State private var detectTimeoutTask: Task<Void, Never>?
 
     /// Lightweight BLE scanner — no restore identifier, no auto-reconnect.
@@ -117,6 +123,39 @@ struct DeviceDiscoveryStep: View {
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity)
+                .background(Theme.error.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+
+            // Bluetooth unavailable — actionable recovery (off / denied / unsupported)
+            if let btState = btUnavailable {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Theme.error)
+                        Text(bluetoothBannerText(btState))
+                            .font(.caption)
+                            .foregroundStyle(Theme.error)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if btState == .unauthorized {
+                        Button("Open Settings") {
+                            #if canImport(UIKit)
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                            #endif
+                        }
+                        .font(.caption.bold())
+                        .foregroundStyle(Theme.accentColor)
+                    }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity)
@@ -279,9 +318,21 @@ struct DeviceDiscoveryStep: View {
         return Color.gray.opacity(0.3)
     }
 
+    private func bluetoothBannerText(_ state: CBManagerState) -> String {
+        switch state {
+        case .poweredOff:   return "Bluetooth is off — turn it on to find your RNode."
+        case .unauthorized: return "Columba needs Bluetooth permission to find your RNode. Allow it in Settings."
+        case .unsupported:  return "Bluetooth Low Energy isn't supported on this device."
+        case .resetting:    return "Bluetooth is resetting — try scanning again in a moment."
+        default:            return "Bluetooth is unavailable right now."
+        }
+    }
+
     // MARK: - Scan Control
 
     private func startScanning() {
+        // A retry should clear any prior Bluetooth-unavailable banner.
+        btUnavailable = nil
         // Reuse existing scanner if available
         if let existing = scanner {
             existing.startScan()
@@ -296,6 +347,12 @@ struct DeviceDiscoveryStep: View {
         probe.onProbeResult = { result in
             addDebug("probe: \(result)")
             handleProbeResult(result)
+        }
+        probe.onBluetoothUnavailable = { state in
+            // CBCentralManager(queue: nil) delivers on the main queue.
+            isScanning = false
+            btUnavailable = state
+            addDebug("bluetooth unavailable: \(state.rawValue)")
         }
         scanner = probe
         isScanning = true

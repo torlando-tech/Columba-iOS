@@ -85,7 +85,10 @@ public final class AppGroupRNodeSeamWire: RNodeSeamWire, @unchecked Sendable {
     // MARK: RNodeSeamWire
 
     public func send(_ message: RNodeSeamMessage) {
-        sendQueue.append(frame: message.encode(), interfaceTag: FrameInterfaceTag.rnodeControl.rawValue)
+        guard sendQueue.append(frame: message.encode(), interfaceTag: FrameInterfaceTag.rnodeControl.rawValue) else {
+            ExtensionDiagLog.log("[RNODE] seam wire: append failed — dropped \(message), skipping wakeup")
+            return
+        }
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),
             CFNotificationName(sendNotification as CFString),

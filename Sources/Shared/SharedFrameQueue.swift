@@ -229,7 +229,8 @@ public final class SharedFrameQueue: @unchecked Sendable {
     /// - Parameters:
     ///   - frame: Raw frame data
     ///   - interfaceTag: Which interface this frame arrived on
-    public func append(frame: Data, interfaceTag: UInt8) {
+    @discardableResult
+    public func append(frame: Data, interfaceTag: UInt8) -> Bool {
         let length = UInt32(frame.count)
         var header = Data(count: Self.headerSize)
         // 4-byte big-endian length
@@ -240,13 +241,19 @@ public final class SharedFrameQueue: @unchecked Sendable {
         // 1-byte interface tag
         header[4] = interfaceTag
 
+        var wrote = false
         withFileLock {
             let fh: FileHandle
             if FileManager.default.fileExists(atPath: fileURL.path) {
                 guard let handle = try? FileHandle(forWritingTo: fileURL) else { return }
                 fh = handle
             } else {
-                FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+                // Pin protection so locked-state IPC keeps working even if the app later
+                // adopts a stricter default-data-protection class (matches ExtensionDiagLog).
+                FileManager.default.createFile(
+                    atPath: fileURL.path, contents: nil,
+                    attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+                )
                 guard let handle = try? FileHandle(forWritingTo: fileURL) else { return }
                 fh = handle
             }
@@ -254,7 +261,9 @@ public final class SharedFrameQueue: @unchecked Sendable {
             fh.write(header)
             fh.write(frame)
             fh.closeFile()
+            wrote = true
         }
+        return wrote
     }
 
     /// Read all queued frames and clear the queue (called by main app).
@@ -322,7 +331,10 @@ public final class SharedFrameQueue: @unchecked Sendable {
 
         // Ensure lock file exists
         if !FileManager.default.fileExists(atPath: lockPath) {
-            FileManager.default.createFile(atPath: lockPath, contents: nil)
+            FileManager.default.createFile(
+                atPath: lockPath, contents: nil,
+                attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+            )
         }
 
         let lockFd = Darwin.open(lockPath, O_RDWR)

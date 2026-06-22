@@ -23,7 +23,7 @@ public final class AppGroupRNodeServer: @unchecked Sendable {
     /// them to the NE), so the app can surface RNode connection state in its own UI —
     /// the NE owns the authoritative `RNodeInterface`, but the BLE link state is a good
     /// proxy and the app has it directly here.
-    public var onLinkStateChange: ((RNodeLinkState) -> Void)?
+    public var onLinkStateChange: ((RNodeLinkState, String?) -> Void)?
 
     private let lock = NSLock()
     private var transport: BLETransport?
@@ -76,23 +76,42 @@ public final class AppGroupRNodeServer: @unchecked Sendable {
         }
     }
 
+    /// Re-create + connect the radio at app launch from the persisted device name (for
+    /// CoreBluetooth state restoration / background relaunch). Idempotent with the
+    /// NE-driven `.connect`: the per-deviceName transport cache means a later `.connect`
+    /// reuses this same central rather than creating a second one with the same restore id.
+    public func restoreRadio(deviceName: String) {
+        connectRadio(deviceName: deviceName)
+    }
+
     private func connectRadio(deviceName: String) {
+        // An empty name would drop BLETransport into scan-only mode (no auto-connect, no
+        // timeout) and wedge the UI on "connecting" forever. The UI already requires a
+        // device name; refuse defensively and surface a failure rather than entering that
+        // dead mode. (RNode targets a specific device by name — there is no "first found".)
+        guard !deviceName.isEmpty else {
+            log?("[RNODE] server: refusing connect with empty deviceName")
+            wire.send(.stateChanged(state: .failed, reason: "No RNode device selected"))
+            return
+        }
         lock.lock()
         if transport == nil || transportDeviceName != deviceName {
             // (Re)create the radio for this device and wire its callbacks once.
             // BLETransport reuses its CBCentralManager across connect()/disconnect(),
             // so we only rebuild it when the target device changes.
             transport?.disconnect()
-            let name = deviceName.isEmpty ? nil : deviceName
-            let radio = BLETransport(deviceName: name)
+            let radio = BLETransport(deviceName: deviceName)
             radio.onDataReceived = { [weak self] data in
                 self?.wire.send(.dataReceived(data: data))
             }
             radio.onStateChange = { [weak self] state in
                 let link = state.linkState
+                // Preserve the underlying failure reason (BLEError copy) for the NE/UI.
+                var reason: String? = nil
+                if case .failed(let err) = state { reason = err.localizedDescription }
                 self?.log?("[RNODE] server: radio BLE state -> \(link)")
-                self?.wire.send(.stateChanged(state: link))
-                self?.onLinkStateChange?(link)
+                self?.wire.send(.stateChanged(state: link, reason: reason))
+                self?.onLinkStateChange?(link, reason)
             }
             transport = radio
             transportDeviceName = deviceName

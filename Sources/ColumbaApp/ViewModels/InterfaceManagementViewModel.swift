@@ -165,6 +165,10 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// relay shows "Unreachable" while a reachable one shows "Connected" — the coarse
     /// any-relay-online bool can't express that. NE-push driven (no per-second round-trip).
     @MainActor private var modelBRelayStatuses: [String: InterfaceStatus] = [:]
+    /// NE-authoritative RNode badge (Model B), cached by `refreshNEBackedStatus`. Only drives
+    /// the badge when `AppServices.rnodeBadgeFromNE` is on (gated — RISK 1); otherwise the
+    /// app-side BLE link owns the RNode badge.
+    @MainActor private var modelBRNodeStatus: InterfaceStatus?
 
     // MARK: - Computed Properties
 
@@ -227,8 +231,15 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// it's saved; on Python it's staged until the user taps "Apply"
     /// (see `requiresExplicitApply` / `applyChanges()`).
     public func toggleInterface(_ interface: InterfaceEntity, enabled: Bool) {
+        // Model B supports a single RNode radio — block enabling a second one.
+        if interface.type == .rnode, enabled, BackendPreference.modelB,
+           otherEnabledRNodeExists(excluding: interface.id) {
+            showError("Only one RNode radio can be active at a time. Disable the other RNode first.")
+            return
+        }
         repository.toggleInterface(id: interface.id, enabled: enabled)
         hasPendingChanges = true
+        applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: enabled)
         showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled")\(applyHint)")
     }
 
@@ -237,6 +248,8 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     public func deleteInterface(_ interface: InterfaceEntity) {
         repository.deleteInterface(id: interface.id)
         hasPendingChanges = true
+        // Tear down the app-side RNode radio when its interface is removed.
+        applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: false)
         showSuccess("Interface deleted\(applyHint)")
     }
 
@@ -300,6 +313,14 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // Validate
         guard validateForm() else { return }
 
+        // Model B hosts a single shared RNode radio — refuse a second enabled one
+        // (it would silently overwrite the first's config + radio).
+        if configType == .rnode, configEnabled, BackendPreference.modelB,
+           otherEnabledRNodeExists(excluding: editingInterface?.id) {
+            showError("Only one RNode radio can be active at a time. Disable the other RNode first.")
+            return
+        }
+
         // Build config
         let config = buildInterfaceConfig()
 
@@ -324,10 +345,22 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             )
 
             repository.addInterface(newInterface)
-            showSuccess("Interface added\(applyHint)")
+            // RNode bring-up is async (radio in app, RNS in NE); don't claim "added"
+            // as if it's connected — the badge + a failure toast report the outcome.
+            if configType == .rnode, BackendPreference.modelB {
+                showSuccess("RNode saved — connecting…")
+            } else {
+                showSuccess("Interface added\(applyHint)")
+            }
         }
 
         hasPendingChanges = true
+        // On Model B the app hosts the CoreBluetooth RNode radio, so a saved RNode
+        // add/edit must start (or stop) the app-side radio NOW — the NE's
+        // `configChanged` reconcile only covers TCP relays and cannot start the
+        // app's radio. Read configName/configEnabled BEFORE dismissConfigSheet()
+        // resets the form. Other interface types stay live-reconciled by the NE.
+        applyRNodeLiveChange(config: config, name: configName, enabled: configEnabled)
         dismissConfigSheet()
         // On Python, don't auto-apply — the user taps "Apply" explicitly so a
         // mid-edit change isn't pushed to the live stack until they're ready.
@@ -376,6 +409,46 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         Task { @MainActor in
             await applyChanges()
         }
+    }
+
+    /// Bring an RNode interface change live immediately on Model B.
+    ///
+    /// Unlike TCP relays — which the NE live-reconciles off the `configChanged`
+    /// notification the repository posts on every save — the RNode radio lives in
+    /// the **app** (the NE runs only the RNS/KISS stack over the App-Group seam).
+    /// So an RNode add / edit / enable / disable / remove must (re)start or stop
+    /// the app-side radio here: `startRNodeInterface` starts the app-side seam
+    /// server AND writes the `RNodeSeamConfig` the NE rebuilds its
+    /// `RNodeInterface` from (which then drives the BLE connect back over the
+    /// seam). Without this hook a freshly-added RNode never connects until the
+    /// next cold launch (`ColumbaApp` startup brings up persisted enabled RNodes),
+    /// which presents as a dead "connect" — the app and the RNode both show BLE
+    /// disconnected. No-op on Python (explicit Apply) and for non-RNode types.
+    private func applyRNodeLiveChange(config: InterfaceTypeConfig, name: String, enabled: Bool) {
+        guard BackendPreference.modelB, case .rnode(let rnodeConfig) = config else { return }
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        Task { @MainActor in
+            do {
+                if enabled {
+                    try await appServices.startRNodeInterface(config: rnodeConfig, name: trimmedName)
+                } else if !otherEnabledRNodeExists() {
+                    // Only tear down the shared radio when no enabled RNode remains
+                    // (the repo entity is already disabled/removed by this point).
+                    await appServices.stopRNodeInterface()
+                }
+            } catch {
+                logger.error("RNode live bring-up failed: \(error.localizedDescription)")
+                showError("Couldn't start RNode: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Model B hosts a single shared RNode radio (one app-side BLETransport, one NE
+    /// `ne-rnode` interface, one App-Group config key), so enforce one active RNode:
+    /// a second would overwrite the first, and disabling/removing one must not tear
+    /// down a still-enabled sibling.
+    private func otherEnabledRNodeExists(excluding id: String? = nil) -> Bool {
+        interfaces.contains { $0.type == .rnode && $0.enabled && $0.id != id }
     }
 
     // MARK: - Apply Changes
@@ -562,7 +635,17 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
                     // Track RNode interface status
                     if let rnodeEntity = enabledIfs.first(where: { $0.type == .rnode }) {
-                        if let state = rnodeState {
+                        if AppServices.rnodeBadgeFromNE {
+                            // GATED: NE-authoritative badge. refreshNEBackedStatus published
+                            // it on the push; mirror it here so the per-tick loop doesn't
+                            // revert to the (now-suppressed) BLE-link state.
+                            let neStatus = self.modelBRNodeStatus ?? .connecting
+                            self.interfaceStatus[rnodeEntity.id] = neStatus
+                            if neStatus == .error {
+                                let msg = "RNode \(rnodeEntity.name) couldn't connect"
+                                if self.errorMessage != msg { self.showError(msg) }
+                            }
+                        } else if let state = rnodeState {
                             switch state {
                             case .connected:
                                 self.interfaceStatus[rnodeEntity.id] = .connected
@@ -574,6 +657,10 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                                 self.interfaceStatus[rnodeEntity.id] = .disconnected
                             case .connectionFailed, .sendFailed, .invalidConfig:
                                 self.interfaceStatus[rnodeEntity.id] = .error
+                                // Surface the failure as a toast (mirrors the TCP path);
+                                // the dedup guard prevents per-tick re-flapping.
+                                let msg = "RNode \(rnodeEntity.name) couldn't connect"
+                                if self.errorMessage != msg { self.showError(msg) }
                             }
                         } else {
                             self.interfaceStatus[rnodeEntity.id] = .disconnected
@@ -680,6 +767,27 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // Publish immediately so the badges update on the push, not the next tick.
         for entity in repository.getEnabledInterfaces() where entity.type == .tcpClient {
             interfaceStatus[entity.id] = fresh[entity.id] ?? .connecting
+        }
+
+        // --- RNode badge (NE-authoritative). GATED: always cache for diagnostics, but only
+        //     write the badge when `AppServices.rnodeBadgeFromNE` is on; otherwise the
+        //     app-side BLE link keeps owning the RNode badge (see applyRNodeLinkState). ---
+        if let rnode = await appServices.neRNodeStatus() {
+            let status: InterfaceStatus
+            if rnode.online {
+                status = .connected
+            } else if let err = rnode.lastError, !err.isEmpty {
+                status = .error
+            } else {
+                status = .connecting
+            }
+            modelBRNodeStatus = status
+            if AppServices.rnodeBadgeFromNE,
+               let rnodeEntity = repository.getEnabledInterfaces().first(where: { $0.type == .rnode }) {
+                interfaceStatus[rnodeEntity.id] = status
+            }
+        } else {
+            modelBRNodeStatus = nil
         }
     }
 
