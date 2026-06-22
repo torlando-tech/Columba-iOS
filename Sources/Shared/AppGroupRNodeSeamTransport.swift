@@ -95,16 +95,19 @@ public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
         guard completion != nil else { return }
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 8_000_000_000)  // 8s
-            guard let self else { return }
-            self.lock.lock()
-            let timedOut = self.pendingSends.removeValue(forKey: reqId)
-            self.lock.unlock()
-            if let timedOut {
-                ExtensionDiagLog.log("[RNODE] seam(NE): send reqId=\(reqId) timed out")
-                timedOut(RNodeSeamTransportError.appWrite("seam send timeout"))
-                self.setState(.disconnected)
-            }
+            guard let self, let timedOut = self.takePendingSend(reqId) else { return }
+            ExtensionDiagLog.log("[RNODE] seam(NE): send reqId=\(reqId) timed out")
+            timedOut(RNodeSeamTransportError.appWrite("seam send timeout"))
+            self.setState(.disconnected)
         }
+    }
+
+    /// Remove + return a pending send's completion under the lock. Kept synchronous so the
+    /// async watchdog never touches `NSLock` directly (unavailable from async contexts /
+    /// Swift 6 error). Returns nil if the real `.sendResult` already resolved this reqId.
+    private func takePendingSend(_ reqId: UInt32) -> ((Error?) -> Void)? {
+        lock.lock(); defer { lock.unlock() }
+        return pendingSends.removeValue(forKey: reqId)
     }
 
     public func disconnect() {

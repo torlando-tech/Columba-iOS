@@ -769,25 +769,26 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             interfaceStatus[entity.id] = fresh[entity.id] ?? .connecting
         }
 
-        // --- RNode badge (NE-authoritative). GATED: always cache for diagnostics, but only
-        //     write the badge when `AppServices.rnodeBadgeFromNE` is on; otherwise the
-        //     app-side BLE link keeps owning the RNode badge (see applyRNodeLinkState). ---
-        if let rnode = await appServices.neRNodeStatus() {
-            let status: InterfaceStatus
-            if rnode.online {
-                status = .connected
-            } else if let err = rnode.lastError, !err.isEmpty {
-                status = .error
+        // --- RNode badge (NE-authoritative). GATED: skip the statusSnapshot() IPC entirely
+        //     when the flag is off — the app-side BLE link owns the RNode badge then (see
+        //     applyRNodeLinkState). Only query + drive the badge when the flag is on. ---
+        if AppServices.rnodeBadgeFromNE {
+            if let rnode = await appServices.neRNodeStatus() {
+                let status: InterfaceStatus
+                if rnode.online {
+                    status = .connected
+                } else if let err = rnode.lastError, !err.isEmpty {
+                    status = .error
+                } else {
+                    status = .connecting
+                }
+                modelBRNodeStatus = status
+                if let rnodeEntity = repository.getEnabledInterfaces().first(where: { $0.type == .rnode }) {
+                    interfaceStatus[rnodeEntity.id] = status
+                }
             } else {
-                status = .connecting
+                modelBRNodeStatus = nil
             }
-            modelBRNodeStatus = status
-            if AppServices.rnodeBadgeFromNE,
-               let rnodeEntity = repository.getEnabledInterfaces().first(where: { $0.type == .rnode }) {
-                interfaceStatus[rnodeEntity.id] = status
-            }
-        } else {
-            modelBRNodeStatus = nil
         }
     }
 

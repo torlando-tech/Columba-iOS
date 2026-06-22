@@ -3178,6 +3178,9 @@ public final class AppServices {
         rnodeConnectWatchdog?.cancel()
         rnodeConnectWatchdog = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 25_000_000_000)
+            // `try?` swallows the cancellation; be explicit so a future `await` in
+            // stopRNodeInterface can't let a cancelled watchdog fire a spurious failure.
+            guard !Task.isCancelled else { return }
             guard let self, let iface = self.rnodeInterface, iface.state == .connecting else { return }
             iface.state = .connectionFailed(
                 underlying: "RNode didn't connect — check Bluetooth is on and Background Delivery is enabled, then try again"
