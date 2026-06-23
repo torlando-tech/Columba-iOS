@@ -16,7 +16,7 @@ import ReticulumSwift
 
 public final class AppGroupRNodeServer: @unchecked Sendable {
 
-    private let wire: AppGroupRNodeSeamWire
+    private let wire: RNodeSeamWire
     private let log: ((String) -> Void)?
 
     /// App-local mirror of the radio's link-state changes (in addition to forwarding
@@ -31,7 +31,7 @@ public final class AppGroupRNodeServer: @unchecked Sendable {
 
     private var inboundTask: Task<Void, Never>?
 
-    public init(wire: AppGroupRNodeSeamWire, log: ((String) -> Void)? = nil) {
+    public init(wire: RNodeSeamWire, log: ((String) -> Void)? = nil) {
         self.wire = wire
         self.log = log
     }

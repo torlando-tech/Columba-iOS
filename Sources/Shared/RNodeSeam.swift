@@ -119,6 +119,10 @@ public protocol RNodeSeamWire: AnyObject, Sendable {
     func send(_ message: RNodeSeamMessage)
     /// Decoded messages arriving from the other process.
     var inbound: AsyncStream<RNodeSeamMessage> { get }
+    /// Begin/stop delivering on `inbound` (and any underlying observers). The app-group
+    /// impl wires Darwin observers; an in-memory test loopback can no-op these.
+    func start()
+    func stop()
 }
 
 // MARK: - Shared config snapshot

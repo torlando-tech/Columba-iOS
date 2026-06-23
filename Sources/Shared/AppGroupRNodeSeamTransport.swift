@@ -20,7 +20,8 @@ import ReticulumSwift
 
 public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
 
-    private let wire: AppGroupRNodeSeamWire
+    private let wire: RNodeSeamWire
+    private let sendTimeoutNanos: UInt64
     private var inboundTask: Task<Void, Never>?
 
     private let lock = NSLock()
@@ -54,10 +55,12 @@ public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
 
     public init(
         deviceName: String,
-        wire: AppGroupRNodeSeamWire = AppGroupRNodeSeamWire(role: .networkExtension)
+        wire: RNodeSeamWire = AppGroupRNodeSeamWire(role: .networkExtension),
+        sendTimeoutNanos: UInt64 = 8_000_000_000  // 8s; injectable for tests
     ) {
         self.deviceName = deviceName
         self.wire = wire
+        self.sendTimeoutNanos = sendTimeoutNanos
     }
 
     // MARK: - Transport
@@ -93,8 +96,9 @@ public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
         // `.connect` idempotently). The real `.sendResult` arriving first removes the reqId,
         // making this a no-op.
         guard completion != nil else { return }
+        let timeout = sendTimeoutNanos
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 8_000_000_000)  // 8s
+            try? await Task.sleep(nanoseconds: timeout)
             guard let self, let timedOut = self.takePendingSend(reqId) else { return }
             ExtensionDiagLog.log("[RNODE] seam(NE): send reqId=\(reqId) timed out")
             timedOut(RNodeSeamTransportError.appWrite("seam send timeout"))
