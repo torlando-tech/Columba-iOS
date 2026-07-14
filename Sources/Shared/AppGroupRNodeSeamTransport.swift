@@ -67,6 +67,11 @@ public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
 
     public func connect() {
         ExtensionDiagLog.log("[RNODE] seam(NE): connect(device='\(deviceName)')")
+        // Cancel any prior inbound task before overwriting it. Without this, a connect()
+        // without a preceding disconnect() (contract misuse / reuse) would leak the old
+        // task AND leave two consumers racing the same AsyncStream — each yield goes to
+        // exactly one of them, splitting KISS .dataReceived frames into corrupt chunks.
+        inboundTask?.cancel()
         // start() first so a reused wire re-arms its stream before the task reads `inbound`;
         // otherwise the task would capture the finished stream from a prior disconnect().
         wire.start()
