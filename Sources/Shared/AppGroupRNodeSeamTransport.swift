@@ -67,13 +67,15 @@ public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
 
     public func connect() {
         ExtensionDiagLog.log("[RNODE] seam(NE): connect(device='\(deviceName)')")
+        // start() first so a reused wire re-arms its stream before the task reads `inbound`;
+        // otherwise the task would capture the finished stream from a prior disconnect().
+        wire.start()
         inboundTask = Task { [weak self] in
             guard let self else { return }
             for await message in self.wire.inbound {
                 self.handle(message)
             }
         }
-        wire.start()
         setState(.connecting)
         wire.send(.connect(deviceName: deviceName))
     }

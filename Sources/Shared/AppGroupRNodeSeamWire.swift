@@ -26,8 +26,8 @@ public final class AppGroupRNodeSeamWire: RNodeSeamWire, @unchecked Sendable {
     private let sendNotification: String
     private let inboundNotification: String
 
-    private let _inbound: AsyncStream<RNodeSeamMessage>
-    private let inboundCont: AsyncStream<RNodeSeamMessage>.Continuation
+    private var _inbound: AsyncStream<RNodeSeamMessage>
+    private var inboundCont: AsyncStream<RNodeSeamMessage>.Continuation
     private var observerRegistered = false
 
     public init(role: Role, appGroupIdentifier: String = appGroupIdentifier) {
@@ -50,6 +50,11 @@ public final class AppGroupRNodeSeamWire: RNodeSeamWire, @unchecked Sendable {
     /// from `init` so `self` is fully initialized before the C callback can fire.)
     public func start() {
         guard !observerRegistered else { return }
+        // Re-arm a fresh stream: a prior stop() called inboundCont.finish(), which is
+        // permanent — yields into a finished continuation are a no-op. Recreating here
+        // lets a disconnect()→connect() cycle on the same wire deliver again instead of
+        // going silently deaf. (Callers must read `inbound` after start(); see connect().)
+        (_inbound, inboundCont) = AsyncStream.makeStream(of: RNodeSeamMessage.self)
         observerRegistered = true
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let observer = Unmanaged.passUnretained(self).toOpaque()
