@@ -1152,6 +1152,41 @@ public final class LXMFDatabase: @unchecked Sendable {
         persistMessage(record)
     }
 
+    /// Persist an already-decoded `MessageRecord` verbatim.
+    ///
+    /// Unlike `saveMessage(_:)` this does NOT go through `LXMessage`, whose
+    /// `pack()`/`unpackFromBytes` are Compat stubs that return an empty
+    /// placeholder (zeroed hash, no content). Callers that already hold a
+    /// full record — notably migration/backup import — must use this so the
+    /// message's content and field map survive; routing them through the stub
+    /// would silently write blank rows. Ensures the conversation row exists
+    /// (without clobbering existing conversation metadata) and upserts the
+    /// message by id.
+    public func saveMessageRecord(_ record: MessageRecord) {
+        lock.lock(); defer { lock.unlock() }
+        let convHash = record.conversationHash
+
+        if conversations[convHash] == nil {
+            let conv = ConversationRecord(
+                hash: convHash,
+                displayName: "",
+                lastMessageAt: Date(timeIntervalSince1970: record.timestamp),
+                lastMessage: String(data: record.content, encoding: .utf8),
+                unreadCount: 0
+            )
+            conversations[convHash] = conv
+            persistConversation(conv)
+        }
+
+        messagesById[record.id] = record
+        if let idx = messagesByConversation[convHash]?.firstIndex(where: { $0.id == record.id }) {
+            messagesByConversation[convHash]?[idx] = record
+        } else {
+            messagesByConversation[convHash, default: []].append(record)
+        }
+        persistMessage(record)
+    }
+
     public func getMessage(id: Data) throws -> LXMessage? { nil }
     public func hasMessage(id: Data) throws -> Bool {
         lock.lock(); defer { lock.unlock() }
@@ -1261,6 +1296,28 @@ public final class LXMFDatabase: @unchecked Sendable {
         }
     }
     public func markConversationRead(hash: Data) throws { try setUnreadCount(hash: hash, count: 0) }
+
+    /// Set a conversation's list-preview metadata in one shot.
+    ///
+    /// Used by migration/backup import, which restores conversation rows
+    /// straight from the backup rather than deriving them from live message
+    /// traffic. Without this the preview, last-message timestamp (list
+    /// ordering), and unread badge stay at their `ensureConversation` defaults
+    /// (blank / nil / 0). No-op if the conversation row doesn't exist yet.
+    public func setConversationMetadata(
+        hash: Data,
+        lastMessage: String?,
+        lastMessageAt: Date?,
+        unreadCount: Int
+    ) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard var conv = conversations[hash] else { return }
+        conv.lastMessage = lastMessage
+        conv.lastMessageAt = lastMessageAt
+        conv.unreadCount = unreadCount
+        conversations[hash] = conv
+        persistConversation(conv)
+    }
     public func deleteConversation(hash: Data) throws {
         lock.lock(); defer { lock.unlock() }
         conversations.removeValue(forKey: hash)

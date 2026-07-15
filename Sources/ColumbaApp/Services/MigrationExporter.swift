@@ -127,7 +127,7 @@ actor MigrationExporter {
                         identityHash: local.identityHash,
                         peerName: conv.displayName,
                         lastMessage: conv.lastMessagePreview,
-                        lastMessageTimestamp: conv.lastMessageTimestamp,
+                        lastMessageTimestamp: conv.lastMessageTimestamp.timeIntervalSince1970,
                         unreadCount: conv.unreadCount,
                         isFavorite: conv.isFavorite == 1,
                         iconName: conv.iconName,
@@ -144,14 +144,18 @@ actor MigrationExporter {
                         let msgIdHex = record.messageId.map { String(format: "%02x", $0) }.joined()
                         let convHashHex = record.conversationHash.map { String(format: "%02x", $0) }.joined()
 
+                        let sourceHashHex = record.sourceHash.map { String(format: "%02x", $0) }.joined()
+
                         bundle.messages.append(MessageExport(
                             id: msgIdHex,
                             conversationHash: convHashHex,
                             identityHash: local.identityHash,
                             timestamp: record.timestamp,
-                            isIncoming: record.incoming,
+                            isIncoming: record.direction == .inbound,
                             state: record.state,
                             method: record.method,
+                            content: record.content.base64EncodedString(),
+                            sourceHash: sourceHashHex,
                             packedLxmf: record.packedLxmf.base64EncodedString()
                         ))
                     }

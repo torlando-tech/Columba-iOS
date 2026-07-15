@@ -112,6 +112,7 @@
 		0BDS /* BLEDriverSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDS /* BLEDriverSeam.swift */; };
 		0BST /* AppGroupBLESeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBST /* AppGroupBLESeamTransport.swift */; };
 		0BSV /* AppGroupBLEServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBSV /* AppGroupBLEServer.swift */; };
+		0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */; };
 		0MBS /* ModelBBLEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FMBS /* ModelBBLEService.swift */; };
 		13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */; };
 		1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
@@ -267,6 +268,7 @@
 		710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
 		71922EC204982A357F814F23 /* CallControlButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
 		7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecSelectionSheet.swift; sourceTree = "<group>"; };
+		853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MigrationRoundTripTests.swift; sourceTree = "<group>"; };
 		86E428836698BA8A8973A92F /* CallManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
 		894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundDeliveryPage.swift; sourceTree = "<group>"; };
 		8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNSBackend.swift; sourceTree = "<group>"; };
@@ -807,6 +809,7 @@
 				BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */,
 				ACT01 /* AnnounceClassificationTests.swift */,
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
+				853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -1257,6 +1260,7 @@
 				9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */,
 				ACT02 /* AnnounceClassificationTests.swift in Sources */,
 				04D735AF318341AD65ABFE61 /* RNodeSeamTests.swift in Sources */,
+				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1336,7 +1340,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED $(inherited)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED COLUMBA_MIGRATION_ENABLED $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = "Debug-Swift";
@@ -1643,7 +1647,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED $(inherited)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED COLUMBA_MIGRATION_ENABLED $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
