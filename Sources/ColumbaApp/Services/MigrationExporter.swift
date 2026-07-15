@@ -144,6 +144,8 @@ actor MigrationExporter {
                         let msgIdHex = record.messageId.map { String(format: "%02x", $0) }.joined()
                         let convHashHex = record.conversationHash.map { String(format: "%02x", $0) }.joined()
 
+                        let sourceHashHex = record.sourceHash.map { String(format: "%02x", $0) }.joined()
+
                         bundle.messages.append(MessageExport(
                             id: msgIdHex,
                             conversationHash: convHashHex,
@@ -152,6 +154,8 @@ actor MigrationExporter {
                             isIncoming: record.direction == .inbound,
                             state: record.state,
                             method: record.method,
+                            content: record.content.base64EncodedString(),
+                            sourceHash: sourceHashHex,
                             packedLxmf: record.packedLxmf.base64EncodedString()
                         ))
                     }

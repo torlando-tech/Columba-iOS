@@ -181,24 +181,28 @@ actor MigrationImporter {
                         continue
                     }
 
-                    // Decode packed LXMF
-                    guard let packedData = Data(base64Encoded: msg.packedLxmf) else {
-                        logger.warning("Invalid Base64 for message \(msg.id)")
-                        continue
-                    }
+                    // Decode the MessagePack field map (attachments/icon/reactions).
+                    let packedData = Data(base64Encoded: msg.packedLxmf) ?? Data()
 
-                    // Reconstruct LXMessage from packed wire format
-                    do {
-                        var lxMessage = try LXMessage.unpackFromBytes(packedData)
-                        lxMessage.incoming = msg.isIncoming
-
-                        // Pack and save through normal path
-                        _ = try lxMessage.pack()
-                        try await db.saveMessage(lxMessage)
-                        messagesImported += 1
-                    } catch {
-                        logger.warning("Failed to import message \(msg.id): \(error)")
-                    }
+                    // Persist the record directly. `LXMessage.unpackFromBytes`/
+                    // `pack()` are Compat stubs that return an empty placeholder
+                    // (zeroed hash, no content), so round-tripping through them
+                    // would silently corrupt the restored message with blank
+                    // content. Rebuild the MessageRecord from the export instead.
+                    let record = MessageRecord(
+                        id: msgId,
+                        conversationHash: Data(hexString: msg.conversationHash) ?? Data(),
+                        content: Data(base64Encoded: msg.content) ?? Data(),
+                        timestamp: msg.timestamp,
+                        direction: msg.isIncoming ? .inbound : .outbound,
+                        state: msg.state,
+                        messageId: msgId,
+                        sourceHash: Data(hexString: msg.sourceHash) ?? Data(),
+                        method: msg.method,
+                        packedLxmf: packedData
+                    )
+                    db.saveMessageRecord(record)
+                    messagesImported += 1
                 }
             } catch {
                 logger.warning("Failed to import data for identity \(identityHash): \(error)")

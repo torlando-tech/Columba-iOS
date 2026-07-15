@@ -157,7 +157,15 @@ struct MessageExport: Codable {
     /// Delivery-method string (matches `MessageRecord.method`).
     let method: String
 
-    /// Base64-encoded packed LXMF wire format.
+    /// Base64-encoded message body bytes (`MessageRecord.content`). Carried
+    /// explicitly because `packedLxmf` only holds the field map, not the text.
+    let content: String
+
+    /// Sender destination hash hex (`MessageRecord.sourceHash`).
+    let sourceHash: String
+
+    /// Base64-encoded MessagePack field map (attachments, icon, reactions) —
+    /// exactly what `LXMFDatabase.getMessageRecords` returns in `packedLxmf`.
     let packedLxmf: String
 }
 
