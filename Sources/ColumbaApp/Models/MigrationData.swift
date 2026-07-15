@@ -151,11 +151,11 @@ struct MessageExport: Codable {
     /// True if this is an incoming message.
     let isIncoming: Bool
 
-    /// Raw LXMessageState value.
-    let state: UInt8
+    /// Message delivery-state string (matches `MessageRecord.state`).
+    let state: String
 
-    /// Raw LXDeliveryMethod value.
-    let method: UInt8
+    /// Delivery-method string (matches `MessageRecord.method`).
+    let method: String
 
     /// Base64-encoded packed LXMF wire format.
     let packedLxmf: String

@@ -127,7 +127,7 @@ actor MigrationExporter {
                         identityHash: local.identityHash,
                         peerName: conv.displayName,
                         lastMessage: conv.lastMessagePreview,
-                        lastMessageTimestamp: conv.lastMessageTimestamp,
+                        lastMessageTimestamp: conv.lastMessageTimestamp.timeIntervalSince1970,
                         unreadCount: conv.unreadCount,
                         isFavorite: conv.isFavorite == 1,
                         iconName: conv.iconName,
@@ -149,7 +149,7 @@ actor MigrationExporter {
                             conversationHash: convHashHex,
                             identityHash: local.identityHash,
                             timestamp: record.timestamp,
-                            isIncoming: record.incoming,
+                            isIncoming: record.direction == .inbound,
                             state: record.state,
                             method: record.method,
                             packedLxmf: record.packedLxmf.base64EncodedString()
