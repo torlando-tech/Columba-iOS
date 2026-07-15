@@ -23,7 +23,16 @@ public final class AppGroupRNodeServer: @unchecked Sendable {
     /// them to the NE), so the app can surface RNode connection state in its own UI —
     /// the NE owns the authoritative `RNodeInterface`, but the BLE link state is a good
     /// proxy and the app has it directly here.
-    public var onLinkStateChange: ((RNodeLinkState, String?) -> Void)?
+    /// Read on the CoreBluetooth delegate queue (radio `onStateChange`) and written on the
+    /// main actor (re-wiring in `ModelBRNodeService.start()`), so guard it with the same
+    /// `lock` as `transport` — an unsynchronised Optional-closure race can see a
+    /// partially-released pointer. `lock` is never held across the callback (see
+    /// `emitLinkStateChange`), so no re-entrancy.
+    private var _onLinkStateChange: ((RNodeLinkState, String?) -> Void)?
+    public var onLinkStateChange: ((RNodeLinkState, String?) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onLinkStateChange }
+        set { lock.lock(); _onLinkStateChange = newValue; lock.unlock() }
+    }
 
     private let lock = NSLock()
     private var transport: BLETransport?
@@ -111,7 +120,7 @@ public final class AppGroupRNodeServer: @unchecked Sendable {
                 if case .failed(let err) = state { reason = err.localizedDescription }
                 self?.log?("[RNODE] server: radio BLE state -> \(link)")
                 self?.wire.send(.stateChanged(state: link, reason: reason))
-                self?.onLinkStateChange?(link, reason)
+                self?.emitLinkStateChange(link, reason)
             }
             transport = radio
             transportDeviceName = deviceName
@@ -120,6 +129,13 @@ public final class AppGroupRNodeServer: @unchecked Sendable {
         lock.unlock()
         log?("[RNODE] server: connect radio '\(deviceName)'")
         radio?.connect()
+    }
+
+    /// Snapshot the app-local link-state callback under `lock`, then invoke it outside the
+    /// lock (never held across a callback — no re-entrancy/deadlock).
+    private func emitLinkStateChange(_ state: RNodeLinkState, _ reason: String?) {
+        lock.lock(); let cb = _onLinkStateChange; lock.unlock()
+        cb?(state, reason)
     }
 
     private func sendToRadio(reqId: UInt32, data: Data) {
