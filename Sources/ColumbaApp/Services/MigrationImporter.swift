@@ -167,6 +167,21 @@ actor MigrationImporter {
                         try await db.setFavorite(hash: peerHash, isFavorite: true)
                     }
 
+                    // Reconcile list-preview metadata from the backup. Messages
+                    // are restored via saveMessageRecord, which does NOT touch an
+                    // existing conversation row, so without this the restored
+                    // conversation keeps a blank preview, no timestamp (wrong
+                    // ordering), and a zero unread count.
+                    let lastAt = conv.lastMessageTimestamp > 0
+                        ? Date(timeIntervalSince1970: conv.lastMessageTimestamp)
+                        : nil
+                    try await db.setConversationMetadata(
+                        hash: peerHash,
+                        lastMessage: conv.lastMessage,
+                        lastMessageAt: lastAt,
+                        unreadCount: conv.unreadCount
+                    )
+
                     conversationsImported += 1
                 }
 

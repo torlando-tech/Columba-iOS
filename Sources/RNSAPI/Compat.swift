@@ -1296,6 +1296,28 @@ public final class LXMFDatabase: @unchecked Sendable {
         }
     }
     public func markConversationRead(hash: Data) throws { try setUnreadCount(hash: hash, count: 0) }
+
+    /// Set a conversation's list-preview metadata in one shot.
+    ///
+    /// Used by migration/backup import, which restores conversation rows
+    /// straight from the backup rather than deriving them from live message
+    /// traffic. Without this the preview, last-message timestamp (list
+    /// ordering), and unread badge stay at their `ensureConversation` defaults
+    /// (blank / nil / 0). No-op if the conversation row doesn't exist yet.
+    public func setConversationMetadata(
+        hash: Data,
+        lastMessage: String?,
+        lastMessageAt: Date?,
+        unreadCount: Int
+    ) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard var conv = conversations[hash] else { return }
+        conv.lastMessage = lastMessage
+        conv.lastMessageAt = lastMessageAt
+        conv.unreadCount = unreadCount
+        conversations[hash] = conv
+        persistConversation(conv)
+    }
     public func deleteConversation(hash: Data) throws {
         lock.lock(); defer { lock.unlock() }
         conversations.removeValue(forKey: hash)

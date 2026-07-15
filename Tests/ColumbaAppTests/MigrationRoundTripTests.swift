@@ -222,6 +222,33 @@ final class MigrationRoundTripTests: XCTestCase {
         XCTAssertEqual(restored.packedLxmf, fieldMap, "field map (attachments/icon) must survive")
     }
 
+    /// Restored conversations must reconcile their list-preview metadata
+    /// (preview text, last-message timestamp for ordering, unread badge) — not
+    /// stay at the blank `ensureConversation` defaults.
+    func testConversationMetadataReconciledOnImport() throws {
+        let dbPath = NSTemporaryDirectory() + "migration-conv-\(UUID().uuidString).db"
+        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+        let db = try LXMFDatabase(path: dbPath)
+
+        let convHash = Data([0xde, 0xad, 0xbe, 0xef])
+        try db.ensureConversation(hash: convHash, displayName: "Bob")
+        // Mirror the importer: apply the backup's preview/timestamp/unread.
+        try db.setConversationMetadata(
+            hash: convHash,
+            lastMessage: "see you then",
+            lastMessageAt: Date(timeIntervalSince1970: 1_700_000_900),
+            unreadCount: 5
+        )
+
+        let reopened = try LXMFDatabase(path: dbPath)
+        let convs = try reopened.getConversations(limit: 10, offset: 0)
+        let restored = try XCTUnwrap(convs.first { $0.hash == convHash })
+        XCTAssertEqual(restored.lastMessage, "see you then", "preview must be restored")
+        XCTAssertEqual(restored.lastMessageAt, Date(timeIntervalSince1970: 1_700_000_900),
+                       "last-message timestamp must be restored for correct ordering")
+        XCTAssertEqual(restored.unreadCount, 5, "unread badge must be restored")
+    }
+
     /// A wrong password must fail the AES-GCM tag check rather than return garbage.
     func testWrongPasswordThrows() throws {
         let bundle = makeBundle()
