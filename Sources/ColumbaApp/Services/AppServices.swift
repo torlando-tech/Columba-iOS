@@ -155,6 +155,18 @@ public final class AppServices {
     /// RNode BLE interface for LoRa radio communication.
     public var rnodeInterface: RNodeInterface?
 
+    /// Watchdog that fails a stuck RNode connect so the badge can't sit on
+    /// "Connecting…" forever (see `startRNodeInterface`). Cancelled the moment the
+    /// link leaves `.connecting` or the interface is stopped.
+    private var rnodeConnectWatchdog: Task<Void, Never>?
+
+    /// GATED (A5 item 3, RISK 1): when true the RNode Settings badge is driven by the NE's
+    /// authoritative `ne-rnode` status and the app-side BLE link no longer greens it —
+    /// killing the ~10s premature "connected". OFF by default: if `neRNodeStatus()` does not
+    /// report online on a real connect, the badge would never go green, so verify on a
+    /// physical RNode before flipping. Read by `applyRNodeLinkState` and the VM status loop.
+    public static let rnodeBadgeFromNE = false
+
     /// Auto discovery interface for LAN peer discovery.
     public private(set) var autoInterface: AutoInterface?
 
@@ -3159,8 +3171,25 @@ public final class AppServices {
         uiInterface.state = .connecting
         self.rnodeInterface = uiInterface
 
-        ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState in
-            self?.applyRNodeLinkState(linkState)
+        // Watchdog: if the link never reports connected/failed — the NE never sent
+        // `.connect` (config read-after-write race exhausted), or the radio scans
+        // forever on a name mismatch — surface a timeout instead of a perpetual
+        // "Connecting…". Cancelled in applyRNodeLinkState / stopRNodeInterface.
+        rnodeConnectWatchdog?.cancel()
+        rnodeConnectWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 25_000_000_000)
+            // `try?` swallows the cancellation; be explicit so a future `await` in
+            // stopRNodeInterface can't let a cancelled watchdog fire a spurious failure.
+            guard !Task.isCancelled else { return }
+            guard let self, let iface = self.rnodeInterface, iface.state == .connecting else { return }
+            iface.state = .connectionFailed(
+                underlying: "RNode didn't connect — check Bluetooth is on and Background Delivery is enabled, then try again"
+            )
+            NotificationObserver.postNetworkStateChanged()
+        }
+
+        ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState, reason in
+            self?.applyRNodeLinkState(linkState, reason)
         })
 
         let seamConfig = RNodeSeamConfig(
@@ -3180,6 +3209,8 @@ public final class AppServices {
 
     /// Stop the RNode interface (Model B).
     public func stopRNodeInterface() async {
+        rnodeConnectWatchdog?.cancel()
+        rnodeConnectWatchdog = nil
         // Clear the NE's RNode config (→ it tears down its RNodeInterface) and stop the
         // app-side radio server.
         RNodeSeamConfig.clearFromAppGroup()
@@ -3191,16 +3222,24 @@ public final class AppServices {
     /// Reflect the app-side RNode radio's BLE link state onto the UI-facing Compat
     /// interface object + refresh the UI. The NE owns the authoritative `RNodeInterface`;
     /// the BLE link state is a good-enough proxy for the Settings "connected" indicator.
-    private func applyRNodeLinkState(_ linkState: RNodeLinkState) {
+    private func applyRNodeLinkState(_ linkState: RNodeLinkState, _ reason: String?) {
         let mapped: InterfaceState
         switch linkState {
         case .disconnected: mapped = .disconnected
         case .connecting:   mapped = .connecting
-        case .connected:    mapped = .connected
-        case .failed:       mapped = .connectionFailed(underlying: "RNode radio link failed")
+        // GATED: when the NE-authoritative badge is on, the BLE link reaching `.connected`
+        // is only a proxy (the NE may still be building its RNodeInterface), so hold at
+        // `.connecting` and let `neRNodeStatus()` green the badge. Off → BLE link greens it.
+        case .connected:    mapped = Self.rnodeBadgeFromNE ? .connecting : .connected
+        case .failed:       mapped = .connectionFailed(underlying: reason ?? "RNode radio link failed")
         }
         DispatchQueue.main.async { [weak self] in
             self?.rnodeInterface?.state = mapped
+            // The link reported a definitive state — stand the connect watchdog down.
+            if case .connecting = mapped {} else {
+                self?.rnodeConnectWatchdog?.cancel()
+                self?.rnodeConnectWatchdog = nil
+            }
             NotificationObserver.postNetworkStateChanged()
         }
     }
@@ -3803,6 +3842,20 @@ public final class AppServices {
             let entityId = String(iface.sectionName.dropFirst("ne-tcp-relay-".count))
             return (entityId: entityId, online: iface.online, lastError: iface.lastError)
         }
+    }
+
+    /// NE-authoritative status for the single Model B RNode interface (`ne-rnode`, the id
+    /// the NE assigns at `NEReticulumNode` setup). Returns nil when no RNode interface is in
+    /// the snapshot. `lastError` only carries a real RNode reason once reticulum-swift
+    /// forwards `lastErrorDescription` for RNode (B5B); until then a down RNode reads as
+    /// "connecting". Consumed (gated) by `InterfaceManagementViewModel.refreshNEBackedStatus`.
+    public func neRNodeStatus() async -> (online: Bool, lastError: String?)? {
+        guard BackendPreference.modelB, let backend = backend else { return nil }
+        let snap = await backend.statusSnapshot()
+        guard let iface = (snap?.interfaces ?? []).first(where: { $0.sectionName == "ne-rnode" }) else {
+            return nil
+        }
+        return (online: iface.online, lastError: iface.lastError)
     }
 
     /// Send both the LXMF delivery announce and the LXST telephony announce.

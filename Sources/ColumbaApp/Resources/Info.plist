@@ -17,8 +17,10 @@
 			</array>
 		</dict>
 	</array>
-	<key>NSBluetoothWhenInUseUsageDescription</key>
-	<string>Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.</string>
+	<!-- Bluetooth usage string is supplied via the build setting
+	     INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription (the iOS 13+ key). The old
+	     NSBluetoothWhenInUseUsageDescription key here was not a real CoreBluetooth
+	     authorization key and was ignored by iOS. -->
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_reticulum._tcp</string>

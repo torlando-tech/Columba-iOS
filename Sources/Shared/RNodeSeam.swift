@@ -59,8 +59,11 @@ public enum RNodeSeamMessage: Equatable, Sendable {
     // ── Events: app → NE (feed the NE's seam `Transport`) ──
     /// Inbound serial bytes from the radio (raw, awaiting KISS deframing in the NE).
     case dataReceived(data: Data)
-    /// The app radio's `TransportState` changed.
-    case stateChanged(state: RNodeLinkState)
+    /// The app radio's `TransportState` changed. `reason` carries the underlying failure
+    /// description (e.g. the `BLEError` copy — "Bluetooth permission denied", "Connection
+    /// timed out…") on `.failed`, nil otherwise, so the NE/UI can show an actionable
+    /// message instead of a bare "failed".
+    case stateChanged(state: RNodeLinkState, reason: String?)
     /// Completion of a `send(reqId:)` — carries the app-side write error (nil = ok)
     /// so the NE can resume the awaiting `send` continuation (flow control).
     case sendResult(reqId: UInt32, error: String?)
@@ -79,7 +82,7 @@ public enum RNodeSeamMessage: Equatable, Sendable {
         case .disconnect:              w.u8(Tag.disconnect.rawValue)
         case let .send(reqId, data):   w.u8(Tag.send.rawValue); w.u32(reqId); w.data(data)
         case let .dataReceived(data):  w.u8(Tag.dataReceived.rawValue); w.data(data)
-        case let .stateChanged(state): w.u8(Tag.stateChanged.rawValue); w.u8(state.rawValue)
+        case let .stateChanged(state, reason): w.u8(Tag.stateChanged.rawValue); w.u8(state.rawValue); w.optStr(reason)
         case let .sendResult(reqId, error): w.u8(Tag.sendResult.rawValue); w.u32(reqId); w.optStr(error)
         }
         return w.out
@@ -99,7 +102,7 @@ public enum RNodeSeamMessage: Equatable, Sendable {
         case .stateChanged:
             let s = try r.u8()
             guard let state = RNodeLinkState(rawValue: s) else { throw SeamError.unknownTag(s) }
-            self = .stateChanged(state: state)
+            self = .stateChanged(state: state, reason: try r.optStr())
         case .sendResult:   self = .sendResult(reqId: try r.u32(), error: try r.optStr())
         }
         try r.expectEnd()
@@ -116,6 +119,10 @@ public protocol RNodeSeamWire: AnyObject, Sendable {
     func send(_ message: RNodeSeamMessage)
     /// Decoded messages arriving from the other process.
     var inbound: AsyncStream<RNodeSeamMessage> { get }
+    /// Begin/stop delivering on `inbound` (and any underlying observers). The app-group
+    /// impl wires Darwin observers; an in-memory test loopback can no-op these.
+    func start()
+    func stop()
 }
 
 // MARK: - Shared config snapshot

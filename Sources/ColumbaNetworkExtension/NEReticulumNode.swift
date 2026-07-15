@@ -166,6 +166,15 @@ actor NEReticulumNode {
     /// orphaned/superseded interface and steals KISS frames. Mirrors `announceTask`.
     private var rnodeAddInterfaceTask: Task<Void, Never>?
     private var rnodeConfigObserverRegistered = false
+    /// Monotonic token bumped at the top of every `setupRNodeInterface()`. A call that is
+    /// superseded across an `await` (a second `rnodeConfigChanged` interleaves on the
+    /// actor) checks this and abandons its half-built interface instead of installing a
+    /// second live seam wire that would steal KISS frames from the winner.
+    private var rnodeSetupGeneration = 0
+    /// The `RNodeSeamConfig` the currently-built interface was configured from. Lets a
+    /// duplicate/no-op notification skip the teardown+rebuild that would otherwise bounce
+    /// the live BLE radio for ~12s (configureDevice re-runs on every rebuild).
+    private var appliedRNodeConfig: RNodeSeamConfig?
 
     /// Model B TCP relays: the app writes the enabled `tcpClient` relays to the shared
     /// `interfacesKey`; the NE brings up one `ne-tcp-relay-<entityId>` interface each and
@@ -491,21 +500,55 @@ actor NEReticulumNode {
     private func setupRNodeInterface() async {
         guard let tp = transport else { return }
 
-        // Cancel any in-flight detached addInterface from a prior setup BEFORE tearing
-        // down the existing interface — otherwise that task's late connect() would
-        // re-register a second rnodeSeamA2N observer on the superseded interface.
+        // Each invocation supersedes earlier ones. Bump synchronously (before any await)
+        // so an interleaving `rnodeConfigChanged` is detectable after our suspension points.
+        rnodeSetupGeneration &+= 1
+        let gen = rnodeSetupGeneration
+
+        // Load the config FIRST so we can diff before any teardown. The app writes
+        // `RNodeSeamConfig` then immediately posts `rnodeConfigChanged`, but cross-process
+        // App-Group UserDefaults visibility is NOT guaranteed synchronous with the Darwin
+        // notify, so a just-written config can momentarily read back nil — retry briefly
+        // before concluding the RNode is genuinely disabled.
+        var cfgSnapshot = RNodeSeamConfig.loadFromAppGroup()
+        if cfgSnapshot == nil {
+            for _ in 0..<5 {
+                try? await Task.sleep(nanoseconds: 60_000_000)  // 60ms
+                cfgSnapshot = RNodeSeamConfig.loadFromAppGroup()
+                if cfgSnapshot != nil { break }
+            }
+        }
+        guard gen == rnodeSetupGeneration else { return }  // superseded during the retry
+
+        // No-op fast paths — never bounce a healthy radio:
+        //  • duplicate notification with the SAME config and an interface already built, or
+        //  • a redundant disable when nothing is up.
+        if let cfg = cfgSnapshot, cfg == appliedRNodeConfig, rnodeInterface != nil {
+            return
+        }
+        if cfgSnapshot == nil, rnodeInterface == nil {
+            appliedRNodeConfig = nil
+            return
+        }
+
+        // A new/changed config supersedes any in-flight detached addInterface — cancel it
+        // BEFORE teardown so its late connect() can't re-register a second seam observer.
         rnodeAddInterfaceTask?.cancel()
         rnodeAddInterfaceTask = nil
 
-        // Tear down any existing RNode interface (reload / disable).
+        // Tear down the existing interface (reload / disable / device change). Claim the
+        // slot synchronously (nil before the await) so a re-entrant call can't see the
+        // same `existing` and double-tear it.
         if let existing = rnodeInterface {
+            rnodeInterface = nil
+            appliedRNodeConfig = nil
             await existing.disconnect()
             await tp.removeInterface(id: existing.id)
-            rnodeInterface = nil
+            guard gen == rnodeSetupGeneration else { return }
             NEReticulumNode.postNetworkStateChangedDarwinNotification()
         }
 
-        guard let cfg = RNodeSeamConfig.loadFromAppGroup() else {
+        guard let cfg = cfgSnapshot else {
             ExtensionDiagLog.log("NEReticulumNode: no RNode configured")
             return
         }
@@ -528,7 +571,11 @@ actor NEReticulumNode {
                 AppGroupRNodeSeamTransport(deviceName: deviceName)
             })
             try await iface.configureRadio(radio)
+            // A newer setup superseded us mid-build — drop this not-yet-registered iface
+            // (no seam wire started since connect() runs only in the detached task below).
+            guard gen == rnodeSetupGeneration else { return }
             rnodeInterface = iface
+            appliedRNodeConfig = cfg
             ExtensionDiagLog.log("NEReticulumNode: RNode interface built (device set, registering off critical path)")
             NEReticulumNode.postNetworkStateChangedDarwinNotification()
             // OFF THE CRITICAL PATH: addInterface → RNodeInterface.connect() must not gate
@@ -870,6 +917,9 @@ actor NEReticulumNode {
         // Cancel any in-flight detached addInterface first so a late connect() can't
         // re-register the seam observer after we tear the interface down (its own
         // post-connect cancellation check then rolls back via the captured refs).
+        // Supersede any in-flight setupRNodeInterface so it bails at its next generation
+        // guard rather than rebuilding a radio we're tearing down.
+        rnodeSetupGeneration &+= 1
         rnodeAddInterfaceTask?.cancel()
         rnodeAddInterfaceTask = nil
         if let ri = rnodeInterface {
@@ -877,6 +927,7 @@ actor NEReticulumNode {
             await transport?.removeInterface(id: ri.id)
             rnodeInterface = nil
         }
+        appliedRNodeConfig = nil
 
         router = nil
         transport = nil

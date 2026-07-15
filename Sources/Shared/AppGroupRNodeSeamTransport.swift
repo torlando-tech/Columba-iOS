@@ -20,43 +20,67 @@ import ReticulumSwift
 
 public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
 
-    private let wire: AppGroupRNodeSeamWire
+    private let wire: RNodeSeamWire
+    private let sendTimeoutNanos: UInt64
     private var inboundTask: Task<Void, Never>?
 
     private let lock = NSLock()
     private var pendingSends: [UInt32: (Error?) -> Void] = [:]
     private var nextReqId: UInt32 = 0
 
-    // The Transport callbacks are set by `RNodeInterface.setupTransport` (via the KISS
-    // wrapper) BEFORE `connect()` runs, so the inbound task — started in `connect()` —
-    // reads them without a data race.
-    public private(set) var state: TransportState = .disconnected
-    public var onStateChange: ((TransportState) -> Void)?
-    public var onDataReceived: ((Data) -> Void)?
+    // The Transport callbacks are normally set by `RNodeInterface.setupTransport` (via the
+    // KISS wrapper) BEFORE `connect()`, but `RNodeInterface.attemptReconnect` nils them on
+    // the interface actor WHILE the inbound task is still delivering, so reads/writes race.
+    // Guard `state`/`onStateChange`/`onDataReceived` with the same `lock` as `pendingSends`
+    // (never held across a callback, so no re-entrancy/deadlock).
+    private var _state: TransportState = .disconnected
+    public var state: TransportState {
+        lock.lock(); defer { lock.unlock() }; return _state
+    }
+    private var _onStateChange: ((TransportState) -> Void)?
+    public var onStateChange: ((TransportState) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onStateChange }
+        set { lock.lock(); _onStateChange = newValue; lock.unlock() }
+    }
+    private var _onDataReceived: ((Data) -> Void)?
+    public var onDataReceived: ((Data) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onDataReceived }
+        set { lock.lock(); _onDataReceived = newValue; lock.unlock() }
+    }
 
     /// The RNode device name to target — passed through to the app's `BLETransport`.
-    /// Empty string = connect to the first RNode found.
+    /// Must be non-empty; `AppGroupRNodeServer.connectRadio` rejects an empty name
+    /// (it would drop the radio into scan-only mode with no connect and no timeout).
     private let deviceName: String
 
     public init(
         deviceName: String,
-        wire: AppGroupRNodeSeamWire = AppGroupRNodeSeamWire(role: .networkExtension)
+        wire: RNodeSeamWire = AppGroupRNodeSeamWire(role: .networkExtension),
+        sendTimeoutNanos: UInt64 = 8_000_000_000  // 8s; injectable for tests
     ) {
         self.deviceName = deviceName
         self.wire = wire
+        self.sendTimeoutNanos = sendTimeoutNanos
     }
 
     // MARK: - Transport
 
     public func connect() {
         ExtensionDiagLog.log("[RNODE] seam(NE): connect(device='\(deviceName)')")
+        // Cancel any prior inbound task before overwriting it. Without this, a connect()
+        // without a preceding disconnect() (contract misuse / reuse) would leak the old
+        // task AND leave two consumers racing the same AsyncStream — each yield goes to
+        // exactly one of them, splitting KISS .dataReceived frames into corrupt chunks.
+        inboundTask?.cancel()
+        // start() first so a reused wire re-arms its stream before the task reads `inbound`;
+        // otherwise the task would capture the finished stream from a prior disconnect().
+        wire.start()
         inboundTask = Task { [weak self] in
             guard let self else { return }
             for await message in self.wire.inbound {
                 self.handle(message)
             }
         }
-        wire.start()
         setState(.connecting)
         wire.send(.connect(deviceName: deviceName))
     }
@@ -68,6 +92,33 @@ public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
         if let completion { pendingSends[reqId] = completion }
         lock.unlock()
         wire.send(.send(reqId: reqId, data: data))
+
+        // Liveness watchdog: if the app-side radio never returns a `.sendResult` — a lost
+        // frame, or the app process suspended/jettisoned mid-write — the awaiting `send`
+        // continuation would hang and `RNodeInterface` stays `interfaceReady=false`, wedging
+        // all outbound TX silently. After 8s (≫ normal write latency) fail the pending send
+        // and drive `.disconnected`, which routes through `handleTransportStateChange` to
+        // reset readiness and restart the NE-local reconnect (it does NOT send `.disconnect`
+        // over the wire, so the app-side shared radio is untouched and reconnect re-issues
+        // `.connect` idempotently). The real `.sendResult` arriving first removes the reqId,
+        // making this a no-op.
+        guard completion != nil else { return }
+        let timeout = sendTimeoutNanos
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: timeout)
+            guard let self, let timedOut = self.takePendingSend(reqId) else { return }
+            ExtensionDiagLog.log("[RNODE] seam(NE): send reqId=\(reqId) timed out")
+            timedOut(RNodeSeamTransportError.appWrite("seam send timeout"))
+            self.setState(.disconnected)
+        }
+    }
+
+    /// Remove + return a pending send's completion under the lock. Kept synchronous so the
+    /// async watchdog never touches `NSLock` directly (unavailable from async contexts /
+    /// Swift 6 error). Returns nil if the real `.sendResult` already resolved this reqId.
+    private func takePendingSend(_ reqId: UInt32) -> ((Error?) -> Void)? {
+        lock.lock(); defer { lock.unlock() }
+        return pendingSends.removeValue(forKey: reqId)
     }
 
     public func disconnect() {
@@ -90,10 +141,11 @@ public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
     private func handle(_ message: RNodeSeamMessage) {
         switch message {
         case let .dataReceived(data):
-            onDataReceived?(data)
-        case let .stateChanged(linkState):
-            ExtensionDiagLog.log("[RNODE] seam(NE): radio state -> \(linkState)")
-            setState(linkState.transportState)
+            lock.lock(); let cb = _onDataReceived; lock.unlock()
+            cb?(data)
+        case let .stateChanged(linkState, reason):
+            ExtensionDiagLog.log("[RNODE] seam(NE): radio state -> \(linkState)\(reason.map { " (\($0))" } ?? "")")
+            setState(linkState.transportState(reason: reason))
         case let .sendResult(reqId, error):
             lock.lock()
             let completion = pendingSends.removeValue(forKey: reqId)
@@ -105,8 +157,8 @@ public final class AppGroupRNodeSeamTransport: Transport, @unchecked Sendable {
     }
 
     private func setState(_ newState: TransportState) {
-        state = newState
-        onStateChange?(newState)
+        lock.lock(); _state = newState; let cb = _onStateChange; lock.unlock()
+        cb?(newState)
     }
 }
 
@@ -116,17 +168,17 @@ public enum RNodeSeamTransportError: Error {
     case disconnected
     /// The app-side radio reported a write failure (string carries the underlying error).
     case appWrite(String)
-    /// The app-side radio link failed.
-    case linkFailed
+    /// The app-side radio link failed (string carries the underlying reason, if any).
+    case linkFailed(String?)
 }
 
 private extension RNodeLinkState {
-    var transportState: TransportState {
+    func transportState(reason: String?) -> TransportState {
         switch self {
         case .disconnected: return .disconnected
         case .connecting:   return .connecting
         case .connected:    return .connected
-        case .failed:       return .failed(RNodeSeamTransportError.linkFailed)
+        case .failed:       return .failed(RNodeSeamTransportError.linkFailed(reason))
         }
     }
 }

@@ -47,6 +47,10 @@ final class RNodeProbeScanner: NSObject {
     /// Called when state changes during a probe attempt.
     var onProbeResult: ((ProbeResult) -> Void)?
 
+    /// Called when Bluetooth is unavailable (off / unauthorized / unsupported / resetting)
+    /// so the wizard can stop the "Scanning…" spinner and show actionable recovery UI.
+    var onBluetoothUnavailable: ((CBManagerState) -> Void)?
+
     enum ProbeResult: CustomStringConvertible {
         case connecting
         case connected
@@ -237,11 +241,23 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         diag("Central state: \(central.state.rawValue)")
-        if central.state == .poweredOn && isScanning {
-            central.scanForPeripherals(
-                withServices: nil,
-                options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
-            )
+        switch central.state {
+        case .poweredOn:
+            if isScanning {
+                central.scanForPeripherals(
+                    withServices: nil,
+                    options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+                )
+            }
+        case .poweredOff, .unauthorized, .unsupported, .resetting:
+            // Stop the spinner and let the wizard surface a recovery banner instead of
+            // spinning "Scanning…" forever.
+            isScanning = false
+            onBluetoothUnavailable?(central.state)
+        case .unknown:
+            break  // transient — CoreBluetooth will call back again
+        @unknown default:
+            break
         }
     }
 

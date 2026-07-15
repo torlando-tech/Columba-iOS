@@ -16,14 +16,23 @@ import ReticulumSwift
 
 public final class AppGroupRNodeServer: @unchecked Sendable {
 
-    private let wire: AppGroupRNodeSeamWire
+    private let wire: RNodeSeamWire
     private let log: ((String) -> Void)?
 
     /// App-local mirror of the radio's link-state changes (in addition to forwarding
     /// them to the NE), so the app can surface RNode connection state in its own UI —
     /// the NE owns the authoritative `RNodeInterface`, but the BLE link state is a good
     /// proxy and the app has it directly here.
-    public var onLinkStateChange: ((RNodeLinkState) -> Void)?
+    /// Read on the CoreBluetooth delegate queue (radio `onStateChange`) and written on the
+    /// main actor (re-wiring in `ModelBRNodeService.start()`), so guard it with the same
+    /// `lock` as `transport` — an unsynchronised Optional-closure race can see a
+    /// partially-released pointer. `lock` is never held across the callback (see
+    /// `emitLinkStateChange`), so no re-entrancy.
+    private var _onLinkStateChange: ((RNodeLinkState, String?) -> Void)?
+    public var onLinkStateChange: ((RNodeLinkState, String?) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onLinkStateChange }
+        set { lock.lock(); _onLinkStateChange = newValue; lock.unlock() }
+    }
 
     private let lock = NSLock()
     private var transport: BLETransport?
@@ -31,7 +40,7 @@ public final class AppGroupRNodeServer: @unchecked Sendable {
 
     private var inboundTask: Task<Void, Never>?
 
-    public init(wire: AppGroupRNodeSeamWire, log: ((String) -> Void)? = nil) {
+    public init(wire: RNodeSeamWire, log: ((String) -> Void)? = nil) {
         self.wire = wire
         self.log = log
     }
@@ -76,23 +85,42 @@ public final class AppGroupRNodeServer: @unchecked Sendable {
         }
     }
 
+    /// Re-create + connect the radio at app launch from the persisted device name (for
+    /// CoreBluetooth state restoration / background relaunch). Idempotent with the
+    /// NE-driven `.connect`: the per-deviceName transport cache means a later `.connect`
+    /// reuses this same central rather than creating a second one with the same restore id.
+    public func restoreRadio(deviceName: String) {
+        connectRadio(deviceName: deviceName)
+    }
+
     private func connectRadio(deviceName: String) {
+        // An empty name would drop BLETransport into scan-only mode (no auto-connect, no
+        // timeout) and wedge the UI on "connecting" forever. The UI already requires a
+        // device name; refuse defensively and surface a failure rather than entering that
+        // dead mode. (RNode targets a specific device by name — there is no "first found".)
+        guard !deviceName.isEmpty else {
+            log?("[RNODE] server: refusing connect with empty deviceName")
+            wire.send(.stateChanged(state: .failed, reason: "No RNode device selected"))
+            return
+        }
         lock.lock()
         if transport == nil || transportDeviceName != deviceName {
             // (Re)create the radio for this device and wire its callbacks once.
             // BLETransport reuses its CBCentralManager across connect()/disconnect(),
             // so we only rebuild it when the target device changes.
             transport?.disconnect()
-            let name = deviceName.isEmpty ? nil : deviceName
-            let radio = BLETransport(deviceName: name)
+            let radio = BLETransport(deviceName: deviceName)
             radio.onDataReceived = { [weak self] data in
                 self?.wire.send(.dataReceived(data: data))
             }
             radio.onStateChange = { [weak self] state in
                 let link = state.linkState
+                // Preserve the underlying failure reason (BLEError copy) for the NE/UI.
+                var reason: String? = nil
+                if case .failed(let err) = state { reason = err.localizedDescription }
                 self?.log?("[RNODE] server: radio BLE state -> \(link)")
-                self?.wire.send(.stateChanged(state: link))
-                self?.onLinkStateChange?(link)
+                self?.wire.send(.stateChanged(state: link, reason: reason))
+                self?.emitLinkStateChange(link, reason)
             }
             transport = radio
             transportDeviceName = deviceName
@@ -101,6 +129,13 @@ public final class AppGroupRNodeServer: @unchecked Sendable {
         lock.unlock()
         log?("[RNODE] server: connect radio '\(deviceName)'")
         radio?.connect()
+    }
+
+    /// Snapshot the app-local link-state callback under `lock`, then invoke it outside the
+    /// lock (never held across a callback — no re-entrancy/deadlock).
+    private func emitLinkStateChange(_ state: RNodeLinkState, _ reason: String?) {
+        lock.lock(); let cb = _onLinkStateChange; lock.unlock()
+        cb?(state, reason)
     }
 
     private func sendToRadio(reqId: UInt32, data: Data) {
