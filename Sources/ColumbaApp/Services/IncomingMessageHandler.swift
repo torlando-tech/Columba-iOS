@@ -41,6 +41,13 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     #if os(iOS)
     /// Location sharing manager for incoming telemetry extraction.
     public var locationSharingManager: LocationSharingManager?
+
+    /// When true, `handleInbound` skips posting user-facing notifications. Set in
+    /// Model B, where the Network Extension already posts the inbound notification
+    /// on receipt — the app then only *replays* persisted messages for field
+    /// side-channel processing (reactions / telemetry / …), so a second app-side
+    /// notification would double-banner.
+    public var suppressUserNotifications = false
     #endif
 
     /// Timestamp when this handler was created.
@@ -82,6 +89,20 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     ///   - router: The router that received the message
     ///   - message: The validated incoming message
     public func router(_ router: LXMRouter, didReceiveMessage message: LXMessage) {
+        // Live (non-Model-B) inbound: the in-process LXMRouter delegate fires once
+        // per message. Model B has NO live delegate (the NE owns delivery), so
+        // `ModelBInboundReplay` calls `handleInbound(_:)` directly over messages the
+        // NE persisted to the shared store — identical side-channel processing.
+        handleInbound(message)
+    }
+
+    /// Run inbound side-channel processing for one ALREADY-PERSISTED message:
+    /// reactions (0x40 / legacy 0x10), replies (0x30), peer icon (0x04), cease
+    /// (0xFD), telemetry → map pin (0x02), plus the user notification. Does NOT
+    /// persist the base message — the LXMRouter (Model A) or the NE (Model B)
+    /// already did. In Model B the replay driver sets `suppressUserNotifications`
+    /// so this doesn't double-notify (the NE posted the notification on receipt).
+    public func handleInbound(_ message: LXMessage) {
         let sourceHashHex = message.sourceHash.prefix(4).map { String(format: "%02x", $0) }.joined()
         let messageHashHex = message.hash.prefix(4).map { String(format: "%02x", $0) }.joined()
         logger.info("Received message from \(sourceHashHex) hash=\(messageHashHex)")
@@ -248,7 +269,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
             let isTelemetryOnly = message.content.isEmpty
                 && message.fields?[LXMessage.FIELD_TELEMETRY] != nil
             let isOldMessage = message.timestamp < self.createdAt.timeIntervalSince1970
-            if !isTelemetryOnly && !isCeaseMessage && !isOldMessage {
+            if !isTelemetryOnly && !isCeaseMessage && !isOldMessage && !self.suppressUserNotifications {
                 // Skip notification if user is already viewing this conversation
                 let sourceThreadId = sourceHash.map { String(format: "%02x", $0) }.joined()
                 let activeThread = await MainActor.run { NotificationService.activeConversationThreadId }

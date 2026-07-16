@@ -61,6 +61,7 @@
 		049B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F049 /* QRScannerView.swift */; platformFilter = ios; };
 		04AB /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A /* AddContactSheet.swift */; };
 		04BB /* LocationSharingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04B /* LocationSharingManager.swift */; platformFilter = ios; };
+		MB01 /* ModelBInboundReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB02 /* ModelBInboundReplay.swift */; platformFilter = ios; };
 		04CB /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04C /* OnboardingView.swift */; };
 		04D735AF318341AD65ABFE61 /* RNodeSeamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */; };
 		04DB /* WelcomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04D /* WelcomePage.swift */; };
@@ -354,6 +355,7 @@
 		F049 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		F04A /* AddContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContactSheet.swift; sourceTree = "<group>"; };
 		F04B /* LocationSharingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSharingManager.swift; sourceTree = "<group>"; };
+		MB02 /* ModelBInboundReplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelBInboundReplay.swift; sourceTree = "<group>"; };
 		F04C /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		F04D /* WelcomePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomePage.swift; sourceTree = "<group>"; };
 		F04E /* IdentityPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityPage.swift; sourceTree = "<group>"; };
@@ -777,6 +779,7 @@
 				F042 /* LocalIdentity.swift */,
 				F043 /* IdentityManager.swift */,
 				F04B /* LocationSharingManager.swift */,
+				MB02 /* ModelBInboundReplay.swift */,
 				F05C /* MigrationCrypto.swift */,
 				F05D /* MigrationExporter.swift */,
 				F05E /* MigrationImporter.swift */,
@@ -1152,6 +1155,7 @@
 				049B /* QRScannerView.swift in Sources */,
 				04AB /* AddContactSheet.swift in Sources */,
 				04BB /* LocationSharingManager.swift in Sources */,
+				MB01 /* ModelBInboundReplay.swift in Sources */,
 				04CB /* OnboardingView.swift in Sources */,
 				04DB /* WelcomePage.swift in Sources */,
 				04EB /* IdentityPage.swift in Sources */,
