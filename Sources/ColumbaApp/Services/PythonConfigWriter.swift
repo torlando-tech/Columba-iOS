@@ -87,7 +87,18 @@ enum PythonConfigWriter {
 
     private static func appendInterface(_ iface: InterfaceEntity, to lines: inout [String]) {
         lines.append("  [[\(sectionName(for: iface))]]")
-        lines.append("    enabled = yes")
+        // RNode and Multipeer are inert placeholders on the Python backend (their
+        // real transport runs through the Swift / Model-B seam), so they must be
+        // written disabled. Emit `enabled` exactly ONCE here: appending a second
+        // `enabled` inside the per-type block produces a duplicate keyword, which
+        // RNS's configobj rejects with a DuplicateError — the whole config fails
+        // to parse and the Python backend crashes on launch.
+        let isInertPlaceholder: Bool
+        switch iface.config {
+        case .rnode, .multipeer: isInertPlaceholder = true
+        default: isInertPlaceholder = false
+        }
+        lines.append("    enabled = \(isInertPlaceholder ? "no" : "yes")")
         lines.append("    interface_enabled = yes")
         appendMode(iface.mode, to: &lines)
 
@@ -129,7 +140,7 @@ enum PythonConfigWriter {
             lines.append("    type = TCPClientInterface  # RNode moved to Model B (Swift NE); Python path retired")
             lines.append("    target_host = 127.0.0.1")
             lines.append("    target_port = 65535")
-            lines.append("    enabled = no")
+            // `enabled = no` already emitted once in the section header above.
         case .multipeer:
             // MultipeerConnectivity bridge not yet wired (separate effort, its
             // own branch — see rnode_interface_port_plan.md). Emit a disabled
@@ -138,7 +149,7 @@ enum PythonConfigWriter {
             lines.append("    type = TCPClientInterface  # placeholder; \(iface.type) bridged from Swift not yet wired")
             lines.append("    target_host = 127.0.0.1")
             lines.append("    target_port = 65535")
-            lines.append("    enabled = no")
+            // `enabled = no` already emitted once in the section header above.
         }
         lines.append("")
     }
