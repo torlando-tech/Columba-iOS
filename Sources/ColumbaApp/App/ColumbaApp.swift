@@ -470,6 +470,7 @@ struct RootView: View {
     @State private var database: LXMFDatabase?
     @State private var messageRepository: MessageRepository?
     @State private var incomingMessageHandler: IncomingMessageHandler?
+    @State private var modelBInboundReplay: ModelBInboundReplay?
     @State private var initError: String?
     @State private var isInitialized = false
     @State private var identitySwitchTrigger = UUID()
@@ -521,6 +522,7 @@ struct RootView: View {
                         isInitialized = false
                         messageRepository = nil
                         incomingMessageHandler = nil
+                        modelBInboundReplay = nil
                         database = nil
                         initError = nil
                         identitySwitchTrigger = UUID()
@@ -827,6 +829,20 @@ struct RootView: View {
             if let router = appServices.router {
                 await router.setDelegate(handler)
             }
+
+            #if os(iOS)
+            // Model B: the NE owns LXMF delivery, so the live `LXMRouter` delegate
+            // above never fires. Drive the SAME `handler`'s field side-channel
+            // processing (reactions / replies / telemetry → map pin / icon / cease)
+            // by replaying NE-persisted inbound messages from the shared store on
+            // each Darwin "new message" ping. No-op in Model A (the delegate fires
+            // live there instead). See `ModelBInboundReplay`.
+            if BackendPreference.modelB {
+                let replay = ModelBInboundReplay(repository: repo, handler: handler)
+                self.modelBInboundReplay = replay
+                replay.start()
+            }
+            #endif
 
             // 7. Start all enabled interfaces (non-blocking)
             DiagLog.log("[STARTUP] Step 7: starting \(enabledInterfaces.count) enabled interfaces")

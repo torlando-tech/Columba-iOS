@@ -1622,19 +1622,30 @@ private final class NEDeliveryDelegate: LXMRouterDelegate {
         let threadId = message.sourceHash.hexHash
         let sourceHash = message.sourceHash
 
+        // Telemetry-only messages (empty body carrying FIELD_TELEMETRY 0x02 — a
+        // periodic location update or a zeroed-body cease) must NOT raise a
+        // user-facing notification: they're silent map-pin updates, not chat
+        // messages. Mirrors the app-side `IncomingMessageHandler` `isTelemetryOnly`
+        // skip so Model B doesn't banner-spam on every location beat. The Darwin
+        // refresh below still fires so the app renders/removes the map pin.
+        let isTelemetryOnly = message.content.isEmpty
+            && (message.fields?[LXMessage.FIELD_TELEMETRY] != nil)
+
         // Post the local notification honoring system authorization. Fire-and-
         // forget; failures are logged but never propagate (a missed notification
         // must not destabilize delivery). The title is the sender's display name
         // (resolved from the shared store, like the app's NotificationService),
         // falling back to the short hash prefix when no name is on record.
-        Task {
-            let senderDisplay = await self.resolveSenderDisplayName(sourceHash: sourceHash)
-                ?? "[\(senderHexPrefix)…]"
-            await Self.postInboundNotification(
-                senderDisplay: senderDisplay,
-                preview: contentPreview,
-                threadId: threadId
-            )
+        if !isTelemetryOnly {
+            Task {
+                let senderDisplay = await self.resolveSenderDisplayName(sourceHash: sourceHash)
+                    ?? "[\(senderHexPrefix)…]"
+                await Self.postInboundNotification(
+                    senderDisplay: senderDisplay,
+                    preview: contentPreview,
+                    threadId: threadId
+                )
+            }
         }
 
         // Tell the app to refresh (same Darwin channel the app's own inbound path

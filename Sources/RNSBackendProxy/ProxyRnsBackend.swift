@@ -487,9 +487,19 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     @discardableResult
     public func sendLocationTelemetry(destHashHex: String, packed: Data, customMeta: Data?) async throws -> SendOutcome {
-        // Model B: not proxied yet (would route via the NE lxmf-send path with
-        // FIELD_TELEMETRY 0x02; out of the A5b skeleton).
-        throw BackendError.unsupportedInProxy(feature: "sendLocationTelemetry")
+        // Location telemetry is just an empty-content LXMF message carrying
+        // FIELD_TELEMETRY (0x02) + optional FIELD_CUSTOM_META (0xFD) — the exact
+        // shape SwiftRNSBackend / PythonRNSBackend produce. Route it through the
+        // same `.lxmfSend` IPC path (with durable-outbox fallback) the proxy uses
+        // for text/image, rather than throwing: the NE packs + sends it like any
+        // other LXMF message, so Sideband/Android peers render the shared location.
+        var extra: [UInt8: Data] = [LxmfFields.FIELD_TELEMETRY: packed]
+        if let customMeta { extra[LxmfFields.FIELD_CUSTOM_META] = customMeta }
+        return try await sendLxmfMessage(
+            destHashHex: destHashHex, content: "", method: .opportunistic,
+            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
+            replyToMessageHashHex: nil, replyQuotedContent: nil, extraFields: extra
+        )
     }
 
     // Collector-host mode is honest-unsupported on the Swift stack too — no-op
@@ -610,7 +620,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                 collectorHostMode: .unsupported,
                 storeOwnTelemetry: .unsupported,
                 allowedRequestersFilter: .unsupported,
-                degradationHint: "Model B proxy: telemetry/propagation/telephony/nomadnet/interface-admin are not proxied to the NE yet (A5b skeleton)."
+                degradationHint: "Model B proxy: peer-to-peer location telemetry (FIELD_TELEMETRY 0x02) IS wired via the NE lxmf-send path; collector-host mode and propagation/telephony/nomadnet/interface-admin are not proxied yet."
             ),
             performance: .init(batteryProfileTuning: .unsupported, sharedInstanceAvailabilityChecks: false)
         )
