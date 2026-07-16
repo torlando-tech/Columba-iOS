@@ -35,11 +35,15 @@
 //      than one page isn't skipped.
 //    • Keys are per-identity, so an identity switch can't inherit another
 //      identity's watermark and filter out that identity's pending messages.
-//  Field processing is idempotent (reaction frames self-delete after merge;
-//  reply/icon/telemetry/cease set-or-render the same value), so the only cost of
-//  re-touching a boundary message is a redundant no-op — never duplication or
-//  loss. A small persisted boundary set dedups messages sharing the exact
-//  watermark timestamp so we don't churn on them every ping.
+//    • The checkpoint is by OUTCOME: `handleInbound` reports whether its required
+//      DB writes succeeded, and a message is only advanced-past on success. A
+//      transient failure keeps the message in a durable retry set (fetched by hash
+//      next drain, independent of the watermark) so it's neither lost nor
+//      head-of-line-blocking. This matters because a reaction merge is a TOGGLE,
+//      not idempotent — re-running an already-applied reaction would undo it, so
+//      "did it actually apply?" must gate the checkpoint. A small boundary set
+//      dedups successful messages sharing the exact watermark timestamp so we
+//      don't re-touch them every ping.
 //
 
 import Foundation
@@ -71,6 +75,15 @@ public final class ModelBInboundReplay {
 
     private var watermarkKey: String { "modelb_inbound_watermark_ts_\(scope)" }
     private var boundaryKey: String { "modelb_inbound_boundary_hashes_\(scope)" }
+    /// Hashes whose REQUIRED field processing failed (transient DB error). Retried
+    /// on every drain, fetched by hash independently of the watermark — so a
+    /// failure is neither lost (the watermark would skip it) nor head-of-line
+    /// blocking (the watermark still advances past it). Cleared on success or when
+    /// the message is gone from the store.
+    private var failedKey: String { "modelb_inbound_failed_hashes_\(scope)" }
+    /// Cap on the retry set; a pathological run of persistent failures (e.g. disk
+    /// full) drops the overflow rather than growing without bound.
+    private static let failedCap = 200
 
     public init(repository: MessageRepository, handler: IncomingMessageHandler, identityScope: String) {
         self.repository = repository
@@ -110,16 +123,19 @@ public final class ModelBInboundReplay {
     private func drainOnce() async {
         let defaults = SharedDefaults.suite
         // Watermark 0 on first run → full catch-up of everything the NE already
-        // persisted (NOT "now", which would drop pending messages). Idempotent
-        // processing makes replaying history safe; the end state is each peer's
-        // latest pin + all reactions/replies applied.
+        // persisted (NOT "now", which would drop pending messages). The end state
+        // is each peer's latest pin + all reactions/replies applied.
         let watermark = defaults.double(forKey: watermarkKey)
         let boundary = Set(defaults.stringArray(forKey: boundaryKey) ?? [])
+        var failed = Set(defaults.stringArray(forKey: failedKey) ?? [])
 
-        // Gather candidates across conversations, paging each (store is
-        // newest-first) until we cross the watermark, so a burst beyond one page
-        // isn't skipped.
-        var candidates: [RNSAPI.LXMessage] = []
+        // Candidates, keyed by hash to dedup the two sources:
+        //   • new messages at/after the watermark (minus the boundary dedup), paging
+        //     each conversation (store is newest-first) until we cross the watermark
+        //     so a burst larger than one page isn't skipped, and
+        //   • prior failures to retry, fetched by hash (they may sit BELOW the
+        //     watermark, which the scan wouldn't reach).
+        var byHash: [String: RNSAPI.LXMessage] = [:]
         do {
             let conversations = try await repository.fetchConversations(limit: 1000)
             for conv in conversations {
@@ -130,7 +146,7 @@ public final class ModelBInboundReplay {
                     for m in page where m.incoming && m.timestamp >= watermark {
                         let hex = Self.hex(m.hash)
                         if boundary.contains(hex) { continue }
-                        candidates.append(m)
+                        byHash[hex] = m
                     }
                     // Newest-first: once the oldest row on this page is below the
                     // watermark, every older page is too.
@@ -139,36 +155,53 @@ public final class ModelBInboundReplay {
                     offset += page.count
                 }
             }
+            for hex in failed where byHash[hex] == nil {
+                if let data = Data(hexString: hex),
+                   let m = try await repository.getMessage(id: data), m.incoming {
+                    byHash[hex] = m
+                } else {
+                    failed.remove(hex)  // message gone from the store — nothing to retry
+                }
+            }
         } catch {
             logger.error("Model B inbound drain fetch failed: \(error.localizedDescription, privacy: .public)")
             return
         }
 
-        guard !candidates.isEmpty else { return }
-        candidates.sort { $0.timestamp < $1.timestamp }
+        guard !byHash.isEmpty else {
+            defaults.set(Array(failed), forKey: failedKey)  // persist any prune above
+            return
+        }
+        let candidates = byHash.values.sorted { $0.timestamp < $1.timestamp }
 
         // Bound each pass; a remainder is picked up by an immediate follow-up.
         let batch = Array(candidates.prefix(Self.batchCap))
         let hasMore = candidates.count > batch.count
 
         var maxTS = watermark
+        var succeededAtMax: Set<String> = []
         for m in batch {
-            // AWAIT completion before checkpointing: if the process is suspended /
-            // killed after this returns, the message is fully handled and the
-            // advanced watermark below is safe.
-            await handler.handleInbound(m).value
-            maxTS = max(maxTS, m.timestamp)
+            let hex = Self.hex(m.hash)
+            // AWAIT completion, and checkpoint by OUTCOME: on success the message is
+            // done; on failure (a transient required-write error) keep it in `failed`
+            // to retry, but still let the watermark advance past it so it never
+            // head-of-line-blocks newer messages.
+            let ok = await handler.handleInbound(m).value
+            if ok { failed.remove(hex) } else { failed.insert(hex) }
+            if m.timestamp > maxTS { maxTS = m.timestamp; succeededAtMax.removeAll() }
+            if m.timestamp == maxTS, ok { succeededAtMax.insert(hex) }
         }
 
-        // Boundary = processed hashes sharing the new watermark timestamp (the only
-        // ones a subsequent `>= watermark` scan re-surfaces). Preserve the prior
-        // boundary only if the watermark didn't advance past it.
-        var newBoundary = Set(batch.filter { $0.timestamp == maxTS }.map { Self.hex($0.hash) })
+        // Boundary dedups only SUCCESSFUL messages sharing the new watermark ts (a
+        // failure at the boundary must stay retryable via `failed`, not deduped).
+        var newBoundary = succeededAtMax
         if maxTS == watermark { newBoundary.formUnion(boundary) }
+        if failed.count > Self.failedCap { failed = Set(failed.prefix(Self.failedCap)) }
         defaults.set(maxTS, forKey: watermarkKey)
         defaults.set(Array(newBoundary), forKey: boundaryKey)
+        defaults.set(Array(failed), forKey: failedKey)
 
-        logger.info("Model B replay: processed \(batch.count, privacy: .public) inbound message(s) for field side-channels\(hasMore ? " (more pending)" : "")")
+        logger.info("Model B replay: processed \(batch.count, privacy: .public) inbound message(s); \(failed.count, privacy: .public) pending retry\(hasMore ? " (more queued)" : "")")
 
         if hasMore { rescanRequested = true }
     }
