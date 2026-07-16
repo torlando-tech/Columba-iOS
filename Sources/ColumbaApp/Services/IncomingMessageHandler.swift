@@ -107,15 +107,20 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     ///   which must not checkpoint a message as processed until its fields are
     ///   handled) can `await` its `.value`. The live delegate ignores it.
     @discardableResult
-    public func handleInbound(_ message: LXMessage) -> Task<Void, Never> {
+    public func handleInbound(_ message: LXMessage) -> Task<Bool, Never> {
         let sourceHashHex = message.sourceHash.prefix(4).map { String(format: "%02x", $0) }.joined()
         let messageHashHex = message.hash.prefix(4).map { String(format: "%02x", $0) }.joined()
         logger.info("Received message from \(sourceHashHex) hash=\(messageHashHex)")
 
         let sourceHash = message.sourceHash
 
-        // Save to database asynchronously, then notify
+        // Save to database asynchronously, then notify. Returns whether every
+        // REQUIRED field-processing DB write succeeded — the Model B replay
+        // checkpoints a message only on `true`, retrying on `false` (a transient
+        // write failure) so a reaction / reply / icon update is never silently
+        // lost. The live Model A delegate ignores the result.
         return Task {
+            var requiredOK = true
             // Reaction — canonical FIELD_REACTION (0x40) = {0x00: targetHashBytes,
             // 0x01: emojiUTF8}; the reacting user is the inbound source hash (not
             // on the wire). Merges into the target message; the empty reaction
@@ -127,7 +132,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 let reactionTo = toData.map { String(format: "%02x", $0) }.joined()
                 let senderHex = sourceHash.map { String(format: "%02x", $0) }.joined()
                 self.logger.info("Reaction \(emoji) (0x40) from \(senderHex.prefix(8)) to \(reactionTo.prefix(8))")
-                await self.handleIncomingReaction(
+                let ok = await self.handleIncomingReaction(
                     targetMessageHex: reactionTo, emoji: emoji,
                     senderHex: senderHex, reactionMessageHash: message.hash
                 )
@@ -135,7 +140,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     name: IncomingMessageHandler.messageReceivedNotification,
                     object: nil, userInfo: ["sourceHash": sourceHash]
                 )
-                return
+                return ok
             }
 
             // Legacy reaction / reply on FIELD_APP_DATA (0x10) — un-upgraded peers.
@@ -144,7 +149,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                    let emoji = appData["emoji"] as? String,
                    let sender = appData["sender"] as? String {
                     self.logger.info("Reaction \(emoji) (0x10 legacy) from \(sender.prefix(8)) to \(reactionTo.prefix(8))")
-                    await self.handleIncomingReaction(
+                    let ok = await self.handleIncomingReaction(
                         targetMessageHex: reactionTo, emoji: emoji,
                         senderHex: sender, reactionMessageHash: message.hash
                     )
@@ -152,11 +157,16 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                         name: IncomingMessageHandler.messageReceivedNotification,
                         object: nil, userInfo: ["sourceHash": sourceHash]
                     )
-                    return
+                    return ok
                 }
                 if let replyTo = appData["reply_to"] as? String {
                     self.logger.info("Reply (0x10 legacy) to \(replyTo.prefix(8))")
-                    try? await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
+                    do {
+                        try await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
+                    } catch {
+                        self.logger.error("Failed to update reply_to_id (0x10): \(error.localizedDescription)")
+                        requiredOK = false
+                    }
                 }
             }
 
@@ -168,6 +178,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     try await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
                 } catch {
                     self.logger.error("Failed to update reply_to_id (0x30): \(error.localizedDescription)")
+                    requiredOK = false
                 }
             }
 
@@ -187,7 +198,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
                 if !isKnownContact {
                     self.logger.info("[LXMF_INBOUND] Blocking message from unknown sender \(sourceHashHex) (block_unknown_senders enabled)")
-                    return
+                    return true  // intentionally dropped — checkpoint so we don't reprocess
                 }
             }
 
@@ -203,6 +214,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             } catch {
                 self.logger.error("[LXMF_INBOUND] Failed to update peer icon for \(messageHashHex): \(error.localizedDescription)")
+                requiredOK = false
             }
 
             // Look up sender display name from path table (announce data) and update conversation
@@ -308,6 +320,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 userInfo: ["sourceHash": sourceHash]
             )
             NotificationObserver.postNewMessage()
+            return requiredOK
         }
     }
 
@@ -368,20 +381,30 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     // MARK: - Reaction Handling
 
     /// Merge an incoming reaction into the target message's reactions_json and delete the reaction message.
+    /// - Returns: `true` if the reaction was applied (or there was nothing valid
+    ///   to apply), `false` only if the read-modify-write of the target's
+    ///   reactions failed transiently. The Model B replay treats `false` as
+    ///   "retry this message" and does NOT checkpoint it — critical because the
+    ///   merge is a TOGGLE (add/remove), so a re-run of an already-applied
+    ///   reaction would incorrectly undo it. Frame deletion is best-effort and
+    ///   does not affect the result (a stray control frame is cosmetic; forcing a
+    ///   retry over it would re-toggle the applied reaction).
+    @discardableResult
     private func handleIncomingReaction(
         targetMessageHex: String,
         emoji: String,
         senderHex: String,
         reactionMessageHash: Data
-    ) async {
+    ) async -> Bool {
         // Convert target message hex to Data
         let targetHash = Self.hexToData(targetMessageHex)
         guard let targetHash, targetHash.count == 32 else {
             logger.warning("Invalid reaction target hash: \(targetMessageHex.prefix(16))")
-            return
+            return true  // malformed — nothing to retry
         }
 
         // Read-modify-write reactions on the target message
+        var mergeOK = true
         do {
             var reactionsDict: [String: [String]] = [:]
             if let json = try await messageRepository.getReactionsJson(targetHash),
@@ -413,14 +436,18 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
             }
         } catch {
             logger.error("Failed to merge reaction: \(error.localizedDescription)")
+            mergeOK = false
         }
 
-        // Delete the reaction message from DB (it's a control message, not a visible message)
+        // Delete the reaction message from DB (it's a control message, not a visible
+        // message). Best-effort: a delete failure does NOT flip `mergeOK`, so the
+        // replay won't retry (and re-toggle) an already-merged reaction.
         do {
             try await messageRepository.deleteMessage(reactionMessageHash)
         } catch {
             logger.error("Failed to delete reaction message: \(error.localizedDescription)")
         }
+        return mergeOK
     }
 
     /// Convert hex string to Data.
