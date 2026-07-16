@@ -16,18 +16,30 @@
 //  an inbound reply never threads.
 //
 //  This driver closes the gap PURELY app-side (no NE / IPC changes): on each
-//  Darwin ping it scans the shared store for inbound messages it hasn't processed
-//  yet and replays each through the SAME `IncomingMessageHandler.handleInbound` —
-//  one code path, every field, uniformly. The base message is already persisted
-//  (the NE did it), so `handleInbound` only runs the side channels; user
-//  notifications are suppressed because the NE already posted them.
+//  Darwin ping (and on start, to catch up on anything delivered while suspended)
+//  it scans the shared store for inbound messages it hasn't processed yet and
+//  replays each through the SAME `IncomingMessageHandler.handleInbound` — one
+//  code path, every field, uniformly. The base message is already persisted (the
+//  NE did it), so `handleInbound` only runs the side channels; user notifications
+//  are suppressed because the NE already posted them.
 //
-//  Exactly-once: a persisted timestamp watermark (`SharedDefaults`) plus an
-//  in-memory boundary dedup keyed by message hash. The watermark is seeded to
-//  "now" on first run so pre-existing history isn't reprocessed. This is the
-//  Model B counterpart of the in-process "delegate fires once per message"
-//  guarantee — made explicit because delivery crosses the suspendable NE↔app
-//  boundary (the app may be asleep at receipt; it catches up on next launch).
+//  ── Exactly-once, correctly (the Model B counterpart of "the in-process delegate
+//     fires once per message", made explicit because delivery crosses the
+//     suspendable NE↔app boundary) ──
+//    • The checkpoint (a per-identity timestamp watermark) advances only AFTER a
+//      message's field work has actually COMPLETED (`await handleInbound(_).value`),
+//      so a suspend/terminate mid-flight resumes rather than skips it.
+//    • The scan starts from watermark 0, so messages the NE persisted BEFORE this
+//      service started (or before the update shipped) are caught up, not dropped.
+//    • It pages each conversation until it crosses the watermark, so a burst larger
+//      than one page isn't skipped.
+//    • Keys are per-identity, so an identity switch can't inherit another
+//      identity's watermark and filter out that identity's pending messages.
+//  Field processing is idempotent (reaction frames self-delete after merge;
+//  reply/icon/telemetry/cease set-or-render the same value), so the only cost of
+//  re-touching a boundary message is a redundant no-op — never duplication or
+//  loss. A small persisted boundary set dedups messages sharing the exact
+//  watermark timestamp so we don't churn on them every ping.
 //
 
 import Foundation
@@ -43,25 +55,27 @@ public final class ModelBInboundReplay {
     private let observer = NotificationObserver()
     private let logger = Logger(subsystem: "network.columba.Columba", category: "ModelBInboundReplay")
 
-    /// App-Group-persisted "last processed inbound timestamp". Only inbound
-    /// messages at/after this are candidates; it advances monotonically.
-    private static let watermarkKey = "modelb_inbound_watermark_ts"
-    /// Set once the watermark has been seeded (so first run skips history).
-    private static let seededKey = "modelb_inbound_replay_seeded"
+    /// Stable per-identity discriminator (the identity hash hex) so checkpoints
+    /// don't leak across an identity switch.
+    private let scope: String
 
-    /// Hash→timestamp of messages processed AT the current watermark boundary.
-    /// The next `>= watermark` scan re-surfaces exactly these (ties on the
-    /// boundary timestamp); this dedups them. Pruned to `ts >= watermark` after
-    /// each drain, so it stays tiny (everything below the watermark can never be
-    /// re-fetched).
-    private var boundaryProcessed: [String: Double] = [:]
+    /// Max messages processed per drain pass. Bounds work + keeps the first-run
+    /// catch-up (watermark 0 → the whole existing inbox) responsive; a remainder
+    /// triggers an immediate follow-up pass via `rescanRequested`.
+    private static let batchCap = 200
+    /// Per-conversation page size when scanning the store.
+    private static let pageSize = 200
 
     private var draining = false
     private var rescanRequested = false
 
-    public init(repository: MessageRepository, handler: IncomingMessageHandler) {
+    private var watermarkKey: String { "modelb_inbound_watermark_ts_\(scope)" }
+    private var boundaryKey: String { "modelb_inbound_boundary_hashes_\(scope)" }
+
+    public init(repository: MessageRepository, handler: IncomingMessageHandler, identityScope: String) {
         self.repository = repository
         self.handler = handler
+        self.scope = identityScope.isEmpty ? "default" : identityScope
         // Model B: the NE posts the inbound notification on receipt, so the app's
         // replay must not double-notify — it only does field side-channel work.
         handler.suppressUserNotifications = true
@@ -95,32 +109,34 @@ public final class ModelBInboundReplay {
 
     private func drainOnce() async {
         let defaults = SharedDefaults.suite
+        // Watermark 0 on first run → full catch-up of everything the NE already
+        // persisted (NOT "now", which would drop pending messages). Idempotent
+        // processing makes replaying history safe; the end state is each peer's
+        // latest pin + all reactions/replies applied.
+        let watermark = defaults.double(forKey: watermarkKey)
+        let boundary = Set(defaults.stringArray(forKey: boundaryKey) ?? [])
 
-        // First run: seed the watermark to "now" so we don't replay the entire
-        // pre-existing inbox (which would re-render every historical pin and,
-        // worse, re-merge historical reactions). Only messages arriving AFTER the
-        // fix ships are processed.
-        if !defaults.bool(forKey: Self.seededKey) {
-            defaults.set(Date().timeIntervalSince1970, forKey: Self.watermarkKey)
-            defaults.set(true, forKey: Self.seededKey)
-            return
-        }
-
-        let watermark = defaults.double(forKey: Self.watermarkKey)
-
-        // Gather candidate inbound messages across conversations. `fetchMessages`
-        // is per-conversation (no cross-conversation query on the store), but a
-        // device has few conversations and the Darwin ping is per-arrival, so the
-        // recent slice is small.
+        // Gather candidates across conversations, paging each (store is
+        // newest-first) until we cross the watermark, so a burst beyond one page
+        // isn't skipped.
         var candidates: [RNSAPI.LXMessage] = []
         do {
-            let conversations = try await repository.fetchConversations(limit: 500)
+            let conversations = try await repository.fetchConversations(limit: 1000)
             for conv in conversations {
-                let msgs = try await repository.fetchMessages(for: conv.hash, limit: 50)
-                for m in msgs where m.incoming && m.timestamp >= watermark {
-                    let hex = Self.hex(m.hash)
-                    if boundaryProcessed[hex] != nil { continue }
-                    candidates.append(m)
+                var offset = 0
+                pageLoop: while true {
+                    let page = try await repository.fetchMessages(for: conv.hash, limit: Self.pageSize, offset: offset)
+                    if page.isEmpty { break }
+                    for m in page where m.incoming && m.timestamp >= watermark {
+                        let hex = Self.hex(m.hash)
+                        if boundary.contains(hex) { continue }
+                        candidates.append(m)
+                    }
+                    // Newest-first: once the oldest row on this page is below the
+                    // watermark, every older page is too.
+                    if let oldest = page.last, oldest.timestamp < watermark { break pageLoop }
+                    if page.count < Self.pageSize { break }
+                    offset += page.count
                 }
             }
         } catch {
@@ -131,18 +147,30 @@ public final class ModelBInboundReplay {
         guard !candidates.isEmpty else { return }
         candidates.sort { $0.timestamp < $1.timestamp }
 
+        // Bound each pass; a remainder is picked up by an immediate follow-up.
+        let batch = Array(candidates.prefix(Self.batchCap))
+        let hasMore = candidates.count > batch.count
+
         var maxTS = watermark
-        for m in candidates {
-            handler.handleInbound(m)
-            boundaryProcessed[Self.hex(m.hash)] = m.timestamp
+        for m in batch {
+            // AWAIT completion before checkpointing: if the process is suspended /
+            // killed after this returns, the message is fully handled and the
+            // advanced watermark below is safe.
+            await handler.handleInbound(m).value
             maxTS = max(maxTS, m.timestamp)
         }
-        defaults.set(maxTS, forKey: Self.watermarkKey)
-        // Keep only boundary hashes (ts >= new watermark); the rest can never be
-        // re-fetched by the next `>= watermark` scan.
-        boundaryProcessed = boundaryProcessed.filter { $0.value >= maxTS }
 
-        logger.info("Model B replay: processed \(candidates.count, privacy: .public) inbound message(s) for field side-channels")
+        // Boundary = processed hashes sharing the new watermark timestamp (the only
+        // ones a subsequent `>= watermark` scan re-surfaces). Preserve the prior
+        // boundary only if the watermark didn't advance past it.
+        var newBoundary = Set(batch.filter { $0.timestamp == maxTS }.map { Self.hex($0.hash) })
+        if maxTS == watermark { newBoundary.formUnion(boundary) }
+        defaults.set(maxTS, forKey: watermarkKey)
+        defaults.set(Array(newBoundary), forKey: boundaryKey)
+
+        logger.info("Model B replay: processed \(batch.count, privacy: .public) inbound message(s) for field side-channels\(hasMore ? " (more pending)" : "")")
+
+        if hasMore { rescanRequested = true }
     }
 
     private static func hex(_ data: Data) -> String {

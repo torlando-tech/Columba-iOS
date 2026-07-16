@@ -838,7 +838,11 @@ struct RootView: View {
             // each Darwin "new message" ping. No-op in Model A (the delegate fires
             // live there instead). See `ModelBInboundReplay`.
             if BackendPreference.modelB {
-                let replay = ModelBInboundReplay(repository: repo, handler: handler)
+                let replay = ModelBInboundReplay(
+                    repository: repo,
+                    handler: handler,
+                    identityScope: appServices.grdbDatabasePath ?? ""
+                )
                 self.modelBInboundReplay = replay
                 replay.start()
             }

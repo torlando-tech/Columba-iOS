@@ -102,7 +102,12 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     /// persist the base message — the LXMRouter (Model A) or the NE (Model B)
     /// already did. In Model B the replay driver sets `suppressUserNotifications`
     /// so this doesn't double-notify (the NE posted the notification on receipt).
-    public func handleInbound(_ message: LXMessage) {
+    /// - Returns: the `Task` running the side-channel work, so callers that need
+    ///   to know when processing has actually COMPLETED (e.g. the Model B replay,
+    ///   which must not checkpoint a message as processed until its fields are
+    ///   handled) can `await` its `.value`. The live delegate ignores it.
+    @discardableResult
+    public func handleInbound(_ message: LXMessage) -> Task<Void, Never> {
         let sourceHashHex = message.sourceHash.prefix(4).map { String(format: "%02x", $0) }.joined()
         let messageHashHex = message.hash.prefix(4).map { String(format: "%02x", $0) }.joined()
         logger.info("Received message from \(sourceHashHex) hash=\(messageHashHex)")
@@ -110,7 +115,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
         let sourceHash = message.sourceHash
 
         // Save to database asynchronously, then notify
-        Task {
+        return Task {
             // Reaction — canonical FIELD_REACTION (0x40) = {0x00: targetHashBytes,
             // 0x01: emojiUTF8}; the reacting user is the inbound source hash (not
             // on the wire). Merges into the target message; the empty reaction
