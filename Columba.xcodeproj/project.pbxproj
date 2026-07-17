@@ -220,8 +220,8 @@
 			isa = PBXContainerItemProxy;
 			containerPortal = PROJ /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = TTARG;
-			remoteInfo = ColumbaAppTests;
+			remoteGlobalIDString = TARG;
+			remoteInfo = ColumbaApp;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -1287,7 +1287,7 @@
 		};
 		TTDEP /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = TTARG /* ColumbaAppTests */;
+			target = TARG /* ColumbaApp */;
 			targetProxy = TTPROXY /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -1394,7 +1394,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION COLUMBA_ONBOARDING_ENABLED";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_MODEL_B COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION COLUMBA_ONBOARDING_ENABLED";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -1440,7 +1440,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION COLUMBA_ONBOARDING_ENABLED";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_MODEL_B COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION COLUMBA_ONBOARDING_ENABLED";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -1814,6 +1814,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_PYTHON";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -1858,6 +1859,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_PYTHON";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

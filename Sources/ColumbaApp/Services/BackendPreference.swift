@@ -10,10 +10,8 @@ import Foundation
 /// The one runtime architecture compiled for an app target.
 ///
 /// `COLUMBA_RUNTIME_PYTHON` and `COLUMBA_RUNTIME_MODEL_B` are the canonical
-/// flavor flags. Until the dedicated targets land, the existing
-/// `COLUMBA_BACKEND_SWIFT` configuration remains as a compatibility fallback;
-/// an unflagged standard build remains Python. Once either canonical flag is
-/// present, persisted backend preferences have no role in this selection.
+/// flavor flags. Every app and test-host configuration must define exactly one;
+/// persisted backend preferences have no role in this selection.
 enum RuntimeFlavor: Equatable {
     case python
     case modelB
@@ -26,14 +24,12 @@ enum RuntimeFlavor: Equatable {
 
         #if COLUMBA_RUNTIME_PYTHON && COLUMBA_RUNTIME_MODEL_B
         #error("Exactly one Columba runtime flavor may be compiled")
-        #elseif COLUMBA_RUNTIME_MODEL_B
-        return .modelB
         #elseif COLUMBA_RUNTIME_PYTHON
         return .python
-        #elseif COLUMBA_BACKEND_SWIFT
+        #elseif COLUMBA_RUNTIME_MODEL_B
         return .modelB
         #else
-        return .python
+        #error("Exactly one Columba runtime flavor must be compiled")
         #endif
     }
 }
@@ -76,8 +72,8 @@ enum BackendPreference {
     /// local backend.
     ///
     /// This is **not** a user setting. It's tied to the build: the NE is only
-    /// compiled in on the Swift build (`ENABLE_NETWORK_EXTENSION`, the same
-    /// `Debug-Swift` / `Release-Swift` configs that define `COLUMBA_BACKEND_SWIFT`),
+    /// compiled in on the Model B build (`COLUMBA_RUNTIME_MODEL_B` alongside the
+    /// temporary `COLUMBA_BACKEND_SWIFT` and `ENABLE_NETWORK_EXTENSION` flags),
     /// and on that build Model B is the *sole* architecture — there is no toggle
     /// and no opt-out. On the standard build the NE isn't present, so the app runs
     /// a foreground node (embedded-Python or local Swift).
