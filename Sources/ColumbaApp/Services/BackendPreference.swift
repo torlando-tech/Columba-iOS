@@ -7,6 +7,37 @@
 
 import Foundation
 
+/// The one runtime architecture compiled for an app target.
+///
+/// `COLUMBA_RUNTIME_PYTHON` and `COLUMBA_RUNTIME_MODEL_B` are the canonical
+/// flavor flags. Until the dedicated targets land, the existing
+/// `COLUMBA_BACKEND_SWIFT` configuration remains as a compatibility fallback;
+/// an unflagged standard build remains Python. Once either canonical flag is
+/// present, persisted backend preferences have no role in this selection.
+enum RuntimeFlavor: Equatable {
+    case python
+    case modelB
+
+    static func resolve(persistedUseSwiftBackend: Bool?) -> RuntimeFlavor {
+        // Deliberately ignored. Runtime architecture is a build property, not a
+        // user preference; retaining the argument makes that boundary directly
+        // testable while the legacy preference is removed in the next refactor.
+        _ = persistedUseSwiftBackend
+
+        #if COLUMBA_RUNTIME_PYTHON && COLUMBA_RUNTIME_MODEL_B
+        #error("Exactly one Columba runtime flavor may be compiled")
+        #elseif COLUMBA_RUNTIME_MODEL_B
+        return .modelB
+        #elseif COLUMBA_RUNTIME_PYTHON
+        return .python
+        #elseif COLUMBA_BACKEND_SWIFT
+        return .modelB
+        #else
+        return .python
+        #endif
+    }
+}
+
 /// Persisted choice of which RNS engine `BackendFactory.make()` constructs:
 /// the embedded-Python reference stack (`PythonRNSBackend`) or the native
 /// Swift reticulum-swift/LXMF-swift port (`SwiftRNSBackend`). Both are compiled
@@ -25,6 +56,19 @@ import Foundation
 /// is visible to the Network Extension, mirroring `transport_enabled`.
 enum BackendPreference {
     private static let key = "useSwiftBackend"
+
+    /// Compile-time runtime architecture for this app target. The persisted
+    /// legacy backend preference is passed only to make its non-influence an
+    /// explicit, testable contract.
+    static var runtimeFlavor: RuntimeFlavor {
+        runtimeFlavor(defaults: SharedDefaults.suite)
+    }
+
+    static func runtimeFlavor(defaults: UserDefaults) -> RuntimeFlavor {
+        RuntimeFlavor.resolve(
+            persistedUseSwiftBackend: defaults.object(forKey: key) as? Bool
+        )
+    }
 
     /// Whether the app runs as the thin **Model B** proxy — the Network
     /// Extension owns the `lxmf.delivery` node and the app marshals node-owning
@@ -45,11 +89,7 @@ enum BackendPreference {
     /// removes the cross-process flag race that used to leave the NE in sniff
     /// mode while the app came up as the proxy.
     static var modelB: Bool {
-        #if COLUMBA_BACKEND_SWIFT
-        return true
-        #else
-        return false
-        #endif
+        runtimeFlavor == .modelB
     }
 
     /// Default when the user has never chosen explicitly. The `Columba-Swift`

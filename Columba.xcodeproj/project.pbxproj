@@ -200,6 +200,7 @@
 		OBQ2B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		PNT001 /* PythonNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = PNT002 /* PythonNetworkTransport.swift */; };
 		PRB001 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
+		RFT002 /* RuntimeFlavorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RFT001 /* RuntimeFlavorTests.swift */; };
 		PXI1B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		SRB001 /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
@@ -422,6 +423,7 @@
 		OBQF /* OutboxQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxQueue.swift; sourceTree = "<group>"; };
 		PNT002 /* PythonNetworkTransport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonNetworkTransport.swift; sourceTree = "<group>"; };
 		PRB002 /* ProxyRnsBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProxyRnsBackend.swift; path = Sources/RNSBackendProxy/ProxyRnsBackend.swift; sourceTree = SOURCE_ROOT; };
+		RFT001 /* RuntimeFlavorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RuntimeFlavorTests.swift; sourceTree = "<group>"; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		PXIF /* ProxyIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyIPC.swift; sourceTree = "<group>"; };
 		SRB002 /* SwiftRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwiftRNSBackend.swift; path = Sources/RNSBackendSwift/SwiftRNSBackend.swift; sourceTree = SOURCE_ROOT; };
@@ -816,6 +818,7 @@
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
 				853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */,
 				6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */,
+				RFT001 /* RuntimeFlavorTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -1269,6 +1272,7 @@
 				04D735AF318341AD65ABFE61 /* RNodeSeamTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
 				26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */,
+				RFT002 /* RuntimeFlavorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1457,6 +1461,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_MODEL_B";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
@@ -1562,6 +1567,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_MODEL_B";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
@@ -1872,6 +1878,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_PYTHON";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
@@ -1893,6 +1900,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_PYTHON";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
