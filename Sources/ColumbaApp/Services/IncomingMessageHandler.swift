@@ -198,7 +198,11 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
                 if !isKnownContact {
                     self.logger.info("[LXMF_INBOUND] Blocking message from unknown sender \(sourceHashHex) (block_unknown_senders enabled)")
-                    return true  // intentionally dropped — checkpoint so we don't reprocess
+                    // Stop processing the rest (icon/telemetry/notification), but
+                    // return the ACCUMULATED result — a reaction/reply write earlier
+                    // in this message may have failed (requiredOK == false), and that
+                    // must still be retried rather than masked by the block.
+                    return requiredOK
                 }
             }
 

@@ -79,11 +79,14 @@ public final class ModelBInboundReplay {
     /// on every drain, fetched by hash independently of the watermark — so a
     /// failure is neither lost (the watermark would skip it) nor head-of-line
     /// blocking (the watermark still advances past it). Cleared on success or when
-    /// the message is gone from the store.
+    /// the message is gone from the store. NOT capped: entries below the watermark
+    /// are only reachable via this set, so dropping one would permanently lose its
+    /// field update. In practice it stays tiny — failures are rare transient DB
+    /// errors that clear on the next retry; the only thing that grows it is a
+    /// sustained write failure (e.g. a full disk), under which UserDefaults writes
+    /// fail too and the app is already degraded. It is bounded by the inbox size
+    /// regardless.
     private var failedKey: String { "modelb_inbound_failed_hashes_\(scope)" }
-    /// Cap on the retry set; a pathological run of persistent failures (e.g. disk
-    /// full) drops the overflow rather than growing without bound.
-    private static let failedCap = 200
 
     public init(repository: MessageRepository, handler: IncomingMessageHandler, identityScope: String) {
         self.repository = repository
@@ -196,7 +199,6 @@ public final class ModelBInboundReplay {
         // failure at the boundary must stay retryable via `failed`, not deduped).
         var newBoundary = succeededAtMax
         if maxTS == watermark { newBoundary.formUnion(boundary) }
-        if failed.count > Self.failedCap { failed = Set(failed.prefix(Self.failedCap)) }
         defaults.set(maxTS, forKey: watermarkKey)
         defaults.set(Array(newBoundary), forKey: boundaryKey)
         defaults.set(Array(failed), forKey: failedKey)
