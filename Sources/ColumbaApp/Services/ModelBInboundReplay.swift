@@ -26,24 +26,23 @@
 //  ── Exactly-once, correctly (the Model B counterpart of "the in-process delegate
 //     fires once per message", made explicit because delivery crosses the
 //     suspendable NE↔app boundary) ──
-//    • The checkpoint (a per-identity timestamp watermark) advances only AFTER a
-//      message's field work has actually COMPLETED (`await handleInbound(_).value`),
-//      so a suspend/terminate mid-flight resumes rather than skips it.
 //    • The scan starts from watermark 0, so messages the NE persisted BEFORE this
 //      service started (or before the update shipped) are caught up, not dropped.
-//    • It pages each conversation until it crosses the watermark, so a burst larger
-//      than one page isn't skipped.
-//    • Keys are per-identity, so an identity switch can't inherit another
-//      identity's watermark and filter out that identity's pending messages.
+//    • It pages each conversation (newest-first) until it crosses the watermark, so
+//      a burst larger than one page isn't skipped.
 //    • The checkpoint is by OUTCOME: `handleInbound` reports whether its required
 //      DB writes succeeded, and a message is only advanced-past on success. A
 //      transient failure keeps the message in a durable retry set (fetched by hash
-//      next drain, independent of the watermark) so it's neither lost nor
-//      head-of-line-blocking. This matters because a reaction merge is a TOGGLE,
-//      not idempotent — re-running an already-applied reaction would undo it, so
-//      "did it actually apply?" must gate the checkpoint. A small boundary set
-//      dedups successful messages sharing the exact watermark timestamp so we
-//      don't re-touch them every ping.
+//      next drain, independent of the watermark) so it's neither lost (the
+//      watermark would skip it) nor head-of-line-blocking (the watermark still
+//      advances past it). This matters because a reaction merge is a TOGGLE, not
+//      idempotent — re-running an already-applied reaction would undo it.
+//    • The watermark, boundary-dedup set, and retry set are persisted as ONE
+//      atomic `Checkpoint` blob under a single per-identity key, so a stop between
+//      writes can't leave a mixed state (advance the watermark past a failure not
+//      yet recorded for retry, or replay a reaction whose boundary hash wasn't
+//      saved). Per-identity, so an identity switch can't inherit another identity's
+//      checkpoint.
 //
 
 import Foundation
@@ -59,7 +58,7 @@ public final class ModelBInboundReplay {
     private let observer = NotificationObserver()
     private let logger = Logger(subsystem: "network.columba.Columba", category: "ModelBInboundReplay")
 
-    /// Stable per-identity discriminator (the identity hash hex) so checkpoints
+    /// Stable per-identity discriminator (the identity's GRDB path) so checkpoints
     /// don't leak across an identity switch.
     private let scope: String
 
@@ -73,20 +72,38 @@ public final class ModelBInboundReplay {
     private var draining = false
     private var rescanRequested = false
 
-    private var watermarkKey: String { "modelb_inbound_watermark_ts_\(scope)" }
-    private var boundaryKey: String { "modelb_inbound_boundary_hashes_\(scope)" }
-    /// Hashes whose REQUIRED field processing failed (transient DB error). Retried
-    /// on every drain, fetched by hash independently of the watermark — so a
-    /// failure is neither lost (the watermark would skip it) nor head-of-line
-    /// blocking (the watermark still advances past it). Cleared on success or when
-    /// the message is gone from the store. NOT capped: entries below the watermark
-    /// are only reachable via this set, so dropping one would permanently lose its
-    /// field update. In practice it stays tiny — failures are rare transient DB
-    /// errors that clear on the next retry; the only thing that grows it is a
-    /// sustained write failure (e.g. a full disk), under which UserDefaults writes
-    /// fail too and the app is already degraded. It is bounded by the inbox size
-    /// regardless.
-    private var failedKey: String { "modelb_inbound_failed_hashes_\(scope)" }
+    /// One atomically-persisted checkpoint per identity: the timestamp watermark
+    /// (only inbound at/after it are scan candidates), the boundary-dedup set
+    /// (SUCCESSFUL hashes sharing the exact watermark timestamp, so we don't
+    /// re-touch them every ping), and the retry set (hashes whose required field
+    /// processing failed — retried by hash each drain, independent of the
+    /// watermark; NOT capped, since an entry below the watermark is reachable ONLY
+    /// here and dropping it would permanently lose its update — it stays tiny in
+    /// practice, bounded by the inbox, growing only under sustained write failure
+    /// where UserDefaults writes fail too).
+    private struct Checkpoint: Codable {
+        var watermark: Double = 0
+        var boundary: [String] = []
+        var failed: [String] = []
+    }
+
+    private var checkpointKey: String { "modelb_inbound_checkpoint_\(scope)" }
+
+    private func loadCheckpoint() -> Checkpoint {
+        guard let data = SharedDefaults.suite.data(forKey: checkpointKey),
+              let cp = try? JSONDecoder().decode(Checkpoint.self, from: data) else {
+            return Checkpoint()
+        }
+        return cp
+    }
+
+    /// Single write → the whole checkpoint moves atomically (UserDefaults updates
+    /// one key's value as a unit), so no partial-state window.
+    private func saveCheckpoint(_ cp: Checkpoint) {
+        if let data = try? JSONEncoder().encode(cp) {
+            SharedDefaults.suite.set(data, forKey: checkpointKey)
+        }
+    }
 
     public init(repository: MessageRepository, handler: IncomingMessageHandler, identityScope: String) {
         self.repository = repository
@@ -124,13 +141,13 @@ public final class ModelBInboundReplay {
     }
 
     private func drainOnce() async {
-        let defaults = SharedDefaults.suite
+        var checkpoint = loadCheckpoint()
         // Watermark 0 on first run → full catch-up of everything the NE already
         // persisted (NOT "now", which would drop pending messages). The end state
         // is each peer's latest pin + all reactions/replies applied.
-        let watermark = defaults.double(forKey: watermarkKey)
-        let boundary = Set(defaults.stringArray(forKey: boundaryKey) ?? [])
-        var failed = Set(defaults.stringArray(forKey: failedKey) ?? [])
+        let watermark = checkpoint.watermark
+        let boundary = Set(checkpoint.boundary)
+        var failed = Set(checkpoint.failed)
 
         // Candidates, keyed by hash to dedup the two sources:
         //   • new messages at/after the watermark (minus the boundary dedup), paging
@@ -172,7 +189,9 @@ public final class ModelBInboundReplay {
         }
 
         guard !byHash.isEmpty else {
-            defaults.set(Array(failed), forKey: failedKey)  // persist any prune above
+            // Persist any retry-set prune above as one atomic write.
+            checkpoint.failed = Array(failed)
+            saveCheckpoint(checkpoint)
             return
         }
         let candidates = byHash.values.sorted { $0.timestamp < $1.timestamp }
@@ -199,9 +218,9 @@ public final class ModelBInboundReplay {
         // failure at the boundary must stay retryable via `failed`, not deduped).
         var newBoundary = succeededAtMax
         if maxTS == watermark { newBoundary.formUnion(boundary) }
-        defaults.set(maxTS, forKey: watermarkKey)
-        defaults.set(Array(newBoundary), forKey: boundaryKey)
-        defaults.set(Array(failed), forKey: failedKey)
+
+        // One atomic write of watermark + boundary + failed together.
+        saveCheckpoint(Checkpoint(watermark: maxTS, boundary: Array(newBoundary), failed: Array(failed)))
 
         logger.info("Model B replay: processed \(batch.count, privacy: .public) inbound message(s); \(failed.count, privacy: .public) pending retry\(hasMore ? " (more queued)" : "")")
 
