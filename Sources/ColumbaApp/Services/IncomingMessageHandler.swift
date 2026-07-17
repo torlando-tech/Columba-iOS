@@ -317,13 +317,24 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             }
 
-            // Post notification so views reload with saved data
-            NotificationCenter.default.post(
-                name: IncomingMessageHandler.messageReceivedNotification,
-                object: nil,
-                userInfo: ["sourceHash": sourceHash]
-            )
-            NotificationObserver.postNewMessage()
+            // Refresh the message-list UIs (chat + conversation) so a newly-saved
+            // VISIBLE message shows. Skip telemetry-only and cease messages: they
+            // never appear in the list (they're filtered), so a reload is pointless
+            // AND harmful — under Model B the replay runs this per inbound including
+            // ~60s location beats, and `MessagingViewModel` reloads (resetting to
+            // page 1) on each, wiping the older messages a scrolled-up user is
+            // viewing. The map pin updates via the @Observable `peerLocations`, not
+            // this notification, so telemetry/cease need no refresh. (This also
+            // avoids the app re-posting the Darwin ping the Model B replay observes,
+            // which would re-trigger a redundant drain.)
+            if !isTelemetryOnly && !isCeaseMessage {
+                NotificationCenter.default.post(
+                    name: IncomingMessageHandler.messageReceivedNotification,
+                    object: nil,
+                    userInfo: ["sourceHash": sourceHash]
+                )
+                NotificationObserver.postNewMessage()
+            }
             return requiredOK
         }
     }
