@@ -2,7 +2,7 @@
 //  BackendPreference.swift
 //  ColumbaApp
 //
-//  Compile-time runtime flavor and transitional legacy UI preference.
+//  Compile-time runtime flavor and capabilities.
 //
 
 import Foundation
@@ -19,7 +19,7 @@ enum RuntimeFlavor: Equatable {
     static func resolve(persistedUseSwiftBackend: Bool?) -> RuntimeFlavor {
         // Deliberately ignored. Runtime architecture is a build property, not a
         // user preference; retaining the argument makes that boundary directly
-        // testable while the legacy preference is removed in the next refactor.
+        // testable against persisted values from older app versions.
         _ = persistedUseSwiftBackend
 
         #if COLUMBA_RUNTIME_PYTHON && COLUMBA_RUNTIME_MODEL_B
@@ -34,10 +34,11 @@ enum RuntimeFlavor: Equatable {
     }
 }
 
-/// Compile-time runtime flavor plus the transitional persisted value still used
-/// by the legacy Settings → Advanced → Network Backend selector. The selector
-/// will be removed separately; its value does not affect `BackendFactory`, which
-/// constructs exclusively from the canonical `COLUMBA_RUNTIME_*` flags.
+/// Compile-time runtime flavor and capabilities.
+///
+/// The legacy persisted backend value is read only by `runtimeFlavor(defaults:)`
+/// so tests can prove it cannot affect architecture selection. Runtime creation
+/// uses exclusively the canonical `COLUMBA_RUNTIME_*` flags.
 enum BackendPreference {
     private static let key = "useSwiftBackend"
 
@@ -74,33 +75,5 @@ enum BackendPreference {
     /// mode while the app came up as the proxy.
     static var modelB: Bool {
         runtimeFlavor == .modelB
-    }
-
-    /// Transitional legacy UI default. Never used for runtime construction.
-    static var buildDefaultIsSwift: Bool {
-        #if COLUMBA_BACKEND_SWIFT
-        return true
-        #else
-        return false
-        #endif
-    }
-
-    /// Transitional legacy UI state retained until the selector is removed.
-    /// `BackendFactory` intentionally never reads this value.
-    static var isSwift: Bool {
-        get {
-            #if COLUMBA_BACKEND_SWIFT
-            // Keep the legacy selector internally consistent on configurations
-            // that still carry its old flag. This value does not select or
-            // construct the runtime backend.
-            return true
-            #else
-            guard let stored = SharedDefaults.suite.object(forKey: key) as? Bool else {
-                return buildDefaultIsSwift
-            }
-            return stored
-            #endif
-        }
-        set { SharedDefaults.suite.set(newValue, forKey: key) }
     }
 }

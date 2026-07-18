@@ -140,16 +140,6 @@ public final class SettingsViewModel {
     public var isTransportEnabled: Bool = false
     public var isTransportExpanded: Bool = false
 
-    // MARK: - Network Backend (RNS engine)
-
-    /// Whether the native Swift backend is selected (vs embedded Python).
-    /// Persisted via `BackendPreference`; applied on next app launch.
-    public var useSwiftBackend: Bool = false
-    public var isBackendExpanded: Bool = false
-    /// True once the user changes the backend, surfacing the "relaunch to
-    /// apply" hint until the app is restarted.
-    public var backendChangePending: Bool = false
-
     // MARK: - Card Expansion State
 
     public var isNetworkExpanded: Bool = false
@@ -432,7 +422,6 @@ public final class SettingsViewModel {
         let lastTs = defaults.double(forKey: "last_announce_time")
         lastAnnounceTime = lastTs > 0 ? Date(timeIntervalSince1970: lastTs) : nil
         isTransportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
-        useSwiftBackend = BackendPreference.isSwift
         isLocationSharingEnabled = defaults.bool(forKey: "location_sharing_enabled")
         locationPrecisionRadius = defaults.integer(forKey: "location_precision_radius")
         if let storedDuration = defaults.string(forKey: "default_sharing_duration") {
@@ -576,20 +565,6 @@ public final class SettingsViewModel {
             }
         }
     }
-
-    /// Persist the selected RNS backend. Takes effect on the next app launch —
-    /// the backend is constructed once at stack init and can't be hot-swapped
-    /// live (same constraint as `restartPythonBackend()`), so the UI surfaces a
-    /// relaunch hint rather than tearing the stack down mid-session.
-    @MainActor
-    public func applyBackendSelection() {
-        BackendPreference.isSwift = useSwiftBackend
-        backendChangePending = true
-    }
-
-    // Model B is no longer a user toggle — it's the sole architecture on the
-    // Swift build (see `BackendPreference.modelB`). `applyModelBSelection` and
-    // the `modelBEnabled` state were removed with the Settings toggle.
 
     /// Update icon appearance and persist.
     @MainActor

@@ -123,16 +123,6 @@ struct SettingsView: View {
 
                         // Transport Mode (advanced)
                         transportModeCard(vm)
-
-                        // Network Backend (advanced) — pick the RNS engine.
-                        // Only meaningful when both engines are present. A
-                        // COLUMBA_BACKEND_SWIFT build strips the embedded Python
-                        // wheels (see the "Install Python stdlib" build phase),
-                        // so "Embedded Python" would be a guaranteed dead-end —
-                        // hide the control entirely on Swift-only builds.
-                        #if !COLUMBA_BACKEND_SWIFT
-                        networkBackendCard(vm)
-                        #endif
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -407,53 +397,6 @@ struct SettingsView: View {
             Text("Toggling restarts Reticulum (~1-2s offline).")
                 .font(.caption2)
                 .foregroundStyle(Theme.textSecondary.opacity(0.7))
-        }
-    }
-
-    // MARK: - Network Backend Card
-
-    /// Advanced control selecting the RNS engine: embedded Python (default —
-    /// the reference RNS/LXMF stack via CPython) vs the native Swift
-    /// reticulum-swift/LXMF-swift port (experimental). Both are built into the
-    /// binary; `BackendFactory` reads the choice once at startup, so a switch
-    /// applies on the next app launch (the backend can't be hot-swapped live).
-    private func networkBackendCard(_ vm: SettingsViewModel) -> some View {
-        ExpandableSettingsCard(
-            icon: "cpu",
-            title: "Network Backend",
-            isExpanded: Binding(get: { vm.isBackendExpanded }, set: { vm.isBackendExpanded = $0 })
-        ) {
-            Text("Choose the Reticulum engine. Embedded Python runs the reference RNS/LXMF stack (default, battle-tested). Swift-native uses the pure-Swift reticulum-swift/LXMF-swift port (experimental).")
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Picker("", selection: Binding(
-                get: { vm.useSwiftBackend },
-                set: { newValue in
-                    vm.useSwiftBackend = newValue
-                    vm.applyBackendSelection()
-                }
-            )) {
-                Text("Embedded Python").tag(false)
-                Text("Swift-native").tag(true)
-            }
-            .pickerStyle(.segmented)
-
-
-            if vm.backendChangePending {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                    Text("Relaunch Columba to apply the new backend.")
-                        .font(.caption2)
-                }
-                .foregroundStyle(Theme.warning)
-            } else {
-                Text("Switching takes effect after you relaunch Columba.")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
-            }
         }
     }
 
