@@ -172,7 +172,13 @@ def _contains_regular_file(directory: Path, app_root: Path, label: str) -> bool:
 
 
 def _verify_entitlements_if_signed(
-    bundle: Path, flavor: str, label: str, app_root: Path, run: Callable
+    bundle: Path,
+    flavor: str,
+    label: str,
+    app_root: Path,
+    run: Callable,
+    platform_name: Optional[str] = None,
+    allow_empty_simulator_entitlements: bool = False,
 ) -> None:
     signature = bundle / "_CodeSignature"
     if not signature.exists():
@@ -193,6 +199,13 @@ def _verify_entitlements_if_signed(
         )
     if not isinstance(entitlements, dict):
         raise VerificationError("effective entitlements for {} are not a dictionary".format(label))
+    if (
+        flavor == "modelb"
+        and not entitlements
+        and allow_empty_simulator_entitlements
+        and platform_name == "iphonesimulator"
+    ):
+        return
     if flavor == "shipping" and NETWORK_EXTENSION_ENTITLEMENT in entitlements:
         raise VerificationError(
             "shipping {} effective entitlements contain the networkextension entitlement".format(
@@ -280,7 +293,14 @@ def _verify_shipping(
     _verify_entitlements_if_signed(app, "shipping", "host", app_root, run)
 
 
-def _verify_modelb(app: Path, app_root: Path, libraries: bytes, run: Callable) -> None:
+def _verify_modelb(
+    app: Path,
+    app_root: Path,
+    app_metadata: Dict,
+    libraries: bytes,
+    run: Callable,
+    allow_empty_simulator_entitlements: bool,
+) -> None:
     extension = app / "PlugIns/ColumbaNetworkExtension.appex"
     plugins = app / "PlugIns"
     _resolve_contained(plugins, app_root, "Model B PlugIns")
@@ -336,11 +356,32 @@ def _verify_modelb(app: Path, app_root: Path, libraries: bytes, run: Callable) -
     )
     if leaked is not None:
         raise VerificationError("Model B artifact contains Python packaging output: {}".format(leaked))
-    _verify_entitlements_if_signed(app, "modelb", "host", app_root, run)
-    _verify_entitlements_if_signed(extension, "modelb", "extension", app_root, run)
+    _verify_entitlements_if_signed(
+        app,
+        "modelb",
+        "host",
+        app_root,
+        run,
+        app_metadata.get("DTPlatformName"),
+        allow_empty_simulator_entitlements,
+    )
+    _verify_entitlements_if_signed(
+        extension,
+        "modelb",
+        "extension",
+        app_root,
+        run,
+        extension_metadata.get("DTPlatformName"),
+        allow_empty_simulator_entitlements,
+    )
 
 
-def verify_artifact(flavor: str, app_path, run: Callable = _default_run) -> None:
+def verify_artifact(
+    flavor: str,
+    app_path,
+    run: Callable = _default_run,
+    allow_empty_simulator_entitlements: bool = False,
+) -> None:
     """Verify *app_path* as ``shipping`` or ``modelb``; raise on uncertainty."""
     if flavor not in ("shipping", "modelb"):
         raise VerificationError("unsupported flavor: {}".format(flavor))
@@ -362,16 +403,37 @@ def verify_artifact(flavor: str, app_path, run: Callable = _default_run) -> None
     if flavor == "shipping":
         _verify_shipping(app, app_root, executable, libraries, run)
     else:
-        _verify_modelb(app, app_root, libraries, run)
+        _verify_modelb(
+            app,
+            app_root,
+            metadata,
+            libraries,
+            run,
+            allow_empty_simulator_entitlements,
+        )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("flavor", choices=("shipping", "modelb"))
     parser.add_argument("app", type=Path)
+    parser.add_argument(
+        "--allow-empty-simulator-entitlements",
+        action="store_true",
+        help=(
+            "allow an empty ad-hoc entitlement plist only when the built bundle "
+            "declares DTPlatformName=iphonesimulator"
+        ),
+    )
     arguments = parser.parse_args(argv)
     try:
-        verify_artifact(arguments.flavor, arguments.app)
+        verify_artifact(
+            arguments.flavor,
+            arguments.app,
+            allow_empty_simulator_entitlements=(
+                arguments.allow_empty_simulator_entitlements
+            ),
+        )
     except VerificationError as error:
         print("artifact verification failed: {}".format(error), file=sys.stderr)
         return 1

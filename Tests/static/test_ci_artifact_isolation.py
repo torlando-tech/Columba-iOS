@@ -41,6 +41,7 @@ class ArtifactFixture:
                 "CFBundleIdentifier": "network.columba.fixture",
                 "CFBundleExecutable": executable,
                 "CFBundlePackageType": "APPL",
+                "DTPlatformName": "iphonesimulator",
             },
         )
         (self.app / executable).write_bytes(
@@ -86,6 +87,7 @@ class ArtifactFixture:
                     "CFBundleIdentifier": "network.columba.Columba.tunnel",
                     "CFBundleExecutable": extension_executable,
                     "CFBundlePackageType": "XPC!",
+                    "DTPlatformName": "iphonesimulator",
                     "NSExtension": {
                         "NSExtensionPointIdentifier": (
                             "com.apple.networkextension.packet-tunnel"
@@ -422,6 +424,43 @@ class ArtifactCheckerTests(unittest.TestCase):
             fixture.run = extension_invalid_run
             self.assert_rejected(fixture, "modelb", "Model B extension effective entitlement")
 
+    def test_empty_adhoc_entitlements_require_explicit_simulator_exception(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "modelb")
+            for path in (fixture.app, fixture.extension):
+                (path / "_CodeSignature").mkdir()
+            payload = plistlib.dumps({})
+            base_run = fixture.run
+
+            def empty_entitlements_run(command, **kwargs):
+                if Path(command[0]).name == "codesign":
+                    return Completed(stdout=payload)
+                return base_run(command, **kwargs)
+
+            fixture.run = empty_entitlements_run
+            self.assert_rejected(fixture, "modelb", "entitlement")
+            self.checker.verify_artifact(
+                "modelb",
+                fixture.app,
+                run=fixture.run,
+                allow_empty_simulator_entitlements=True,
+            )
+
+            with (fixture.extension / "Info.plist").open("rb") as stream:
+                metadata = plistlib.load(stream)
+            metadata["DTPlatformName"] = "iphoneos"
+            fixture.write_plist(fixture.extension / "Info.plist", metadata)
+            with self.assertRaisesRegex(
+                self.checker.VerificationError,
+                "Model B extension effective entitlement",
+            ):
+                self.checker.verify_artifact(
+                    "modelb",
+                    fixture.app,
+                    run=fixture.run,
+                    allow_empty_simulator_entitlements=True,
+                )
+
     def test_rejects_out_of_bundle_and_dangling_symlinks_before_tool_access(self):
         mutations = ("extension", "app-executable", "python-framework", "python-payload", "dangling")
         for mutation in mutations:
@@ -494,7 +533,7 @@ class WorkflowContractTests(unittest.TestCase):
             workflow,
         )
         self.assertIn('verify-flavor-artifact.py shipping "$SHIPPING_APP"', workflow)
-        self.assertIn('verify-flavor-artifact.py modelb "$MODELB_APP"', workflow)
+        self.assertIn('modelb "$MODELB_APP" --allow-empty-simulator-entitlements', workflow)
 
     def test_workflow_keeps_shipping_tests_and_coverage_without_modelb_tests(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -504,16 +543,22 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("-resultBundlePath TestResults.xcresult", workflow)
         self.assertIn("rm -rf TestResults.xcresult", workflow)
 
-    def test_every_shell_block_is_fail_fast_and_simulator_builds_disable_signing(self):
+    def test_every_shell_block_is_fail_fast_and_builds_use_adhoc_signing(self):
         lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
         for index, line in enumerate(lines):
             if line.strip() == "run: |":
                 self.assertEqual(lines[index + 1].strip(), "set -euo pipefail")
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("CODE_SIGNING_ALLOWED=NO"), 3)
+        signing = (
+            "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- "
+            'CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" '
+            'PROVISIONING_PROFILE_SPECIFIER=""'
+        )
+        self.assertEqual(workflow.count(signing), 3)
         self.assertIn("test_host_entitlements_contract", workflow)
         self.assertIn("test_ci_artifact_isolation", workflow)
-        self.assertNotIn("CODE_SIGN_IDENTITY=-", workflow)
+        self.assertIn("--allow-empty-simulator-entitlements", workflow)
+        self.assertNotIn("CODE_SIGNING_ALLOWED=NO", workflow)
 
 
 if __name__ == "__main__":

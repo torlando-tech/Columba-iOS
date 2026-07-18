@@ -64,10 +64,9 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      # Simulator ad-hoc signing does not preserve the app's requested
-      # Network Extension entitlement. Exercise source entitlement contracts in
-      # CI, and reserve effective-entitlement inspection for signed archives or
-      # device products passed to the artifact checker.
+      # Simulator ad-hoc signing leaves effective entitlements empty. Exercise
+      # source entitlement contracts in CI; signed archives/device products are
+      # still checked strictly by the artifact checker.
       - name: Run static flavor and entitlement contracts
         run: |
           set -euo pipefail
@@ -85,7 +84,7 @@ jobs:
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             -derivedDataPath "$PWD/DerivedData-Python" \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
 
       - name: Verify shipping artifact isolation
         run: |
@@ -104,13 +103,14 @@ jobs:
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             -derivedDataPath "$PWD/DerivedData-ModelB" \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
 
       - name: Verify Model B artifact isolation
         run: |
           set -euo pipefail
           MODELB_APP="$PWD/DerivedData-ModelB/Build/Products/Debug-iphonesimulator/ColumbaModelBApp.app"
-          python3 support/verify-flavor-artifact.py modelb "$MODELB_APP"
+          python3 support/verify-flavor-artifact.py \
+            modelb "$MODELB_APP" --allow-empty-simulator-entitlements
 
       - name: Build and run shipping tests
         run: |
@@ -126,7 +126,7 @@ jobs:
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
             -enableCodeCoverage YES \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
 
       - name: Export coverage report (function-level lcov)
         run: |
