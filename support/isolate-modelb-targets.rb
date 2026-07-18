@@ -19,6 +19,7 @@ PROJECT_PATH = File.expand_path(
 SHIPPING_TARGET_NAME = 'ColumbaApp'
 SHIPPING_TEST_TARGET_NAME = 'ColumbaAppTests'
 MODEL_B_TARGET_NAME = 'ColumbaModelBApp'
+MODEL_B_TEST_TARGET_NAME = 'ColumbaModelBAppTests'
 EXTENSION_TARGET_NAME = 'ColumbaNetworkExtension'
 SHIPPING_ENTITLEMENTS = 'Sources/ColumbaApp/Resources/ColumbaApp.entitlements'
 MODEL_B_ENTITLEMENTS = 'Sources/ColumbaApp/Resources/ColumbaModelBApp.entitlements'
@@ -133,8 +134,7 @@ PYTHON_INSTALL_SCRIPT = <<~'SH'.freeze
   source "$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh"
   install_python Frameworks/Python.xcframework app_packages
 SH
-# Task 9 will assign these seam tests to an explicit Model B XCTest host. Until
-# that target exists, they must remain file references only: shipping's sole
+# These seam tests belong only to the explicit Model B XCTest host. Shipping's
 # XCTest target cannot compile declarations intentionally absent from its app.
 MODEL_B_ONLY_TEST_SOURCE_PATHS = %w[
   Tests/ColumbaAppTests/BLESeamDriverTests.swift
@@ -1014,15 +1014,153 @@ module ModelBTargetIsolation
     model_b
   end
 
+  def reconcile_model_b_tests(project, shipping_tests, model_b)
+    existing = project.targets.select { |target| target.name == MODEL_B_TEST_TARGET_NAME }
+    model_b_tests = existing.shift
+    existing.each { |duplicate| remove_duplicate_target(project, duplicate) }
+    model_b_tests ||= project.new_target(:unit_test_bundle, MODEL_B_TEST_TARGET_NAME, :ios, nil)
+
+    model_b_tests.name = MODEL_B_TEST_TARGET_NAME
+    model_b_tests.product_name = MODEL_B_TEST_TARGET_NAME
+    model_b_tests.product_type = 'com.apple.product-type.bundle.unit-test'
+    model_b_tests.product_reference.path = "#{MODEL_B_TEST_TARGET_NAME}.xctest"
+
+    attributes = project.root_object.attributes['TargetAttributes'] ||= {}
+    attributes[model_b_tests.uuid] = duplicate_value(attributes.fetch(shipping_tests.uuid, {}))
+
+    retained_dependency = model_b_tests.dependencies.find { |dependency| dependency.target == model_b }
+    model_b_tests.dependencies.dup.each do |dependency|
+      remove_dependency(dependency) unless dependency == retained_dependency
+    end
+    model_b_tests.add_dependency(model_b) unless retained_dependency
+
+    references = project.files.each_with_object({}) do |reference, by_path|
+      path = source_path(project, reference)
+      by_path[path] = reference if MODEL_B_ONLY_TEST_SOURCE_PATHS.include?(path)
+    end
+    missing = MODEL_B_ONLY_TEST_SOURCE_PATHS - references.keys
+    raise "Missing Model B test source references: #{missing.join(', ')}" unless missing.empty?
+
+    source_phase = model_b_tests.source_build_phase
+    retained_files = MODEL_B_ONLY_TEST_SOURCE_PATHS.map do |path|
+      matching = source_phase.files.select do |build_file|
+        source_path(project, build_file.file_ref) == path &&
+          build_file_owners(project, build_file).map(&:uuid) == [source_phase.uuid]
+      end
+      build_file = matching.shift || project.new(Xcodeproj::Project::Object::PBXBuildFile)
+      build_file.file_ref = references.fetch(path)
+      build_file.product_ref = nil
+      build_file.settings = nil
+      build_file.platform_filter = nil
+      build_file.platform_filters = nil
+      build_file
+    end
+    retained_ids = retained_files.map(&:uuid)
+    source_phase.files.dup.each do |build_file|
+      remove_build_file_from_phase(project, source_phase, build_file) unless retained_ids.include?(build_file.uuid)
+    end
+    source_phase.files.clear
+    retained_files.each { |build_file| source_phase.files << build_file }
+
+    shipping_configs = {}
+    shipping_tests.build_configurations.each { |configuration| shipping_configs[configuration.name] = configuration }
+    existing_configs = model_b_tests.build_configurations.group_by(&:name)
+    ordered_configs = model_b.build_configurations.map do |host_configuration|
+      configuration = existing_configs.fetch(host_configuration.name, []).shift || project.new(
+        Xcodeproj::Project::Object::XCBuildConfiguration
+      )
+      template = shipping_configs.fetch(host_configuration.name)
+      configuration.name = host_configuration.name
+      configuration.base_configuration_reference = template.base_configuration_reference
+      configuration.build_settings = duplicate_value(template.build_settings)
+      configuration.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'network.columba.ColumbaModelB.tests'
+      configuration.build_settings['TEST_HOST'] =
+        '$(BUILT_PRODUCTS_DIR)/ColumbaModelBApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaModelBApp'
+      configuration.build_settings['BUNDLE_LOADER'] = '$(TEST_HOST)'
+      configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
+        host_configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']
+      configuration
+    end
+    (model_b_tests.build_configurations.to_a - ordered_configs).each(&:remove_from_project)
+    model_b_tests.build_configuration_list.build_configurations.clear
+    ordered_configs.each do |configuration|
+      model_b_tests.build_configuration_list.build_configurations << configuration
+    end
+    model_b_tests.build_configuration_list.default_configuration_name =
+      model_b.build_configuration_list.default_configuration_name
+    model_b_tests.build_configuration_list.default_configuration_is_visible =
+      model_b.build_configuration_list.default_configuration_is_visible
+    model_b_tests
+  end
+
+  def scheme_xml(app, tests, extension = nil)
+    buildables = [app, extension].compact.map do |target|
+      <<~XML
+               <BuildActionEntry buildForTesting = "YES" buildForRunning = "YES" buildForProfiling = "YES" buildForArchiving = "YES" buildForAnalyzing = "YES">
+                  <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "#{target.uuid}" BuildableName = "#{target.product_reference.path}" BlueprintName = "#{target.name}" ReferencedContainer = "container:Columba.xcodeproj">
+                  </BuildableReference>
+               </BuildActionEntry>
+      XML
+    end.join
+    <<~XML
+      <?xml version="1.0" encoding="UTF-8"?>
+      <Scheme LastUpgradeVersion = "1500" version = "1.7">
+         <BuildAction parallelizeBuildables = "YES" buildImplicitDependencies = "YES">
+            <BuildActionEntries>
+      #{buildables.rstrip}
+            </BuildActionEntries>
+         </BuildAction>
+         <TestAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv = "YES" shouldAutocreateTestPlan = "YES">
+            <Testables>
+               <TestableReference skipped = "NO">
+                  <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "#{tests.uuid}" BuildableName = "#{tests.product_reference.path}" BlueprintName = "#{tests.name}" ReferencedContainer = "container:Columba.xcodeproj">
+                  </BuildableReference>
+               </TestableReference>
+            </Testables>
+         </TestAction>
+         <LaunchAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle = "0" useCustomWorkingDirectory = "NO" ignoresPersistentStateOnLaunch = "NO" debugDocumentVersioning = "YES" debugServiceExtension = "internal" allowLocationSimulation = "YES">
+            <BuildableProductRunnable runnableDebuggingMode = "0">
+               <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "#{app.uuid}" BuildableName = "#{app.product_reference.path}" BlueprintName = "#{app.name}" ReferencedContainer = "container:Columba.xcodeproj">
+               </BuildableReference>
+            </BuildableProductRunnable>
+         </LaunchAction>
+         <ProfileAction buildConfiguration = "Release" shouldUseLaunchSchemeArgsEnv = "YES" savedToolIdentifier = "" useCustomWorkingDirectory = "NO" debugDocumentVersioning = "YES">
+            <BuildableProductRunnable runnableDebuggingMode = "0">
+               <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "#{app.uuid}" BuildableName = "#{app.product_reference.path}" BlueprintName = "#{app.name}" ReferencedContainer = "container:Columba.xcodeproj">
+               </BuildableReference>
+            </BuildableProductRunnable>
+         </ProfileAction>
+         <AnalyzeAction buildConfiguration = "Debug">
+         </AnalyzeAction>
+         <ArchiveAction buildConfiguration = "Release" revealArchiveInOrganizer = "YES">
+         </ArchiveAction>
+      </Scheme>
+    XML
+  end
+
+  def reconcile_shared_schemes(project, shipping, shipping_tests, model_b, model_b_tests, extension)
+    schemes_dir = File.join(project.path.to_s, 'xcshareddata', 'xcschemes')
+    Dir.mkdir(File.join(project.path.to_s, 'xcshareddata')) unless Dir.exist?(File.join(project.path.to_s, 'xcshareddata'))
+    Dir.mkdir(schemes_dir) unless Dir.exist?(schemes_dir)
+    Dir.glob(File.join(schemes_dir, '*.xcscheme')).each { |path| File.delete(path) }
+    File.write(File.join(schemes_dir, 'Columba.xcscheme'), scheme_xml(shipping, shipping_tests))
+    File.write(
+      File.join(schemes_dir, 'Columba-ModelB.xcscheme'),
+      scheme_xml(model_b, model_b_tests, extension)
+    )
+  end
+
   def assert_graph!(project)
     shipping = project.targets.select { |target| target.name == SHIPPING_TARGET_NAME }
     model_b = project.targets.select { |target| target.name == MODEL_B_TARGET_NAME }
     extension = project.targets.select { |target| target.name == EXTENSION_TARGET_NAME }
-    raise 'target names are not unique' unless [shipping, model_b, extension].all? { |targets| targets.one? }
+    model_b_tests = project.targets.select { |target| target.name == MODEL_B_TEST_TARGET_NAME }
+    raise 'target names are not unique' unless [shipping, model_b, extension, model_b_tests].all? { |targets| targets.one? }
 
     shipping = shipping.first
     model_b = model_b.first
     extension = extension.first
+    model_b_tests = model_b_tests.first
     raise 'shipping target still depends on extension' if shipping.dependencies.any? { |dep| dep.target == extension }
     raise 'shipping target retained an extension embed phase' if shipping.build_phases.any? do |phase|
       extension_embed_phase?(phase)
@@ -1032,6 +1170,25 @@ module ModelBTargetIsolation
     end
     raise 'Model B extension dependency is not unique' unless model_b.dependencies.count { |dep| dep.target == extension } == 1
     raise 'Model B has stale target dependencies' unless model_b.dependencies.one?
+    model_b_test_sources = model_b_tests.source_build_phase.files.map do |file|
+      source_path(project, file.file_ref)
+    end
+    raise 'Model B test source membership is incorrect' unless
+      model_b_test_sources == MODEL_B_ONLY_TEST_SOURCE_PATHS
+    raise 'Model B XCTest host dependency is incorrect' unless
+      model_b_tests.dependencies.one? && model_b_tests.dependencies.first.target == model_b
+    model_b_configs = {}
+    model_b.build_configurations.each { |configuration| model_b_configs[configuration.name] = configuration }
+    model_b_tests.build_configurations.each do |configuration|
+      host = model_b_configs.fetch(configuration.name)
+      raise "Model B TEST_HOST is incorrect in #{configuration.name}" unless
+        configuration.build_settings.fetch('TEST_HOST', '').include?('ColumbaModelBApp.app')
+      raise "Model B BUNDLE_LOADER is incorrect in #{configuration.name}" unless
+        configuration.build_settings['BUNDLE_LOADER'] == '$(TEST_HOST)'
+      raise "Model B host/test flavor mismatch in #{configuration.name}" unless
+        configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] ==
+          host.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']
+    end
 
     shipping_tests = project.targets.find { |target| target.name == SHIPPING_TEST_TARGET_NAME } or
       raise "Missing #{SHIPPING_TEST_TARGET_NAME} target"
@@ -1344,8 +1501,14 @@ ModelBTargetIsolation.reconcile_shipping_test_configurations(project, shipping)
 shipping_tests = project.targets.find { |target| target.name == SHIPPING_TEST_TARGET_NAME } or
   abort "Missing #{SHIPPING_TEST_TARGET_NAME} target"
 ModelBTargetIsolation.strip_shipping_model_b_test_membership(project, shipping_tests)
+model_b_tests = ModelBTargetIsolation.reconcile_model_b_tests(
+  project, shipping_tests, model_b
+)
 ModelBTargetIsolation.assert_graph!(project)
 project.save
+ModelBTargetIsolation.reconcile_shared_schemes(
+  project, shipping, shipping_tests, model_b, model_b_tests, extension
+)
 
 # A successful reopen catches malformed references immediately on Linux too.
 reopened = Xcodeproj::Project.open(PROJECT_PATH)

@@ -136,6 +136,7 @@ class ModelBTargetIsolationTests < Minitest::Test
     @shipping = unique_target('ColumbaApp')
     @shipping_tests = unique_target('ColumbaAppTests')
     @model_b = unique_target('ColumbaModelBApp')
+    @model_b_tests = unique_target('ColumbaModelBAppTests')
     @extension = unique_target('ColumbaNetworkExtension')
   end
 
@@ -1296,10 +1297,12 @@ class ModelBTargetIsolationTests < Minitest::Test
     end
   end
 
-  def test_shipping_test_membership_excludes_model_b_seams_pending_task_9_hosting
+  def test_model_b_seam_tests_have_only_the_model_b_test_host
     assert_equal 2, MODEL_B_ONLY_TEST_SOURCE_PATHS.size
     assert_empty MODEL_B_ONLY_TEST_SOURCE_PATHS & source_paths(@shipping_tests)
     assert_equal SHIPPING_TEST_SOURCE_PATHS, source_paths(@shipping_tests)
+    assert_equal MODEL_B_ONLY_TEST_SOURCE_PATHS, source_paths(@model_b_tests)
+    assert_equal [@model_b.uuid], @model_b_tests.dependencies.map { |dependency| dependency.target.uuid }
   end
 
   def test_shipping_test_sources_do_not_reference_declarations_absent_from_shipping

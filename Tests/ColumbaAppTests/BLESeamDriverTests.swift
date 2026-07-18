@@ -1,6 +1,6 @@
 import XCTest
 import ReticulumSwift
-@testable import ColumbaApp
+@testable import ColumbaModelBApp
 
 /// Runtime tests for the NE-side BLE seam proxy (`AppGroupBLEDriver`): that it
 /// encodes commands out, feeds the `BLEDriver` streams from decoded app events,

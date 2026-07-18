@@ -150,6 +150,7 @@
 		36AA591CD5DF055FA6124E7D /* BLEDriverSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDS /* BLEDriverSeam.swift */; };
 		384033BE99794CB11185E99C /* AppGroupBLEServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBSV /* AppGroupBLEServer.swift */; };
 		3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
+		3AD864B112B2E1810E510599 /* BLESeamDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDT /* BLESeamDriverTests.swift */; };
 		3B33F02402537B1825B64EEC /* MessagingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F005 /* MessagingViewModel.swift */; };
 		3C22AABC6B36F30028DF5A5A /* BackgroundVPNExplainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */; };
 		3D759EC171FEA82AD5A804DB /* BackgroundDeliveryPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */; };
@@ -167,12 +168,14 @@
 		489A5C72A9C4C3FAB742F3E2 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027 /* NotificationObserver.swift */; };
 		4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB02 /* ModelBInboundReplay.swift */; platformFilter = ios; };
 		4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */; };
+		4CD5BF2A4CA7A4E0FB498406 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2B1D94BCDC14153F6C4D05B1 /* Foundation.framework */; };
 		5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A49337EFC55C10979AEB702B /* LXSTSwift */; };
 		557D530BBEDAEBE9A6A0BE41 /* PyConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D8CBCF7E546028A043E1C7 /* PyConversation.swift */; };
 		55F3BF7D600C32E07B7B8C26 /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EBCA636D502CF4367E32C7 /* TCPClientWizard.swift */; };
 		577EE1AF377E314E961710B3 /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
 		58560228AFEDBA4201D9F9D4 /* PlatformCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07A /* PlatformCompat.swift */; };
 		59CE6F635354725F7D445625 /* PyLocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */; };
+		5A782C77CC09D0601E7D945C /* RNodeSeamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */; };
 		5AB385A087D36D5CE40E54F1 /* MigrationImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05E /* MigrationImporter.swift */; };
 		5AFC71BEEE6F92017B41233F /* ProfileIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F037 /* ProfileIcon.swift */; };
 		5C05E5EC2A287FEAD018BB36 /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
@@ -332,6 +335,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		7010CAD866AB1B15363DF273 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = PROJ /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4CAC30008285BCF92BD97428;
+			remoteInfo = ColumbaModelBApp;
+		};
 		FBE88AA266B2C98EA164D350 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = PROJ /* Project object */;
@@ -420,6 +430,7 @@
 		BKF002 /* BackendFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFactory.swift; sourceTree = "<group>"; };
 		CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBLECallbackBridge.swift; sourceTree = "<group>"; };
 		D001472BC7DFD3CD7BF27F0C /* app */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = app; sourceTree = "<group>"; };
+		D33D0252383165C6829D2767 /* ColumbaModelBAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaModelBAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
 		DA586EB5F8EB62D2579CEAAB /* Lucide.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Lucide.swift; sourceTree = "<group>"; };
 		DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioRingBufferTests.swift; sourceTree = "<group>"; };
@@ -567,6 +578,14 @@
 				876F4CCF3FA441B67D08BBEC /* SwiftBLEBridge in Frameworks */,
 				E34B504A6DCC8F5E7F44E491 /* LXMFSwift in Frameworks */,
 				73B2FC9ECC25BA7B4AFF3D96 /* ReticulumSwift in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BA76B3E0FEB3B2D17ECBA3A8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4CD5BF2A4CA7A4E0FB498406 /* Foundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1025,6 +1044,7 @@
 				EPROD /* ColumbaNetworkExtension.appex */,
 				TPROD /* ColumbaAppTests.xctest */,
 				E59ED1029D4A906764BC582F /* ColumbaModelBApp.app */,
+				D33D0252383165C6829D2767 /* ColumbaModelBAppTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -1091,6 +1111,24 @@
 			productName = ColumbaModelBApp;
 			productReference = E59ED1029D4A906764BC582F /* ColumbaModelBApp.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A95531E5BB41AD06A7E635C1 /* ColumbaModelBAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4D4626E633E7025C9F5C0788 /* Build configuration list for PBXNativeTarget "ColumbaModelBAppTests" */;
+			buildPhases = (
+				BE984227C99798B516781FB3 /* Sources */,
+				BA76B3E0FEB3B2D17ECBA3A8 /* Frameworks */,
+				E39B3AF4DC41DD5CD7259D9C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5EC1A1137842C28B8B4B8244 /* PBXTargetDependency */,
+			);
+			name = ColumbaModelBAppTests;
+			productName = ColumbaModelBAppTests;
+			productReference = D33D0252383165C6829D2767 /* ColumbaModelBAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		ETARG /* ColumbaNetworkExtension */ = {
 			isa = PBXNativeTarget;
@@ -1177,6 +1215,10 @@
 					4CAC30008285BCF92BD97428 = {
 						CreatedOnToolsVersion = 15.0;
 					};
+					A95531E5BB41AD06A7E635C1 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = TARG;
+					};
 					ETARG = {
 						CreatedOnToolsVersion = 15.0;
 					};
@@ -1213,6 +1255,7 @@
 				ETARG /* ColumbaNetworkExtension */,
 				TTARG /* ColumbaAppTests */,
 				4CAC30008285BCF92BD97428 /* ColumbaModelBApp */,
+				A95531E5BB41AD06A7E635C1 /* ColumbaModelBAppTests */,
 			);
 		};
 /* End PBXProject section */
@@ -1227,6 +1270,13 @@
 				AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */,
 				C17B4B4AD850DBC3CD27AEC0 /* JetBrainsMono-Bold.ttf in Resources */,
 				DF2A7839A4D81C4DAEEF6A2A /* lucide.ttf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E39B3AF4DC41DD5CD7259D9C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1415,6 +1465,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BE984227C99798B516781FB3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3AD864B112B2E1810E510599 /* BLESeamDriverTests.swift in Sources */,
+				5A782C77CC09D0601E7D945C /* RNodeSeamTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ESRCBP /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -1595,6 +1654,12 @@
 			target = ETARG /* ColumbaNetworkExtension */;
 			targetProxy = FBE88AA266B2C98EA164D350 /* PBXContainerItemProxy */;
 		};
+		5EC1A1137842C28B8B4B8244 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ColumbaModelBApp;
+			target = 4CAC30008285BCF92BD97428 /* ColumbaModelBApp */;
+			targetProxy = 7010CAD866AB1B15363DF273 /* PBXContainerItemProxy */;
+		};
 		TTDEP /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = TARG /* ColumbaApp */;
@@ -1758,6 +1823,28 @@
 			};
 			name = "Debug-Swift";
 		};
+		2BAF73D8684A2AE66AAF00AA /* Debug-Swift */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.ColumbaModelB.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_ONBOARDING_ENABLED COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaModelBApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaModelBApp";
+			};
+			name = "Debug-Swift";
+		};
 		40664B29B91154746B7404C5 /* Release-Swift */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1909,6 +1996,28 @@
 			};
 			name = "Release-Swift";
 		};
+		8505672A280AE4778A516B74 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.ColumbaModelB.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaModelBApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaModelBApp";
+			};
+			name = Release;
+		};
 		8EF6B3D866C818B668A4599F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = F07B /* Signing.xcconfig */;
@@ -1975,6 +2084,50 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
 			};
 			name = "Debug-Swift";
+		};
+		A471D0A5D3CC9B268B87F97F /* Release-Swift */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.ColumbaModelB.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_ONBOARDING_ENABLED COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaModelBApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaModelBApp";
+			};
+			name = "Release-Swift";
+		};
+		A8529EE132E360AFF09B6CF8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.ColumbaModelB.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaModelBApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaModelBApp";
+			};
+			name = Debug;
 		};
 		BB9D1E96F186BDF9EBE59FE3 /* Release-Swift */ = {
 			isa = XCBuildConfiguration;
@@ -2402,6 +2555,17 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		4D4626E633E7025C9F5C0788 /* Build configuration list for PBXNativeTarget "ColumbaModelBAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A8529EE132E360AFF09B6CF8 /* Debug */,
+				8505672A280AE4778A516B74 /* Release */,
+				2BAF73D8684A2AE66AAF00AA /* Debug-Swift */,
+				A471D0A5D3CC9B268B87F97F /* Release-Swift */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		BCLST /* Build configuration list for PBXNativeTarget "ColumbaApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -1,6 +1,6 @@
 import XCTest
 import ReticulumSwift
-@testable import ColumbaApp
+@testable import ColumbaModelBApp
 
 /// Unit tests for the Model-B RNode seam: the binary wire codec, the file-backed IPC
 /// queue's new failure-reporting contract, the app-side server's empty-name guard, and

@@ -3,7 +3,11 @@
    <BuildAction parallelizeBuildables = "YES" buildImplicitDependencies = "YES">
       <BuildActionEntries>
 <BuildActionEntry buildForTesting = "YES" buildForRunning = "YES" buildForProfiling = "YES" buildForArchiving = "YES" buildForAnalyzing = "YES">
-   <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "TARG" BuildableName = "ColumbaApp.app" BlueprintName = "ColumbaApp" ReferencedContainer = "container:Columba.xcodeproj">
+   <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "4CAC30008285BCF92BD97428" BuildableName = "ColumbaModelBApp.app" BlueprintName = "ColumbaModelBApp" ReferencedContainer = "container:Columba.xcodeproj">
+   </BuildableReference>
+</BuildActionEntry>
+<BuildActionEntry buildForTesting = "YES" buildForRunning = "YES" buildForProfiling = "YES" buildForArchiving = "YES" buildForAnalyzing = "YES">
+   <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "ETARG" BuildableName = "ColumbaNetworkExtension.appex" BlueprintName = "ColumbaNetworkExtension" ReferencedContainer = "container:Columba.xcodeproj">
    </BuildableReference>
 </BuildActionEntry>
       </BuildActionEntries>
@@ -11,20 +15,20 @@
    <TestAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv = "YES" shouldAutocreateTestPlan = "YES">
       <Testables>
          <TestableReference skipped = "NO">
-            <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "TTARG" BuildableName = "ColumbaAppTests.xctest" BlueprintName = "ColumbaAppTests" ReferencedContainer = "container:Columba.xcodeproj">
+            <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "A95531E5BB41AD06A7E635C1" BuildableName = "ColumbaModelBAppTests.xctest" BlueprintName = "ColumbaModelBAppTests" ReferencedContainer = "container:Columba.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle = "0" useCustomWorkingDirectory = "NO" ignoresPersistentStateOnLaunch = "NO" debugDocumentVersioning = "YES" debugServiceExtension = "internal" allowLocationSimulation = "YES">
       <BuildableProductRunnable runnableDebuggingMode = "0">
-         <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "TARG" BuildableName = "ColumbaApp.app" BlueprintName = "ColumbaApp" ReferencedContainer = "container:Columba.xcodeproj">
+         <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "4CAC30008285BCF92BD97428" BuildableName = "ColumbaModelBApp.app" BlueprintName = "ColumbaModelBApp" ReferencedContainer = "container:Columba.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
    <ProfileAction buildConfiguration = "Release" shouldUseLaunchSchemeArgsEnv = "YES" savedToolIdentifier = "" useCustomWorkingDirectory = "NO" debugDocumentVersioning = "YES">
       <BuildableProductRunnable runnableDebuggingMode = "0">
-         <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "TARG" BuildableName = "ColumbaApp.app" BlueprintName = "ColumbaApp" ReferencedContainer = "container:Columba.xcodeproj">
+         <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "4CAC30008285BCF92BD97428" BuildableName = "ColumbaModelBApp.app" BlueprintName = "ColumbaModelBApp" ReferencedContainer = "container:Columba.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
