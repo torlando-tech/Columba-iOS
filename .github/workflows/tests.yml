@@ -64,6 +64,17 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
+      # Simulator ad-hoc signing does not preserve the app's requested
+      # Network Extension entitlement. Exercise source entitlement contracts in
+      # CI, and reserve effective-entitlement inspection for signed archives or
+      # device products passed to the artifact checker.
+      - name: Run static flavor and entitlement contracts
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest \
+            Tests.static.test_host_entitlements_contract \
+            Tests.static.test_ci_artifact_isolation
+
       - name: Build shipping artifact (embedded Python)
         run: |
           set -euo pipefail
@@ -74,7 +85,7 @@ jobs:
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             -derivedDataPath "$PWD/DerivedData-Python" \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Verify shipping artifact isolation
         run: |
@@ -93,7 +104,7 @@ jobs:
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             -derivedDataPath "$PWD/DerivedData-ModelB" \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Verify Model B artifact isolation
         run: |
@@ -115,7 +126,7 @@ jobs:
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
             -enableCodeCoverage YES \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Export coverage report (function-level lcov)
         run: |

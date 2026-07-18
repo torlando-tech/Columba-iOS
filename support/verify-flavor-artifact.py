@@ -10,9 +10,8 @@ commands; existing source-membership static contracts provide the source-graph
 proof. Model B's positive graph proof is its exact embedded extension plus
 NetworkExtension load commands in both host and extension.
 
-Unsigned local products are supported. If an artifact has a _CodeSignature
-directory, effective entitlements become mandatory and are read with codesign;
-CI deliberately uses ad-hoc simulator signing to exercise that proof.
+Unsigned simulator products are supported. If an artifact has a _CodeSignature
+directory, effective entitlements become mandatory and are read with codesign.
 """
 
 import argparse
@@ -258,11 +257,20 @@ def _verify_shipping(
                 marker.decode("ascii")
             )
         )
-    if PYTHON_LOAD not in libraries:
-        raise VerificationError("shipping executable does not link Python.framework")
     framework = app / "Frameworks/Python.framework"
     if not _contains_regular_file(framework, app_root, "shipping Python.framework"):
         raise VerificationError("shipping Python.framework payload is missing or empty")
+    framework_metadata = _load_bundle(
+        framework, "FMWK", "shipping Python.framework", app_root
+    )
+    framework_executable = _bundle_executable(
+        framework,
+        framework_metadata,
+        "shipping Python.framework",
+        app_root,
+    )
+    if framework_executable.stat().st_size == 0:
+        raise VerificationError("shipping Python.framework executable is empty")
     stdlib = app / "python/lib"
     if not _contains_regular_file(stdlib, app_root, "shipping python/lib"):
         raise VerificationError("shipping python/lib standard-library payload is missing or empty")

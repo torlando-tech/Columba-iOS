@@ -55,6 +55,14 @@ class ArtifactFixture:
         if flavor == "shipping":
             framework = self.app / "Frameworks/Python.framework"
             framework.mkdir(parents=True)
+            self.write_plist(
+                framework / "Info.plist",
+                {
+                    "CFBundleIdentifier": "org.python.Python",
+                    "CFBundleExecutable": "Python",
+                    "CFBundlePackageType": "FMWK",
+                },
+            )
             (framework / "Python").write_bytes(b"python")
             stdlib = self.app / "python/lib/python3.13"
             stdlib.mkdir(parents=True)
@@ -177,6 +185,27 @@ class ArtifactCheckerTests(unittest.TestCase):
                         child.unlink() if child.is_file() else child.rmdir()
                     path.rmdir()
                 self.assert_rejected(fixture, "shipping", "Python|python|app_packages")
+
+    def test_shipping_rejects_malformed_or_empty_python_framework(self):
+        mutations = ("missing-plist", "wrong-package-type", "empty-executable")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                fixture = ArtifactFixture(Path(directory), "shipping")
+                framework = fixture.app / "Frameworks/Python.framework"
+                if mutation == "missing-plist":
+                    (framework / "Info.plist").unlink()
+                elif mutation == "wrong-package-type":
+                    with (framework / "Info.plist").open("rb") as stream:
+                        metadata = plistlib.load(stream)
+                    metadata["CFBundlePackageType"] = "BNDL"
+                    fixture.write_plist(framework / "Info.plist", metadata)
+                else:
+                    (framework / "Python").write_bytes(b"")
+                self.assert_rejected(
+                    fixture,
+                    "shipping",
+                    "Python.framework.*Info.plist|CFBundlePackageType|executable is empty",
+                )
 
     def test_modelb_rejects_missing_extension_and_wrong_package_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -475,19 +504,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("-resultBundlePath TestResults.xcresult", workflow)
         self.assertIn("rm -rf TestResults.xcresult", workflow)
 
-    def test_every_shell_block_is_fail_fast_and_builds_use_adhoc_signing(self):
+    def test_every_shell_block_is_fail_fast_and_simulator_builds_disable_signing(self):
         lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
         for index, line in enumerate(lines):
             if line.strip() == "run: |":
                 self.assertEqual(lines[index + 1].strip(), "set -euo pipefail")
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertNotIn("CODE_SIGNING_ALLOWED=NO", workflow)
-        signing = (
-            "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- "
-            'CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" '
-            'PROVISIONING_PROFILE_SPECIFIER=""'
-        )
-        self.assertEqual(workflow.count(signing), 3)
+        self.assertEqual(workflow.count("CODE_SIGNING_ALLOWED=NO"), 3)
+        self.assertIn("test_host_entitlements_contract", workflow)
+        self.assertIn("test_ci_artifact_isolation", workflow)
+        self.assertNotIn("CODE_SIGN_IDENTITY=-", workflow)
 
 
 if __name__ == "__main__":
