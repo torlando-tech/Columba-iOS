@@ -1981,6 +1981,120 @@ class ModelBTargetIsolationTests < Minitest::Test
     end
   end
 
+  def test_duplicate_model_b_test_cleanup_preserves_shared_shipping_dependency_and_proxy
+    Dir.mktmpdir('columba-duplicate-modelb-test-dependency') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      shipping_tests = fixture.targets.find { |target| target.name == 'ColumbaAppTests' }
+      model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      duplicate = fixture.new_target(:unit_test_bundle, 'ColumbaModelBAppTests', :ios, nil)
+      duplicate.add_dependency(model_b)
+      model_b.add_dependency(duplicate)
+      inbound = model_b.dependencies.find { |dependency| dependency.target&.uuid == duplicate.uuid }
+      shipping_dependency = shipping_tests.dependencies.find do |dependency|
+        dependency.target&.uuid == shipping.uuid
+      end or raise 'shipping tests lack their protected host dependency'
+      duplicate_id = duplicate.uuid
+      duplicate_product_id = duplicate.product_reference.uuid
+      shipping_dependency_id = shipping_dependency.uuid
+      shipping_proxy_id = shipping_dependency.target_proxy.uuid
+      inbound_ids = [inbound.uuid, inbound.target_proxy.uuid]
+      duplicate_local_dependency = duplicate.dependencies.find do |dependency|
+        dependency.target&.uuid == model_b.uuid
+      end
+      duplicate_local_ids = [duplicate_local_dependency.uuid, duplicate_local_dependency.target_proxy.uuid]
+      duplicate_graph_ids = duplicate.build_phases.flat_map do |phase|
+        [phase.uuid] + phase.files.map(&:uuid)
+      end + duplicate.build_configurations.map(&:uuid) +
+        [duplicate.build_configuration_list.uuid, duplicate_product_id] + duplicate_local_ids + inbound_ids
+      fixture.save
+
+      # xcodeproj cannot serialize one PBXTargetDependency under multiple
+      # targets. Inject both the protected outbound edge and a two-owner inbound
+      # edge after saving the otherwise-valid duplicate target graph.
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      target_header = "\t\t#{duplicate_id} /* ColumbaModelBAppTests */ = {"
+      target_start = pbxproj.index(target_header) or raise 'missing duplicate Model B XCTest target'
+      target_end = pbxproj.index("\t\t};", target_start) or raise 'unterminated duplicate Model B XCTest target'
+      target_text = pbxproj[target_start..target_end]
+      dependency_entries = [
+        "\t\t\t\t#{shipping_dependency_id} /* protected shipping host dependency */,\n",
+        "\t\t\t\t#{inbound.uuid} /* shared inbound duplicate dependency */,\n"
+      ].join
+      raise 'missing duplicate dependency list' unless target_text.sub!(
+        /dependencies = \(\n/, "dependencies = (\n#{dependency_entries}"
+      )
+      pbxproj[target_start..target_end] = target_text
+      File.write(pbxproj_path, pbxproj)
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_shipping_tests = mutated.targets.find { |target| target.name == 'ColumbaAppTests' }
+      mutated_duplicate = mutated.targets.find do |target|
+        target.uuid == duplicate_id && target.name == 'ColumbaModelBAppTests'
+      end
+      refute_nil mutated_duplicate
+      assert_includes mutated_duplicate.dependencies.map(&:uuid), shipping_dependency_id,
+                      'shared shipping dependency mutation did not survive reopen'
+      assert_includes mutated_duplicate.dependencies.map(&:uuid), inbound.uuid,
+                      'shared inbound dependency mutation did not survive reopen'
+      inbound_owners = mutated.targets.select do |target|
+        target.dependencies.any? { |dependency| dependency.uuid == inbound.uuid }
+      end
+      assert_equal [model_b.uuid, duplicate_id].sort, inbound_owners.map(&:uuid).sort
+      shipping_before = target_graph_signature(mutated_shipping_tests)
+
+      run_reconciler(temporary_project, 'duplicate Model B XCTest shared dependency/proxy')
+
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      repaired_shipping_tests = reconciled.targets.find { |target| target.name == 'ColumbaAppTests' }
+      assert_equal shipping_before, target_graph_signature(repaired_shipping_tests),
+                   'duplicate XCTest cleanup mutated the protected shipping test graph'
+      protected_dependency = repaired_shipping_tests.dependencies.find do |dependency|
+        dependency.uuid == shipping_dependency_id
+      end
+      refute_nil protected_dependency
+      assert_equal shipping_proxy_id, protected_dependency.target_proxy&.uuid
+      assert reconciled.objects_by_uuid.key?(shipping_dependency_id)
+      assert reconciled.objects_by_uuid.key?(shipping_proxy_id)
+
+      repaired_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      repaired_model_b_tests = reconciled.targets.select do |target|
+        target.name == 'ColumbaModelBAppTests'
+      end
+      assert_equal 1, repaired_model_b_tests.size
+      assert_equal [repaired_model_b.uuid],
+                   repaired_model_b_tests.first.dependencies.map { |dependency| dependency.target&.uuid }
+      refute_includes repaired_model_b_tests.first.dependencies.map(&:uuid), shipping_dependency_id
+      refute reconciled.objects_by_uuid.key?(duplicate_id)
+      assert_empty duplicate_graph_ids & reconciled.objects_by_uuid.keys,
+                   'duplicate XCTest target left dependency/proxy or target graph orphans'
+
+      dependency_owners = Hash.new { |hash, key| hash[key] = [] }
+      reconciled.targets.each do |target|
+        target.dependencies.each { |dependency| dependency_owners[dependency.uuid] << target.uuid }
+      end
+      all_dependencies = reconciled.objects.select do |object|
+        object.is_a?(Xcodeproj::Project::Object::PBXTargetDependency)
+      end
+      assert all_dependencies.all? { |dependency| dependency_owners.fetch(dependency.uuid, []).one? },
+             'reconciled project contains an orphan or shared target dependency'
+      proxy_users = Hash.new { |hash, key| hash[key] = [] }
+      all_dependencies.each do |dependency|
+        proxy_users[dependency.target_proxy.uuid] << dependency.uuid if dependency.target_proxy
+      end
+      all_proxies = reconciled.objects.select do |object|
+        object.is_a?(Xcodeproj::Project::Object::PBXContainerItemProxy)
+      end
+      assert all_proxies.all? { |proxy| proxy_users.fetch(proxy.uuid, []).one? },
+             'reconciled project contains an orphan or shared dependency proxy'
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
   def test_shipping_cleanup_preserves_shared_extension_owned_graph
     Dir.mktmpdir('columba-shared-extension-product') do |directory|
       temporary_project = File.join(directory, 'Columba.xcodeproj')

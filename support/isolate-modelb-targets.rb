@@ -1123,10 +1123,14 @@ module ModelBTargetIsolation
       target.dependencies.dup.each do |dependency|
         proxy_target_id = dependency.target_proxy&.remote_global_id_string
         target_id = dependency.target&.uuid
-        remove_dependency(dependency) if target_id == duplicate.uuid || proxy_target_id == duplicate.uuid
+        if target_id == duplicate.uuid || proxy_target_id == duplicate.uuid
+          detach_dependency(project, target, dependency)
+        end
       end
     end
-    duplicate.dependencies.dup.each { |dependency| remove_dependency(dependency) }
+    duplicate.dependencies.dup.each do |dependency|
+      detach_dependency(project, duplicate, dependency)
+    end
 
     duplicate.build_phases.dup.each do |phase|
       remove_phase_for_target(project, duplicate, phase)
