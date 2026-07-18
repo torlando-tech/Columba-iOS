@@ -237,6 +237,45 @@ def replace_guarded_wait(source: str, replacement: str) -> str:
     return mutated
 
 
+def assert_onboarding_completion_cases_are_branch_local(source: str) -> None:
+    """Require each runtime branch to give its completion case a concrete body."""
+    conditional = re.search(
+        r"(?ms)^\s*#if COLUMBA_RUNTIME_MODEL_B\s*$"
+        r"(?P<model_b>.*?)"
+        r"^\s*#else\s*$"
+        r"(?P<shipping>.*?)"
+        r"^\s*#endif\s*$",
+        source,
+    )
+    if conditional is None:
+        raise AssertionError("could not locate Model-B onboarding page conditional")
+
+    expected_cases = {
+        "Model B": (conditional.group("model_b"), (4, 5), 5),
+        "shipping": (conditional.group("shipping"), (4,), 4),
+    }
+    for flavor, (branch, expected_indices, completion_index) in expected_cases.items():
+        cases = list(re.finditer(r"^\s*case\s+(\d+):", branch, re.MULTILINE))
+        indices = tuple(int(case.group(1)) for case in cases)
+        if indices != expected_indices:
+            raise AssertionError(
+                f"{flavor} onboarding branch must contain cases {expected_indices}; found {indices}"
+            )
+        for index, case in enumerate(cases):
+            body_end = cases[index + 1].start() if index + 1 < len(cases) else len(branch)
+            body = branch[case.end():body_end]
+            if not body.strip():
+                raise AssertionError(
+                    f"{flavor} onboarding case {case.group(1)} must have a branch-local statement"
+                )
+            if int(case.group(1)) == completion_index and not re.search(
+                r"^\s*completePage\s*$", body, re.MULTILINE
+            ):
+                raise AssertionError(
+                    f"{flavor} onboarding completion case must render branch-local completePage"
+                )
+
+
 def relocate_backend_start(
     source: str,
     container: str,
@@ -553,6 +592,15 @@ class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
     def test_onboarding_page_matrix_has_no_blank_or_unreachable_page(self) -> None:
         view = self.source(ONBOARDING)
         view_model = self.source(ONBOARDING_VIEW_MODEL)
+        assert_onboarding_completion_cases_are_branch_local(view)
+        self.assertIn("private var completePage: some View {", view)
+        self.assertEqual(1, view.count("CompletePage("), "completion UI must remain shared")
+        for required_flow in (
+            "await viewModel.prepareIdentity(identityManager: identityManager)",
+            "try? await viewModel.completeOnboarding(",
+            "onComplete()",
+        ):
+            self.assertIn(required_flow, view)
         for model_b, expected_count in ((False, 5), (True, 6)):
             flags = {"COLUMBA_ONBOARDING_ENABLED"}
             if model_b:
@@ -573,7 +621,32 @@ class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
                 body_end = cases[index + 1].start() if index + 1 < len(cases) else len(switch_body)
                 body = switch_body[case.end():body_end]
                 with self.subTest(model_b=model_b, page=int(case.group(1))):
-                    self.assertRegex(body, r"\b(?:Welcome|Identity|Connectivity|Permissions|BackgroundDelivery|Complete)Page\(")
+                    self.assertRegex(
+                        body,
+                        r"\b(?:(?:Welcome|Identity|Connectivity|Permissions|BackgroundDelivery)Page\(|completePage\b)",
+                    )
+
+    def test_onboarding_contract_rejects_completion_body_after_conditional(self) -> None:
+        view = self.source(ONBOARDING)
+        canonical = (
+            "                    case 5:\n"
+            "                        completePage\n"
+            "                    #else\n"
+            "                    case 4:\n"
+            "                        completePage\n"
+            "                    #endif"
+        )
+        legacy = (
+            "                    case 5:\n"
+            "                    #else\n"
+            "                    case 4:\n"
+            "                    #endif\n"
+            "                        completePage"
+        )
+        mutated = view.replace(canonical, legacy, 1)
+        self.assertNotEqual(view, mutated, "completion-case mutation did not change source")
+        with self.assertRaisesRegex(AssertionError, "branch-local statement"):
+            assert_onboarding_completion_cases_are_branch_local(mutated)
 
     def test_model_b_product_retains_gate_status_onboarding_and_manager_paths(self) -> None:
         self.assertIn("BackgroundDeliveryGateView(appServices: appServices)", self.source(APP_ENTRY))

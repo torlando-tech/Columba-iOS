@@ -128,30 +128,11 @@ struct OnboardingView: View {
                             onBack: { viewModel.previousPage() }
                         )
                     case 5:
+                        completePage
                     #else
                     case 4:
+                        completePage
                     #endif
-                        CompletePage(
-                            displayName: viewModel.effectiveDisplayName,
-                            interfaceNames: viewModel.selectedInterfaceNames,
-                            notificationsGranted: viewModel.notificationsGranted,
-                            isSaving: viewModel.isSaving,
-                            selectedRNode: viewModel.selectedInterfaces.contains(.rnode),
-                            identityManager: identityManager,
-                            qrCodeString: viewModel.qrCodeString,
-                            onPrepare: {
-                                await viewModel.prepareIdentity(identityManager: identityManager)
-                            },
-                            onFinish: {
-                                Task {
-                                    try? await viewModel.completeOnboarding(
-                                        identityManager: identityManager,
-                                        settingsRepository: settingsRepository
-                                    )
-                                    onComplete()
-                                }
-                            }
-                        )
                     default:
                         EmptyView()
                     }
@@ -190,6 +171,30 @@ struct OnboardingView: View {
             }
         }
         #endif
+    }
+
+    private var completePage: some View {
+        CompletePage(
+            displayName: viewModel.effectiveDisplayName,
+            interfaceNames: viewModel.selectedInterfaceNames,
+            notificationsGranted: viewModel.notificationsGranted,
+            isSaving: viewModel.isSaving,
+            selectedRNode: viewModel.selectedInterfaces.contains(.rnode),
+            identityManager: identityManager,
+            qrCodeString: viewModel.qrCodeString,
+            onPrepare: {
+                await viewModel.prepareIdentity(identityManager: identityManager)
+            },
+            onFinish: {
+                Task {
+                    try? await viewModel.completeOnboarding(
+                        identityManager: identityManager,
+                        settingsRepository: settingsRepository
+                    )
+                    onComplete()
+                }
+            }
+        )
     }
 }
 #endif
