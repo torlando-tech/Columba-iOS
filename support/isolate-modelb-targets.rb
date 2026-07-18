@@ -179,6 +179,31 @@ module ModelBTargetIsolation
     proxy.remove_from_project if proxy && proxy.referrers.empty?
   end
 
+  def dependency_owners(project, dependency)
+    project.targets.select do |target|
+      target.dependencies.any? { |candidate| candidate.uuid == dependency.uuid }
+    end
+  end
+
+  def proxy_users(project, proxy)
+    return [] unless proxy
+
+    project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::PBXTargetDependency) &&
+        object.target_proxy&.uuid == proxy.uuid
+    end
+  end
+
+  def detach_dependency(project, target, dependency)
+    proxy = dependency.target_proxy
+    index = target.dependencies.index { |candidate| candidate.uuid == dependency.uuid }
+    target.dependencies.delete_at(index) if index
+    if dependency_owners(project, dependency).empty?
+      dependency.remove_from_project
+      proxy.remove_from_project if proxy && proxy_users(project, proxy).empty?
+    end
+  end
+
   def phase_owners(project, phase)
     project.targets.select do |target|
       target.build_phases.any? { |candidate| candidate.uuid == phase.uuid }
@@ -207,6 +232,152 @@ module ModelBTargetIsolation
     destination.file_ref = source.file_ref
     destination.product_ref = source.product_ref
     destination
+  end
+
+  def configuration_list_owners(project, list)
+    owners = project.targets.select do |target|
+      target.build_configuration_list&.uuid == list.uuid
+    end
+    owners << project.root_object if project.root_object.build_configuration_list&.uuid == list.uuid
+    owners
+  end
+
+  def configuration_owners(project, configuration)
+    project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::XCConfigurationList) &&
+        object.build_configurations.any? { |candidate| candidate.uuid == configuration.uuid }
+    end
+  end
+
+  def clone_configuration(project, source)
+    destination = project.new(Xcodeproj::Project::Object::XCBuildConfiguration)
+    copy_simple_attributes(source, destination)
+    destination.base_configuration_reference = source.base_configuration_reference
+    destination
+  end
+
+  def localize_test_configurations(project, target)
+    source_list = target.build_configuration_list
+    list_is_local = configuration_list_owners(project, source_list).map(&:uuid) == [target.uuid]
+    configurations_are_local = source_list.build_configurations.all? do |configuration|
+      configuration_owners(project, configuration).map(&:uuid) == [source_list.uuid]
+    end
+    return source_list if list_is_local && configurations_are_local
+
+    destination = project.new(Xcodeproj::Project::Object::XCConfigurationList)
+    copy_simple_attributes(source_list, destination)
+    source_list.build_configurations.each do |configuration|
+      destination.build_configurations << clone_configuration(project, configuration)
+    end
+    target.build_configuration_list = destination
+    if configuration_list_owners(project, source_list).empty?
+      source_list.build_configurations.to_a.each do |configuration|
+        source_list.build_configurations.delete_if { |candidate| candidate.uuid == configuration.uuid }
+        configuration.remove_from_project if configuration_owners(project, configuration).empty?
+      end
+      source_list.remove_from_project
+    end
+    destination
+  end
+
+  def localize_test_phases(project, target)
+    target.build_phases.to_a.each do |phase|
+      owners = phase_owners(project, phase)
+      if owners.any? { |owner| owner.uuid != target.uuid }
+        # A protected target remains authoritative for a shared phase. Detach
+        # only the malformed XCTest edge; the exact local phase is retained (or
+        # recreated below) and reconciled from the authoritative test matrix.
+        index = target.build_phases.index { |candidate| candidate.uuid == phase.uuid }
+        target.build_phases.delete_at(index) if index
+        next
+      end
+
+      phase.files.compact.to_a.each do |build_file|
+        next if build_file_owners(project, build_file).map(&:uuid) == [phase.uuid]
+
+        replacement = clone_build_file(project, build_file)
+        index = phase.files.index { |candidate| candidate.uuid == build_file.uuid }
+        next unless index
+
+        phase.files.delete_at(index)
+        phase.files.insert(index, replacement)
+      end
+    end
+  end
+
+  def product_owners(project, product)
+    project.targets.select do |target|
+      target.product_reference&.uuid == product.uuid
+    end
+  end
+
+  def product_build_file_users(project, product)
+    project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::PBXBuildFile) &&
+        object.file_ref&.uuid == product.uuid
+    end
+  end
+
+  def localize_test_product(project, target, template)
+    current = target.product_reference
+    return current if current && product_owners(project, current).map(&:uuid) == [target.uuid]
+
+    product = project.new(Xcodeproj::Project::Object::PBXFileReference)
+    copy_simple_attributes(template || current, product)
+    # Give the replacement semantic identity before assigning it. Otherwise
+    # xcodeproj can suppress the association as equal to the shared product.
+    product.path = "__local_#{product.uuid}.xctest"
+    product.explicit_file_type = 'wrapper.cfbundle'
+    product.source_tree = 'BUILT_PRODUCTS_DIR'
+    project.products_group.children << product
+    target.product_reference = product
+    product
+  end
+
+  def clean_test_products(project, retained)
+    project.products_group.children.to_a.each do |product|
+      next if product.uuid == retained.uuid
+      next unless product.path == "#{MODEL_B_TEST_TARGET_NAME}.xctest"
+
+      if product_owners(project, product).empty? && product_build_file_users(project, product).empty?
+        product.path = "__stale_#{product.uuid}.xctest"
+        product.remove_from_project
+      else
+        product.path = "__protected_#{product.uuid}.xctest"
+      end
+    end
+  end
+
+  def clean_orphan_graph_nodes(project)
+    project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::AbstractBuildPhase) && phase_owners(project, object).empty?
+    end.each do |phase|
+      phase.files.compact.dup.each { |build_file| remove_build_file_from_phase(project, phase, build_file) }
+      phase.remove_from_project
+    end
+
+    project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::XCConfigurationList) &&
+        configuration_list_owners(project, object).empty?
+    end.each do |list|
+      list.build_configurations.to_a.each do |configuration|
+        list.build_configurations.delete_if { |candidate| candidate.uuid == configuration.uuid }
+        configuration.remove_from_project if configuration_owners(project, configuration).empty?
+      end
+      list.remove_from_project
+    end
+
+    project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::PBXTargetDependency) &&
+        dependency_owners(project, object).empty?
+    end.each do |dependency|
+      proxy = dependency.target_proxy
+      dependency.remove_from_project
+      proxy.remove_from_project if proxy && proxy_users(project, proxy).empty?
+    end
+    project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::PBXContainerItemProxy) && proxy_users(project, object).empty?
+    end.each(&:remove_from_project)
   end
 
   def authoritative_shipping_build_file?(project, shipping, phase, build_file)
@@ -240,20 +411,23 @@ module ModelBTargetIsolation
   def localize_shipping_canonical_phases(project, shipping)
     localized = false
     model_b = project.targets.find { |target| target.name == MODEL_B_TARGET_NAME }
+    model_b_tests = project.targets.find { |target| target.name == MODEL_B_TEST_TARGET_NAME }
     canonical_phases = [
       shipping.source_build_phase,
       shipping.frameworks_build_phase,
       shipping.resources_build_phase
     ]
     canonical_phases.each do |source|
-      # Model B is regenerated from shipping later in this script. Detach its
-      # malformed ownership first so the canonical shipping phase and UUID stay
-      # stable when Model B was the only other owner. Other owners are protected:
-      # shipping gets a local clone and their malformed extra attachment is
-      # removed, restoring their pre-mutation graph.
-      if model_b && model_b.build_phases.any? { |phase| phase.uuid == source.uuid }
-        shared_index = model_b.build_phases.index { |phase| phase.uuid == source.uuid }
-        model_b.build_phases.delete_at(shared_index)
+      # Model B and its XCTest target are authoritatively regenerated later in
+      # this script. Detach their malformed ownership first so the canonical
+      # shipping phase and UUID stay stable when either is the only other owner.
+      # Other owners are protected: shipping gets a local clone and their
+      # malformed extra attachment is removed, restoring their pre-mutation graph.
+      [model_b, model_b_tests].compact.each do |regenerated_target|
+        shared_index = regenerated_target.build_phases.index do |phase|
+          phase.uuid == source.uuid
+        end
+        regenerated_target.build_phases.delete_at(shared_index) if shared_index
       end
       # PBXBuildFiles are phase-owned. Even when the canonical shipping phase is
       # itself local, one of its build files may be independently referenced by
@@ -1020,24 +1194,83 @@ module ModelBTargetIsolation
     existing.each { |duplicate| remove_duplicate_target(project, duplicate) }
     model_b_tests ||= project.new_target(:unit_test_bundle, MODEL_B_TEST_TARGET_NAME, :ios, nil)
 
+    # Localize every mutable edge before applying authoritative XCTest state.
+    # In particular, a malformed target may point directly at a shipping
+    # product, phase, build file, configuration, dependency, or proxy.
+    product = localize_test_product(project, model_b_tests, shipping_tests.product_reference)
+    localize_test_phases(project, model_b_tests)
+    localize_test_configurations(project, model_b_tests)
+
     model_b_tests.name = MODEL_B_TEST_TARGET_NAME
     model_b_tests.product_name = MODEL_B_TEST_TARGET_NAME
     model_b_tests.product_type = 'com.apple.product-type.bundle.unit-test'
-    model_b_tests.product_reference.path = "#{MODEL_B_TEST_TARGET_NAME}.xctest"
+    product.path = "#{MODEL_B_TEST_TARGET_NAME}.xctest"
+    product.name = nil
+    product.explicit_file_type = 'wrapper.cfbundle'
+    product.source_tree = 'BUILT_PRODUCTS_DIR'
+    clean_test_products(project, product)
 
-    attributes = project.root_object.attributes['TargetAttributes'] ||= {}
-    attributes[model_b_tests.uuid] = duplicate_value(attributes.fetch(shipping_tests.uuid, {}))
-    attributes[model_b_tests.uuid]['TestTargetID'] = model_b.uuid
-
-    # These tests import ReticulumSwift directly. Keep their package graph exact
-    # and target-local rather than relying on the host app's link dependencies.
-    original_packages = model_b_tests.package_product_dependencies.to_a
-    stale_packages = original_packages.reject do |dependency|
-      dependency.product_name == RETICULUM_PRODUCT_NAME
+    # The test target owns exactly one Sources, Frameworks, and Resources phase.
+    phase_classes = [
+      Xcodeproj::Project::Object::PBXSourcesBuildPhase,
+      Xcodeproj::Project::Object::PBXFrameworksBuildPhase,
+      Xcodeproj::Project::Object::PBXResourcesBuildPhase
+    ]
+    phases = phase_classes.map do |klass|
+      candidates = model_b_tests.build_phases.select { |phase| phase.is_a?(klass) }
+      retained = candidates.shift || project.new(klass)
+      candidates.each { |phase| remove_phase_for_target(project, model_b_tests, phase) }
+      retained
     end
-    model_b_tests.build_phases.each do |phase|
-      next unless phase.respond_to?(:files)
+    model_b_tests.build_phases.to_a.each do |phase|
+      remove_phase_for_target(project, model_b_tests, phase) unless phases.any? { |kept| kept.uuid == phase.uuid }
+    end
+    model_b_tests.build_phases.clear
+    phases.each { |phase| model_b_tests.build_phases << phase }
+    source_phase, framework_phase, resources_phase = phases
 
+    references = project.files.each_with_object({}) do |reference, by_path|
+      path = source_path(project, reference)
+      by_path[path] = reference if MODEL_B_ONLY_TEST_SOURCE_PATHS.include?(path)
+    end
+    missing = MODEL_B_ONLY_TEST_SOURCE_PATHS - references.keys
+    raise "Missing Model B test source references: #{missing.join(', ')}" unless missing.empty?
+    retained_files = MODEL_B_ONLY_TEST_SOURCE_PATHS.map do |path|
+      matching = source_phase.files.select do |build_file|
+        build_file.file_ref && source_path(project, build_file.file_ref) == path &&
+          build_file_owners(project, build_file).map(&:uuid) == [source_phase.uuid]
+      end
+      build_file = matching.shift || project.new(Xcodeproj::Project::Object::PBXBuildFile)
+      build_file.file_ref = references.fetch(path)
+      build_file.product_ref = nil
+      apply_build_file_metadata(build_file, EMPTY_SOURCE_BUILD_FILE_METADATA)
+      build_file
+    end
+    retained_ids = retained_files.map(&:uuid)
+    source_phase.files.compact.dup.each do |build_file|
+      remove_build_file_from_phase(project, source_phase, build_file) unless retained_ids.include?(build_file.uuid)
+    end
+    source_phase.files.clear
+    retained_files.each { |build_file| source_phase.files << build_file }
+
+    # Keep the SDK Foundation.framework link target-local; all package links are
+    # rebuilt below, and test resources are intentionally empty.
+    foundation_reference = project.files.find do |reference|
+      reference.display_name == 'Foundation.framework'
+    end or raise 'project lacks Foundation.framework reference'
+    foundation_file = local_build_file_for_reference(project, framework_phase, foundation_reference)
+    apply_build_file_metadata(foundation_file, EMPTY_SOURCE_BUILD_FILE_METADATA)
+    framework_phase.files.compact.dup.each do |build_file|
+      next if build_file.uuid == foundation_file.uuid || build_file.product_ref
+
+      remove_build_file_from_phase(project, framework_phase, build_file)
+    end
+    resources_phase.files.compact.dup.each do |build_file|
+      remove_build_file_from_phase(project, resources_phase, build_file)
+    end
+
+    original_packages = model_b_tests.package_product_dependencies.to_a
+    model_b_tests.build_phases.each do |phase|
       phase.files.compact.dup.each do |build_file|
         next unless build_file.product_ref
         next if build_file.product_ref.product_name == RETICULUM_PRODUCT_NAME
@@ -1046,54 +1279,31 @@ module ModelBTargetIsolation
       end
     end
     model_b_tests.package_product_dependencies.clear
-    (original_packages - stale_packages).each do |dependency|
+    original_packages.select { |dependency| dependency.product_name == RETICULUM_PRODUCT_NAME }.each do |dependency|
       model_b_tests.package_product_dependencies << dependency
     end
-    stale_packages.each do |dependency|
+    original_packages.reject { |dependency| dependency.product_name == RETICULUM_PRODUCT_NAME }.each do |dependency|
       dependency.remove_from_project unless package_dependency_referenced?(project, dependency)
     end
     reticulum_package = model_b.package_product_dependencies.find do |dependency|
       dependency.product_name == RETICULUM_PRODUCT_NAME
     end&.package
     raise 'Model B host lacks ReticulumSwift package reference' unless reticulum_package
+    reconcile_required_package_product(project, model_b_tests, RETICULUM_PRODUCT_NAME, reticulum_package)
 
-    reconcile_required_package_product(
-      project, model_b_tests, RETICULUM_PRODUCT_NAME, reticulum_package
-    )
-
-    retained_dependency = model_b_tests.dependencies.find { |dependency| dependency.target == model_b }
-    model_b_tests.dependencies.dup.each do |dependency|
-      remove_dependency(dependency) unless dependency == retained_dependency
+    retained_dependency = model_b_tests.dependencies.find do |dependency|
+      dependency.target&.uuid == model_b.uuid &&
+        dependency_owners(project, dependency).map(&:uuid) == [model_b_tests.uuid] &&
+        proxy_users(project, dependency.target_proxy).map(&:uuid) == [dependency.uuid]
+    end
+    model_b_tests.dependencies.to_a.each do |dependency|
+      detach_dependency(project, model_b_tests, dependency) unless dependency.uuid == retained_dependency&.uuid
     end
     model_b_tests.add_dependency(model_b) unless retained_dependency
 
-    references = project.files.each_with_object({}) do |reference, by_path|
-      path = source_path(project, reference)
-      by_path[path] = reference if MODEL_B_ONLY_TEST_SOURCE_PATHS.include?(path)
-    end
-    missing = MODEL_B_ONLY_TEST_SOURCE_PATHS - references.keys
-    raise "Missing Model B test source references: #{missing.join(', ')}" unless missing.empty?
-
-    source_phase = model_b_tests.source_build_phase
-    retained_files = MODEL_B_ONLY_TEST_SOURCE_PATHS.map do |path|
-      matching = source_phase.files.select do |build_file|
-        source_path(project, build_file.file_ref) == path &&
-          build_file_owners(project, build_file).map(&:uuid) == [source_phase.uuid]
-      end
-      build_file = matching.shift || project.new(Xcodeproj::Project::Object::PBXBuildFile)
-      build_file.file_ref = references.fetch(path)
-      build_file.product_ref = nil
-      build_file.settings = nil
-      build_file.platform_filter = nil
-      build_file.platform_filters = nil
-      build_file
-    end
-    retained_ids = retained_files.map(&:uuid)
-    source_phase.files.dup.each do |build_file|
-      remove_build_file_from_phase(project, source_phase, build_file) unless retained_ids.include?(build_file.uuid)
-    end
-    source_phase.files.clear
-    retained_files.each { |build_file| source_phase.files << build_file }
+    attributes = project.root_object.attributes['TargetAttributes'] ||= {}
+    attributes[model_b_tests.uuid] = duplicate_value(attributes.fetch(shipping_tests.uuid, {}))
+    attributes[model_b_tests.uuid]['TestTargetID'] = model_b.uuid
 
     shipping_configs = {}
     shipping_tests.build_configurations.each { |configuration| shipping_configs[configuration.name] = configuration }
@@ -1114,15 +1324,20 @@ module ModelBTargetIsolation
         host_configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']
       configuration
     end
-    (model_b_tests.build_configurations.to_a - ordered_configs).each(&:remove_from_project)
+    stale_configs = model_b_tests.build_configurations.to_a.reject do |configuration|
+      ordered_configs.any? { |retained| retained.uuid == configuration.uuid }
+    end
     model_b_tests.build_configuration_list.build_configurations.clear
-    ordered_configs.each do |configuration|
-      model_b_tests.build_configuration_list.build_configurations << configuration
+    ordered_configs.each { |configuration| model_b_tests.build_configuration_list.build_configurations << configuration }
+    stale_configs.each do |configuration|
+      configuration.remove_from_project if configuration_owners(project, configuration).empty?
     end
     model_b_tests.build_configuration_list.default_configuration_name =
       model_b.build_configuration_list.default_configuration_name
     model_b_tests.build_configuration_list.default_configuration_is_visible =
       model_b.build_configuration_list.default_configuration_is_visible
+    attributes.delete_if { |uuid, _value| !project.targets.any? { |target| target.uuid == uuid } }
+    clean_orphan_graph_nodes(project)
     model_b_tests
   end
 
@@ -1210,6 +1425,42 @@ module ModelBTargetIsolation
       model_b_test_sources == MODEL_B_ONLY_TEST_SOURCE_PATHS
     raise 'Model B XCTest host dependency is incorrect' unless
       model_b_tests.dependencies.one? && model_b_tests.dependencies.first.target == model_b
+    test_dependency = model_b_tests.dependencies.first
+    unless dependency_owners(project, test_dependency).map(&:uuid) == [model_b_tests.uuid] &&
+           proxy_users(project, test_dependency.target_proxy).map(&:uuid) == [test_dependency.uuid]
+      raise 'Model B XCTest dependency/proxy is not target-local'
+    end
+    expected_test_phase_classes = [
+      Xcodeproj::Project::Object::PBXSourcesBuildPhase,
+      Xcodeproj::Project::Object::PBXFrameworksBuildPhase,
+      Xcodeproj::Project::Object::PBXResourcesBuildPhase
+    ]
+    unless model_b_tests.build_phases.map(&:class) == expected_test_phase_classes &&
+           model_b_tests.build_phases.all? { |phase| phase_owners(project, phase).map(&:uuid) == [model_b_tests.uuid] }
+      raise 'Model B XCTest phases are not exact and target-local'
+    end
+    configurations_local = model_b_tests.build_configurations.all? do |configuration|
+      configuration_owners(project, configuration).map(&:uuid) ==
+        [model_b_tests.build_configuration_list.uuid]
+    end
+    unless configuration_list_owners(project, model_b_tests.build_configuration_list).map(&:uuid) ==
+             [model_b_tests.uuid] && configurations_local
+      raise 'Model B XCTest configurations are not target-local'
+    end
+    test_product = model_b_tests.product_reference
+    test_product_ids = project.products_group.children.select do |reference|
+      reference.path == "#{MODEL_B_TEST_TARGET_NAME}.xctest"
+    end.map(&:uuid)
+    unless test_product_ids == [test_product.uuid] &&
+           product_owners(project, test_product).map(&:uuid) == [model_b_tests.uuid]
+      raise 'Model B XCTest product reference is not unique and target-local'
+    end
+    orphan_test_products = project.products_group.children.select do |reference|
+      reference.path.to_s.end_with?('.xctest') && product_owners(project, reference).empty?
+    end
+    unless orphan_test_products.empty?
+      raise "orphan XCTest products: #{orphan_test_products.map(&:uuid).join(', ')}"
+    end
     target_attributes = project.root_object.attributes.fetch('TargetAttributes', {})
     unless target_attributes.fetch(model_b_tests.uuid, {})['TestTargetID'] == model_b.uuid
       raise 'Model B XCTest TargetAttributes.TestTargetID is incorrect'

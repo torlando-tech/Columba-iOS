@@ -1418,6 +1418,171 @@ class ModelBTargetIsolationTests < Minitest::Test
     end
   end
 
+  def test_reconciler_localizes_a_shipping_product_malformed_as_model_b_test_product
+    Dir.mktmpdir('columba-modelb-test-shared-product') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping_tests = fixture.targets.find { |target| target.name == 'ColumbaAppTests' }
+      model_b_tests = fixture.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      shipping_product_id = shipping_tests.product_reference.uuid
+      stale_product_id = model_b_tests.product_reference.uuid
+      shipping_before = target_graph_signature(shipping_tests)
+      fixture.save
+
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      target_header = "\t\t#{model_b_tests.uuid} /* ColumbaModelBAppTests */ = {"
+      target_start = pbxproj.index(target_header) or raise 'missing Model B XCTest target'
+      target_end = pbxproj.index("\t\t};", target_start) or raise 'unterminated Model B XCTest target'
+      target_text = pbxproj[target_start..target_end]
+      raise 'missing Model B XCTest productReference' unless target_text.sub!(
+        /productReference = #{stale_product_id}\b/, "productReference = #{shipping_product_id}"
+      )
+      pbxproj[target_start..target_end] = target_text
+      File.write(pbxproj_path, pbxproj)
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_tests = mutated.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      assert_equal shipping_product_id, mutated_tests.product_reference.uuid
+      run_reconciler(temporary_project, 'shared XCTest product')
+
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      repaired_tests = reconciled.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      repaired_shipping = reconciled.targets.find { |target| target.name == 'ColumbaAppTests' }
+      assert_equal shipping_before, target_graph_signature(repaired_shipping)
+      assert_equal 'ColumbaAppTests.xctest', repaired_shipping.product_reference.path
+      assert_equal 'ColumbaModelBAppTests.xctest', repaired_tests.product_reference.path
+      refute_equal shipping_product_id, repaired_tests.product_reference.uuid
+      refute reconciled.objects_by_uuid.key?(stale_product_id), 'stale Model B XCTest product survived'
+      assert_equal [repaired_tests.product_reference.uuid], reconciled.products_group.children.select { |product|
+        product.path == 'ColumbaModelBAppTests.xctest'
+      }.map(&:uuid)
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
+  def test_reconciler_recreates_missing_model_b_test_target_with_leftover_product
+    Dir.mktmpdir('columba-modelb-test-missing-target') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      tests = fixture.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      old_target_id = tests.uuid
+      old_product = tests.product_reference
+      old_product_id = old_product.uuid
+      removed_ids = tests.build_phases.flat_map { |phase| [phase.uuid] + phase.files.map(&:uuid) }
+      removed_ids.concat(tests.build_configurations.map(&:uuid))
+      removed_ids << tests.build_configuration_list.uuid
+      removed_ids.concat(tests.dependencies.flat_map { |dependency| [dependency.uuid, dependency.target_proxy&.uuid].compact })
+      removed_ids.concat(tests.package_product_dependencies.map(&:uuid))
+
+      tests.dependencies.to_a.each do |dependency|
+        proxy = dependency.target_proxy
+        dependency.remove_from_project
+        proxy.remove_from_project if proxy && proxy.referrers.empty?
+      end
+      tests.build_phases.to_a.each do |phase|
+        phase.files.to_a.each(&:remove_from_project)
+        phase.remove_from_project
+      end
+      tests.build_configurations.to_a.each(&:remove_from_project)
+      tests.build_configuration_list.remove_from_project
+      tests.package_product_dependencies.to_a.each do |dependency|
+        tests.package_product_dependencies.delete_if { |candidate| candidate.uuid == dependency.uuid }
+        dependency.remove_from_project if dependency.referrers.empty?
+      end
+      fixture.root_object.attributes.fetch('TargetAttributes', {}).delete(old_target_id)
+      tests.remove_from_project
+      fixture.products_group.children << old_product unless fixture.products_group.children.any? do |product|
+        product.uuid == old_product_id
+      end
+      old_product.path = 'ColumbaModelBAppTests.xctest'
+      fixture.save
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      assert_nil mutated.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      assert mutated.objects_by_uuid.key?(old_product_id), 'leftover product did not survive fixture setup'
+      run_reconciler(temporary_project, 'missing XCTest target with leftover product')
+
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      recreated = reconciled.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      refute_nil recreated
+      refute_equal old_target_id, recreated.uuid
+      refute_equal old_product_id, recreated.product_reference.uuid
+      refute reconciled.objects_by_uuid.key?(old_product_id), 'leftover XCTest product became an orphan'
+      assert_empty removed_ids & reconciled.objects_by_uuid.keys
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
+  def test_reconciler_localizes_shared_test_phases_configurations_and_dependency_proxy
+    Dir.mktmpdir('columba-modelb-test-shared-graph') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping_app = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      shipping_tests = fixture.targets.find { |target| target.name == 'ColumbaAppTests' }
+      model_b_tests = fixture.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      shared_phases = [shipping_tests.source_build_phase, shipping_tests.frameworks_build_phase,
+                       shipping_app.resources_build_phase]
+      shared_list = shipping_tests.build_configuration_list
+      shared_dependency = shipping_tests.dependencies.first
+      stale_list_id = model_b_tests.build_configuration_list.uuid
+      stale_dependency = model_b_tests.dependencies.first
+      stale_dependency_ids = [stale_dependency.uuid, stale_dependency.target_proxy.uuid]
+      shipping_before = target_graph_signature(shipping_tests)
+      shipping_app_before = target_graph_signature(shipping_app)
+      fixture.save
+
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      target_header = "\t\t#{model_b_tests.uuid} /* ColumbaModelBAppTests */ = {"
+      target_start = pbxproj.index(target_header) or raise 'missing Model B XCTest target'
+      target_end = pbxproj.index("\t\t};", target_start) or raise 'unterminated Model B XCTest target'
+      target_text = pbxproj[target_start..target_end]
+      shared_phase_entries = shared_phases.map do |phase|
+        "\t\t\t\t#{phase.uuid} /* shared protected #{phase.isa} */,\n"
+      end.join
+      raise 'missing build phase list' unless target_text.sub!(
+        /buildPhases = \(\n/, "buildPhases = (\n#{shared_phase_entries}"
+      )
+      raise 'missing configuration list' unless target_text.sub!(
+        /buildConfigurationList = #{stale_list_id}\b[^;]*;/,
+        "buildConfigurationList = #{shared_list.uuid} /* shared shipping configuration list */;"
+      )
+      raise 'missing local dependency' unless target_text.sub!(
+        /#{stale_dependency.uuid}\b[^,]*,/,
+        "#{shared_dependency.uuid} /* shared shipping dependency/proxy */,"
+      )
+      pbxproj[target_start..target_end] = target_text
+      File.write(pbxproj_path, pbxproj)
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_tests = mutated.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      assert_empty shared_phases.map(&:uuid) - mutated_tests.build_phases.map(&:uuid)
+      assert_equal shared_list.uuid, mutated_tests.build_configuration_list.uuid
+      assert_includes mutated_tests.dependencies.map(&:uuid), shared_dependency.uuid
+      run_reconciler(temporary_project, 'shared XCTest phase/configuration/dependency')
+
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      repaired_tests = reconciled.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      repaired_shipping = reconciled.targets.find { |target| target.name == 'ColumbaAppTests' }
+      assert_equal shipping_before, target_graph_signature(repaired_shipping)
+      assert_equal shipping_app_before, target_graph_signature(
+        reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+      )
+      assert_empty shared_phases.map(&:uuid) & repaired_tests.build_phases.map(&:uuid)
+      refute_equal shared_list.uuid, repaired_tests.build_configuration_list.uuid
+      refute_includes repaired_tests.dependencies.map(&:uuid), shared_dependency.uuid
+      assert_empty ([stale_list_id] + stale_dependency_ids) & reconciled.objects_by_uuid.keys
+      assert repaired_tests.build_phases.all? { |phase|
+        reconciled.targets.count { |target| target.build_phases.any? { |candidate| candidate.uuid == phase.uuid } } == 1
+      }
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
   def test_shipping_test_sources_do_not_reference_declarations_absent_from_shipping
     failures = source_paths(@shipping_tests).each_with_object({}) do |relative_path, references|
       source = File.read(File.join(REPOSITORY_ROOT, relative_path))
