@@ -18,6 +18,7 @@ CANONICAL_FLAGS = %w[
   ENABLE_NETWORK_EXTENSION
   COLUMBA_BACKEND_SWIFT
 ].freeze
+ONBOARDING_FLAG = 'COLUMBA_ONBOARDING_ENABLED'
 
 class ModelBTargetIsolationTests < Minitest::Test
   def setup
@@ -51,8 +52,12 @@ class ModelBTargetIsolationTests < Minitest::Test
   end
 
   def canonical_tokens(configuration)
+    compilation_tokens(configuration) & CANONICAL_FLAGS
+  end
+
+  def compilation_tokens(configuration)
     Array(configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'])
-      .flat_map { |value| value.to_s.split } & CANONICAL_FLAGS
+      .flat_map { |value| value.to_s.split }
   end
 
   def test_both_application_targets_exist_and_are_ios_apps
@@ -111,8 +116,17 @@ class ModelBTargetIsolationTests < Minitest::Test
 
     @shipping.build_configurations.zip(@model_b.build_configurations).each do |shipping, model_b|
       assert_equal ['COLUMBA_RUNTIME_PYTHON'], canonical_tokens(shipping), shipping.name
+      refute_includes compilation_tokens(shipping), ONBOARDING_FLAG,
+                      "shipping app retained Model B onboarding in #{shipping.name}"
       assert_equal %w[COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT],
                    canonical_tokens(model_b), model_b.name
+      if model_b.name.end_with?('-Swift')
+        assert_includes compilation_tokens(model_b), ONBOARDING_FLAG,
+                        "Model B lost inherited onboarding in #{model_b.name}"
+      else
+        refute_includes compilation_tokens(model_b), ONBOARDING_FLAG,
+                        "Model B gained onboarding in #{model_b.name}"
+      end
       assert_equal 'Sources/ColumbaApp/Resources/ColumbaApp.entitlements',
                    shipping.build_settings['CODE_SIGN_ENTITLEMENTS']
       assert_equal 'Sources/ColumbaApp/Resources/ColumbaModelBApp.entitlements',
@@ -142,6 +156,8 @@ class ModelBTargetIsolationTests < Minitest::Test
                    "host/test runtime flavor differs in #{test_configuration.name}"
       assert_equal ['COLUMBA_RUNTIME_PYTHON'], canonical_tokens(test_configuration),
                    test_configuration.name
+      refute_includes compilation_tokens(test_configuration), ONBOARDING_FLAG,
+                      "shipping tests retained Model B onboarding in #{test_configuration.name}"
       assert_match(/ColumbaApp\.app/, test_configuration.build_settings.fetch('TEST_HOST'),
                    "TEST_HOST changed in #{test_configuration.name}")
       assert_equal '$(TEST_HOST)', test_configuration.build_settings.fetch('BUNDLE_LOADER'),
@@ -176,7 +192,14 @@ class ModelBTargetIsolationTests < Minitest::Test
       fixture = Xcodeproj::Project.open(temporary_project)
       fixture_model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
       fixture_shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      fixture_shipping_tests = fixture.targets.find { |target| target.name == 'ColumbaAppTests' }
       fixture_extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      [fixture_shipping, fixture_shipping_tests].each do |target|
+        configuration = target.build_configurations.find { |candidate| candidate.name == 'Debug-Swift' }
+        tokens = compilation_tokens(configuration)
+        configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
+          (tokens + [ONBOARDING_FLAG, 'GENUINE_SHIPPING_CONDITION']).uniq.join(' ')
+      end
       fixture_model_b.add_dependency(fixture_shipping)
       duplicate_proxy = fixture.new(Xcodeproj::Project::Object::PBXContainerItemProxy)
       duplicate_proxy.container_portal = fixture.root_object.uuid
@@ -207,7 +230,17 @@ class ModelBTargetIsolationTests < Minitest::Test
       first_hash = Digest::SHA256.file(File.join(temporary_project, 'project.pbxproj')).hexdigest
       after_project = Xcodeproj::Project.open(temporary_project)
       reconciled_model_b = after_project.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      reconciled_shipping = after_project.targets.find { |target| target.name == 'ColumbaApp' }
+      reconciled_shipping_tests = after_project.targets.find { |target| target.name == 'ColumbaAppTests' }
       reconciled_extension = after_project.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      [reconciled_shipping, reconciled_shipping_tests].each do |target|
+        configuration = target.build_configurations.find { |candidate| candidate.name == 'Debug-Swift' }
+        refute_includes compilation_tokens(configuration), ONBOARDING_FLAG
+        assert_includes compilation_tokens(configuration), 'GENUINE_SHIPPING_CONDITION'
+      end
+      assert_includes compilation_tokens(
+        reconciled_model_b.build_configurations.find { |candidate| candidate.name == 'Debug-Swift' }
+      ), ONBOARDING_FLAG
       assert_equal [reconciled_extension.uuid],
                    reconciled_model_b.dependencies.map { |dependency| dependency.target&.uuid },
                    'Model B dependencies were not authoritatively reconciled'

@@ -26,6 +26,7 @@ CANONICAL_FLAGS = %w[
   ENABLE_NETWORK_EXTENSION
   COLUMBA_BACKEND_SWIFT
 ].freeze
+SHIPPING_FORBIDDEN_FLAGS = (CANONICAL_FLAGS + ['COLUMBA_ONBOARDING_ENABLED']).freeze
 MODEL_B_FLAGS = %w[
   COLUMBA_RUNTIME_MODEL_B
   ENABLE_NETWORK_EXTENSION
@@ -44,8 +45,8 @@ module ModelBTargetIsolation
     Array(value).flat_map { |entry| entry.to_s.split }.uniq
   end
 
-  def set_compilation_tokens(configuration, required)
-    tokens = compilation_tokens(configuration).reject { |token| CANONICAL_FLAGS.include?(token) }
+  def set_compilation_tokens(configuration, required, removed: CANONICAL_FLAGS)
+    tokens = compilation_tokens(configuration).reject { |token| removed.include?(token) }
     required.each { |token| tokens << token unless tokens.include?(token) }
     configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = tokens.join(' ')
   end
@@ -247,11 +248,16 @@ module ModelBTargetIsolation
       configuration = existing.fetch(source.name, []).shift || project.new(
         Xcodeproj::Project::Object::XCBuildConfiguration
       )
+      preserves_onboarding = (compilation_tokens(source) + compilation_tokens(configuration))
+                             .include?('COLUMBA_ONBOARDING_ENABLED')
       configuration.name = source.name
       configuration.base_configuration_reference = source.base_configuration_reference
       configuration.build_settings = duplicate_value(source.build_settings)
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = MODEL_B_ENTITLEMENTS
-      set_compilation_tokens(configuration, MODEL_B_FLAGS)
+      required = []
+      required << 'COLUMBA_ONBOARDING_ENABLED' if preserves_onboarding
+      required.concat(MODEL_B_FLAGS)
+      set_compilation_tokens(configuration, required, removed: SHIPPING_FORBIDDEN_FLAGS)
       configuration
     end
 
@@ -265,7 +271,11 @@ module ModelBTargetIsolation
 
     shipping.build_configurations.each do |configuration|
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = SHIPPING_ENTITLEMENTS
-      set_compilation_tokens(configuration, ['COLUMBA_RUNTIME_PYTHON'])
+      set_compilation_tokens(
+        configuration,
+        ['COLUMBA_RUNTIME_PYTHON'],
+        removed: SHIPPING_FORBIDDEN_FLAGS
+      )
     end
   end
 
@@ -282,7 +292,11 @@ module ModelBTargetIsolation
     shipping_tests.build_configurations.each do |test_configuration|
       shipping_configuration = shipping_by_name.fetch(test_configuration.name)
       shipping_flags = compilation_tokens(shipping_configuration) & CANONICAL_FLAGS
-      set_compilation_tokens(test_configuration, shipping_flags)
+      set_compilation_tokens(
+        test_configuration,
+        shipping_flags,
+        removed: SHIPPING_FORBIDDEN_FLAGS
+      )
     end
   end
 
@@ -338,6 +352,11 @@ module ModelBTargetIsolation
       raise "shipping host/test flavor mismatch in #{test_configuration.name}" unless test_flags == shipping_flags
       test_host = test_configuration.build_settings.fetch('TEST_HOST', '')
       raise "shipping TEST_HOST changed in #{test_configuration.name}" unless test_host.include?('ColumbaApp.app')
+    end
+    (shipping.build_configurations + shipping_tests.build_configurations).each do |configuration|
+      next unless compilation_tokens(configuration).include?('COLUMBA_ONBOARDING_ENABLED')
+
+      raise "shipping configuration retained Model B onboarding in #{configuration.name}"
     end
 
     embed_phases = model_b.build_phases.select { |phase| extension_embed_phase?(phase) }
