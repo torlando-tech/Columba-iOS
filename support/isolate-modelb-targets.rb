@@ -11,11 +11,27 @@
 # exclusions are repaired first, so a stale project cannot leak those additions
 # back through the clone operation.
 
+require 'fileutils'
+require 'securerandom'
 require 'xcodeproj'
 
-PROJECT_PATH = File.expand_path(
+SOURCE_PROJECT_PATH = File.expand_path(
   ENV.fetch('COLUMBA_PROJECT_PATH', File.expand_path('../Columba.xcodeproj', __dir__))
 )
+abort "Missing project at #{SOURCE_PROJECT_PATH}" unless File.directory?(SOURCE_PROJECT_PATH)
+
+# Reconcile a same-filesystem staged copy and publish it only after every graph
+# reopen succeeds. This keeps the authoritative project byte-for-byte unchanged
+# when any prerequisite or final invariant fails, including failures after the
+# structural localization save/reopen required by Xcodeproj.
+STAGING_ROOT = File.join(
+  File.dirname(SOURCE_PROJECT_PATH),
+  ".columba-project-stage-#{SecureRandom.hex(6)}"
+)
+PROJECT_PATH = File.join(STAGING_ROOT, File.basename(SOURCE_PROJECT_PATH))
+FileUtils.mkdir_p(STAGING_ROOT)
+FileUtils.cp_r(SOURCE_PROJECT_PATH, PROJECT_PATH)
+at_exit { FileUtils.rm_rf(STAGING_ROOT) if File.exist?(STAGING_ROOT) }
 SHIPPING_TARGET_NAME = 'ColumbaApp'
 SHIPPING_TEST_TARGET_NAME = 'ColumbaAppTests'
 MODEL_B_TARGET_NAME = 'ColumbaModelBApp'
@@ -1862,4 +1878,17 @@ ModelBTargetIsolation.reconcile_shared_schemes(
 # A successful reopen catches malformed references immediately on Linux too.
 reopened = Xcodeproj::Project.open(PROJECT_PATH)
 ModelBTargetIsolation.assert_graph!(reopened)
+
+# Staging and source paths share a filesystem, so rename publishes the validated
+# project tree without exposing a partially rewritten project. If the second
+# second rename fails, restore the original before surfacing the error.
+backup_path = "#{SOURCE_PROJECT_PATH}.backup-#{SecureRandom.hex(6)}"
+File.rename(SOURCE_PROJECT_PATH, backup_path)
+begin
+  File.rename(PROJECT_PATH, SOURCE_PROJECT_PATH)
+rescue StandardError
+  File.rename(backup_path, SOURCE_PROJECT_PATH)
+  raise
+end
+FileUtils.rm_rf(backup_path)
 puts "Reconciled #{MODEL_B_TARGET_NAME}; #{SHIPPING_TARGET_NAME} no longer ships #{EXTENSION_TARGET_NAME}."

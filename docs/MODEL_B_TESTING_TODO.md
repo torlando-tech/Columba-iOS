@@ -1,14 +1,15 @@
-# Model B — on-device test plan (next steps)
+# Model B product — on-device test plan (next steps)
 
-Status: Model B (NE-canonical LXMF node) is **working on-device** — inbound LXMF
-delivery (decrypt / persist / notify / delivery-proof), announce in + out, and the
-relay TCP path are all verified on the iPhone 14. What remains is the harder
-end-to-end surface: **radios**, **delivery while locked**, and the **memory GATE**.
+Historical Model B work verified inbound LXMF delivery, announce paths, and the
+relay TCP path on a physical device. Those historical results are orientation,
+not release evidence for the compile-isolated product branch; perform the fresh
+physical-device checks below before claiming device support. The remaining hard
+surface includes radios, delivery while locked, and the memory GATE.
 
-> **Model B now ships OFF by default.** Before any test below: Settings → Network
-> Backend → enable **"Background delivery (Model B)"**, then relaunch the app (the
-> backend is built once per launch). Confirm via Settings → Network Status =
-> Connected and the interface card showing the NE relay online.
+> Before any test below, build the explicit `ColumbaModelBApp` target through the
+> shared `Columba-ModelB` scheme. Runtime architecture is compile-time isolated;
+> persisted settings never switch the shipping Python product into Model B.
+> Confirm operation through Settings → Network Status and the NE relay card.
 >
 > Peer for all tests = the **Android Columba** client ("Torlando - Columba",
 > lxmf.delivery dest `<peer-dest>…`). Relay = the LAN Reticulum host (`lxmd`/`rnsd`).
@@ -37,9 +38,9 @@ tests prove that bridge in both directions.
       confirm the NE never forms a link the radio MTU can't carry (no stalled
       transfer). Watch for resource-cancel in `ext-diag.log`.
 
-> Note (known scope gap): the native **Swift** BLE/RNode path is the Model B
-> target; the legacy driver path was Python-coupled. If BLE delivery doesn't
-> work on the Swift backend yet, that's the documented C8 follow-on, not this bug.
+> Note (known scope gap): the native BLE/RNode path belongs to the Model B
+> product; the legacy driver path was Python-coupled. If BLE delivery does not
+> work in Model B yet, that is the documented C8 follow-on, not this bug.
 
 ---
 
@@ -149,6 +150,7 @@ memory** and drive load from a desktop peer — no debugger needed.
   open). Use the in-app `[DIAG-STORE]` log instead, or copy the DB to Documents
   from app code if raw rows are needed.
 - Relay bounce (clears a wedged daemon): `launchctl kickstart -k gui/$(id -u)/network.reticulum.rnsd` and `…/network.lxmf.lxmd`.
-- Build: NE = `ColumbaNetworkExtension` scheme, app = `Columba-Swift` scheme,
-  config `Debug-Swift`. **Build the NE scheme to validate NE changes** — the app
-  scheme alone won't surface NE compile errors (false-green trap).
+- Build and test with the shared `Columba-ModelB` scheme. Its build action owns
+  `ColumbaModelBApp`, `ColumbaModelBAppTests`, and `ColumbaNetworkExtension`.
+  **Verify the host, tests, and extension together** — an app-only build is a
+  false green for Network Extension changes.

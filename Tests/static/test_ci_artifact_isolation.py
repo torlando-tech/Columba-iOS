@@ -38,7 +38,7 @@ class ArtifactFixture:
         self.write_plist(
             self.app / "Info.plist",
             {
-                "CFBundleIdentifier": "network.columba.fixture",
+                "CFBundleIdentifier": "network.columba.Columba",
                 "CFBundleExecutable": executable,
                 "CFBundlePackageType": "APPL",
                 "DTPlatformName": "iphonesimulator",
@@ -141,6 +141,31 @@ class ArtifactCheckerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "modelb", "NotModelBApp")
             self.verify(fixture, "modelb")
+
+    def test_rejects_wrong_host_bundle_identifier_for_each_flavor(self):
+        for flavor in ("shipping", "modelb"):
+            with self.subTest(flavor=flavor), tempfile.TemporaryDirectory() as directory:
+                fixture = ArtifactFixture(Path(directory), flavor)
+                plist_path = fixture.app / "Info.plist"
+                with plist_path.open("rb") as stream:
+                    metadata = plistlib.load(stream)
+                metadata["CFBundleIdentifier"] = "com.attacker.WrongHost"
+                fixture.write_plist(plist_path, metadata)
+                self.assert_rejected(fixture, flavor, "host CFBundleIdentifier")
+
+    def test_unsigned_device_artifacts_fail_closed_for_each_flavor(self):
+        for flavor in ("shipping", "modelb"):
+            with self.subTest(flavor=flavor), tempfile.TemporaryDirectory() as directory:
+                fixture = ArtifactFixture(Path(directory), flavor)
+                plist_paths = [fixture.app / "Info.plist"]
+                if flavor == "modelb":
+                    plist_paths.append(fixture.extension / "Info.plist")
+                for plist_path in plist_paths:
+                    with plist_path.open("rb") as stream:
+                        metadata = plistlib.load(stream)
+                    metadata["DTPlatformName"] = "iphoneos"
+                    fixture.write_plist(plist_path, metadata)
+                self.assert_rejected(fixture, flavor, "unsigned.*iphoneos|signature")
 
     def test_debug_dylib_products_are_inspected_as_application_code(self):
         with tempfile.TemporaryDirectory() as directory:

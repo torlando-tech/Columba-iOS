@@ -16,6 +16,9 @@ SCRIPTS = {
   swift_config: File.join(ROOT, 'support/add-swift-backend-config.rb'),
   ne_dependencies: File.join(ROOT, 'support/add-ne-backend-deps.rb'),
   embed_ne: File.join(ROOT, 'support/embed-ne.rb'),
+  enable_rnode: File.join(ROOT, 'support/enable-rnode.rb'),
+  enable_migration: File.join(ROOT, 'support/enable-migration.rb'),
+  enable_nomadnet_release: File.join(ROOT, 'support/enable-nomadnet-release.rb'),
   reconciler: File.join(ROOT, 'support/isolate-modelb-targets.rb')
 }.freeze
 
@@ -144,7 +147,7 @@ class Task11MaintenanceScriptIsolationTests < Minitest::Test
 
   def test_obsolete_bootstrap_and_swift_variant_scripts_fail_closed_without_mutation
     Dir.mktmpdir('task11-retired') do |directory|
-      %i[configure swift_config].each do |key|
+      %i[configure swift_config enable_rnode enable_migration enable_nomadnet_release].each do |key|
         temporary_project = copy_project(File.join(directory, key.to_s))
         before = project_tree_hash(temporary_project)
         output, error, status = run_script(key, temporary_project)
@@ -156,6 +159,51 @@ class Task11MaintenanceScriptIsolationTests < Minitest::Test
         assert_includes guidance, 'support/isolate-modelb-targets.rb'
         assert_no_legacy_swift_variants(temporary_project)
       end
+    end
+  end
+
+  def test_model_b_testing_guide_uses_explicit_target_and_scheme
+    guide = File.read(File.join(ROOT, 'docs/MODEL_B_TESTING_TODO.md'), encoding: 'UTF-8')
+    refute_includes guide, 'Settings → Network Backend'
+    refute_includes guide, 'Columba-Swift'
+    refute_includes guide, 'Debug-Swift'
+    refute_includes guide, 'Release-Swift'
+    assert_includes guide, 'Columba-ModelB'
+    assert_includes guide, 'ColumbaModelBApp'
+  end
+
+  def test_authoritative_reconciler_failure_is_atomic_after_localization_would_save
+    Dir.mktmpdir('task11-atomic-failure') do |directory|
+      temporary_project = copy_project(directory)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping = target(fixture, 'ColumbaApp')
+      model_b = target(fixture, 'ColumbaModelBApp')
+      extension = target(fixture, 'ColumbaNetworkExtension')
+      shared_phase_uuid = shipping.source_build_phase.uuid
+      model_b_uuid = model_b.uuid
+      extension.remove_from_project
+      fixture.save
+
+      # Xcodeproj cannot reliably serialize malformed multi-owner phase graphs,
+      # so inject the shipping Sources phase UUID into Model B after saving.
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      contents = File.binread(pbxproj_path)
+      target_marker = "\t\t#{model_b_uuid} /* ColumbaModelBApp */ = {"
+      target_start = contents.index(target_marker) or raise 'missing Model B target block'
+      phases_marker = "\n\t\t\tbuildPhases = (\n"
+      phases_start = contents.index(phases_marker, target_start) or raise 'missing Model B phases list'
+      contents.insert(
+        phases_start + phases_marker.bytesize,
+        "\t\t\t\t#{shared_phase_uuid} /* Sources */,\n"
+      )
+      File.binwrite(pbxproj_path, contents)
+
+      before = project_tree_hash(temporary_project)
+      _output, error, status = run_script(:reconciler, temporary_project)
+      refute status.success?
+      assert_includes error, 'Missing ColumbaNetworkExtension target'
+      assert_equal before, project_tree_hash(temporary_project),
+                   'failed reconciliation partially mutated the project tree'
     end
   end
 

@@ -10,8 +10,9 @@ commands; existing source-membership static contracts provide the source-graph
 proof. Model B's positive graph proof is its exact embedded extension plus
 NetworkExtension load commands in both host and extension.
 
-Unsigned simulator products are supported. If an artifact has a _CodeSignature
-directory, effective entitlements become mandatory and are read with codesign.
+Unsigned simulator products are supported. Device products must be signed. If
+an artifact has a _CodeSignature directory, effective entitlements become
+mandatory and are read with codesign.
 """
 
 import argparse
@@ -34,6 +35,10 @@ NETWORK_EXTENSION_ENTITLEMENT = (
     "com.apple.developer.networking.networkextension"
 )
 PACKET_TUNNEL_ENTITLEMENT = ["packet-tunnel-provider"]
+HOST_BUNDLE_IDENTIFIERS = {
+    "shipping": "network.columba.Columba",
+    "modelb": "network.columba.Columba",
+}
 EXTENSION_BUNDLE_IDENTIFIER = "network.columba.Columba.tunnel"
 EXTENSION_PRINCIPAL_CLASS = "ColumbaNetworkExtension.PacketTunnelProvider"
 
@@ -250,6 +255,12 @@ def _verify_entitlements_if_signed(
 ) -> None:
     signature = bundle / "_CodeSignature"
     if not signature.exists():
+        if platform_name != "iphonesimulator":
+            raise VerificationError(
+                "unsigned {} artifact is not permitted for {}".format(
+                    platform_name or "unknown-platform", label
+                )
+            )
         return
     _resolve_contained(signature, app_root, "{} signature".format(label))
     if not signature.is_dir():
@@ -325,6 +336,7 @@ def _is_python_packaging_path(path: Path, app: Path) -> bool:
 def _verify_shipping(
     app: Path,
     app_root: Path,
+    app_metadata: Dict,
     code_images: Sequence[Path],
     libraries: bytes,
     run: Callable,
@@ -369,7 +381,14 @@ def _verify_shipping(
     packages = app / "app_packages"
     if not _contains_regular_file(packages, app_root, "shipping app_packages"):
         raise VerificationError("shipping app_packages wheel payload is missing or empty")
-    _verify_entitlements_if_signed(app, "shipping", "host", app_root, run)
+    _verify_entitlements_if_signed(
+        app,
+        "shipping",
+        "host",
+        app_root,
+        run,
+        app_metadata.get("DTPlatformName"),
+    )
 
 
 def _verify_modelb(
@@ -490,6 +509,20 @@ def verify_artifact(
         raise VerificationError("application bundle is not a directory: {}".format(app))
     _audit_bundle_tree(app, app_root)
     metadata = _load_bundle(app, "APPL", "{} app".format(flavor), app_root)
+    expected_host_identifier = HOST_BUNDLE_IDENTIFIERS[flavor]
+    if metadata.get("CFBundleIdentifier") != expected_host_identifier:
+        raise VerificationError(
+            "{} host CFBundleIdentifier must be {}".format(
+                flavor, expected_host_identifier
+            )
+        )
+    platform_name = metadata.get("DTPlatformName")
+    if platform_name not in ("iphonesimulator", "iphoneos"):
+        raise VerificationError(
+            "{} host DTPlatformName must be iphonesimulator or iphoneos".format(
+                flavor
+            )
+        )
     executable = _bundle_executable(
         app, metadata, "{} app".format(flavor), app_root
     )
@@ -501,7 +534,7 @@ def verify_artifact(
         run,
     )
     if flavor == "shipping":
-        _verify_shipping(app, app_root, code_images, libraries, run)
+        _verify_shipping(app, app_root, metadata, code_images, libraries, run)
     else:
         _verify_modelb(
             app,
