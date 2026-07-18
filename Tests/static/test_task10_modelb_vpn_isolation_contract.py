@@ -19,6 +19,7 @@ from test_modelb_caller_guards_contract import (  # noqa: E402
     parse_condition,
     reference_conditions,
     simplify,
+    swift_lexical_mask,
     unguarded_references,
 )
 
@@ -62,6 +63,114 @@ VPN_LIFECYCLE_SYMBOLS = (
     "NETunnelProviderManager",
     "NEVPNStatus",
 )
+
+
+def function_source(source: str, declaration: str) -> str:
+    """Return one Swift function, using lexical masking for brace matching."""
+    masked = swift_lexical_mask(source, ())
+    declarations = list(re.finditer(declaration, masked))
+    if len(declarations) != 1:
+        raise AssertionError(
+            f"expected exactly one matching function declaration, found {len(declarations)}"
+        )
+    opening_brace = masked.find("{", declarations[0].end())
+    if opening_brace < 0:
+        raise AssertionError("matching function has no opening brace")
+    depth = 0
+    for index in range(opening_brace, len(masked)):
+        if masked[index] == "{":
+            depth += 1
+        elif masked[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[declarations[0].start():index + 1]
+    raise AssertionError("matching function has unbalanced braces")
+
+
+def assert_model_b_tunnel_wait_precedes_backend_start(source: str) -> None:
+    """Prove the mandatory Model-B wait is in, and first on, the start path."""
+    start_function = function_source(
+        source,
+        r"\bprivate\s+func\s+startPythonBackend\s*\(",
+    )
+    masked_function = swift_lexical_mask(start_function, ())
+    wait_calls = list(
+        re.finditer(r"\bawait\s+ensureBackgroundDeliveryTunnel\s*\(\s*\)", masked_function)
+    )
+    backend_starts = list(
+        re.finditer(r"\btry\s+await\s+backend\.start\s*\(", masked_function)
+    )
+    if len(wait_calls) != 1:
+        raise AssertionError(
+            f"startPythonBackend must contain exactly one executable tunnel wait; found {len(wait_calls)}"
+        )
+    if len(backend_starts) != 1:
+        raise AssertionError(
+            f"startPythonBackend must contain exactly one executable backend.start; found {len(backend_starts)}"
+        )
+    if wait_calls[0].start() >= backend_starts[0].start():
+        raise AssertionError("Model-B tunnel wait must precede backend.start")
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "StartPythonBackend.swift"
+        path.write_text(start_function, encoding="utf-8")
+        waits = reference_conditions(path, ("ensureBackgroundDeliveryTunnel",))
+    if len(waits) != 1:
+        raise AssertionError(f"expected one condition-tracked tunnel wait; found {len(waits)}")
+    _, wait_line, condition = waits[0]
+    if wait_line != "await ensureBackgroundDeliveryTunnel()":
+        raise AssertionError(f"unexpected tunnel-wait expression: {wait_line}")
+    if not guarantees_flag(condition, "COLUMBA_RUNTIME_MODEL_B"):
+        raise AssertionError("tunnel wait must be active only for Model B")
+    if not guaranteed_for_every_flag_configuration(condition, "COLUMBA_RUNTIME_MODEL_B"):
+        raise AssertionError("tunnel wait must not be narrowed by DEBUG or another build condition")
+
+
+def guarded_tunnel_wait_block(source: str) -> str:
+    """Extract the complete compile-time block containing the mandatory wait."""
+    start_function = function_source(
+        source,
+        r"\bprivate\s+func\s+startPythonBackend\s*\(",
+    )
+    match = re.search(
+        r"(?ms)^        #if COLUMBA_RUNTIME_MODEL_B\n"
+        r"(?:(?!^        #endif\n).)*?"
+        r"^        await ensureBackgroundDeliveryTunnel\(\)\n"
+        r"^        #endif\n",
+        start_function,
+    )
+    if match is None:
+        raise AssertionError("could not locate complete guarded wait block")
+    return match.group(0)
+
+
+def move_guarded_wait_after_backend_start(source: str) -> str:
+    """Create the regression mutation without relying on a later source delimiter."""
+    start_function = function_source(
+        source,
+        r"\bprivate\s+func\s+startPythonBackend\s*\(",
+    )
+    wait_block = guarded_tunnel_wait_block(source)
+    mutated_function = start_function.replace(wait_block, "", 1)
+    masked = swift_lexical_mask(mutated_function, ())
+    start_call = re.search(r"\btry\s+await\s+backend\.start\s*\(", masked)
+    if start_call is None:
+        raise AssertionError("could not locate backend.start mutation point")
+    depth = 0
+    for index in range(start_call.end() - 1, len(masked)):
+        if masked[index] == "(":
+            depth += 1
+        elif masked[index] == ")":
+            depth -= 1
+            if depth == 0:
+                mutated_function = (
+                    mutated_function[:index + 1]
+                    + "\n"
+                    + wait_block
+                    + mutated_function[index + 1:]
+                )
+                return source.replace(start_function, mutated_function, 1)
+    raise AssertionError("backend.start call has unbalanced parentheses")
 
 
 class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
@@ -148,29 +257,46 @@ class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
         ):
             self.assertEqual([], self.references(source, symbols))
 
-    def test_python_backend_start_path_has_no_tunnel_wait_or_lifecycle_call(self) -> None:
+    def test_model_b_tunnel_wait_precedes_backend_start_in_start_function(self) -> None:
         source = self.source(APP_SERVICES)
-        start_body = source.split("private func startPythonBackend(", 1)[1].split(
-            "// Outbound LXMF now goes directly", 1
-        )[0]
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "StartPath.swift"
-            path.write_text(start_body, encoding="utf-8")
-            waits = reference_conditions(path, ("ensureBackgroundDeliveryTunnel",))
-        self.assertEqual(1, len(waits), "start path must contain exactly one mandatory tunnel wait")
-        _, wait_line, condition = waits[0]
-        self.assertEqual("await ensureBackgroundDeliveryTunnel()", wait_line)
-        self.assertTrue(guarantees_flag(condition, "COLUMBA_RUNTIME_MODEL_B"))
-        self.assertTrue(
-            guaranteed_for_every_flag_configuration(condition, "COLUMBA_RUNTIME_MODEL_B"),
-            "tunnel wait must not be narrowed by DEBUG or another build condition",
-        )
+        assert_model_b_tunnel_wait_precedes_backend_start(source)
 
-        without_model_b = self.preprocessed(start_body, set())
+        start_function = function_source(
+            source,
+            r"\bprivate\s+func\s+startPythonBackend\s*\(",
+        )
+        without_model_b = self.preprocessed(start_function, set())
         for forbidden in ("ensureBackgroundDeliveryTunnel", "waitUntilConnected", "tunnel.install()", "tunnel.start()"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, without_model_b)
         self.assertIn("try await backend.start(", without_model_b)
+
+    def test_tunnel_wait_contract_rejects_wait_moved_after_backend_start(self) -> None:
+        source = self.source(APP_SERVICES)
+        mutated = move_guarded_wait_after_backend_start(source)
+        self.assertNotEqual(source, mutated)
+        with self.assertRaisesRegex(AssertionError, "must precede backend.start"):
+            assert_model_b_tunnel_wait_precedes_backend_start(mutated)
+
+    def test_tunnel_wait_order_ignores_decoy_calls_and_comments(self) -> None:
+        source = self.source(APP_SERVICES)
+        moved = move_guarded_wait_after_backend_start(source)
+        decoys = {
+            "comment": "    // await ensureBackgroundDeliveryTunnel() before try await backend.start(\n",
+            "other function": (
+                "    #if COLUMBA_RUNTIME_MODEL_B\n"
+                "    private func decoyTunnelWait() async {\n"
+                "        await ensureBackgroundDeliveryTunnel()\n"
+                "    }\n"
+                "    #endif\n"
+            ),
+        }
+        target = "    private func startPythonBackend("
+        for name, decoy in decoys.items():
+            with self.subTest(decoy=name):
+                mutated = moved.replace(target, decoy + target, 1)
+                with self.assertRaisesRegex(AssertionError, "must precede backend.start"):
+                    assert_model_b_tunnel_wait_precedes_backend_start(mutated)
 
     def test_tunnel_wait_contract_rejects_nested_debug_narrowing(self) -> None:
         source = self.source(APP_SERVICES)
