@@ -1025,7 +1025,8 @@ final class MessageRepositoryAdapterTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(await probe.maximum(), 1)
+        let maximumActive = await probe.maximum()
+        XCTAssertEqual(maximumActive, 1)
     }
 
     // Note: the empty/field-map/wire discriminator is covered through the public
