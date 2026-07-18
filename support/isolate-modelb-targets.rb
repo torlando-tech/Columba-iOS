@@ -582,8 +582,8 @@ module ModelBTargetIsolation
       end
     end
 
-    model_b_product_ids = project.products_group.children.filter_map do |reference|
-      reference.uuid if reference.path == "#{MODEL_B_TARGET_NAME}.app"
+    model_b_product_ids = project.products_group.children.each_with_object([]) do |reference, ids|
+      ids << reference.uuid if reference.path == "#{MODEL_B_TARGET_NAME}.app"
     end
     unless model_b_product_ids == [model_b.product_reference.uuid]
       raise "Model B product reference is not unique: #{model_b_product_ids.join(', ')}"
