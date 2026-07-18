@@ -13,6 +13,10 @@
 	<array>
 		<string>$(AppIdentifierPrefix)network.columba.Columba.shared</string>
 	</array>
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
 	<!-- Multicast Networking — iOS 14+ requires Apple approval for this
 	     to be embedded in the signed provisioning profile, requested at:
 	         https://developer.apple.com/contact/request/networking-multicast
