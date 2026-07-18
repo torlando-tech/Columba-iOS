@@ -112,6 +112,21 @@ jobs:
           python3 support/verify-flavor-artifact.py \
             modelb "$MODELB_APP" --allow-empty-simulator-entitlements
 
+      - name: Build and run Model B tests
+        run: |
+          set -euo pipefail
+          rm -rf ModelBTestResults.xcresult
+          xcodebuild test \
+            -project Columba.xcodeproj \
+            -scheme Columba-ModelB \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.sim.outputs.device_id }}" \
+            -derivedDataPath "$PWD/DerivedData-ModelB" \
+            -only-testing:ColumbaModelBAppTests \
+            -resultBundlePath ModelBTestResults.xcresult \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
+
       - name: Build and run shipping tests
         run: |
           set -euo pipefail

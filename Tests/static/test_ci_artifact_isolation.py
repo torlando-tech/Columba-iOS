@@ -647,13 +647,15 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('verify-flavor-artifact.py shipping "$SHIPPING_APP"', workflow)
         self.assertIn('modelb "$MODELB_APP" --allow-empty-simulator-entitlements', workflow)
 
-    def test_workflow_keeps_shipping_tests_and_coverage_without_modelb_tests(self):
+    def test_workflow_runs_both_dedicated_test_targets_and_keeps_shipping_coverage(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("-only-testing:ColumbaAppTests", workflow)
-        self.assertNotIn("-only-testing:ColumbaModelBAppTests", workflow)
+        self.assertIn("-only-testing:ColumbaModelBAppTests", workflow)
         self.assertIn("-enableCodeCoverage YES", workflow)
         self.assertIn("-resultBundlePath TestResults.xcresult", workflow)
         self.assertIn("rm -rf TestResults.xcresult", workflow)
+        self.assertIn("-resultBundlePath ModelBTestResults.xcresult", workflow)
+        self.assertIn("rm -rf ModelBTestResults.xcresult", workflow)
 
     def test_every_shell_block_is_fail_fast_and_builds_use_adhoc_signing(self):
         lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
@@ -666,7 +668,7 @@ class WorkflowContractTests(unittest.TestCase):
             'CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" '
             'PROVISIONING_PROFILE_SPECIFIER=""'
         )
-        self.assertEqual(workflow.count(signing), 3)
+        self.assertEqual(workflow.count(signing), 4)
         self.assertIn("test_host_entitlements_contract", workflow)
         self.assertIn("test_ci_artifact_isolation", workflow)
         self.assertIn("--allow-empty-simulator-entitlements", workflow)
