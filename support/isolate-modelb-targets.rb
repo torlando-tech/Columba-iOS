@@ -32,30 +32,40 @@ MODEL_B_FLAGS = %w[
   COLUMBA_BACKEND_SWIFT
 ].freeze
 RETICULUM_PRODUCT_NAME = 'ReticulumSwift'
-MODEL_B_ONLY_SOURCE_PATHS = %w[
-  Sources/RNSBackendProxy/ProxyRnsBackend.swift
-  Sources/ColumbaApp/Services/TunnelManager.swift
-  Sources/ColumbaApp/Services/ExtensionFrameReader.swift
-  Sources/ColumbaApp/Services/ModelBBLEService.swift
-  Sources/ColumbaApp/Views/Settings/BackgroundTransportView.swift
-  Sources/ColumbaApp/Views/Components/BackgroundVPNExplainer.swift
-  Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryGateView.swift
-  Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift
-  Sources/Shared/AppGroupBridgeInterface.swift
-  Sources/Shared/AppGroupBLEDriver.swift
-  Sources/Shared/AppGroupBLESeamTransport.swift
-  Sources/Shared/AppGroupBLEServer.swift
-  Sources/Shared/BLEDriverSeam.swift
-  Sources/Shared/ProxyIPC.swift
-  Sources/Shared/OutboxQueue.swift
-  Sources/ColumbaApp/Services/ModelBRNodeService.swift
-  Sources/Shared/AppGroupRNodeSeamTransport.swift
-  Sources/Shared/AppGroupRNodeSeamWire.swift
-  Sources/Shared/AppGroupRNodeServer.swift
-  Sources/Shared/RNodeSeam.swift
-  Sources/Shared/PropagationSeam.swift
-  Sources/ColumbaApp/Services/ModelBInboundReplay.swift
-].freeze
+EMPTY_SOURCE_BUILD_FILE_METADATA = {
+  settings: nil,
+  platform_filter: nil,
+  platform_filters: nil
+}.freeze
+MODEL_B_ONLY_SOURCE_METADATA = {
+  'Sources/RNSBackendProxy/ProxyRnsBackend.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Services/TunnelManager.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Services/ExtensionFrameReader.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Services/ModelBBLEService.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Views/Settings/BackgroundTransportView.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Views/Components/BackgroundVPNExplainer.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryGateView.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/AppGroupBridgeInterface.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/AppGroupBLEDriver.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/AppGroupBLESeamTransport.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/AppGroupBLEServer.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/BLEDriverSeam.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/ProxyIPC.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/OutboxQueue.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Services/ModelBRNodeService.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/AppGroupRNodeSeamTransport.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/AppGroupRNodeSeamWire.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/AppGroupRNodeServer.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/RNodeSeam.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/Shared/PropagationSeam.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Services/ModelBInboundReplay.swift' => {
+    settings: nil,
+    platform_filter: 'ios',
+    platform_filters: nil
+  }.freeze
+}.freeze
+MODEL_B_ONLY_SOURCE_PATHS = MODEL_B_ONLY_SOURCE_METADATA.keys.freeze
 
 module ModelBTargetIsolation
   module_function
@@ -309,22 +319,41 @@ module ModelBTargetIsolation
     end
   end
 
+  def build_file_metadata(build_file)
+    {
+      settings: build_file.settings,
+      platform_filter: build_file.platform_filter,
+      platform_filters: build_file.platform_filters
+    }
+  end
+
+  def apply_build_file_metadata(build_file, metadata)
+    build_file.settings = duplicate_value(metadata.fetch(:settings))
+    build_file.platform_filter = metadata.fetch(:platform_filter)
+    build_file.platform_filters = duplicate_value(metadata.fetch(:platform_filters))
+  end
+
   def reconcile_phase_files(project, source, destination, package_map,
-                            extra_file_refs: [], extra_products: [])
+                            extra_file_refs: [], extra_file_metadata: {}, extra_products: [])
     desired = source.files.map do |source_build_file|
       if source_build_file.product_ref
-        [source_build_file, :product, package_map.fetch(source_build_file.product_ref)]
+        [source_build_file, :product, package_map.fetch(source_build_file.product_ref),
+         build_file_metadata(source_build_file)]
       else
-        [source_build_file, :file, source_build_file.file_ref]
+        [source_build_file, :file, source_build_file.file_ref, build_file_metadata(source_build_file)]
       end
     end
-    desired.concat(extra_file_refs.map { |reference| [nil, :file, reference] })
-    desired.concat(extra_products.map { |dependency| [nil, :product, dependency] })
+    desired.concat(extra_file_refs.map do |reference|
+      [nil, :file, reference, extra_file_metadata.fetch(reference.uuid)]
+    end)
+    desired.concat(extra_products.map do |dependency|
+      [nil, :product, dependency, EMPTY_SOURCE_BUILD_FILE_METADATA]
+    end)
 
     existing = destination.files.select do |build_file|
       build_file_owners(project, build_file).map(&:uuid) == [destination.uuid]
     end.group_by { |build_file| build_file_key(build_file) }
-    ordered = desired.map do |source_build_file, kind, reference|
+    ordered = desired.map do |_source_build_file, kind, reference, metadata|
       key = [kind, reference.uuid]
       build_file = existing.fetch(key, []).shift || project.new(
         Xcodeproj::Project::Object::PBXBuildFile
@@ -336,9 +365,7 @@ module ModelBTargetIsolation
         build_file.file_ref = reference
         build_file.product_ref = nil
       end
-      build_file.settings = source_build_file ? duplicate_value(source_build_file.settings) : nil
-      build_file.platform_filter = source_build_file&.platform_filter
-      build_file.platform_filters = source_build_file ? duplicate_value(source_build_file.platform_filters) : nil
+      apply_build_file_metadata(build_file, metadata)
       build_file
     end
 
@@ -361,10 +388,15 @@ module ModelBTargetIsolation
       destination = available.fetch(phase_key(source), []).shift || new_phase(project, source)
       copy_common_phase_attributes(source, destination)
       extra_file_refs = source.is_a?(Xcodeproj::Project::Object::PBXSourcesBuildPhase) ? model_b_sources : []
+      extra_file_metadata = extra_file_refs.to_h do |reference|
+        [reference.uuid, MODEL_B_ONLY_SOURCE_METADATA.fetch(source_path(project, reference))]
+      end
       extra_products = source.is_a?(Xcodeproj::Project::Object::PBXFrameworksBuildPhase) ? [reticulum_dependency] : []
       reconcile_phase_files(
         project, source, destination, package_map,
-        extra_file_refs: extra_file_refs, extra_products: extra_products
+        extra_file_refs: extra_file_refs,
+        extra_file_metadata: extra_file_metadata,
+        extra_products: extra_products
       )
       destination
     end
@@ -627,6 +659,16 @@ module ModelBTargetIsolation
     raise "Model B lost isolated sources: #{missing_sources.join(', ')}" unless missing_sources.empty?
     unless model_b_sources == shipping_sources + MODEL_B_ONLY_SOURCE_PATHS
       raise 'Model B source membership is not shipping plus the authoritative isolated source set'
+    end
+    MODEL_B_ONLY_SOURCE_METADATA.each do |path, expected_metadata|
+      build_file = model_b.source_build_phase.files.find do |candidate|
+        source_path(project, candidate.file_ref) == path
+      end
+      actual_metadata = build_file_metadata(build_file)
+      next if actual_metadata == expected_metadata
+
+      raise "Model B source metadata mismatch for #{path}: " \
+            "expected #{expected_metadata.inspect}, got #{actual_metadata.inspect}"
     end
     shipping_products = shipping.package_product_dependencies.map(&:product_name)
     model_b_products = model_b.package_product_dependencies.map(&:product_name)

@@ -43,6 +43,16 @@ MODEL_B_ONLY_SOURCE_PATHS = %w[
   Sources/Shared/PropagationSeam.swift
   Sources/ColumbaApp/Services/ModelBInboundReplay.swift
 ].freeze
+MODEL_B_ONLY_SOURCE_METADATA = MODEL_B_ONLY_SOURCE_PATHS.to_h do |path|
+  [path, { settings: nil, platform_filter: nil, platform_filters: nil }]
+end
+MODEL_B_ONLY_SOURCE_METADATA['Sources/ColumbaApp/Services/ModelBInboundReplay.swift'] = {
+  settings: nil,
+  platform_filter: 'ios',
+  platform_filters: nil
+}
+MODEL_B_ONLY_SOURCE_METADATA.each_value(&:freeze)
+MODEL_B_ONLY_SOURCE_METADATA.freeze
 SHIPPING_REQUIRED_SOURCE_PATHS = %w[
   Sources/ColumbaApp/Services/MessageRepository.swift
   Sources/PythonBridge/PythonBridge.swift
@@ -100,6 +110,19 @@ class ModelBTargetIsolationTests < Minitest::Test
   def source_paths(target, root = REPOSITORY_ROOT)
     target.source_build_phase.files.map do |build_file|
       build_file.file_ref.real_path.relative_path_from(Pathname.new(root)).to_s
+    end
+  end
+
+  def isolated_source_metadata(target, root = REPOSITORY_ROOT)
+    target.source_build_phase.files.each_with_object({}) do |build_file, metadata|
+      path = build_file.file_ref.real_path.relative_path_from(Pathname.new(root)).to_s
+      next unless MODEL_B_ONLY_SOURCE_METADATA.key?(path)
+
+      metadata[path] = {
+        settings: build_file.settings,
+        platform_filter: build_file.platform_filter,
+        platform_filters: build_file.platform_filters
+      }
     end
   end
 
@@ -219,6 +242,7 @@ class ModelBTargetIsolationTests < Minitest::Test
     assert_empty SHIPPING_REQUIRED_SOURCE_PATHS - shipping_sources
     assert_empty SHIPPING_REQUIRED_SOURCE_PATHS - model_b_sources
     assert_equal shipping_sources + MODEL_B_ONLY_SOURCE_PATHS, model_b_sources
+    assert_equal MODEL_B_ONLY_SOURCE_METADATA, isolated_source_metadata(@model_b)
 
     shipping_products = @shipping.package_product_dependencies.map(&:product_name)
     model_b_products = @model_b.package_product_dependencies.map(&:product_name)
@@ -261,6 +285,16 @@ class ModelBTargetIsolationTests < Minitest::Test
       refute_nil removed_model_b_file
       removed_model_b_file.remove_from_project
 
+      stale_metadata_path = 'Sources/RNSBackendProxy/ProxyRnsBackend.swift'
+      stale_metadata_file = model_b.source_build_phase.files.find do |file|
+        file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == stale_metadata_path
+      end
+      refute_nil stale_metadata_file
+      stale_metadata_file_id = stale_metadata_file.uuid
+      stale_metadata_file.settings = { 'COMPILER_FLAGS' => '-DSTALE_MODEL_B_METADATA' }
+      stale_metadata_file.platform_filter = 'macos'
+      stale_metadata_file.platform_filters = %w[ios macos]
+
       model_reticulum = model_b.package_product_dependencies.find do |dependency|
         dependency.product_name == 'ReticulumSwift'
       end
@@ -279,6 +313,9 @@ class ModelBTargetIsolationTests < Minitest::Test
       mutated_shipping_sources = source_paths(mutated_shipping, File.dirname(temporary_project))
       assert_empty MODEL_B_ONLY_SOURCE_PATHS - mutated_shipping_sources
       refute_includes source_paths(mutated_model_b, File.dirname(temporary_project)), removed_model_b_path
+      assert_equal 'macos', isolated_source_metadata(
+        mutated_model_b, File.dirname(temporary_project)
+      ).fetch(stale_metadata_path).fetch(:platform_filter)
       assert_includes mutated_shipping.package_product_dependencies.map(&:product_name), 'ReticulumSwift'
       extension_before = target_graph_signature(
         mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
@@ -293,6 +330,17 @@ class ModelBTargetIsolationTests < Minitest::Test
       reconciled_model_b_sources = source_paths(reconciled_model_b, File.dirname(temporary_project))
       assert_empty MODEL_B_ONLY_SOURCE_PATHS & reconciled_shipping_sources
       assert_equal reconciled_shipping_sources + MODEL_B_ONLY_SOURCE_PATHS, reconciled_model_b_sources
+      assert_equal MODEL_B_ONLY_SOURCE_METADATA,
+                   isolated_source_metadata(reconciled_model_b, File.dirname(temporary_project))
+      retained_stale_file = reconciled_model_b.source_build_phase.files.find do |file|
+        file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == stale_metadata_path
+      end
+      assert_equal stale_metadata_file_id, retained_stale_file&.uuid,
+                   'reconciler replaced a target-local isolated-source build file'
+      replay_build_file = reconciled_model_b.source_build_phase.files.find do |file|
+        file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == removed_model_b_path
+      end
+      assert_equal 'ios', replay_build_file&.platform_filter
       refute_includes reconciled_shipping.package_product_dependencies.map(&:product_name), 'ReticulumSwift'
       refute(reconciled_shipping.frameworks_build_phase.files.any? do |file|
         file.product_ref&.product_name == 'ReticulumSwift'

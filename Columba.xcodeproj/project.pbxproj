@@ -171,7 +171,7 @@
 		47FC07D2AE8ECD5D88A868BA /* PropagationSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */; };
 		485B8EFF327C28C1A5F0727B /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039 /* materialdesignicons.ttf */; };
 		489A5C72A9C4C3FAB742F3E2 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027 /* NotificationObserver.swift */; };
-		4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB02 /* ModelBInboundReplay.swift */; };
+		4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB02 /* ModelBInboundReplay.swift */; platformFilter = ios; };
 		4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */; };
 		5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A49337EFC55C10979AEB702B /* LXSTSwift */; };
 		557D530BBEDAEBE9A6A0BE41 /* PyConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D8CBCF7E546028A043E1C7 /* PyConversation.swift */; };
