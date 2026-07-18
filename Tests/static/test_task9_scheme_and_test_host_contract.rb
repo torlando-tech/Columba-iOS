@@ -94,6 +94,9 @@ class Task9SchemeAndTestHostContractTests < Minitest::Test
     assert_equal [model_b.uuid], model_b_tests.dependencies.map { |dependency| dependency.target.uuid }
     refute_includes model_b_tests.dependencies.map { |dependency| dependency.target.uuid }, shipping.uuid
 
+    target_attributes = @project.root_object.attributes.fetch('TargetAttributes')
+    assert_equal model_b.uuid, target_attributes.fetch(model_b_tests.uuid).fetch('TestTargetID')
+
     model_b_by_name = {}
     model_b.build_configurations.each { |configuration| model_b_by_name[configuration.name] = configuration }
     assert_equal model_b_by_name.keys, model_b_tests.build_configurations.map(&:name)
@@ -103,6 +106,30 @@ class Task9SchemeAndTestHostContractTests < Minitest::Test
       assert_equal model_b_by_name.fetch(configuration.name).build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'],
                    configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']
     end
+  end
+
+  def test_model_b_tests_link_reticulum_with_target_local_objects
+    shipping_tests = unique_target('ColumbaAppTests')
+    model_b = unique_target('ColumbaModelBApp')
+    model_b_tests = unique_target('ColumbaModelBAppTests')
+    products = model_b_tests.package_product_dependencies
+
+    assert_equal ['ReticulumSwift'], products.map(&:product_name)
+    dependency = products.first
+    host_dependency = model_b.package_product_dependencies.find do |candidate|
+      candidate.product_name == 'ReticulumSwift'
+    end
+    refute_nil host_dependency
+    refute_equal host_dependency.uuid, dependency.uuid
+    assert_equal host_dependency.package.uuid, dependency.package.uuid
+
+    build_files = model_b_tests.frameworks_build_phase.files.select do |build_file|
+      build_file.product_ref&.product_name == 'ReticulumSwift'
+    end
+    assert_equal 1, build_files.size
+    assert_equal dependency.uuid, build_files.first.product_ref.uuid
+    refute_includes model_b.frameworks_build_phase.files.map(&:uuid), build_files.first.uuid
+    refute_includes shipping_tests.frameworks_build_phase.files.map(&:uuid), build_files.first.uuid
   end
 
   def test_model_b_tests_import_the_model_b_module

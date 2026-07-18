@@ -1027,6 +1027,39 @@ module ModelBTargetIsolation
 
     attributes = project.root_object.attributes['TargetAttributes'] ||= {}
     attributes[model_b_tests.uuid] = duplicate_value(attributes.fetch(shipping_tests.uuid, {}))
+    attributes[model_b_tests.uuid]['TestTargetID'] = model_b.uuid
+
+    # These tests import ReticulumSwift directly. Keep their package graph exact
+    # and target-local rather than relying on the host app's link dependencies.
+    original_packages = model_b_tests.package_product_dependencies.to_a
+    stale_packages = original_packages.reject do |dependency|
+      dependency.product_name == RETICULUM_PRODUCT_NAME
+    end
+    model_b_tests.build_phases.each do |phase|
+      next unless phase.respond_to?(:files)
+
+      phase.files.compact.dup.each do |build_file|
+        next unless build_file.product_ref
+        next if build_file.product_ref.product_name == RETICULUM_PRODUCT_NAME
+
+        remove_build_file_from_phase(project, phase, build_file)
+      end
+    end
+    model_b_tests.package_product_dependencies.clear
+    (original_packages - stale_packages).each do |dependency|
+      model_b_tests.package_product_dependencies << dependency
+    end
+    stale_packages.each do |dependency|
+      dependency.remove_from_project unless package_dependency_referenced?(project, dependency)
+    end
+    reticulum_package = model_b.package_product_dependencies.find do |dependency|
+      dependency.product_name == RETICULUM_PRODUCT_NAME
+    end&.package
+    raise 'Model B host lacks ReticulumSwift package reference' unless reticulum_package
+
+    reconcile_required_package_product(
+      project, model_b_tests, RETICULUM_PRODUCT_NAME, reticulum_package
+    )
 
     retained_dependency = model_b_tests.dependencies.find { |dependency| dependency.target == model_b }
     model_b_tests.dependencies.dup.each do |dependency|
@@ -1177,6 +1210,33 @@ module ModelBTargetIsolation
       model_b_test_sources == MODEL_B_ONLY_TEST_SOURCE_PATHS
     raise 'Model B XCTest host dependency is incorrect' unless
       model_b_tests.dependencies.one? && model_b_tests.dependencies.first.target == model_b
+    target_attributes = project.root_object.attributes.fetch('TargetAttributes', {})
+    unless target_attributes.fetch(model_b_tests.uuid, {})['TestTargetID'] == model_b.uuid
+      raise 'Model B XCTest TargetAttributes.TestTargetID is incorrect'
+    end
+    test_products = model_b_tests.package_product_dependencies
+    unless test_products.map(&:product_name) == [RETICULUM_PRODUCT_NAME]
+      raise 'Model B XCTest package membership is incorrect'
+    end
+    test_reticulum = test_products.first
+    host_reticulum = model_b.package_product_dependencies.find do |dependency|
+      dependency.product_name == RETICULUM_PRODUCT_NAME
+    end
+    if test_reticulum.uuid == host_reticulum&.uuid
+      raise 'Model B app and XCTest targets share a ReticulumSwift package dependency object'
+    end
+    unless test_reticulum.package&.uuid == host_reticulum&.package&.uuid
+      raise 'Model B XCTest ReticulumSwift dependency uses the wrong root package reference'
+    end
+    test_reticulum_files = model_b_tests.build_phases.flat_map(&:files).select do |file|
+      file.product_ref&.product_name == RETICULUM_PRODUCT_NAME
+    end
+    unless test_reticulum_files.one? &&
+           test_reticulum_files.first.product_ref&.uuid == test_reticulum.uuid &&
+           build_file_owners(project, test_reticulum_files.first).map(&:uuid) ==
+             [model_b_tests.frameworks_build_phase.uuid]
+      raise 'Model B XCTest ReticulumSwift framework build file is not unique and target-local'
+    end
     model_b_configs = {}
     model_b.build_configurations.each { |configuration| model_b_configs[configuration.name] = configuration }
     model_b_tests.build_configurations.each do |configuration|

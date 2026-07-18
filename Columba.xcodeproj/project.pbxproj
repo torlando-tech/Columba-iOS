@@ -111,6 +111,7 @@
 		084B /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
 		0A7FF8FA55B27781DF23C7E8 /* ThemeColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F064 /* ThemeColors.swift */; };
 		0B768533EC90008D3E23C326 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
+		0E85864BF022C4B2A2595D0F /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 15F82FBE10E56E30D4706B40 /* ReticulumSwift */; };
 		0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */; };
 		113FFF9C5A228CC0C294A3D9 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		11D0621686D1D65C9602C911 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */; };
@@ -586,6 +587,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4CD5BF2A4CA7A4E0FB498406 /* Foundation.framework in Frameworks */,
+				0E85864BF022C4B2A2595D0F /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1126,6 +1128,9 @@
 				5EC1A1137842C28B8B4B8244 /* PBXTargetDependency */,
 			);
 			name = ColumbaModelBAppTests;
+			packageProductDependencies = (
+				15F82FBE10E56E30D4706B40 /* ReticulumSwift */,
+			);
 			productName = ColumbaModelBAppTests;
 			productReference = D33D0252383165C6829D2767 /* ColumbaModelBAppTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -1217,7 +1222,7 @@
 					};
 					A95531E5BB41AD06A7E635C1 = {
 						CreatedOnToolsVersion = 15.0;
-						TestTargetID = TARG;
+						TestTargetID = 4CAC30008285BCF92BD97428;
 					};
 					ETARG = {
 						CreatedOnToolsVersion = 15.0;
@@ -2679,6 +2684,11 @@
 		0FD6A68A52A54D21FDB70324 /* RNSAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RNSAPI;
+		};
+		15F82FBE10E56E30D4706B40 /* ReticulumSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
+			productName = ReticulumSwift;
 		};
 		265C043240DBCD7A542021FC /* MapLibre */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -1303,6 +1303,119 @@ class ModelBTargetIsolationTests < Minitest::Test
     assert_equal SHIPPING_TEST_SOURCE_PATHS, source_paths(@shipping_tests)
     assert_equal MODEL_B_ONLY_TEST_SOURCE_PATHS, source_paths(@model_b_tests)
     assert_equal [@model_b.uuid], @model_b_tests.dependencies.map { |dependency| dependency.target.uuid }
+    attributes = @project.root_object.attributes.fetch('TargetAttributes')
+    assert_equal @model_b.uuid, attributes.fetch(@model_b_tests.uuid).fetch('TestTargetID')
+
+    products = @model_b_tests.package_product_dependencies
+    assert_equal ['ReticulumSwift'], products.map(&:product_name)
+    dependency = products.first
+    host_dependency = @model_b.package_product_dependencies.find do |candidate|
+      candidate.product_name == 'ReticulumSwift'
+    end
+    refute_equal host_dependency.uuid, dependency.uuid
+    assert_equal host_dependency.package.uuid, dependency.package.uuid
+    files = @model_b_tests.frameworks_build_phase.files.select do |file|
+      file.product_ref&.product_name == 'ReticulumSwift'
+    end
+    assert_equal 1, files.size
+    assert_equal dependency.uuid, files.first.product_ref.uuid
+  end
+
+  def test_reconciler_repairs_model_b_test_host_metadata_and_package_ownership
+    Dir.mktmpdir('columba-modelb-test-host-package') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      shipping_tests = fixture.targets.find { |target| target.name == 'ColumbaAppTests' }
+      model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      model_b_tests = fixture.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      fixture.root_object.attributes.fetch('TargetAttributes')
+             .fetch(model_b_tests.uuid)['TestTargetID'] = shipping.uuid
+
+      local_dependency = model_b_tests.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      local_build_file = model_b_tests.frameworks_build_phase.files.find do |build_file|
+        build_file.product_ref&.uuid == local_dependency&.uuid
+      end
+      shared_dependencies = %w[ReticulumSwift LXMFSwift].map do |name|
+        shipping_tests.package_product_dependencies.find { |dependency| dependency.product_name == name } or
+          raise "shipping tests lack #{name} fixture dependency"
+      end
+      shared_build_files = shared_dependencies.map do |dependency|
+        shipping_tests.frameworks_build_phase.files.find do |build_file|
+          build_file.product_ref&.uuid == dependency.uuid
+        end or raise "shipping tests lack #{dependency.product_name} fixture build file"
+      end
+      refute_nil local_build_file
+      model_b_tests.package_product_dependencies.clear
+      shared_dependencies.each do |dependency|
+        model_b_tests.package_product_dependencies << dependency
+      end
+      fixture.save
+
+      # Xcodeproj cannot serialize a shared PBXBuildFile, and can suppress a
+      # malformed same-product productRef assignment. Inject both after saving.
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      product_ref = /^(\s*#{local_build_file.uuid}\b.*\bproductRef = )#{local_dependency.uuid}(\b.*)$/
+      raise 'missing Model B test ReticulumSwift productRef' unless pbxproj.sub!(
+        product_ref, "\\1#{shared_dependencies.first.uuid}\\2"
+      )
+      phase_header = "\t\t#{model_b_tests.frameworks_build_phase.uuid} /* Frameworks */ = {"
+      phase_start = pbxproj.index(phase_header) or raise 'missing Model B test Frameworks phase'
+      files_start = pbxproj.index("\t\t\tfiles = (\n", phase_start) or raise 'missing Frameworks files'
+      insertion_point = files_start + "\t\t\tfiles = (\n".length
+      shared_entries = shared_build_files.map do |build_file|
+        "\t\t\t\t#{build_file.uuid} /* malformed shared test package build file */,\n"
+      end.join
+      pbxproj.insert(insertion_point, shared_entries)
+      File.write(pbxproj_path, pbxproj)
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_tests = mutated.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      assert_equal shipping.uuid,
+                   mutated.root_object.attributes.fetch('TargetAttributes')
+                          .fetch(mutated_tests.uuid).fetch('TestTargetID')
+      assert_equal shared_dependencies.map(&:uuid),
+                   mutated_tests.package_product_dependencies.map(&:uuid)
+      assert_empty shared_build_files.map(&:uuid) -
+                   mutated_tests.frameworks_build_phase.files.map(&:uuid)
+      protected = [shipping, shipping_tests, model_b, extension].each_with_object({}) do |target, result|
+        live = mutated.targets.find { |candidate| candidate.uuid == target.uuid }
+        result[target.uuid] = target_graph_signature(live)
+      end
+
+      run_reconciler(temporary_project, 'Model B test host/package ownership')
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_tests = reconciled.targets.find { |target| target.name == 'ColumbaModelBAppTests' }
+      reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      assert_equal reconciled_model_b.uuid,
+                   reconciled.root_object.attributes.fetch('TargetAttributes')
+                             .fetch(reconciled_tests.uuid).fetch('TestTargetID')
+      assert_equal ['ReticulumSwift'],
+                   reconciled_tests.package_product_dependencies.map(&:product_name)
+      repaired_dependency = reconciled_tests.package_product_dependencies.first
+      refute_includes shared_dependencies.map(&:uuid), repaired_dependency.uuid
+      host_dependency = reconciled_model_b.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      assert_equal host_dependency.package.uuid, repaired_dependency.package.uuid
+      repaired_files = reconciled_tests.frameworks_build_phase.files.select do |build_file|
+        build_file.product_ref&.product_name == 'ReticulumSwift'
+      end
+      assert_equal 1, repaired_files.size
+      assert_equal repaired_dependency.uuid, repaired_files.first.product_ref.uuid
+      assert_empty shared_build_files.map(&:uuid) &
+                   reconciled_tests.frameworks_build_phase.files.map(&:uuid)
+      protected.each do |uuid, signature|
+        assert_equal signature, target_graph_signature(reconciled.objects_by_uuid.fetch(uuid)),
+                     "Model B XCTest repair mutated protected target #{uuid}"
+      end
+      assert_second_run_byte_idempotent(temporary_project)
+    end
   end
 
   def test_shipping_test_sources_do_not_reference_declarations_absent_from_shipping
