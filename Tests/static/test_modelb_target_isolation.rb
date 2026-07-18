@@ -55,6 +55,39 @@ MODEL_B_ONLY_SOURCE_METADATA['Sources/ColumbaApp/Services/ModelBInboundReplay.sw
 }
 MODEL_B_ONLY_SOURCE_METADATA.each_value(&:freeze)
 MODEL_B_ONLY_SOURCE_METADATA.freeze
+MODEL_B_ONLY_TEST_SOURCE_PATHS = %w[
+  Tests/ColumbaAppTests/BLESeamDriverTests.swift
+  Tests/ColumbaAppTests/RNodeSeamTests.swift
+].freeze
+SHIPPING_TEST_SOURCE_PATHS = %w[
+  Tests/ColumbaAppTests/MicronParserTests.swift
+  Tests/ColumbaAppTests/AudioRingBufferTests.swift
+  Tests/ColumbaAppTests/AudioManagerConfigChangeTests.swift
+  Tests/ColumbaAppTests/CallManagerCallKitTests.swift
+  Tests/ColumbaAppTests/MessageFormattedTimeTests.swift
+  Tests/ColumbaAppTests/AnnounceClassificationTests.swift
+  Tests/ColumbaAppTests/MigrationRoundTripTests.swift
+  Tests/ColumbaAppTests/PythonConfigWriterTests.swift
+  Tests/ColumbaAppTests/RuntimeFlavorTests.swift
+].freeze
+MODEL_B_DECLARATIONS_ABSENT_FROM_SHIPPING = %w[
+  SwiftRNSBackend
+  NomadNetFetch
+  ModelBRNodeService
+  BLESeamTransport
+  BLEDriverSeamMessage
+  AppGroupBLEDriver
+  RNodeSeamWire
+  RNodeSeamMessage
+  AppGroupRNodeSeamTransport
+  AppGroupRNodeSeamWire
+  AppGroupRNodeServer
+  RNodeSeamConfig
+  RNodeLinkState
+  PropagationSeamConfig
+  PropagationSyncStateSnapshot
+  ModelBInboundReplay
+].freeze
 SHIPPING_REQUIRED_SOURCE_PATHS = %w[
   Sources/ColumbaApp/Services/MessageRepository.swift
   Sources/PythonBridge/PythonBridge.swift
@@ -590,6 +623,111 @@ class ModelBTargetIsolationTests < Minitest::Test
                    "TEST_HOST changed in #{test_configuration.name}")
       assert_equal '$(TEST_HOST)', test_configuration.build_settings.fetch('BUNDLE_LOADER'),
                    "BUNDLE_LOADER changed in #{test_configuration.name}"
+    end
+  end
+
+  def test_shipping_test_membership_excludes_model_b_seams_pending_task_9_hosting
+    assert_equal 2, MODEL_B_ONLY_TEST_SOURCE_PATHS.size
+    assert_empty MODEL_B_ONLY_TEST_SOURCE_PATHS & source_paths(@shipping_tests)
+    assert_equal SHIPPING_TEST_SOURCE_PATHS, source_paths(@shipping_tests)
+  end
+
+  def test_shipping_test_sources_do_not_reference_declarations_absent_from_shipping
+    failures = source_paths(@shipping_tests).each_with_object({}) do |relative_path, references|
+      source = File.read(File.join(REPOSITORY_ROOT, relative_path))
+      matches = MODEL_B_DECLARATIONS_ABSENT_FROM_SHIPPING.select do |declaration|
+        source.match?(/\b#{Regexp.escape(declaration)}\b/)
+      end
+      references[relative_path] = matches unless matches.empty?
+    end
+    assert_equal({}, failures)
+  end
+
+  def test_reconciler_removes_local_and_shared_model_b_test_build_files_ownership_safely
+    Dir.mktmpdir('columba-modelb-test-membership') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      tests = fixture.targets.find { |target| target.name == 'ColumbaAppTests' }
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      references = MODEL_B_ONLY_TEST_SOURCE_PATHS.to_h do |path|
+        basename = File.basename(path)
+        reference = fixture.files.find { |candidate| candidate.path == basename }
+        [path, reference || raise("missing retained file reference for #{path}")]
+      end
+
+      local_ids = MODEL_B_ONLY_TEST_SOURCE_PATHS.map do |path|
+        build_file = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+        build_file.file_ref = references.fetch(path)
+        tests.source_build_phase.files << build_file
+        build_file.uuid
+      end
+      shared_app_file = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      shared_app_file.file_ref = references.fetch(MODEL_B_ONLY_TEST_SOURCE_PATHS.first)
+      shipping.source_build_phase.files << shared_app_file
+      shared_extension_file = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      shared_extension_file.file_ref = references.fetch(MODEL_B_ONLY_TEST_SOURCE_PATHS.last)
+      extension.source_build_phase.files << shared_extension_file
+      fixture.save
+
+      # xcodeproj cannot serialize one PBXBuildFile under two phases. Inject the
+      # malformed test-phase references after saving the otherwise-valid graph.
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      phase_header = "\t\t#{tests.source_build_phase.uuid} /* Sources */ = {"
+      phase_start = pbxproj.index(phase_header) or raise 'missing test Sources phase in fixture'
+      files_start = pbxproj.index("\t\t\tfiles = (\n", phase_start) or raise 'missing test Sources files'
+      insertion_point = files_start + "\t\t\tfiles = (\n".length
+      shared_entries = [shared_app_file, shared_extension_file].map do |build_file|
+        "\t\t\t\t#{build_file.uuid} /* malformed shared Model B test source */,\n"
+      end.join
+      pbxproj.insert(insertion_point, shared_entries)
+      File.write(pbxproj_path, pbxproj)
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_tests = mutated.targets.find { |target| target.name == 'ColumbaAppTests' }
+      assert_equal 2, MODEL_B_ONLY_TEST_SOURCE_PATHS.count { |path|
+        source_paths(mutated_tests, directory).include?(path)
+      }
+      assert_empty local_ids - mutated_tests.source_build_phase.files.map(&:uuid)
+      shared_ids = [shared_app_file.uuid, shared_extension_file.uuid]
+      assert_empty shared_ids - mutated_tests.source_build_phase.files.map(&:uuid)
+      shipping_before = target_graph_signature(
+        mutated.targets.find { |target| target.name == 'ColumbaApp' }
+      )
+      extension_before = target_graph_signature(
+        mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      )
+
+      run_reconciler(temporary_project, 'Model B test membership')
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_tests = reconciled.targets.find { |target| target.name == 'ColumbaAppTests' }
+      assert_empty MODEL_B_ONLY_TEST_SOURCE_PATHS & source_paths(reconciled_tests, directory)
+      assert_equal SHIPPING_TEST_SOURCE_PATHS, source_paths(reconciled_tests, directory)
+      assert_equal shipping_before, target_graph_signature(
+        reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+      ), 'test membership repair mutated the protected shipping app graph'
+      assert_equal extension_before, target_graph_signature(
+        reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      ), 'test membership repair mutated the protected extension graph'
+      assert_empty local_ids & reconciled.objects_by_uuid.keys,
+                   'target-local excluded test PBXBuildFiles became orphans'
+      shared_ids.each do |uuid|
+        assert reconciled.objects_by_uuid.key?(uuid), 'shared protected PBXBuildFile was deleted'
+      end
+      build_file_owners = Hash.new { |hash, key| hash[key] = [] }
+      reconciled.objects.each do |object|
+        next unless object.respond_to?(:files)
+
+        object.files.each { |build_file| build_file_owners[build_file.uuid] << object.uuid }
+      end
+      all_build_file_ids = reconciled.objects.select do |object|
+        object.is_a?(Xcodeproj::Project::Object::PBXBuildFile)
+      end.map(&:uuid)
+      assert_empty all_build_file_ids.reject { |uuid| build_file_owners.fetch(uuid, []).one? },
+                   'reconciled project contains orphan or shared PBXBuildFiles'
+      assert_second_run_byte_idempotent(temporary_project)
     end
   end
 

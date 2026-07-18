@@ -73,6 +73,13 @@ MODEL_B_ONLY_SOURCE_METADATA = {
   }.freeze
 }.freeze
 MODEL_B_ONLY_SOURCE_PATHS = MODEL_B_ONLY_SOURCE_METADATA.keys.freeze
+# Task 9 will assign these seam tests to an explicit Model B XCTest host. Until
+# that target exists, they must remain file references only: shipping's sole
+# XCTest target cannot compile declarations intentionally absent from its app.
+MODEL_B_ONLY_TEST_SOURCE_PATHS = %w[
+  Tests/ColumbaAppTests/BLESeamDriverTests.swift
+  Tests/ColumbaAppTests/RNodeSeamTests.swift
+].freeze
 
 module ModelBTargetIsolation
   module_function
@@ -181,6 +188,14 @@ module ModelBTargetIsolation
       next unless MODEL_B_ONLY_SOURCE_PATHS.include?(source_path(project, build_file.file_ref))
 
       remove_build_file_from_phase(project, shipping.source_build_phase, build_file)
+    end
+  end
+
+  def strip_shipping_model_b_test_membership(project, shipping_tests)
+    shipping_tests.source_build_phase.files.dup.each do |build_file|
+      next unless MODEL_B_ONLY_TEST_SOURCE_PATHS.include?(source_path(project, build_file.file_ref))
+
+      remove_build_file_from_phase(project, shipping_tests.source_build_phase, build_file)
     end
   end
 
@@ -665,6 +680,13 @@ module ModelBTargetIsolation
 
     shipping_tests = project.targets.find { |target| target.name == SHIPPING_TEST_TARGET_NAME } or
       raise "Missing #{SHIPPING_TEST_TARGET_NAME} target"
+    shipping_test_sources = shipping_tests.source_build_phase.files.map do |file|
+      source_path(project, file.file_ref)
+    end
+    leaked_test_sources = shipping_test_sources & MODEL_B_ONLY_TEST_SOURCE_PATHS
+    unless leaked_test_sources.empty?
+      raise "shipping tests retained Model B-only sources: #{leaked_test_sources.join(', ')}"
+    end
     raise 'shipping test target dependency changed' unless shipping_tests.dependencies.any? do |dependency|
       dependency.target == shipping
     end
@@ -771,6 +793,13 @@ module ModelBTargetIsolation
     unless shared_build_files.empty?
       raise "PBXBuildFile objects have multiple phase owners: #{shared_build_files.inspect}"
     end
+    orphan_build_files = project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::PBXBuildFile) &&
+        build_file_ownership.fetch(object.uuid, []).empty?
+    end
+    unless orphan_build_files.empty?
+      raise "orphan PBXBuildFile objects: #{orphan_build_files.map(&:uuid).join(', ')}"
+    end
 
     package_ownership = Hash.new { |hash, key| hash[key] = [] }
     project.targets.each do |target|
@@ -862,6 +891,9 @@ model_b.build_phases.clear
 (regular_phases + [embed_phase]).each { |phase| model_b.build_phases << phase }
 ModelBTargetIsolation.reconcile_configurations(project, shipping, model_b)
 ModelBTargetIsolation.reconcile_shipping_test_configurations(project, shipping)
+shipping_tests = project.targets.find { |target| target.name == SHIPPING_TEST_TARGET_NAME } or
+  abort "Missing #{SHIPPING_TEST_TARGET_NAME} target"
+ModelBTargetIsolation.strip_shipping_model_b_test_membership(project, shipping_tests)
 ModelBTargetIsolation.assert_graph!(project)
 project.save
 

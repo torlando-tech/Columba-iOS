@@ -64,7 +64,6 @@
 		04AB /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A /* AddContactSheet.swift */; };
 		04BB /* LocationSharingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04B /* LocationSharingManager.swift */; platformFilter = ios; };
 		04CB /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04C /* OnboardingView.swift */; };
-		04D735AF318341AD65ABFE61 /* RNodeSeamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */; };
 		04DB /* WelcomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04D /* WelcomePage.swift */; };
 		04EB /* IdentityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04E /* IdentityPage.swift */; };
 		04FB /* ConnectivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04F /* ConnectivityPage.swift */; };
@@ -342,7 +341,6 @@
 		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		RFT002 /* RuntimeFlavorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RFT001 /* RuntimeFlavorTests.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
-		TBDT /* BLESeamDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDT /* BLESeamDriverTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1635,12 +1633,10 @@
 			files = (
 				T003 /* MicronParserTests.swift in Sources */,
 				2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */,
-				TBDT /* BLESeamDriverTests.swift in Sources */,
 				A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */,
 				E49B977D311DA1C9ACE14CAB /* CallManagerCallKitTests.swift in Sources */,
 				9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */,
 				ACT02 /* AnnounceClassificationTests.swift in Sources */,
-				04D735AF318341AD65ABFE61 /* RNodeSeamTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
 				26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */,
 				RFT002 /* RuntimeFlavorTests.swift in Sources */,
