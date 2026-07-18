@@ -75,14 +75,16 @@ class ArtifactFixture:
             self.write_plist(
                 self.extension / "Info.plist",
                 {
-                    "CFBundleIdentifier": "network.columba.fixture.extension",
+                    "CFBundleIdentifier": "network.columba.Columba.tunnel",
                     "CFBundleExecutable": extension_executable,
                     "CFBundlePackageType": "XPC!",
                     "NSExtension": {
                         "NSExtensionPointIdentifier": (
                             "com.apple.networkextension.packet-tunnel"
                         ),
-                        "NSExtensionPrincipalClass": "Fixture.PacketTunnelProvider",
+                        "NSExtensionPrincipalClass": (
+                            "ColumbaNetworkExtension.PacketTunnelProvider"
+                        ),
                     },
                 },
             )
@@ -208,6 +210,40 @@ class ArtifactCheckerTests(unittest.TestCase):
                 fixture.write_plist(path, metadata)
                 self.assert_rejected(fixture, "modelb", "NSExtension metadata")
 
+    def test_modelb_rejects_wrong_extension_identity_or_principal(self):
+        mutations = (
+            ("CFBundleIdentifier", "network.columba.attacker.tunnel", "CFBundleIdentifier"),
+            (
+                "NSExtensionPrincipalClass",
+                "Attacker.PacketTunnelProvider",
+                "NSExtensionPrincipalClass",
+            ),
+        )
+        for key, value, diagnostic in mutations:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as directory:
+                fixture = ArtifactFixture(Path(directory), "modelb")
+                path = fixture.extension / "Info.plist"
+                with path.open("rb") as stream:
+                    metadata = plistlib.load(stream)
+                if key == "CFBundleIdentifier":
+                    metadata[key] = value
+                else:
+                    metadata["NSExtension"][key] = value
+                fixture.write_plist(path, metadata)
+                self.assert_rejected(fixture, "modelb", diagnostic)
+
+    def test_modelb_plugins_root_rejects_every_extra_entry_type(self):
+        mutations = ("unexpected.txt", "UnexpectedDirectory")
+        for name in mutations:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                fixture = ArtifactFixture(Path(directory), "modelb")
+                extra = fixture.app / "PlugIns" / name
+                if "." in name:
+                    extra.write_text("unexpected", encoding="utf-8")
+                else:
+                    extra.mkdir()
+                self.assert_rejected(fixture, "modelb", "PlugIns.*exactly one entry")
+
     def test_modelb_rejects_python_packaging_leaks(self):
         leaks = (
             "Frameworks/Python.framework/Python",
@@ -284,6 +320,27 @@ class ArtifactCheckerTests(unittest.TestCase):
             ("shipping", {"com.apple.developer.networking.networkextension": ["packet-tunnel-provider"]}, False),
             ("modelb", {"com.apple.developer.networking.networkextension": ["packet-tunnel-provider"]}, True),
             ("modelb", {}, False),
+            ("modelb", {"com.apple.developer.networking.networkextension": ["dns-proxy"]}, False),
+            (
+                "modelb",
+                {
+                    "com.apple.developer.networking.networkextension": [
+                        "packet-tunnel-provider",
+                        "dns-proxy",
+                    ]
+                },
+                False,
+            ),
+            (
+                "modelb",
+                {
+                    "com.apple.developer.networking.networkextension": [
+                        "packet-tunnel-provider",
+                        "packet-tunnel-provider",
+                    ]
+                },
+                False,
+            ),
         )
         for flavor, entitlements, passes in cases:
             with self.subTest(flavor=flavor, entitlements=entitlements), tempfile.TemporaryDirectory() as directory:
@@ -306,6 +363,80 @@ class ArtifactCheckerTests(unittest.TestCase):
                     self.verify(fixture, flavor)
                 else:
                     self.assert_rejected(fixture, flavor, "entitlement")
+
+    def test_modelb_entitlement_diagnostic_distinguishes_host_and_extension(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "modelb")
+            for path in (fixture.app, fixture.extension):
+                (path / "_CodeSignature").mkdir()
+            valid = plistlib.dumps(
+                {"com.apple.developer.networking.networkextension": ["packet-tunnel-provider"]}
+            )
+            invalid = plistlib.dumps(
+                {"com.apple.developer.networking.networkextension": ["dns-proxy"]}
+            )
+            base_run = fixture.run
+
+            def host_invalid_run(command, **kwargs):
+                if Path(command[0]).name == "codesign":
+                    return Completed(stdout=invalid if Path(command[-1]) == fixture.app else valid)
+                return base_run(command, **kwargs)
+
+            fixture.run = host_invalid_run
+            self.assert_rejected(fixture, "modelb", "Model B host effective entitlement")
+
+            def extension_invalid_run(command, **kwargs):
+                if Path(command[0]).name == "codesign":
+                    return Completed(stdout=valid if Path(command[-1]) == fixture.app else invalid)
+                return base_run(command, **kwargs)
+
+            fixture.run = extension_invalid_run
+            self.assert_rejected(fixture, "modelb", "Model B extension effective entitlement")
+
+    def test_rejects_out_of_bundle_and_dangling_symlinks_before_tool_access(self):
+        mutations = ("extension", "app-executable", "python-framework", "python-payload", "dangling")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                flavor = "modelb" if mutation in ("extension", "dangling") else "shipping"
+                fixture = ArtifactFixture(root, flavor)
+                outside = root / "outside"
+                if mutation == "extension":
+                    fixture.extension.rename(outside)
+                    fixture.extension.symlink_to(outside, target_is_directory=True)
+                elif mutation == "app-executable":
+                    executable = fixture.app / fixture.executable
+                    executable.rename(outside)
+                    executable.symlink_to(outside)
+                elif mutation == "python-framework":
+                    framework = fixture.app / "Frameworks/Python.framework"
+                    framework.rename(outside)
+                    framework.symlink_to(outside, target_is_directory=True)
+                elif mutation == "python-payload":
+                    payload = fixture.app / "app_packages"
+                    payload.rename(outside)
+                    payload.symlink_to(outside, target_is_directory=True)
+                else:
+                    (fixture.app / "Resources").mkdir()
+                    (fixture.app / "Resources/dangling").symlink_to(root / "missing")
+                self.assert_rejected(fixture, flavor, "symlink|contained|resolve")
+
+    def test_rejects_top_level_app_symlink_but_allows_safe_internal_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = ArtifactFixture(root, "shipping")
+            real_app = root / "Real.app"
+            fixture.app.rename(real_app)
+            fixture.app.symlink_to(real_app, target_is_directory=True)
+            self.assert_rejected(fixture, "shipping", "top-level.*symlink")
+
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "shipping")
+            resources = fixture.app / "Resources"
+            resources.mkdir()
+            (resources / "target.txt").write_text("safe", encoding="utf-8")
+            (resources / "internal-link").symlink_to(resources / "target.txt")
+            self.verify(fixture, "shipping")
 
     def test_cli_rejects_unknown_flavor(self):
         result = subprocess.run(
@@ -344,15 +475,19 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("-resultBundlePath TestResults.xcresult", workflow)
         self.assertIn("rm -rf TestResults.xcresult", workflow)
 
-    def test_every_shell_block_is_fail_fast_and_builds_disable_signing(self):
+    def test_every_shell_block_is_fail_fast_and_builds_use_adhoc_signing(self):
         lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
         for index, line in enumerate(lines):
             if line.strip() == "run: |":
                 self.assertEqual(lines[index + 1].strip(), "set -euo pipefail")
-        self.assertGreaterEqual(
-            WORKFLOW.read_text(encoding="utf-8").count("CODE_SIGNING_ALLOWED=NO"),
-            3,
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn("CODE_SIGNING_ALLOWED=NO", workflow)
+        signing = (
+            "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- "
+            'CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" '
+            'PROVISIONING_PROFILE_SPECIFIER=""'
         )
+        self.assertEqual(workflow.count(signing), 3)
 
 
 if __name__ == "__main__":
