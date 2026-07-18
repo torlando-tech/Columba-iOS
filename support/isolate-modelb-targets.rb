@@ -15,6 +15,7 @@ PROJECT_PATH = File.expand_path(
   ENV.fetch('COLUMBA_PROJECT_PATH', File.expand_path('../Columba.xcodeproj', __dir__))
 )
 SHIPPING_TARGET_NAME = 'ColumbaApp'
+SHIPPING_TEST_TARGET_NAME = 'ColumbaAppTests'
 MODEL_B_TARGET_NAME = 'ColumbaModelBApp'
 EXTENSION_TARGET_NAME = 'ColumbaNetworkExtension'
 SHIPPING_ENTITLEMENTS = 'Sources/ColumbaApp/Resources/ColumbaApp.entitlements'
@@ -208,8 +209,11 @@ module ModelBTargetIsolation
 
   def reconcile_extension_dependency(model_b, extension)
     matching = model_b.dependencies.select { |dependency| dependency.target == extension }
-    matching.drop(1).each { |dependency| remove_dependency(dependency) }
-    model_b.add_dependency(extension) if matching.empty?
+    retained = matching.first
+    model_b.dependencies.dup.each do |dependency|
+      remove_dependency(dependency) unless dependency == retained
+    end
+    model_b.add_dependency(extension) unless retained
   end
 
   def reconcile_extension_embed(project, model_b, extension)
@@ -265,6 +269,23 @@ module ModelBTargetIsolation
     end
   end
 
+  def reconcile_shipping_test_configurations(project, shipping)
+    shipping_tests = project.targets.find { |target| target.name == SHIPPING_TEST_TARGET_NAME } or
+      raise "Missing #{SHIPPING_TEST_TARGET_NAME} target"
+    unless shipping_tests.dependencies.any? { |dependency| dependency.target == shipping }
+      raise "#{SHIPPING_TEST_TARGET_NAME} does not depend on #{SHIPPING_TARGET_NAME}"
+    end
+
+    shipping_by_name = shipping.build_configurations.to_h do |configuration|
+      [configuration.name, configuration]
+    end
+    shipping_tests.build_configurations.each do |test_configuration|
+      shipping_configuration = shipping_by_name.fetch(test_configuration.name)
+      shipping_flags = compilation_tokens(shipping_configuration) & CANONICAL_FLAGS
+      set_compilation_tokens(test_configuration, shipping_flags)
+    end
+  end
+
   def reconcile_target_identity(project, shipping, model_b)
     model_b.name = MODEL_B_TARGET_NAME
     model_b.product_name = MODEL_B_TARGET_NAME
@@ -300,6 +321,24 @@ module ModelBTargetIsolation
       phase.respond_to?(:files) && phase.files.any? { |file| file.file_ref == extension.product_reference }
     end
     raise 'Model B extension dependency is not unique' unless model_b.dependencies.count { |dep| dep.target == extension } == 1
+    raise 'Model B has stale target dependencies' unless model_b.dependencies.one?
+
+    shipping_tests = project.targets.find { |target| target.name == SHIPPING_TEST_TARGET_NAME } or
+      raise "Missing #{SHIPPING_TEST_TARGET_NAME} target"
+    raise 'shipping test target dependency changed' unless shipping_tests.dependencies.any? do |dependency|
+      dependency.target == shipping
+    end
+    shipping_by_name = shipping.build_configurations.to_h do |configuration|
+      [configuration.name, configuration]
+    end
+    shipping_tests.build_configurations.each do |test_configuration|
+      shipping_configuration = shipping_by_name.fetch(test_configuration.name)
+      test_flags = compilation_tokens(test_configuration) & CANONICAL_FLAGS
+      shipping_flags = compilation_tokens(shipping_configuration) & CANONICAL_FLAGS
+      raise "shipping host/test flavor mismatch in #{test_configuration.name}" unless test_flags == shipping_flags
+      test_host = test_configuration.build_settings.fetch('TEST_HOST', '')
+      raise "shipping TEST_HOST changed in #{test_configuration.name}" unless test_host.include?('ColumbaApp.app')
+    end
 
     embed_phases = model_b.build_phases.select { |phase| extension_embed_phase?(phase) }
     raise 'Model B embed phase is not unique' unless embed_phases.one?
@@ -336,6 +375,7 @@ embed_phase = ModelBTargetIsolation.reconcile_extension_embed(project, model_b, 
 model_b.build_phases.clear
 (regular_phases + [embed_phase]).each { |phase| model_b.build_phases << phase }
 ModelBTargetIsolation.reconcile_configurations(project, shipping, model_b)
+ModelBTargetIsolation.reconcile_shipping_test_configurations(project, shipping)
 ModelBTargetIsolation.strip_shipping_extension_graph(shipping, extension)
 ModelBTargetIsolation.assert_graph!(project)
 project.save
