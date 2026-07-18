@@ -66,7 +66,40 @@ module ModelBTargetIsolation
   end
 
   def remove_dependency(dependency)
+    proxy = dependency.target_proxy
     dependency.remove_from_project
+    proxy.remove_from_project if proxy && proxy.referrers.empty?
+  end
+
+  def phase_owners(project, phase)
+    project.targets.select do |target|
+      target.build_phases.any? { |candidate| candidate.uuid == phase.uuid }
+    end
+  end
+
+  def build_file_owners(project, build_file)
+    project.objects.select do |object|
+      object.respond_to?(:files) && object.files.any? { |candidate| candidate.uuid == build_file.uuid }
+    end
+  end
+
+  def remove_phase_for_target(project, target, phase)
+    if phase_owners(project, phase).none? { |owner| owner.uuid != target.uuid }
+      phase.files.dup.each do |build_file|
+        remove_build_file_from_phase(project, phase, build_file)
+      end
+      phase.remove_from_project
+    else
+      target.build_phases.delete(phase)
+    end
+  end
+
+  def remove_build_file_from_phase(project, phase, build_file)
+    if build_file_owners(project, build_file).none? { |owner| owner.uuid != phase.uuid }
+      remove_build_file(build_file)
+    else
+      phase.files.delete(build_file)
+    end
   end
 
   def strip_shipping_extension_graph(shipping, extension)
@@ -137,7 +170,9 @@ module ModelBTargetIsolation
       model_b.build_phases.each do |phase|
         next unless phase.respond_to?(:files)
         phase.files.dup.each do |build_file|
-          remove_build_file(build_file) if build_file.product_ref == dependency
+          next unless build_file.product_ref&.uuid == dependency.uuid
+
+          remove_build_file_from_phase(project, phase, build_file)
         end
       end
       dependency.remove_from_project
@@ -167,7 +202,9 @@ module ModelBTargetIsolation
       end
     end
 
-    existing = destination.files.group_by { |build_file| build_file_key(build_file) }
+    existing = destination.files.select do |build_file|
+      build_file_owners(project, build_file).map(&:uuid) == [destination.uuid]
+    end.group_by { |build_file| build_file_key(build_file) }
     ordered = source.files.zip(desired_refs).map do |source_build_file, (kind, reference)|
       key = [kind, reference.uuid]
       build_file = existing.fetch(key, []).shift || project.new(
@@ -186,7 +223,10 @@ module ModelBTargetIsolation
       build_file
     end
 
-    (destination.files.to_a - ordered).each { |build_file| remove_build_file(build_file) }
+    ordered_ids = ordered.map(&:uuid)
+    destination.files.to_a.reject { |build_file| ordered_ids.include?(build_file.uuid) }.each do |build_file|
+      remove_build_file_from_phase(project, destination, build_file)
+    end
     destination.files.clear
     ordered.each { |build_file| destination.files << build_file }
   end
@@ -194,6 +234,7 @@ module ModelBTargetIsolation
   def reconcile_regular_phases(project, shipping, model_b, package_map)
     source_phases = shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
     available = model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
+                             .select { |phase| phase_owners(project, phase).map(&:uuid) == [model_b.uuid] }
                              .group_by { |phase| phase_key(phase) }
 
     ordered = source_phases.map do |source|
@@ -203,8 +244,10 @@ module ModelBTargetIsolation
       destination
     end
 
-    stale = model_b.build_phases.reject { |phase| extension_embed_phase?(phase) } - ordered
-    stale.each { |phase| remove_phase(phase) }
+    ordered_ids = ordered.map(&:uuid)
+    stale = model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
+                   .reject { |phase| ordered_ids.include?(phase.uuid) }
+    stale.each { |phase| remove_phase_for_target(project, model_b, phase) }
     ordered
   end
 
@@ -218,9 +261,14 @@ module ModelBTargetIsolation
   end
 
   def reconcile_extension_embed(project, model_b, extension)
-    candidates = model_b.build_phases.select { |phase| extension_embed_phase?(phase) }
+    all_candidates = model_b.build_phases.select { |phase| extension_embed_phase?(phase) }
+    candidates = all_candidates.select do |candidate|
+      phase_owners(project, candidate).map(&:uuid) == [model_b.uuid]
+    end
     phase = candidates.shift || project.new(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
-    candidates.each { |duplicate| remove_phase(duplicate) }
+    all_candidates.reject { |candidate| candidate.uuid == phase.uuid }.each do |duplicate|
+      remove_phase_for_target(project, model_b, duplicate)
+    end
 
     phase.name = 'Embed App Extensions'
     phase.symbol_dst_subfolder_spec = :plug_ins
@@ -228,10 +276,14 @@ module ModelBTargetIsolation
     phase.build_action_mask = '2147483647'
     phase.run_only_for_deployment_postprocessing = '0'
 
-    matching = phase.files.select { |build_file| build_file.file_ref == extension.product_reference }
+    matching = phase.files.select do |build_file|
+      build_file.file_ref == extension.product_reference &&
+        build_file_owners(project, build_file).map(&:uuid) == [phase.uuid]
+    end
     build_file = matching.shift || project.new(Xcodeproj::Project::Object::PBXBuildFile)
-    matching.each { |duplicate| remove_build_file(duplicate) }
-    (phase.files.to_a - [build_file]).each { |stale| remove_build_file(stale) }
+    phase.files.to_a.reject { |candidate| candidate.uuid == build_file.uuid }.each do |stale|
+      remove_build_file_from_phase(project, phase, stale)
+    end
     build_file.file_ref = extension.product_reference
     build_file.product_ref = nil
     build_file.settings = {
@@ -312,12 +364,61 @@ module ModelBTargetIsolation
     attributes[model_b.uuid] = duplicate_value(attributes.fetch(shipping.uuid, {}))
   end
 
+  def remove_duplicate_target(project, duplicate)
+    project.targets.each do |target|
+      target.dependencies.dup.each do |dependency|
+        proxy_target_id = dependency.target_proxy&.remote_global_id_string
+        target_id = dependency.target&.uuid
+        remove_dependency(dependency) if target_id == duplicate.uuid || proxy_target_id == duplicate.uuid
+      end
+    end
+    duplicate.dependencies.dup.each { |dependency| remove_dependency(dependency) }
+
+    product = duplicate.product_reference
+    product_id = product&.uuid
+    # PBX objects compare by semantic content in xcodeproj. Give the stale
+    # product a unique identity before removal so referrer cleanup cannot also
+    # match and detach the retained same-named product reference.
+    product.path = "__stale_#{product_id}.app" if product
+    attributes = project.root_object.attributes['TargetAttributes'] ||= {}
+    attributes.delete(duplicate.uuid)
+    duplicate.remove_from_project
+
+    return unless product_id && project.objects_by_uuid.key?(product_id)
+
+    project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::PBXBuildFile) &&
+        object.file_ref&.uuid == product_id
+    end.each { |build_file| remove_build_file(build_file) }
+    project.objects_by_uuid.fetch(product_id).remove_from_project
+  end
+
+  def clean_target_metadata(project, model_b)
+    products = project.products_group.children.select do |reference|
+      reference.path == "#{MODEL_B_TARGET_NAME}.app"
+    end
+    products.reject { |product| product.uuid == model_b.product_reference.uuid }.each do |product|
+      product_id = product.uuid
+      product.path = "__stale_#{product_id}.app"
+      project.objects.select do |object|
+        object.is_a?(Xcodeproj::Project::Object::PBXBuildFile) &&
+          object.file_ref&.uuid == product_id
+      end.each { |build_file| remove_build_file(build_file) }
+      product.remove_from_project
+    end
+
+    attributes = project.root_object.attributes['TargetAttributes'] ||= {}
+    live_target_ids = project.targets.map(&:uuid)
+    attributes.delete_if { |uuid, _value| !live_target_ids.include?(uuid) }
+  end
+
   def create_or_find_model_b(project, shipping)
     existing = project.targets.select { |target| target.name == MODEL_B_TARGET_NAME }
     model_b = existing.shift
-    existing.each(&:remove_from_project)
+    existing.each { |duplicate| remove_duplicate_target(project, duplicate) }
     model_b ||= project.new_target(:application, MODEL_B_TARGET_NAME, :ios, nil)
     reconcile_target_identity(project, shipping, model_b)
+    clean_target_metadata(project, model_b)
     model_b
   end
 
@@ -366,9 +467,37 @@ module ModelBTargetIsolation
     attributes = Array(embed_files.first.settings&.fetch('ATTRIBUTES', nil))
     raise 'Model B extension embed lacks CodeSignOnCopy' unless attributes.include?('CodeSignOnCopy')
 
-    reused = shipping.build_phases.flat_map(&:files).map(&:uuid) &
-             model_b.build_phases.flat_map(&:files).map(&:uuid)
-    raise "app targets reuse PBXBuildFile objects: #{reused.join(', ')}" unless reused.empty?
+    phase_ownership = Hash.new { |hash, key| hash[key] = [] }
+    project.targets.each do |target|
+      target.build_phases.each { |phase| phase_ownership[phase.uuid] << target.name }
+    end
+    shared_phases = phase_ownership.select { |_uuid, owners| owners.size > 1 }
+    raise "build phases have multiple target owners: #{shared_phases.inspect}" unless shared_phases.empty?
+
+    build_file_ownership = Hash.new { |hash, key| hash[key] = [] }
+    project.objects.each do |object|
+      next unless object.respond_to?(:files)
+
+      object.files.each { |build_file| build_file_ownership[build_file.uuid] << object.uuid }
+    end
+    shared_build_files = build_file_ownership.select { |_uuid, owners| owners.size > 1 }
+    unless shared_build_files.empty?
+      raise "PBXBuildFile objects have multiple phase owners: #{shared_build_files.inspect}"
+    end
+
+    model_b_product_ids = project.products_group.children.filter_map do |reference|
+      reference.uuid if reference.path == "#{MODEL_B_TARGET_NAME}.app"
+    end
+    unless model_b_product_ids == [model_b.product_reference.uuid]
+      raise "Model B product reference is not unique: #{model_b_product_ids.join(', ')}"
+    end
+
+    target_ids = project.targets.map(&:uuid)
+    attributes = project.root_object.attributes.fetch('TargetAttributes', {})
+    stale_attributes = attributes.keys - target_ids
+    unless stale_attributes.empty?
+      raise "TargetAttributes contains nonexistent targets: #{stale_attributes.join(', ')}"
+    end
 
     [shipping, model_b].each do |target|
       phase_ids = target.build_phases.map(&:uuid)

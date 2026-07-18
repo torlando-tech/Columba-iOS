@@ -184,6 +184,125 @@ class ModelBTargetIsolationTests < Minitest::Test
     assert phase_owners.values.all?(&:one?), 'a build phase is attached to multiple targets'
   end
 
+  def test_reconciler_detaches_shared_shipping_phase_and_build_file_without_mutating_shipping
+    Dir.mktmpdir('columba-modelb-shared-ownership') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+
+      fixture = Xcodeproj::Project.open(temporary_project)
+      fixture_shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      fixture_model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      shipping_sources = fixture_shipping.source_build_phase
+      model_b_sources = fixture_model_b.source_build_phase
+      shared_build_file = shipping_sources.files.first
+      fixture_model_b.build_phases << shipping_sources
+      fixture.save
+
+      # xcodeproj refuses to serialize a PBXBuildFile with two parents, so seed
+      # that malformed relationship directly after serializing the shared phase.
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      phase_header = "\t\t#{model_b_sources.uuid} /* Sources */ = {"
+      phase_start = pbxproj.index(phase_header) or raise 'missing Model B Sources phase in fixture'
+      files_start = pbxproj.index("\t\t\tfiles = (\n", phase_start) or raise 'missing Model B Sources files'
+      insertion_point = files_start + "\t\t\tfiles = (\n".length
+      shared_entry = "\t\t\t\t#{shared_build_file.uuid} /* malformed shared build file */,\n"
+      pbxproj.insert(insertion_point, shared_entry)
+      File.write(pbxproj_path, pbxproj)
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_shipping = mutated.targets.find { |target| target.name == 'ColumbaApp' }
+      mutated_model_b = mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      shipping_source_id = mutated_shipping.source_build_phase.uuid
+      shared_build_file_id = mutated_shipping.source_build_phase.files.first.uuid
+      assert_includes mutated_model_b.build_phases.map(&:uuid), shipping_source_id,
+                      'shared phase mutation did not survive serialization'
+      shared_file_survived = mutated_model_b.build_phases.any? do |phase|
+        phase.uuid != shipping_source_id && phase.files.any? { |file| file.uuid == shared_build_file_id }
+      end
+      assert shared_file_survived, 'shared build-file mutation did not survive serialization'
+      shipping_semantic = mutated_shipping.to_hash
+
+      output, error, status = Open3.capture3(
+        { 'COLUMBA_PROJECT_PATH' => temporary_project }, RbConfig.ruby, SCRIPT_PATH
+      )
+      assert status.success?, "ownership reconciliation failed:\n#{output}\n#{error}"
+
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+      reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      assert_equal shipping_semantic, reconciled_shipping.to_hash,
+                   'shipping target changed while detaching malformed Model B ownership'
+      refute_includes reconciled_model_b.build_phases.map(&:uuid), shipping_source_id
+      refute_includes reconciled_model_b.build_phases.flat_map(&:files).map(&:uuid), shared_build_file_id
+
+      local_sources = reconciled_model_b.source_build_phase
+      shipping_first = reconciled_shipping.source_build_phase.files.first
+      local_first = local_sources.files.find { |file| file.file_ref == shipping_first.file_ref }
+      refute_nil local_first
+      refute_equal shipping_first.uuid, local_first.uuid
+
+      phase_owners = Hash.new { |hash, key| hash[key] = [] }
+      build_file_owners = Hash.new { |hash, key| hash[key] = [] }
+      reconciled.targets.each do |target|
+        target.build_phases.each { |phase| phase_owners[phase.uuid] << target.uuid }
+      end
+      reconciled.objects.each do |object|
+        next unless object.respond_to?(:files)
+
+        object.files.each { |file| build_file_owners[file.uuid] << object.uuid }
+      end
+      assert phase_owners.values.all?(&:one?), 'a phase still has multiple target owners'
+      assert build_file_owners.values.all?(&:one?), 'a build file still has multiple phase owners'
+    end
+  end
+
+  def test_reconciler_removes_duplicate_target_product_dependencies_and_attributes
+    Dir.mktmpdir('columba-modelb-duplicate-target') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+
+      fixture = Xcodeproj::Project.open(temporary_project)
+      retained = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      duplicate = fixture.new_target(:application, 'ColumbaModelBApp', :ios, nil)
+      duplicate_id = duplicate.uuid
+      duplicate_product_id = duplicate.product_reference.uuid
+      fixture.root_object.attributes['TargetAttributes'][duplicate_id] = { 'CreatedOnToolsVersion' => 'stale' }
+      retained.add_dependency(duplicate)
+      fixture.save
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      assert_equal 2, mutated.targets.count { |target| target.name == 'ColumbaModelBApp' }
+      duplicate_products = mutated.products_group.children.count do |reference|
+        reference.path == 'ColumbaModelBApp.app'
+      end
+      assert_equal 2, duplicate_products
+      assert mutated.root_object.attributes['TargetAttributes'].key?(duplicate_id)
+
+      output, error, status = Open3.capture3(
+        { 'COLUMBA_PROJECT_PATH' => temporary_project }, RbConfig.ruby, SCRIPT_PATH
+      )
+      assert status.success?, "duplicate-target reconciliation failed:\n#{output}\n#{error}"
+
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      model_b_targets = reconciled.targets.select { |target| target.name == 'ColumbaModelBApp' }
+      assert_equal 1, model_b_targets.size
+      products = reconciled.products_group.children.select do |reference|
+        reference.path == 'ColumbaModelBApp.app'
+      end
+      assert_equal [model_b_targets.first.product_reference.uuid], products.map(&:uuid)
+      refute reconciled.objects_by_uuid.key?(duplicate_id)
+      refute reconciled.objects_by_uuid.key?(duplicate_product_id)
+      attributes = reconciled.root_object.attributes.fetch('TargetAttributes', {})
+      assert_empty attributes.keys - reconciled.targets.map(&:uuid)
+      stale_proxy = reconciled.objects.any? do |object|
+        object.is_a?(Xcodeproj::Project::Object::PBXContainerItemProxy) &&
+          object.remote_global_id_string == duplicate_id
+      end
+      refute stale_proxy
+    end
+  end
+
   def test_reconciler_repairs_dependency_mutations_preserves_extension_and_is_byte_idempotent
     Dir.mktmpdir('columba-modelb-isolation') do |directory|
       temporary_project = File.join(directory, 'Columba.xcodeproj')
