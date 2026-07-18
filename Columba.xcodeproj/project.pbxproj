@@ -211,6 +211,7 @@
 		80D6B89564EAC050DD8FC6EC /* Identicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F019 /* Identicon.swift */; };
 		81B38F51CE308680ACB9ACB2 /* MigrationExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05D /* MigrationExporter.swift */; };
 		82010207856E1B25E8137512 /* CodecSelectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */; };
+		83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A1380C075A9F67E1B173EA94 /* ReticulumSwift */; };
 		861533706E74F637CD32C1CC /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04C /* OnboardingView.swift */; };
 		8617F06252A9D8A0C052959B /* IconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F038 /* IconPickerView.swift */; };
 		86182491293F826E8940E753 /* RNodeWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F054 /* RNodeWizardView.swift */; };
@@ -335,13 +336,11 @@
 		FCCD8B0C2F027D65D2DD8759 /* NomadNetBrowserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07F /* NomadNetBrowserService.swift */; };
 		FDE0DB7957C9D877D3E67367 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
 		NERN2 /* NEReticulumNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = NERN1 /* NEReticulumNode.swift */; };
-		NMF1B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
 		NMF2B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
 		OBQ2B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		PNT001 /* PythonNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = PNT002 /* PythonNetworkTransport.swift */; };
 		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		RFT002 /* RuntimeFlavorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RFT001 /* RuntimeFlavorTests.swift */; };
-		SRB001 /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
 		TBDT /* BLESeamDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDT /* BLESeamDriverTests.swift */; };
 /* End PBXBuildFile section */
@@ -616,6 +615,7 @@
 				F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */,
 				13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */,
 				2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */,
+				83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1161,6 +1161,7 @@
 				0FD6A68A52A54D21FDB70324 /* RNSAPI */,
 				5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */,
 				2F8EC8222FC732AF00235991 /* LXMFSwift */,
+				A1380C075A9F67E1B173EA94 /* ReticulumSwift */,
 			);
 			productName = ColumbaApp;
 			productReference = PROD /* ColumbaApp.app */;
@@ -1407,7 +1408,6 @@
 				113FFF9C5A228CC0C294A3D9 /* SharedFrameQueue.swift in Sources */,
 				2332846F7A8E0E2234D7EF8D /* ExtensionDiagLog.swift in Sources */,
 				CE8E3B8292DA54170D020367 /* AppGroupPaths.swift in Sources */,
-				6965E7A95909A97BDBA20535 /* NomadNetFetch.swift in Sources */,
 				7A9BCAF4AA8130159163BA6C /* OnboardingRestoreSheet.swift in Sources */,
 				58560228AFEDBA4201D9F9D4 /* PlatformCompat.swift in Sources */,
 				C126E88E13D9DB7CCE7AD8A0 /* MicronDocument.swift in Sources */,
@@ -1426,7 +1426,6 @@
 				906AAC4C151F816F189BBD34 /* PythonBridge.swift in Sources */,
 				150F9B06F1516792D01A1A72 /* PythonRuntime.swift in Sources */,
 				6D99248103F010707D69AF48 /* PythonRNSBackend.swift in Sources */,
-				33E0E91CAEFB07F13C04637D /* SwiftRNSBackend.swift in Sources */,
 				AA9D3715FB399E675BD53B41 /* PythonConfigWriter.swift in Sources */,
 				0B768533EC90008D3E23C326 /* AudioManager.swift in Sources */,
 				FC1149733FD2E4E009612DDF /* CallKitManager.swift in Sources */,
@@ -1469,6 +1468,8 @@
 				5C7438876260CE1CD77FC20A /* AppGroupRNodeServer.swift in Sources */,
 				CC036F8B85839F5FC3C138E2 /* RNodeSeam.swift in Sources */,
 				47FC07D2AE8ECD5D88A868BA /* PropagationSeam.swift in Sources */,
+				33E0E91CAEFB07F13C04637D /* SwiftRNSBackend.swift in Sources */,
+				6965E7A95909A97BDBA20535 /* NomadNetFetch.swift in Sources */,
 				4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1586,7 +1587,6 @@
 				076B /* SharedFrameQueue.swift in Sources */,
 				EDL1B /* ExtensionDiagLog.swift in Sources */,
 				AGP1B /* AppGroupPaths.swift in Sources */,
-				NMF1B /* NomadNetFetch.swift in Sources */,
 				079B /* OnboardingRestoreSheet.swift in Sources */,
 				07AB /* PlatformCompat.swift in Sources */,
 				07CB /* MicronDocument.swift in Sources */,
@@ -1605,7 +1605,6 @@
 				4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */,
 				C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */,
 				668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */,
-				SRB001 /* SwiftRNSBackend.swift in Sources */,
 				69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */,
 				71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */,
 				D33B15C781E3C98A5CBD06F3 /* CallKitManager.swift in Sources */,
@@ -2609,6 +2608,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
 			productName = LXMFSwift;
+		};
+		A1380C075A9F67E1B173EA94 /* ReticulumSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
+			productName = ReticulumSwift;
 		};
 		A49337EFC55C10979AEB702B /* LXSTSwift */ = {
 			isa = XCSwiftPackageProductDependency;

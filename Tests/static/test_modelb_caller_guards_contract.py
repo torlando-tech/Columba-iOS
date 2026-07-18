@@ -17,6 +17,8 @@ CALLERS = (
 )
 MODEL_B_FLAG = "COLUMBA_RUNTIME_MODEL_B"
 MODEL_B_DECLARATIONS = (
+    "SwiftRNSBackend",
+    "NomadNetFetch",
     "ModelBRNodeService",
     "AppGroupRNodeSeamTransport",
     "AppGroupRNodeSeamWire",
@@ -516,6 +518,10 @@ class ModelBCallerGuardContractTests(unittest.TestCase):
     def test_unguarded_executable_reference_is_rejected(self) -> None:
         self.assertEqual([(1, "ModelBRNodeService.shared.start()")],
                          self.references("ModelBRNodeService.shared.start()\n"))
+
+    def test_newly_isolated_native_backend_references_are_rejected(self) -> None:
+        snippet = "SwiftRNSBackend()\nNomadNetFetch.fetch()\n"
+        self.assertEqual([1, 2], [line for line, _ in self.references(snippet)])
 
     def test_identifiers_in_normal_and_multiline_strings_are_ignored(self) -> None:
         snippet = 'let normal = "ModelBRNodeService \\\"quoted\\\""\nlet multiline = """\nRNodeSeamConfig\n"""\n'

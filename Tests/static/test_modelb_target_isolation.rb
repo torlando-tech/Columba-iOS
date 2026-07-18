@@ -41,6 +41,8 @@ MODEL_B_ONLY_SOURCE_PATHS = %w[
   Sources/Shared/AppGroupRNodeServer.swift
   Sources/Shared/RNodeSeam.swift
   Sources/Shared/PropagationSeam.swift
+  Sources/RNSBackendSwift/SwiftRNSBackend.swift
+  Sources/Shared/NomadNetFetch.swift
   Sources/ColumbaApp/Services/ModelBInboundReplay.swift
 ].freeze
 MODEL_B_ONLY_SOURCE_METADATA = MODEL_B_ONLY_SOURCE_PATHS.to_h do |path|
@@ -58,7 +60,6 @@ SHIPPING_REQUIRED_SOURCE_PATHS = %w[
   Sources/PythonBridge/PythonBridge.swift
   Sources/PythonBridge/PythonRuntime.swift
   Sources/RNSBackendPy/PythonRNSBackend.swift
-  Sources/Shared/NomadNetFetch.swift
   Sources/Shared/SharedFrameQueue.swift
   Sources/Shared/ExtensionDiagLog.swift
 ].freeze
@@ -262,7 +263,7 @@ class ModelBTargetIsolationTests < Minitest::Test
   end
 
   def test_application_membership_is_authoritatively_partitioned
-    assert_equal 22, MODEL_B_ONLY_SOURCE_PATHS.size
+    assert_equal 24, MODEL_B_ONLY_SOURCE_PATHS.size
     shipping_phases = @shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
     model_phases = @model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
     assert_equal shipping_phases.map { |phase| phase_signature(phase) },
@@ -288,10 +289,10 @@ class ModelBTargetIsolationTests < Minitest::Test
 
     shipping_products = @shipping.package_product_dependencies.map(&:product_name)
     model_b_products = @model_b.package_product_dependencies.map(&:product_name)
-    refute_includes shipping_products, 'ReticulumSwift'
+    assert_equal 1, shipping_products.count('ReticulumSwift')
     assert_includes model_b_products, 'ReticulumSwift'
     assert_includes shipping_products, 'LXMFSwift'
-    assert_equal shipping_products + ['ReticulumSwift'], model_b_products
+    assert_equal shipping_products, model_b_products
     @shipping.package_product_dependencies.each do |left|
       right = @model_b.package_product_dependencies.find do |candidate|
         candidate.product_name == left.product_name
@@ -300,6 +301,24 @@ class ModelBTargetIsolationTests < Minitest::Test
       refute_same left, right
       assert_same left.package, right.package
     end
+    [@shipping, @model_b].each do |target|
+      dependency = target.package_product_dependencies.find do |candidate|
+        candidate.product_name == 'ReticulumSwift'
+      end
+      files = target.frameworks_build_phase.files.select do |file|
+        file.product_ref&.product_name == 'ReticulumSwift'
+      end
+      assert_equal 1, files.size
+      assert_equal dependency.uuid, files.first.product_ref.uuid
+    end
+    shipping_reticulum = @shipping.package_product_dependencies.find do |dependency|
+      dependency.product_name == 'ReticulumSwift'
+    end
+    model_b_reticulum = @model_b.package_product_dependencies.find do |dependency|
+      dependency.product_name == 'ReticulumSwift'
+    end
+    refute_equal shipping_reticulum.uuid, model_b_reticulum.uuid
+    assert_equal shipping_reticulum.package.uuid, model_b_reticulum.package.uuid
   end
 
   def test_reconciler_repairs_shipping_source_and_reticulum_mutations
@@ -337,16 +356,18 @@ class ModelBTargetIsolationTests < Minitest::Test
       stale_metadata_file.platform_filter = 'macos'
       stale_metadata_file.platform_filters = %w[ios macos]
 
-      model_reticulum = model_b.package_product_dependencies.find do |dependency|
+      shipping_reticulum = shipping.package_product_dependencies.find do |dependency|
         dependency.product_name == 'ReticulumSwift'
       end
-      seeded_reticulum = fixture.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
-      seeded_reticulum.product_name = 'ReticulumSwift'
-      seeded_reticulum.package = model_reticulum.package
-      shipping.package_product_dependencies << seeded_reticulum
-      seeded_framework = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
-      seeded_framework.product_ref = seeded_reticulum
-      shipping.frameworks_build_phase.files << seeded_framework
+      refute_nil shipping_reticulum
+      shipping_reticulum_id = shipping_reticulum.uuid
+      shipping.package_product_dependencies.delete_if do |dependency|
+        dependency.uuid == shipping_reticulum.uuid
+      end
+      shipping.frameworks_build_phase.files.select do |file|
+        file.product_ref&.uuid == shipping_reticulum.uuid
+      end.each(&:remove_from_project)
+      shipping_reticulum.remove_from_project if shipping_reticulum.referrers.empty?
       fixture.save
 
       mutated = Xcodeproj::Project.open(temporary_project)
@@ -358,7 +379,10 @@ class ModelBTargetIsolationTests < Minitest::Test
       assert_equal 'macos', isolated_source_metadata(
         mutated_model_b, File.dirname(temporary_project)
       ).fetch(stale_metadata_path).fetch(:platform_filter)
-      assert_includes mutated_shipping.package_product_dependencies.map(&:product_name), 'ReticulumSwift'
+      refute_includes mutated_shipping.package_product_dependencies.map(&:product_name), 'ReticulumSwift'
+      refute(mutated_shipping.frameworks_build_phase.files.any? do |file|
+        file.product_ref&.product_name == 'ReticulumSwift'
+      end)
       extension_before = target_graph_signature(
         mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
       )
@@ -383,10 +407,19 @@ class ModelBTargetIsolationTests < Minitest::Test
         file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == removed_model_b_path
       end
       assert_equal 'ios', replay_build_file&.platform_filter
-      refute_includes reconciled_shipping.package_product_dependencies.map(&:product_name), 'ReticulumSwift'
-      refute(reconciled_shipping.frameworks_build_phase.files.any? do |file|
+      assert_equal 1, reconciled_shipping.package_product_dependencies.count { |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      }
+      shipping_reticulum_file = reconciled_shipping.frameworks_build_phase.files.select do |file|
         file.product_ref&.product_name == 'ReticulumSwift'
-      end)
+      end
+      assert_equal 1, shipping_reticulum_file.size
+      reconciled_shipping_reticulum = reconciled_shipping.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      assert_equal reconciled_shipping_reticulum.uuid, shipping_reticulum_file.first.product_ref.uuid
+      refute_equal shipping_reticulum_id, shipping_reticulum_file.first.product_ref.uuid,
+                   'fixture did not force recreation of shipping ReticulumSwift linkage'
       assert_equal extension_before, target_graph_signature(reconciled_extension)
       assert_second_run_byte_idempotent(temporary_project)
     end
@@ -445,6 +478,17 @@ class ModelBTargetIsolationTests < Minitest::Test
         dependency.remove_from_project if dependency.referrers.empty?
       end
       product = model_b.product_reference
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      shipping_reticulum = shipping.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      shipping.package_product_dependencies.delete_if do |dependency|
+        dependency.uuid == shipping_reticulum.uuid
+      end
+      shipping.frameworks_build_phase.files.select do |file|
+        file.product_ref&.uuid == shipping_reticulum.uuid
+      end.each(&:remove_from_project)
+      shipping_reticulum.remove_from_project if shipping_reticulum.referrers.empty?
       fixture.root_object.attributes.fetch('TargetAttributes', {}).delete(model_b.uuid)
       model_b.remove_from_project
       product.remove_from_project if fixture.objects_by_uuid.key?(product.uuid)
@@ -452,6 +496,8 @@ class ModelBTargetIsolationTests < Minitest::Test
 
       mutated = Xcodeproj::Project.open(temporary_project)
       assert_nil mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      refute_includes mutated.targets.find { |target| target.name == 'ColumbaApp' }
+                              .package_product_dependencies.map(&:product_name), 'ReticulumSwift'
       assert mutated.objects_by_uuid.key?(root_package_id),
              'fixture removed the authoritative root Reticulum package reference'
       assert_empty removed_ids & mutated.objects_by_uuid.keys,
@@ -467,6 +513,8 @@ class ModelBTargetIsolationTests < Minitest::Test
         reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
       ), 'target recreation mutated the protected extension graph'
       assert reconciled.objects_by_uuid.key?(root_package_id)
+      assert_includes reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+                               .package_product_dependencies.map(&:product_name), 'ReticulumSwift'
       assert_empty removed_ids & reconciled.objects_by_uuid.keys,
                    'recreation retained orphan nodes from the removed target graph'
 
@@ -643,7 +691,10 @@ class ModelBTargetIsolationTests < Minitest::Test
       fixture = Xcodeproj::Project.open(temporary_project)
       shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
       model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
-      shipping_dependency = shipping.package_product_dependencies.first
+      shipping_dependency = shipping.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      refute_nil shipping_dependency
       local_dependency = model_b.package_product_dependencies.find do |dependency|
         dependency.product_name == shipping_dependency.product_name
       end
@@ -673,25 +724,42 @@ class ModelBTargetIsolationTests < Minitest::Test
       mutated = Xcodeproj::Project.open(temporary_project)
       mutated_shipping = mutated.targets.find { |target| target.name == 'ColumbaApp' }
       mutated_model_b = mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
-      shared_id = mutated_shipping.package_product_dependencies.first.uuid
+      shared_dependency = mutated_shipping.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      shared_id = shared_dependency.uuid
       assert_includes mutated_model_b.package_product_dependencies.map(&:uuid), shared_id
       assert(mutated_model_b.frameworks_build_phase.files.any? do |build_file|
         build_file.product_ref&.uuid == shared_id
       end)
-      shipping_before = target_graph_signature(mutated_shipping)
+      extension_before = target_graph_signature(
+        mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      )
 
       run_reconciler(temporary_project, 'shared-shipping-package')
 
       reconciled = Xcodeproj::Project.open(temporary_project)
       reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
       reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
-      assert_equal shipping_before, target_graph_signature(reconciled_shipping),
-                   'package reconciliation mutated the protected shipping graph'
-      local = reconciled_model_b.package_product_dependencies.find do |dependency|
-        dependency.product_name == reconciled_shipping.package_product_dependencies.first.product_name
+      reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      assert_equal extension_before, target_graph_signature(reconciled_extension),
+                   'Reticulum package repair mutated the protected extension graph'
+      shipping_local = reconciled_shipping.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
       end
+      local = reconciled_model_b.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      refute_nil shipping_local
       refute_nil local
-      refute_equal shared_id, local.uuid
+      refute_equal shared_id, shipping_local.uuid
+      assert_equal shared_id, local.uuid,
+                   'the formerly shared Reticulum dependency was not safely retained by Model B'
+      refute_equal shipping_local.uuid, local.uuid
+      assert_equal shipping_local.package.uuid, local.package.uuid
+      assert(reconciled_shipping.frameworks_build_phase.files.any? do |build_file|
+        build_file.product_ref&.uuid == shipping_local.uuid
+      end)
       assert(reconciled_model_b.frameworks_build_phase.files.any? do |build_file|
         build_file.product_ref&.uuid == local.uuid
       end)
