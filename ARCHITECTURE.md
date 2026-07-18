@@ -7,7 +7,7 @@ Columba has one shipping app target and one isolated experimental app target. Fl
 | Concern | Shipping Python flavor | Experimental Model B flavor |
 |---|---|---|
 | App target | `ColumbaApp` | `ColumbaModelBApp` |
-| Shared scheme | `Columba` | `Columba-ModelB` |
+| Scheme | `Columba` | `Columba-ModelB` |
 | Canonical runtime condition | `COLUMBA_RUNTIME_PYTHON` | `COLUMBA_RUNTIME_MODEL_B` |
 | Messaging runtime | Embedded Python RNS/LXMF through `PythonRNSBackend` and the Python bridge | `ProxyRnsBackend` controlling a native ReticulumSwift/LXMFSwift node in `ColumbaNetworkExtension` |
 | Runtime-owned sources | Python bridge/runtime, Python backend and models, Python network transport | Model B proxy, host lifecycle, App Group IPC/frame seams, BLE/RNode proxy lifecycle, background-delivery UI |
@@ -53,30 +53,40 @@ The script reads Xcode targets and target/package-product dependencies through t
 <!-- module-graph-start -->
 ```mermaid
 flowchart TD
-    CCodec2["CCodec2"]
-    COpus["COpus"]
     ColumbaApp["ColumbaApp"]
+    ColumbaModelBApp["ColumbaModelBApp"]
     ColumbaNetworkExtension["ColumbaNetworkExtension"]
+    LXMFSwift["LXMFSwift"]
     LXSTSwift["LXSTSwift"]
     MapLibre["MapLibre"]
     RNSAPI["RNSAPI"]
+    RNSAPITests["RNSAPITests"]
+    ReticulumSwift["ReticulumSwift"]
     SwiftBLEBridge["SwiftBLEBridge"]
+    ColumbaApp --> LXMFSwift
     ColumbaApp --> LXSTSwift
     ColumbaApp --> MapLibre
     ColumbaApp --> RNSAPI
+    ColumbaApp --> ReticulumSwift
     ColumbaApp --> SwiftBLEBridge
-    LXSTSwift --> CCodec2
-    LXSTSwift --> COpus
-    LXSTSwift --> RNSAPI
+    ColumbaModelBApp --> ColumbaNetworkExtension
+    ColumbaModelBApp --> LXMFSwift
+    ColumbaModelBApp --> LXSTSwift
+    ColumbaModelBApp --> MapLibre
+    ColumbaModelBApp --> RNSAPI
+    ColumbaModelBApp --> ReticulumSwift
+    ColumbaModelBApp --> SwiftBLEBridge
+    ColumbaNetworkExtension --> LXMFSwift
+    ColumbaNetworkExtension --> ReticulumSwift
+    RNSAPITests --> RNSAPI
     SwiftBLEBridge --> RNSAPI
     classDef app       fill:#1f6feb,stroke:#0d419d,color:#fff
     classDef extension fill:#8957e5,stroke:#553098,color:#fff
     classDef bridge    fill:#f0883e,stroke:#9e4c0f,color:#fff
     classDef spm_lib   fill:#3fb950,stroke:#0f7a2e,color:#fff
     classDef c_lib     fill:#6e7681,stroke:#30363d,color:#fff
-    class ColumbaApp app
-    class LXSTSwift,MapLibre,RNSAPI,SwiftBLEBridge spm_lib
+    class ColumbaApp,ColumbaModelBApp app
+    class LXMFSwift,LXSTSwift,MapLibre,RNSAPI,RNSAPITests,ReticulumSwift,SwiftBLEBridge spm_lib
     class ColumbaNetworkExtension extension
-    class CCodec2,COpus c_lib
 ```
 <!-- module-graph-end -->
