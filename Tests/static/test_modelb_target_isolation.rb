@@ -779,6 +779,15 @@ class ModelBTargetIsolationTests < Minitest::Test
           build_file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == missing_path
         end
         refute_nil missing_file, "fixture lacks #{missing_path} in shipping #{kind}"
+        contaminated_file = phase.files.find { |build_file| build_file.uuid != missing_file.uuid }
+        refute_nil contaminated_file, "fixture lacks contamination candidate for #{kind}"
+        protected_local_phase = if kind == :frameworks
+                                  extension.frameworks_build_phase
+                                else
+                                  extension.source_build_phase
+                                end
+        protected_local_phase_id = protected_local_phase.uuid
+        contaminated_file_id = contaminated_file.uuid
         missing_file.remove_from_project
         # Save the missing-member mutation first, then inject the canonical phase
         # UUID into the extension target. Xcodeproj normalizes a shared phase if
@@ -798,6 +807,15 @@ class ModelBTargetIsolationTests < Minitest::Test
           insertion_point,
           "\t\t\t\t#{shared_phase_id} /* malformed shared shipping #{kind} phase */,\n"
         )
+        protected_header = "\t\t#{protected_local_phase_id} /* #{protected_local_phase.display_name} */ = {"
+        protected_start = pbxproj.index(protected_header) or raise 'missing protected local phase in fixture'
+        protected_files_start = pbxproj.index("\t\t\tfiles = (\n", protected_start) or
+          raise 'missing protected local phase files in fixture'
+        protected_insertion = protected_files_start + "\t\t\tfiles = (\n".length
+        pbxproj.insert(
+          protected_insertion,
+          "\t\t\t\t#{contaminated_file_id} /* malformed independently shared build file */,\n"
+        )
         File.write(pbxproj_path, pbxproj)
 
         mutated = Xcodeproj::Project.open(temporary_project)
@@ -807,6 +825,10 @@ class ModelBTargetIsolationTests < Minitest::Test
                         "#{kind} shipping phase mutation did not survive serialization"
         assert_includes mutated_extension.build_phases.map(&:uuid), shared_phase_id,
                         "#{kind} shared-phase mutation did not survive serialization"
+        assert mutated_extension.build_phases.any? { |candidate|
+          candidate.uuid == protected_local_phase_id &&
+            candidate.files.any? { |build_file| build_file.uuid == contaminated_file_id }
+        }, "#{kind} independently shared build-file mutation did not survive serialization"
         run_reconciler(temporary_project, "shared-shipping-#{kind}")
         reconciled = Xcodeproj::Project.open(temporary_project)
         reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
@@ -817,6 +839,9 @@ class ModelBTargetIsolationTests < Minitest::Test
                      "shipping retained protected shared #{kind} phase"
         assert_equal protected_extension_before, target_graph_signature(reconciled_extension),
                      "#{kind} localization mutated protected extension phase/build-file UUIDs or metadata"
+        refute_includes reconciled_extension.build_phases.flat_map(&:files).map(&:uuid),
+                        contaminated_file_id,
+                        "#{kind} repair retained an independently shared shipping PBXBuildFile"
         assert_empty protected_phase_file_ids & local_phase.files.map(&:uuid),
                      "#{kind} localization reused protected PBXBuildFiles"
         assert_equal canonical_signature, {

@@ -245,6 +245,21 @@ module ModelBTargetIsolation
       source.files.compact.each do |build_file|
         destination.files << clone_build_file(project, build_file)
       end
+      # A malformed graph can also attach one of the old canonical phase's
+      # PBXBuildFiles independently to a protected target's local phase. Those
+      # exact objects are shipping-owned contamination; the local shipping clone
+      # already has distinct replacements, so detach every stale cross-phase
+      # reference before deleting the old phase.
+      source.files.compact.each do |build_file|
+        project.objects.each do |object|
+          next unless object.respond_to?(:files) && object.uuid != source.uuid
+
+          (object.files.length - 1).downto(0) do |file_index|
+            candidate = object.files[file_index]
+            object.files.delete_at(file_index) if candidate&.uuid == build_file.uuid
+          end
+        end
+      end
       phase_owners(project, source).each do |owner|
         owner_index = owner.build_phases.index { |phase| phase.uuid == source.uuid }
         owner.build_phases.delete_at(owner_index) if owner_index
