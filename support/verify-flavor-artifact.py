@@ -10,9 +10,9 @@ commands; existing source-membership static contracts provide the source-graph
 proof. Model B's positive graph proof is its exact embedded extension plus
 NetworkExtension load commands in both host and extension.
 
-Unsigned simulator products are supported. Device products must be signed. If
-an artifact has a _CodeSignature directory, effective entitlements become
-mandatory and are read with codesign.
+Unsigned simulator products are supported only through an explicit verifier
+option. Device products must be signed. If an artifact has a _CodeSignature
+directory, effective entitlements become mandatory and are read with codesign.
 """
 
 import argparse
@@ -252,6 +252,7 @@ def _verify_entitlements_if_signed(
     run: Callable,
     platform_name: Optional[str] = None,
     allow_empty_simulator_entitlements: bool = False,
+    allow_unsigned_simulator: bool = False,
 ) -> None:
     signature = bundle / "_CodeSignature"
     if not signature.exists():
@@ -260,6 +261,11 @@ def _verify_entitlements_if_signed(
                 "unsigned {} artifact is not permitted for {}".format(
                     platform_name or "unknown-platform", label
                 )
+            )
+        if not allow_unsigned_simulator:
+            raise VerificationError(
+                "unsigned simulator artifact requires the explicit "
+                "--allow-unsigned-simulator option for {}".format(label)
             )
         return
     _resolve_contained(signature, app_root, "{} signature".format(label))
@@ -340,6 +346,7 @@ def _verify_shipping(
     code_images: Sequence[Path],
     libraries: bytes,
     run: Callable,
+    allow_unsigned_simulator: bool,
 ) -> None:
     forbidden = next(iter(_shipping_forbidden_paths(app)), None)
     if forbidden is not None:
@@ -388,6 +395,7 @@ def _verify_shipping(
         app_root,
         run,
         app_metadata.get("DTPlatformName"),
+        allow_unsigned_simulator=allow_unsigned_simulator,
     )
 
 
@@ -398,6 +406,7 @@ def _verify_modelb(
     libraries: bytes,
     run: Callable,
     allow_empty_simulator_entitlements: bool,
+    allow_unsigned_simulator: bool,
 ) -> None:
     extension = app / "PlugIns/ColumbaNetworkExtension.appex"
     plugins = app / "PlugIns"
@@ -477,6 +486,7 @@ def _verify_modelb(
         run,
         app_metadata.get("DTPlatformName"),
         allow_empty_for_both,
+        allow_unsigned_simulator,
     )
     _verify_entitlements_if_signed(
         extension,
@@ -486,6 +496,7 @@ def _verify_modelb(
         run,
         extension_metadata.get("DTPlatformName"),
         allow_empty_for_both,
+        allow_unsigned_simulator,
     )
 
 
@@ -494,6 +505,7 @@ def verify_artifact(
     app_path,
     run: Callable = _default_run,
     allow_empty_simulator_entitlements: bool = False,
+    allow_unsigned_simulator: bool = False,
 ) -> None:
     """Verify *app_path* as ``shipping`` or ``modelb``; raise on uncertainty."""
     if flavor not in ("shipping", "modelb"):
@@ -534,7 +546,15 @@ def verify_artifact(
         run,
     )
     if flavor == "shipping":
-        _verify_shipping(app, app_root, metadata, code_images, libraries, run)
+        _verify_shipping(
+            app,
+            app_root,
+            metadata,
+            code_images,
+            libraries,
+            run,
+            allow_unsigned_simulator,
+        )
     else:
         _verify_modelb(
             app,
@@ -543,6 +563,7 @@ def verify_artifact(
             libraries,
             run,
             allow_empty_simulator_entitlements,
+            allow_unsigned_simulator,
         )
 
 
@@ -558,6 +579,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "declares DTPlatformName=iphonesimulator"
         ),
     )
+    parser.add_argument(
+        "--allow-unsigned-simulator",
+        action="store_true",
+        help=(
+            "allow an unsigned bundle only when it declares "
+            "DTPlatformName=iphonesimulator"
+        ),
+    )
     arguments = parser.parse_args(argv)
     try:
         verify_artifact(
@@ -566,6 +595,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             allow_empty_simulator_entitlements=(
                 arguments.allow_empty_simulator_entitlements
             ),
+            allow_unsigned_simulator=arguments.allow_unsigned_simulator,
         )
     except VerificationError as error:
         print("artifact verification failed: {}".format(error), file=sys.stderr)

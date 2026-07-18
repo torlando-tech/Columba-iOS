@@ -126,7 +126,12 @@ class ArtifactCheckerTests(unittest.TestCase):
         cls.checker = load_checker()
 
     def verify(self, fixture: ArtifactFixture, flavor: str) -> None:
-        self.checker.verify_artifact(flavor, fixture.app, run=fixture.run)
+        self.checker.verify_artifact(
+            flavor,
+            fixture.app,
+            run=fixture.run,
+            allow_unsigned_simulator=True,
+        )
 
     def assert_rejected(self, fixture: ArtifactFixture, flavor: str, message: str) -> None:
         with self.assertRaisesRegex(self.checker.VerificationError, message):
@@ -166,6 +171,20 @@ class ArtifactCheckerTests(unittest.TestCase):
                     metadata["DTPlatformName"] = "iphoneos"
                     fixture.write_plist(plist_path, metadata)
                 self.assert_rejected(fixture, flavor, "unsigned.*iphoneos|signature")
+
+    def test_unsigned_simulator_requires_explicit_exception(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "shipping")
+            with self.assertRaisesRegex(
+                self.checker.VerificationError,
+                "unsigned.*simulator.*explicit",
+            ):
+                self.checker.verify_artifact(
+                    "shipping",
+                    fixture.app,
+                    run=fixture.run,
+                )
+            self.verify(fixture, "shipping")
 
     def test_debug_dylib_products_are_inspected_as_application_code(self):
         with tempfile.TemporaryDirectory() as directory:
