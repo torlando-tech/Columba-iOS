@@ -32,6 +32,8 @@ MODEL_B_FLAGS = %w[
   COLUMBA_BACKEND_SWIFT
 ].freeze
 RETICULUM_PRODUCT_NAME = 'ReticulumSwift'
+RETICULUM_PACKAGE_IDENTITY = 'reticulum-swift'
+RETICULUM_REPOSITORY_URL = 'https://github.com/torlando-tech/reticulum-swift.git'
 EMPTY_SOURCE_BUILD_FILE_METADATA = {
   settings: nil,
   platform_filter: nil,
@@ -154,6 +156,18 @@ module ModelBTargetIsolation
     references = project.files.to_h { |reference| [source_path(project, reference), reference] }
     MODEL_B_ONLY_SOURCE_PATHS.map do |path|
       references.fetch(path) { raise "Missing Model B source reference: #{path}" }
+    end
+  end
+
+  def root_reticulum_package_reference(project)
+    project.root_object.package_references.find do |reference|
+      next false unless reference.is_a?(
+        Xcodeproj::Project::Object::XCRemoteSwiftPackageReference
+      )
+
+      repository_url = reference.repositoryURL.to_s
+      identity = repository_url.sub(%r{/+\z}, '').sub(/\.git\z/i, '').split('/').last.to_s.downcase
+      repository_url == RETICULUM_REPOSITORY_URL && identity == RETICULUM_PACKAGE_IDENTITY
     end
   end
 
@@ -764,7 +778,11 @@ reticulum_package = [existing_model_b, shipping].compact.lazy.map do |target|
   target.package_product_dependencies.find do |dependency|
     dependency.product_name == RETICULUM_PRODUCT_NAME
   end&.package
-end.find(&:itself) or abort "Missing #{RETICULUM_PRODUCT_NAME} package reference"
+end.find(&:itself)
+reticulum_package ||= ModelBTargetIsolation.root_reticulum_package_reference(project)
+unless reticulum_package
+  abort "Missing root #{RETICULUM_PRODUCT_NAME} package reference (#{RETICULUM_REPOSITORY_URL})"
+end
 model_b_sources = ModelBTargetIsolation.model_b_source_references(project)
 ModelBTargetIsolation.strip_shipping_model_b_membership(project, shipping)
 ModelBTargetIsolation.strip_shipping_extension_graph(project, shipping, extension)

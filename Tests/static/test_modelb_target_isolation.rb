@@ -178,6 +178,48 @@ class ModelBTargetIsolationTests < Minitest::Test
     }
   end
 
+  def target_semantic_signature(project, target)
+    {
+      identity: [target.name, target.product_name, target.product_type],
+      product: target.product_reference && [
+        target.product_reference.path,
+        target.product_reference.name,
+        target.product_reference.explicit_file_type,
+        target.product_reference.source_tree
+      ],
+      phases: target.build_phases.map do |phase|
+        {
+          isa: phase.isa,
+          scalar_attributes: phase.class.simple_attributes.to_h do |attribute|
+            [attribute.name, deep_copy(phase.public_send(attribute.name))]
+          end,
+          files: phase.files.map { |build_file| build_file_signature(build_file) }
+        }
+      end,
+      package_products: target.package_product_dependencies.map do |dependency|
+        package = dependency.package
+        package_identity = if package.respond_to?(:repositoryURL)
+                             package.repositoryURL
+                           elsif package.respond_to?(:relative_path)
+                             package.relative_path
+                           end
+        [dependency.product_name, package_identity]
+      end,
+      configurations: target.build_configurations.map do |configuration|
+        base = configuration.base_configuration_reference
+        [configuration.name, base&.display_name, deep_copy(configuration.build_settings)]
+      end,
+      configuration_list: [
+        target.build_configuration_list.default_configuration_name,
+        target.build_configuration_list.default_configuration_is_visible
+      ],
+      dependencies: target.dependencies.map { |dependency| dependency.target&.name },
+      target_attributes: deep_copy(
+        project.root_object.attributes.fetch('TargetAttributes', {}).fetch(target.uuid, nil)
+      )
+    }
+  end
+
   def run_reconciler(temporary_project, label)
     output, error, status = Open3.capture3(
       { 'COLUMBA_PROJECT_PATH' => temporary_project }, RbConfig.ruby, SCRIPT_PATH
@@ -268,10 +310,10 @@ class ModelBTargetIsolationTests < Minitest::Test
       shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
       model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
 
-      excluded_refs = model_b.source_build_phase.files.filter_map do |file|
+      excluded_refs = model_b.source_build_phase.files.each_with_object({}) do |file, references|
         path = file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s
-        [path, file.file_ref] if MODEL_B_ONLY_SOURCE_PATHS.include?(path)
-      end.to_h
+        references[path] = file.file_ref if MODEL_B_ONLY_SOURCE_PATHS.include?(path)
+      end
       assert_equal MODEL_B_ONLY_SOURCE_PATHS.sort, excluded_refs.keys.sort
       excluded_refs.each_value do |excluded_ref|
         seeded_source = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
@@ -346,6 +388,100 @@ class ModelBTargetIsolationTests < Minitest::Test
         file.product_ref&.product_name == 'ReticulumSwift'
       end)
       assert_equal extension_before, target_graph_signature(reconciled_extension)
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
+  def test_reconciler_recreates_completely_missing_model_b_target_from_root_package_reference
+    Dir.mktmpdir('columba-modelb-missing-target') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      expected_signature = target_semantic_signature(fixture, model_b)
+      extension_before = target_graph_signature(extension)
+      reticulum_dependency = model_b.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      root_package = reticulum_dependency.package
+      root_package_id = root_package.uuid
+      removed_ids = [model_b.uuid, model_b.product_reference.uuid,
+                     model_b.build_configuration_list.uuid]
+      removed_ids.concat(model_b.build_phases.flat_map do |phase|
+        [phase.uuid] + phase.files.map(&:uuid)
+      end)
+      removed_ids.concat(model_b.build_configurations.map(&:uuid))
+      removed_ids.concat(model_b.package_product_dependencies.map(&:uuid))
+      removed_ids.concat(model_b.dependencies.flat_map do |dependency|
+        [dependency.uuid, dependency.target_proxy&.uuid].compact
+      end)
+      refute_includes removed_ids, root_package_id
+
+      fixture.targets.each do |target|
+        target.dependencies.dup.each do |dependency|
+          next unless dependency.target&.uuid == model_b.uuid
+
+          proxy = dependency.target_proxy
+          dependency.remove_from_project
+          proxy.remove_from_project if proxy && proxy.referrers.empty?
+        end
+      end
+      model_b.dependencies.dup.each do |dependency|
+        proxy = dependency.target_proxy
+        dependency.remove_from_project
+        proxy.remove_from_project if proxy && proxy.referrers.empty?
+      end
+      model_b.build_phases.dup.each do |phase|
+        phase.files.dup.each(&:remove_from_project)
+        phase.remove_from_project
+      end
+      model_b.build_configurations.dup.each(&:remove_from_project)
+      model_b.build_configuration_list.remove_from_project
+      model_b.package_product_dependencies.dup.each do |dependency|
+        model_b.package_product_dependencies.delete_if do |candidate|
+          candidate.uuid == dependency.uuid
+        end
+        dependency.remove_from_project if dependency.referrers.empty?
+      end
+      product = model_b.product_reference
+      fixture.root_object.attributes.fetch('TargetAttributes', {}).delete(model_b.uuid)
+      model_b.remove_from_project
+      product.remove_from_project if fixture.objects_by_uuid.key?(product.uuid)
+      fixture.save
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      assert_nil mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      assert mutated.objects_by_uuid.key?(root_package_id),
+             'fixture removed the authoritative root Reticulum package reference'
+      assert_empty removed_ids & mutated.objects_by_uuid.keys,
+                   'fixture did not cleanly remove the old Model B target graph'
+
+      run_reconciler(temporary_project, 'missing-target')
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      recreated = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      refute_nil recreated
+      assert_equal expected_signature, target_semantic_signature(reconciled, recreated),
+                   'recreated Model B target differs from the authoritative target graph'
+      assert_equal extension_before, target_graph_signature(
+        reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      ), 'target recreation mutated the protected extension graph'
+      assert reconciled.objects_by_uuid.key?(root_package_id)
+      assert_empty removed_ids & reconciled.objects_by_uuid.keys,
+                   'recreation retained orphan nodes from the removed target graph'
+
+      phase_owners = Hash.new { |hash, key| hash[key] = [] }
+      build_file_owners = Hash.new { |hash, key| hash[key] = [] }
+      reconciled.targets.each do |target|
+        target.build_phases.each { |phase| phase_owners[phase.uuid] << target.uuid }
+      end
+      reconciled.objects.each do |object|
+        next unless object.respond_to?(:files)
+
+        object.files.each { |build_file| build_file_owners[build_file.uuid] << object.uuid }
+      end
+      assert phase_owners.values.all?(&:one?), 'recreated graph has a multi-owner phase'
+      assert build_file_owners.values.all?(&:one?), 'recreated graph has a multi-owner build file'
       assert_second_run_byte_idempotent(temporary_project)
     end
   end

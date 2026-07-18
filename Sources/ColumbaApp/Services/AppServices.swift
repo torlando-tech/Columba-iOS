@@ -3151,8 +3151,8 @@ public final class AppServices {
     /// Start an RNode BLE interface with the given radio configuration.
     ///
     /// Starts the Model B App-Group RNode seam with the given radio configuration.
-    /// The Python runtime keeps this shared API available but reports RNode as
-    /// unavailable; it does not create a tunnel or restore the historical stack.
+    /// The Python runtime keeps this shared API available but publishes a failed
+    /// UI state and throws; it does not create a tunnel or restore the historical stack.
     ///
     /// - Parameters:
     ///   - config: RNode radio configuration (device name, frequency, etc.)
@@ -3214,6 +3214,7 @@ public final class AppServices {
         self.rnodeInterface = uiInterface
         NotificationObserver.postNetworkStateChanged()
         logger.warning("RNode start requested, but RNode is unavailable in the Python runtime")
+        throw AppServicesError.rnodeUnavailableInPythonRuntime
         #endif
     }
 
@@ -4273,6 +4274,9 @@ public enum AppServicesError: Error, Equatable {
 
     /// Transport not connected
     case transportNotConnected
+
+    /// RNode belongs to Model B and is not available in the shipping Python runtime.
+    case rnodeUnavailableInPythonRuntime
 }
 
 // MARK: - CustomStringConvertible
@@ -4288,6 +4292,8 @@ extension AppServicesError: CustomStringConvertible {
             return "Router not initialized"
         case .transportNotConnected:
             return "Transport not connected"
+        case .rnodeUnavailableInPythonRuntime:
+            return "RNode is unavailable in the Python runtime"
         }
     }
 }
