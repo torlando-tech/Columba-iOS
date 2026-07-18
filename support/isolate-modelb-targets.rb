@@ -187,8 +187,77 @@ module ModelBTargetIsolation
 
   def build_file_owners(project, build_file)
     project.objects.select do |object|
-      object.respond_to?(:files) && object.files.any? { |candidate| candidate.uuid == build_file.uuid }
+      object.respond_to?(:files) && object.files.any? do |candidate|
+        candidate && candidate.uuid == build_file.uuid
+      end
     end
+  end
+
+  def copy_simple_attributes(source, destination)
+    source.class.simple_attributes.each do |attribute|
+      destination.public_send(
+        "#{attribute.name}=", duplicate_value(source.public_send(attribute.name))
+      )
+    end
+  end
+
+  def clone_build_file(project, source)
+    destination = project.new(Xcodeproj::Project::Object::PBXBuildFile)
+    copy_simple_attributes(source, destination)
+    destination.file_ref = source.file_ref
+    destination.product_ref = source.product_ref
+    destination
+  end
+
+  # The canonical shipping phases are authoritative mutation points below. A
+  # malformed project may also attach one of them to Model B, the extension,
+  # tests, or several protected targets. Replace only shipping's ownership with
+  # a phase and PBXBuildFiles that are genuinely local before changing Python
+  # membership, metadata, or order. Detach the malformed extra ownership from
+  # protected targets so their pre-mutation graph is restored.
+  def localize_shipping_canonical_phases(project, shipping)
+    localized = false
+    model_b = project.targets.find { |target| target.name == MODEL_B_TARGET_NAME }
+    canonical_phases = [
+      shipping.source_build_phase,
+      shipping.frameworks_build_phase,
+      shipping.resources_build_phase
+    ]
+    canonical_phases.each do |source|
+      # Model B is regenerated from shipping later in this script. Detach its
+      # malformed ownership first so the canonical shipping phase and UUID stay
+      # stable when Model B was the only other owner. Other owners are protected:
+      # shipping gets a local clone and their malformed extra attachment is
+      # removed, restoring their pre-mutation graph.
+      if model_b && model_b.build_phases.any? { |phase| phase.uuid == source.uuid }
+        shared_index = model_b.build_phases.index { |phase| phase.uuid == source.uuid }
+        model_b.build_phases.delete_at(shared_index)
+      end
+      next if phase_owners(project, source).map(&:uuid) == [shipping.uuid]
+
+      index = shipping.build_phases.index { |phase| phase.uuid == source.uuid }
+      raise "shipping canonical #{source.isa} phase is missing" unless index
+
+      destination = project.new(source.class)
+      copy_simple_attributes(source, destination)
+      shipping.build_phases.delete_at(index)
+      shipping.build_phases.insert(index, destination)
+      source.files.compact.each do |build_file|
+        destination.files << clone_build_file(project, build_file)
+      end
+      phase_owners(project, source).each do |owner|
+        owner_index = owner.build_phases.index { |phase| phase.uuid == source.uuid }
+        owner.build_phases.delete_at(owner_index) if owner_index
+      end
+      if phase_owners(project, source).empty?
+        source.files.compact.dup.each do |build_file|
+          remove_build_file_from_phase(project, source, build_file)
+        end
+        source.remove_from_project
+      end
+      localized = true
+    end
+    localized
   end
 
   def package_dependency_owners(project, dependency)
@@ -348,8 +417,10 @@ module ModelBTargetIsolation
     shell.build_action_mask = '2147483647'
     shell.run_only_for_deployment_postprocessing = '0'
 
-    shipping.build_phases.delete(embed)
-    shipping.build_phases.delete(shell)
+    embed_index = shipping.build_phases.index { |phase| phase.uuid == embed.uuid }
+    shipping.build_phases.delete_at(embed_index) if embed_index
+    shell_index = shipping.build_phases.index { |phase| phase.uuid == shell.uuid }
+    shipping.build_phases.delete_at(shell_index) if shell_index
     resources_index = shipping.build_phases.index do |phase|
       phase.uuid == shipping.resources_build_phase.uuid
     end
@@ -417,14 +488,14 @@ module ModelBTargetIsolation
     ordered.each { |candidate| target.package_product_dependencies << candidate }
 
     framework_phase = target.frameworks_build_phase
-    reusable_build_file = framework_phase.files.find do |build_file|
+    reusable_build_file = framework_phase.files.compact.find do |build_file|
       build_file.product_ref&.uuid == dependency.uuid &&
         build_file_owners(project, build_file).map(&:uuid) == [framework_phase.uuid]
     end
     target.build_phases.each do |phase|
       next unless phase.respond_to?(:files)
 
-      phase.files.dup.each do |build_file|
+      phase.files.compact.dup.each do |build_file|
         next unless build_file.product_ref&.product_name == product_name
         next if build_file.uuid == reusable_build_file&.uuid && phase.uuid == framework_phase.uuid
 
@@ -435,7 +506,7 @@ module ModelBTargetIsolation
     build_file.file_ref = nil
     build_file.product_ref = dependency
     apply_build_file_metadata(build_file, EMPTY_SOURCE_BUILD_FILE_METADATA)
-    framework_phase.files << build_file unless framework_phase.files.any? do |candidate|
+    framework_phase.files << build_file unless framework_phase.files.compact.any? do |candidate|
       candidate.uuid == build_file.uuid
     end
 
@@ -594,7 +665,7 @@ module ModelBTargetIsolation
   def reconcile_phase_files(project, source, destination, package_map,
                             extra_file_refs: [], extra_file_metadata: {}, extra_products: [],
                             excluded_file_paths: [])
-    desired = source.files.reject do |source_build_file|
+    desired = source.files.compact.reject do |source_build_file|
       source_build_file.file_ref &&
         excluded_file_paths.include?(source_path(project, source_build_file.file_ref))
     end.map do |source_build_file|
@@ -612,7 +683,7 @@ module ModelBTargetIsolation
       [nil, :product, dependency, EMPTY_SOURCE_BUILD_FILE_METADATA]
     end)
 
-    existing = destination.files.select do |build_file|
+    existing = destination.files.compact.select do |build_file|
       build_file_owners(project, build_file).map(&:uuid) == [destination.uuid]
     end.group_by { |build_file| build_file_key(build_file) }
     ordered = desired.map do |_source_build_file, kind, reference, metadata|
@@ -632,7 +703,9 @@ module ModelBTargetIsolation
     end
 
     ordered_ids = ordered.map(&:uuid)
-    destination.files.to_a.reject { |build_file| ordered_ids.include?(build_file.uuid) }.each do |build_file|
+    destination.files.to_a.compact.reject do |build_file|
+      ordered_ids.include?(build_file.uuid)
+    end.each do |build_file|
       remove_build_file_from_phase(project, destination, build_file)
     end
     destination.files.clear
@@ -1148,6 +1221,16 @@ end
 project = Xcodeproj::Project.open(PROJECT_PATH)
 shipping = project.targets.find { |target| target.name == SHIPPING_TARGET_NAME } or
   abort "Missing #{SHIPPING_TARGET_NAME} target"
+# Xcodeproj can omit a newly restored PBXBuildFile when its owning phase was
+# also created in the same serialization pass. Persist and reopen the purely
+# structural localization first, then perform all canonical Python mutations on
+# the reopened target-local phases.
+if ModelBTargetIsolation.localize_shipping_canonical_phases(project, shipping)
+  project.save
+  project = Xcodeproj::Project.open(PROJECT_PATH)
+  shipping = project.targets.find { |target| target.name == SHIPPING_TARGET_NAME } or
+    abort "Missing #{SHIPPING_TARGET_NAME} target after canonical phase localization"
+end
 extension = project.targets.find { |target| target.name == EXTENSION_TARGET_NAME } or
   abort "Missing #{EXTENSION_TARGET_NAME} target"
 existing_model_b = project.targets.find { |target| target.name == MODEL_B_TARGET_NAME }

@@ -746,6 +746,109 @@ class ModelBTargetIsolationTests < Minitest::Test
     end
   end
 
+  def test_reconciler_localizes_each_shared_shipping_canonical_phase_before_python_repair
+    cases = [
+      [:sources, PYTHON_ONLY_SOURCE_PATHS.first],
+      [:frameworks, PYTHON_FRAMEWORK_PATH],
+      [:resources, PYTHON_RESOURCE_PATH]
+    ]
+    cases.each do |kind, missing_path|
+      Dir.mktmpdir("columba-shared-shipping-#{kind}") do |directory|
+        temporary_project = File.join(directory, 'Columba.xcodeproj')
+        FileUtils.cp_r(PROJECT_PATH, temporary_project)
+        fixture = Xcodeproj::Project.open(temporary_project)
+        shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+        extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+        protected_extension_before = target_graph_signature(extension)
+        phase = case kind
+                when :sources then shipping.source_build_phase
+                when :frameworks then shipping.frameworks_build_phase
+                when :resources then shipping.resources_build_phase
+                end
+        phase_index = shipping.build_phases.index { |candidate| candidate.uuid == phase.uuid }
+        canonical_signature = {
+          isa: phase.isa,
+          scalar_attributes: phase.class.simple_attributes.to_h do |attribute|
+            [attribute.name, deep_copy(phase.public_send(attribute.name))]
+          end,
+          files: phase.files.map { |build_file| build_file_signature(build_file) }
+        }
+        missing_file = phase.files.find do |build_file|
+          next false unless build_file.file_ref
+
+          build_file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == missing_path
+        end
+        refute_nil missing_file, "fixture lacks #{missing_path} in shipping #{kind}"
+        missing_file.remove_from_project
+        # Save the missing-member mutation first, then inject the canonical phase
+        # UUID into the extension target. Xcodeproj normalizes a shared phase if
+        # asked to serialize it through the object model, so the malformed
+        # multi-owner relationship must be introduced in project.pbxproj.
+        shared_phase_id = phase.uuid
+        protected_phase_file_ids = phase.files.map(&:uuid)
+        fixture.save
+        pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+        pbxproj = File.read(pbxproj_path)
+        target_header = "\t\t#{extension.uuid} /* ColumbaNetworkExtension */ = {"
+        target_start = pbxproj.index(target_header) or raise 'missing extension target in fixture'
+        phases_start = pbxproj.index("\t\t\tbuildPhases = (\n", target_start) or
+          raise 'missing extension buildPhases in fixture'
+        insertion_point = phases_start + "\t\t\tbuildPhases = (\n".length
+        pbxproj.insert(
+          insertion_point,
+          "\t\t\t\t#{shared_phase_id} /* malformed shared shipping #{kind} phase */,\n"
+        )
+        File.write(pbxproj_path, pbxproj)
+
+        mutated = Xcodeproj::Project.open(temporary_project)
+        mutated_shipping = mutated.targets.find { |target| target.name == 'ColumbaApp' }
+        mutated_extension = mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+        assert_includes mutated_shipping.build_phases.map(&:uuid), shared_phase_id,
+                        "#{kind} shipping phase mutation did not survive serialization"
+        assert_includes mutated_extension.build_phases.map(&:uuid), shared_phase_id,
+                        "#{kind} shared-phase mutation did not survive serialization"
+        run_reconciler(temporary_project, "shared-shipping-#{kind}")
+        reconciled = Xcodeproj::Project.open(temporary_project)
+        reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+        reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+        local_phase = reconciled_shipping.build_phases.fetch(phase_index)
+
+        refute_equal shared_phase_id, local_phase.uuid,
+                     "shipping retained protected shared #{kind} phase"
+        assert_equal protected_extension_before, target_graph_signature(reconciled_extension),
+                     "#{kind} localization mutated protected extension phase/build-file UUIDs or metadata"
+        assert_empty protected_phase_file_ids & local_phase.files.map(&:uuid),
+                     "#{kind} localization reused protected PBXBuildFiles"
+        assert_equal canonical_signature, {
+          isa: local_phase.isa,
+          scalar_attributes: local_phase.class.simple_attributes.to_h do |attribute|
+            [attribute.name, deep_copy(local_phase.public_send(attribute.name))]
+          end,
+          files: local_phase.files.map { |build_file| build_file_signature(build_file) }
+        }, "shipping #{kind} phase was not restored with canonical attributes, metadata, and order"
+        assert_equal 1, phase_file_paths(reconciled, local_phase, directory).count(missing_path)
+
+        phase_owners = Hash.new { |hash, key| hash[key] = [] }
+        build_file_owners = Hash.new { |hash, key| hash[key] = [] }
+        reconciled.targets.each do |target|
+          target.build_phases.each { |candidate| phase_owners[candidate.uuid] << target.uuid }
+        end
+        reconciled.objects.each do |object|
+          next unless object.respond_to?(:files)
+
+          object.files.each { |build_file| build_file_owners[build_file.uuid] << object.uuid }
+        end
+        all_build_files = reconciled.objects.select do |object|
+          object.is_a?(Xcodeproj::Project::Object::PBXBuildFile)
+        end
+        assert phase_owners.values.all?(&:one?), "#{kind} repair retained a shared phase"
+        assert all_build_files.all? { |build_file| build_file_owners[build_file.uuid].one? },
+               "#{kind} repair retained an orphan/shared PBXBuildFile"
+        assert_second_run_byte_idempotent(temporary_project)
+      end
+    end
+  end
+
   def test_reconciler_recreates_completely_missing_model_b_target_from_root_package_reference
     Dir.mktmpdir('columba-modelb-missing-target') do |directory|
       temporary_project = File.join(directory, 'Columba.xcodeproj')

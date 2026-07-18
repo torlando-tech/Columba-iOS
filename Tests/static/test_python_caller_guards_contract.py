@@ -70,6 +70,20 @@ def python_declarations() -> tuple[str, ...]:
     return tuple(sorted(declarations))
 
 
+def model_b_guard_failures(
+    membership: dict[str, list[str]], root: Path = ROOT
+) -> dict[str, list[tuple[int, str]]]:
+    """Scan every compiled Model B source, not merely shipping-shared sources."""
+    failures = {}
+    declarations = python_declarations()
+    model_b_sources = set(membership["ColumbaModelBApp"]) - set(PYTHON_ONLY_SOURCES)
+    for relative in sorted(model_b_sources):
+        references = unguarded_references(root / relative, declarations, PYTHON_FLAG)
+        if references:
+            failures[relative] = references
+    return failures
+
+
 class PythonCallerGuardContractTests(unittest.TestCase):
     def references(self, snippet: str) -> list[tuple[int, str]]:
         with tempfile.TemporaryDirectory() as directory:
@@ -93,17 +107,33 @@ class PythonCallerGuardContractTests(unittest.TestCase):
         self.assertTrue(set(PYTHON_ONLY_SOURCES) <= set(membership["ColumbaApp"]))
         self.assertTrue(set(PYTHON_ONLY_SOURCES).isdisjoint(membership["ColumbaModelBApp"]))
 
-    def test_shared_model_b_member_sources_guard_python_declarations(self) -> None:
+    def test_every_model_b_member_source_guards_python_declarations(self) -> None:
         membership = source_membership()
-        shared = set(membership["ColumbaApp"]) & set(membership["ColumbaModelBApp"])
-        shared -= set(PYTHON_ONLY_SOURCES)
-        failures = {}
-        declarations = python_declarations()
-        for relative in sorted(shared):
-            references = unguarded_references(ROOT / relative, declarations, PYTHON_FLAG)
-            if references:
-                failures[relative] = references
-        self.assertEqual({}, failures)
+        scanned = set(membership["ColumbaModelBApp"]) - set(PYTHON_ONLY_SOURCES)
+        self.assertEqual(set(membership["ColumbaModelBApp"]), scanned)
+        self.assertEqual({}, model_b_guard_failures(membership))
+
+    def test_model_b_only_member_mutation_is_scanned_and_positive_guard_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "ModelBOnly.swift"
+            membership = {
+                "ColumbaApp": [],
+                "ColumbaModelBApp": ["ModelBOnly.swift"],
+            }
+
+            source.write_text("PythonRuntime.shared.start()\n")
+            self.assertEqual(
+                {"ModelBOnly.swift": [(1, "PythonRuntime.shared.start()")]},
+                model_b_guard_failures(membership, root),
+            )
+
+            source.write_text(
+                "#if COLUMBA_RUNTIME_PYTHON\n"
+                "PythonBridge.shared.stop()\n"
+                "#endif\n"
+            )
+            self.assertEqual({}, model_b_guard_failures(membership, root))
 
     def test_unguarded_and_non_implying_guards_are_rejected(self) -> None:
         snippet = """PythonRuntime.shared.start()
