@@ -21,6 +21,7 @@ SHIPPING_TEST_TARGET_NAME = 'ColumbaAppTests'
 MODEL_B_TARGET_NAME = 'ColumbaModelBApp'
 MODEL_B_TEST_TARGET_NAME = 'ColumbaModelBAppTests'
 EXTENSION_TARGET_NAME = 'ColumbaNetworkExtension'
+LEGACY_SWIFT_CONFIGURATION_NAMES = %w[Debug-Swift Release-Swift].freeze
 SHIPPING_ENTITLEMENTS = 'Sources/ColumbaApp/Resources/ColumbaApp.entitlements'
 MODEL_B_ENTITLEMENTS = 'Sources/ColumbaApp/Resources/ColumbaModelBApp.entitlements'
 CANONICAL_FLAGS = %w[
@@ -143,6 +144,34 @@ MODEL_B_ONLY_TEST_SOURCE_PATHS = %w[
 
 module ModelBTargetIsolation
   module_function
+
+  # Model B is an explicit target/scheme, never a build-configuration variant.
+  # Remove the retired configuration names from every owner before using
+  # shipping as the source for any regenerated target configuration list.
+  def remove_legacy_swift_configurations(project)
+    owners = [project] + project.targets
+    removed = []
+    owners.each do |owner|
+      list = owner.build_configuration_list
+      list.build_configurations.to_a.each do |configuration|
+        next unless LEGACY_SWIFT_CONFIGURATION_NAMES.include?(configuration.name)
+
+        index = list.build_configurations.each_with_index.find do |candidate, _position|
+          candidate.uuid == configuration.uuid
+        end&.last
+        list.build_configurations.delete_at(index) if index
+        removed << configuration
+      end
+    end
+    removed.uniq { |configuration| configuration.uuid }.each do |configuration|
+      still_owned = owners.any? do |owner|
+        owner.build_configuration_list.build_configurations.any? do |candidate|
+          candidate.uuid == configuration.uuid
+        end
+      end
+      configuration.remove_from_project unless still_owned
+    end
+  end
 
   def duplicate_value(value)
     Marshal.load(Marshal.dump(value))
@@ -1060,7 +1089,7 @@ module ModelBTargetIsolation
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = MODEL_B_ENTITLEMENTS
       configuration.build_settings.delete('SWIFT_OBJC_BRIDGING_HEADER')
       required = destination_tokens
-      required << 'COLUMBA_ONBOARDING_ENABLED' if source.name.end_with?('-Swift')
+      required << 'COLUMBA_ONBOARDING_ENABLED'
       required.concat(MODEL_B_FLAGS)
       set_compilation_tokens(configuration, required, removed: SHIPPING_FORBIDDEN_FLAGS)
       configuration
@@ -1535,10 +1564,14 @@ module ModelBTargetIsolation
     end
     model_b.build_configurations.each do |configuration|
       has_onboarding = compilation_tokens(configuration).include?('COLUMBA_ONBOARDING_ENABLED')
-      expected = configuration.name.end_with?('-Swift')
-      next if has_onboarding == expected
+      next if has_onboarding
 
       raise "Model B onboarding mapping is incorrect in #{configuration.name}"
+    end
+    ([project] + project.targets).each do |owner|
+      names = owner.build_configuration_list.build_configurations.map(&:name)
+      stale = names & LEGACY_SWIFT_CONFIGURATION_NAMES
+      raise "#{owner.respond_to?(:name) ? owner.name : 'project'} retained #{stale.join(', ')}" unless stale.empty?
     end
 
     embed_phases = model_b.build_phases.select { |phase| extension_embed_phase?(phase) }
@@ -1767,6 +1800,7 @@ module ModelBTargetIsolation
 end
 
 project = Xcodeproj::Project.open(PROJECT_PATH)
+ModelBTargetIsolation.remove_legacy_swift_configurations(project)
 shipping = project.targets.find { |target| target.name == SHIPPING_TARGET_NAME } or
   abort "Missing #{SHIPPING_TARGET_NAME} target"
 # Xcodeproj can omit a newly restored PBXBuildFile when its owning phase was

@@ -68,13 +68,12 @@ class HostEntitlementsContractTests(unittest.TestCase):
                     self.fail(f"{target_name} build configuration list is missing")
 
                 entries = re.findall(
-                    r"([A-Za-z0-9]+) /\* "
-                    r"(Debug|Release|Debug-Swift|Release-Swift) \*/",
+                    r"([A-Za-z0-9]+) /\* (Debug|Release) \*/",
                     configuration_list.group(2),
                 )
                 self.assertEqual(
                     {name for _, name in entries},
-                    {"Debug", "Release", "Debug-Swift", "Release-Swift"},
+                    {"Debug", "Release"},
                 )
 
                 for identifier, name in entries:
