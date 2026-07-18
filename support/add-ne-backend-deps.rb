@@ -16,6 +16,10 @@ PROJECT_PATH = File.expand_path(
 )
 NE_TARGET = 'ColumbaNetworkExtension'
 PRODUCTS = %w[ReticulumSwift LXMFSwift].freeze
+PRODUCT_REPOSITORIES = {
+  'ReticulumSwift' => 'https://github.com/torlando-tech/reticulum-swift.git',
+  'LXMFSwift' => 'https://github.com/torlando-tech/LXMF-swift.git'
+}.freeze
 
 module NetworkExtensionBackendDependencies
   module_function
@@ -43,27 +47,29 @@ module NetworkExtensionBackendDependencies
     end
   end
 
-  def package_for(project, extension, product_name)
-    local = extension.package_product_dependencies.find do |dependency|
-      dependency.product_name == product_name && dependency.package
+  def package_for(project, product_name)
+    repository_url = PRODUCT_REPOSITORIES.fetch(product_name)
+    matches = project.root_object.package_references.select do |reference|
+      reference.is_a?(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference) &&
+        reference.repositoryURL.to_s == repository_url
     end
-    return local.package if local
-
-    source = project.targets.flat_map(&:package_product_dependencies).find do |dependency|
-      dependency.product_name == product_name && dependency.package
+    unless matches.length == 1
+      raise "expected exactly one root package reference for #{product_name} at #{repository_url}; " \
+            "found #{matches.length}"
     end
-    return source.package if source
 
-    raise "no root package reference is associated with #{product_name}"
+    matches.first
   end
 
   def reconcile_product(project, extension, product_name)
     framework_phase = extension.frameworks_build_phase
+    root_package = package_for(project, product_name)
     candidates = extension.package_product_dependencies.select do |dependency|
       dependency.product_name == product_name
     end
     dependency = candidates.find do |candidate|
-      dependency_owners(project, candidate).map(&:uuid) == [extension.uuid] &&
+      candidate.package&.uuid == root_package.uuid &&
+        dependency_owners(project, candidate).map(&:uuid) == [extension.uuid] &&
         dependency_build_files(project, candidate).all? do |build_file|
           build_file_owners(project, build_file).map(&:uuid) == [framework_phase.uuid]
         end
@@ -71,7 +77,7 @@ module NetworkExtensionBackendDependencies
 
     unless dependency
       dependency = project.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
-      dependency.package = package_for(project, extension, product_name)
+      dependency.package = root_package
       dependency.product_name = product_name
       extension.package_product_dependencies << dependency
     end
@@ -87,12 +93,14 @@ module NetworkExtensionBackendDependencies
       framework_phase.files << retained_file
     end
 
-    framework_phase.files.dup.each do |build_file|
-      next if build_file.uuid == retained_file.uuid
-      next unless build_file.product_ref&.product_name == product_name
+    extension.build_phases.each do |phase|
+      phase.files.dup.each do |build_file|
+        next if phase.uuid == framework_phase.uuid && build_file.uuid == retained_file.uuid
+        next unless build_file.product_ref&.product_name == product_name
 
-      remove_uuid(framework_phase.files, build_file.uuid)
-      build_file.remove_from_project if build_file_owners(project, build_file).empty?
+        remove_uuid(phase.files, build_file.uuid)
+        build_file.remove_from_project if build_file_owners(project, build_file).empty?
+      end
     end
 
     extension.package_product_dependencies.dup.each do |stale|

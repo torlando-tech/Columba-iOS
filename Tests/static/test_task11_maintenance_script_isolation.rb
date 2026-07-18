@@ -45,6 +45,26 @@ class Task11MaintenanceScriptIsolationTests < Minitest::Test
     digest.hexdigest
   end
 
+  def remove_uuid(list, uuid)
+    index = list.each_with_index.find { |item, _position| item.uuid == uuid }&.last
+    list.delete_at(index) if index
+  end
+
+  def inject_build_file_reference(project_path, phase_uuid, build_file_uuid, comment)
+    pbxproj_path = File.join(project_path, 'project.pbxproj')
+    contents = File.binread(pbxproj_path)
+    phase_marker = "\t\t#{phase_uuid} /* Sources */ = {"
+    phase_start = contents.index(phase_marker) or raise "missing Sources phase #{phase_uuid}"
+    files_marker = "\n\t\t\tfiles = (\n"
+    files_start = contents.index(files_marker, phase_start) or
+      raise "missing files list for Sources phase #{phase_uuid}"
+    contents.insert(
+      files_start + files_marker.bytesize,
+      "\t\t\t\t#{build_file_uuid} /* #{comment} */,\n"
+    )
+    File.binwrite(pbxproj_path, contents)
+  end
+
   def target(project, name)
     matches = project.targets.select { |candidate| candidate.name == name }
     assert_equal 1, matches.length, "expected one #{name} target"
@@ -205,21 +225,36 @@ class Task11MaintenanceScriptIsolationTests < Minitest::Test
     end
   end
 
-  def test_add_ne_dependencies_repairs_missing_extension_local_objects_without_touching_apps
+  def test_add_ne_dependencies_recovers_from_root_references_when_all_target_memberships_are_missing
     Dir.mktmpdir('task11-add-ne-missing') do |directory|
       temporary_project = copy_project(directory)
       fixture = Xcodeproj::Project.open(temporary_project)
-      extension = target(fixture, 'ColumbaNetworkExtension')
-      stale_dependencies = extension.package_product_dependencies.select do |dependency|
-        %w[ReticulumSwift LXMFSwift].include?(dependency.product_name)
+      root_ids = {
+        'ReticulumSwift' => 'https://github.com/torlando-tech/reticulum-swift.git',
+        'LXMFSwift' => 'https://github.com/torlando-tech/LXMF-swift.git'
+      }.to_h do |product_name, repository_url|
+        references = fixture.root_object.package_references.select do |reference|
+          reference.respond_to?(:repositoryURL) && reference.repositoryURL == repository_url
+        end
+        assert_equal 1, references.length
+        [product_name, references.first.uuid]
       end
-      extension.frameworks_build_phase.files.dup.each do |file|
-        next unless stale_dependencies.any? { |dependency| file.product_ref&.uuid == dependency.uuid }
 
-        file.remove_from_project
+      stale_dependencies = fixture.targets.flat_map(&:package_product_dependencies).select do |dependency|
+        root_ids.key?(dependency.product_name)
+      end
+      fixture.objects.grep(Xcodeproj::Project::Object::AbstractBuildPhase).each do |phase|
+        phase.files.dup.each do |file|
+          next unless stale_dependencies.any? { |dependency| file.product_ref&.uuid == dependency.uuid }
+
+          remove_uuid(phase.files, file.uuid)
+          file.remove_from_project
+        end
       end
       stale_dependencies.each do |dependency|
-        extension.package_product_dependencies.delete(dependency)
+        fixture.targets.each do |candidate|
+          remove_uuid(candidate.package_product_dependencies, dependency.uuid)
+        end
         dependency.remove_from_project
       end
       fixture.save
@@ -236,11 +271,108 @@ class Task11MaintenanceScriptIsolationTests < Minitest::Test
       repaired_extension = target(repaired, 'ColumbaNetworkExtension')
       assert_equal %w[LXMFSwift ReticulumSwift],
                    repaired_extension.package_product_dependencies.map(&:product_name).sort
+      repaired_extension.package_product_dependencies.each do |dependency|
+        assert_equal root_ids.fetch(dependency.product_name), dependency.package.uuid
+        files = repaired_extension.frameworks_build_phase.files.select do |file|
+          file.product_ref&.uuid == dependency.uuid
+        end
+        assert_equal 1, files.length
+      end
       assert_graph_ownership(repaired)
 
       first_hash = project_tree_hash(temporary_project)
       _output, error, status = run_script(:ne_dependencies, temporary_project)
       assert status.success?, "second missing-dependency repair failed:\n#{error}"
+      assert_equal first_hash, project_tree_hash(temporary_project)
+    end
+  end
+
+  def test_add_ne_dependencies_fails_closed_on_missing_or_ambiguous_root_reference
+    {
+      missing: 0,
+      ambiguous: 2
+    }.each do |variant, expected_count|
+      Dir.mktmpdir("task11-add-ne-root-#{variant}") do |directory|
+        temporary_project = copy_project(directory)
+        fixture = Xcodeproj::Project.open(temporary_project)
+        repository_url = 'https://github.com/torlando-tech/reticulum-swift.git'
+        reference = fixture.root_object.package_references.find do |candidate|
+          candidate.respond_to?(:repositoryURL) && candidate.repositoryURL == repository_url
+        end
+        refute_nil reference
+        if variant == :missing
+          remove_uuid(fixture.root_object.package_references, reference.uuid)
+        else
+          duplicate = fixture.new(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference)
+          duplicate.repositoryURL = repository_url
+          duplicate.requirement = reference.requirement.dup
+          fixture.root_object.package_references << duplicate
+        end
+        fixture.save
+        before = project_tree_hash(temporary_project)
+
+        _output, error, status = run_script(:ne_dependencies, temporary_project)
+        refute status.success?
+        assert_includes error, 'expected exactly one root package reference for ReticulumSwift'
+        assert_includes error, "found #{expected_count}"
+        assert_equal before, project_tree_hash(temporary_project)
+      end
+    end
+  end
+
+  def test_add_ne_dependencies_removes_malformed_non_framework_edges_without_mutating_protected_owner
+    Dir.mktmpdir('task11-add-ne-sources') do |directory|
+      temporary_project = copy_project(directory)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      extension = target(fixture, 'ColumbaNetworkExtension')
+      shipping = target(fixture, 'ColumbaApp')
+      canonical = extension.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      stale = fixture.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
+      stale.product_name = canonical.product_name
+      stale.package = canonical.package
+      extension.package_product_dependencies << stale
+      stale_file = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      stale_file.product_ref = stale
+      extension.source_build_phase.files << stale_file
+      source_phase_id = extension.source_build_phase.uuid
+      stale_id = stale.uuid
+      stale_file_id = stale_file.uuid
+      protected_file = shipping.frameworks_build_phase.files.find do |file|
+        file.product_ref&.product_name == 'ReticulumSwift'
+      end
+      refute_nil protected_file
+      protected_file_id = protected_file.uuid
+      fixture.save
+
+      inject_build_file_reference(
+        temporary_project,
+        source_phase_id,
+        protected_file_id,
+        'ReticulumSwift in Frameworks'
+      )
+      malformed = Xcodeproj::Project.open(temporary_project)
+      malformed_extension = target(malformed, 'ColumbaNetworkExtension')
+      assert malformed_extension.source_build_phase.files.any? { |file| file.uuid == stale_file_id }
+      assert malformed_extension.source_build_phase.files.any? { |file| file.uuid == protected_file_id }
+      protected_before = target_signature(target(malformed, 'ColumbaApp'))
+
+      _output, error, status = run_script(:ne_dependencies, temporary_project)
+      assert status.success?, "non-Frameworks repair failed:\n#{error}"
+      repaired = Xcodeproj::Project.open(temporary_project)
+      assert_equal protected_before, target_signature(target(repaired, 'ColumbaApp'))
+      repaired_extension = target(repaired, 'ColumbaNetworkExtension')
+      refute repaired_extension.build_phases.flat_map(&:files).any? { |file| file.uuid == stale_file_id }
+      refute repaired_extension.build_phases.flat_map(&:files).any? { |file| file.uuid == protected_file_id }
+      refute repaired.objects_by_uuid.key?(stale_file_id)
+      refute repaired.objects_by_uuid.key?(stale_id)
+      assert repaired.objects_by_uuid.key?(protected_file_id)
+      assert_graph_ownership(repaired)
+
+      first_hash = project_tree_hash(temporary_project)
+      _output, error, status = run_script(:ne_dependencies, temporary_project)
+      assert status.success?, "second non-Frameworks repair failed:\n#{error}"
       assert_equal first_hash, project_tree_hash(temporary_project)
     end
   end
