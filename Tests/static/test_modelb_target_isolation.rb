@@ -325,6 +325,128 @@ class ModelBTargetIsolationTests < Minitest::Test
     end
   end
 
+  def test_reconciler_localizes_shipping_package_dependency_shared_with_model_b
+    Dir.mktmpdir('columba-modelb-shared-shipping-package') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      shipping_dependency = shipping.package_product_dependencies.first
+      local_dependency = model_b.package_product_dependencies.find do |dependency|
+        dependency.product_name == shipping_dependency.product_name
+      end
+      local_build_file = model_b.frameworks_build_phase.files.find do |build_file|
+        build_file.product_ref&.uuid == local_dependency.uuid
+      end
+      refute_nil local_build_file
+      retained_dependencies = model_b.package_product_dependencies.to_a.reject do |dependency|
+        dependency.uuid == local_dependency.uuid
+      end
+      model_b.package_product_dependencies.clear
+      (retained_dependencies + [shipping_dependency]).each do |dependency|
+        model_b.package_product_dependencies << dependency
+      end
+      fixture.save
+
+      # Xcodeproj treats same-product dependencies as semantically equal and can
+      # suppress this intentionally malformed cross-target productRef assignment.
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      build_file_line = /^(\s*#{local_build_file.uuid}\b.*\bproductRef = )#{local_dependency.uuid}(\b.*)$/
+      raise 'missing Model B package build file in fixture' unless pbxproj.sub!(
+        build_file_line, "\\1#{shipping_dependency.uuid}\\2"
+      )
+      File.write(pbxproj_path, pbxproj)
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_shipping = mutated.targets.find { |target| target.name == 'ColumbaApp' }
+      mutated_model_b = mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      shared_id = mutated_shipping.package_product_dependencies.first.uuid
+      assert_includes mutated_model_b.package_product_dependencies.map(&:uuid), shared_id
+      assert(mutated_model_b.frameworks_build_phase.files.any? do |build_file|
+        build_file.product_ref&.uuid == shared_id
+      end)
+      shipping_before = target_graph_signature(mutated_shipping)
+
+      run_reconciler(temporary_project, 'shared-shipping-package')
+
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+      reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      assert_equal shipping_before, target_graph_signature(reconciled_shipping),
+                   'package reconciliation mutated the protected shipping graph'
+      local = reconciled_model_b.package_product_dependencies.find do |dependency|
+        dependency.product_name == reconciled_shipping.package_product_dependencies.first.product_name
+      end
+      refute_nil local
+      refute_equal shared_id, local.uuid
+      assert(reconciled_model_b.frameworks_build_phase.files.any? do |build_file|
+        build_file.product_ref&.uuid == local.uuid
+      end)
+      owners = Hash.new { |hash, key| hash[key] = [] }
+      reconciled.targets.each do |target|
+        target.package_product_dependencies.each { |dependency| owners[dependency.uuid] << target.uuid }
+      end
+      assert owners.values.all?(&:one?), 'a package dependency still has multiple target owners'
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
+  def test_reconciler_detaches_stale_package_shared_with_extension_without_mutating_extension
+    Dir.mktmpdir('columba-modelb-shared-extension-package') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+
+      fixture = Xcodeproj::Project.open(temporary_project)
+      model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      package = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+                       .package_product_dependencies.first.package
+      stale = fixture.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
+      stale.product_name = 'AdversarialSharedStaleProduct'
+      stale.package = package
+      model_b.package_product_dependencies << stale
+      extension.package_product_dependencies << stale
+      model_b_file = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      model_b_file.product_ref = stale
+      model_b.frameworks_build_phase.files << model_b_file
+      extension_file = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      extension_file.product_ref = stale
+      extension.frameworks_build_phase.files << extension_file
+      stale_id = stale.uuid
+      extension_file_id = extension_file.uuid
+      fixture.save
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_extension = mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      extension_before = target_graph_signature(mutated_extension)
+      assert_equal stale_id, mutated_extension.frameworks_build_phase.files
+                                        .find { |file| file.uuid == extension_file_id }.product_ref.uuid
+
+      run_reconciler(temporary_project, 'shared-extension-package')
+
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      assert_equal extension_before, target_graph_signature(reconciled_extension),
+                   'stale package cleanup mutated the protected extension graph'
+      refute_includes reconciled_model_b.package_product_dependencies.map(&:uuid), stale_id
+      refute(reconciled_model_b.build_phases.flat_map(&:files).any? do |build_file|
+        build_file.product_ref&.uuid == stale_id
+      end)
+      protected_file = reconciled_extension.frameworks_build_phase.files.find do |file|
+        file.uuid == extension_file_id
+      end
+      refute_nil protected_file
+      assert_equal stale_id, protected_file.product_ref&.uuid
+      assert reconciled.objects_by_uuid.key?(stale_id),
+             'extension-owned package dependency was removed globally'
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
   def test_reconciler_removes_duplicate_target_product_dependencies_and_attributes
     Dir.mktmpdir('columba-modelb-duplicate-target') do |directory|
       temporary_project = File.join(directory, 'Columba.xcodeproj')
@@ -335,10 +457,20 @@ class ModelBTargetIsolationTests < Minitest::Test
       duplicate = fixture.new_target(:application, 'ColumbaModelBApp', :ios, nil)
       duplicate_id = duplicate.uuid
       duplicate_product_id = duplicate.product_reference.uuid
+      duplicate_package = fixture.new(
+        Xcodeproj::Project::Object::XCSwiftPackageProductDependency
+      )
+      duplicate_package.product_name = 'DuplicateTargetOrphanProduct'
+      duplicate_package.package = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+                                         .package_product_dependencies.first.package
+      duplicate.package_product_dependencies << duplicate_package
+      duplicate_package_file = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      duplicate_package_file.product_ref = duplicate_package
+      duplicate.frameworks_build_phase.files << duplicate_package_file
       duplicate_graph_ids = (
         duplicate.build_phases.flat_map { |phase| [phase.uuid] + phase.files.map(&:uuid) } +
         duplicate.build_configurations.map(&:uuid) +
-        [duplicate.build_configuration_list.uuid]
+        [duplicate.build_configuration_list.uuid, duplicate_package.uuid, duplicate_package_file.uuid]
       )
       fixture.root_object.attributes['TargetAttributes'][duplicate_id] = { 'CreatedOnToolsVersion' => 'stale' }
       retained.add_dependency(duplicate)
@@ -346,6 +478,12 @@ class ModelBTargetIsolationTests < Minitest::Test
 
       mutated = Xcodeproj::Project.open(temporary_project)
       assert_equal 2, mutated.targets.count { |target| target.name == 'ColumbaModelBApp' }
+      mutated_duplicate = mutated.objects_by_uuid.fetch(duplicate_id)
+      assert_includes mutated_duplicate.package_product_dependencies.map(&:uuid), duplicate_package.uuid
+      assert_includes mutated_duplicate.build_phases.flat_map(&:files).map(&:uuid),
+                      duplicate_package_file.uuid
+      assert_equal duplicate_package.uuid,
+                   mutated.objects_by_uuid.fetch(duplicate_package_file.uuid).product_ref&.uuid
       duplicate_products = mutated.products_group.children.count do |reference|
         reference.path == 'ColumbaModelBApp.app'
       end

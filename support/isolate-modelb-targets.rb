@@ -83,6 +83,34 @@ module ModelBTargetIsolation
     end
   end
 
+  def package_dependency_owners(project, dependency)
+    project.targets.select do |target|
+      target.package_product_dependencies.any? { |candidate| candidate.uuid == dependency.uuid }
+    end
+  end
+
+  def package_dependency_build_file_users(project, dependency)
+    project.objects.select do |object|
+      object.is_a?(Xcodeproj::Project::Object::PBXBuildFile) &&
+        object.product_ref&.uuid == dependency.uuid
+    end
+  end
+
+  def package_dependency_reusable_for_target?(project, dependency, target)
+    return false unless package_dependency_owners(project, dependency).map(&:uuid) == [target.uuid]
+
+    package_dependency_build_file_users(project, dependency).none? do |build_file|
+      build_file_owners(project, build_file).any? do |phase|
+        phase_owners(project, phase).any? { |owner| owner.uuid != target.uuid }
+      end
+    end
+  end
+
+  def package_dependency_referenced?(project, dependency)
+    package_dependency_owners(project, dependency).any? ||
+      package_dependency_build_file_users(project, dependency).any?
+  end
+
   def remove_phase_for_target(project, target, phase)
     if phase_owners(project, phase).none? { |owner| owner.uuid != target.uuid }
       phase.files.dup.each do |build_file|
@@ -163,7 +191,10 @@ module ModelBTargetIsolation
   end
 
   def reconcile_package_products(project, shipping, model_b)
-    existing_by_name = model_b.package_product_dependencies.group_by(&:product_name)
+    original = model_b.package_product_dependencies.to_a
+    existing_by_name = original.select do |dependency|
+      package_dependency_reusable_for_target?(project, dependency, model_b)
+    end.group_by(&:product_name)
     ordered = shipping.package_product_dependencies.map do |shipping_dependency|
       candidates = existing_by_name.fetch(shipping_dependency.product_name, [])
       dependency = candidates.shift || project.new(
@@ -174,7 +205,8 @@ module ModelBTargetIsolation
       dependency
     end
 
-    stale = model_b.package_product_dependencies.to_a - ordered
+    ordered_ids = ordered.map(&:uuid)
+    stale = original.reject { |dependency| ordered_ids.include?(dependency.uuid) }
     stale.each do |dependency|
       model_b.build_phases.each do |phase|
         next unless phase.respond_to?(:files)
@@ -184,11 +216,13 @@ module ModelBTargetIsolation
           remove_build_file_from_phase(project, phase, build_file)
         end
       end
-      dependency.remove_from_project
     end
 
     model_b.package_product_dependencies.clear
     ordered.each { |dependency| model_b.package_product_dependencies << dependency }
+    stale.each do |dependency|
+      dependency.remove_from_project unless package_dependency_referenced?(project, dependency)
+    end
     shipping.package_product_dependencies.zip(ordered).to_h
   end
 
@@ -390,8 +424,10 @@ module ModelBTargetIsolation
     duplicate.build_configurations.dup.each(&:remove_from_project)
     duplicate.build_configuration_list.remove_from_project
     duplicate.package_product_dependencies.dup.each do |dependency|
-      duplicate.package_product_dependencies.delete(dependency)
-      dependency.remove_from_project if dependency.referrers.empty?
+      duplicate.package_product_dependencies.delete_if do |candidate|
+        candidate.uuid == dependency.uuid
+      end
+      dependency.remove_from_project unless package_dependency_referenced?(project, dependency)
     end
 
     product = duplicate.product_reference
@@ -513,6 +549,37 @@ module ModelBTargetIsolation
     shared_build_files = build_file_ownership.select { |_uuid, owners| owners.size > 1 }
     unless shared_build_files.empty?
       raise "PBXBuildFile objects have multiple phase owners: #{shared_build_files.inspect}"
+    end
+
+    package_ownership = Hash.new { |hash, key| hash[key] = [] }
+    project.targets.each do |target|
+      target.package_product_dependencies.each do |dependency|
+        package_ownership[dependency.uuid] << target.uuid
+      end
+    end
+    shared_packages = package_ownership.select { |_uuid, owners| owners.size > 1 }
+    unless shared_packages.empty?
+      raise "package product dependencies have multiple target owners: #{shared_packages.inspect}"
+    end
+
+    project.objects.each do |object|
+      next unless object.is_a?(Xcodeproj::Project::Object::PBXBuildFile)
+
+      has_file_ref = !object.file_ref.nil?
+      has_product_ref = !object.product_ref.nil?
+      unless has_file_ref ^ has_product_ref
+        raise "PBXBuildFile #{object.uuid} must have exactly one file_ref or product_ref"
+      end
+      next unless has_product_ref
+
+      build_file_owners(project, object).each do |phase|
+        phase_owners(project, phase).each do |target|
+          target_package_ids = target.package_product_dependencies.map(&:uuid)
+          next if target_package_ids.include?(object.product_ref.uuid)
+
+          raise "package build file #{object.uuid} references a product not owned by #{target.name}"
+        end
+      end
     end
 
     model_b_product_ids = project.products_group.children.filter_map do |reference|
