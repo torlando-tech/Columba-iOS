@@ -779,15 +779,32 @@ class ModelBTargetIsolationTests < Minitest::Test
           build_file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == missing_path
         end
         refute_nil missing_file, "fixture lacks #{missing_path} in shipping #{kind}"
-        contaminated_file = phase.files.find { |build_file| build_file.uuid != missing_file.uuid }
-        refute_nil contaminated_file, "fixture lacks contamination candidate for #{kind}"
+        contaminated_file = case kind
+                            when :sources
+                              phase.files.find do |build_file|
+                                next false unless build_file.file_ref
+
+                                path = build_file.file_ref.real_path.relative_path_from(
+                                  Pathname.new(directory)
+                                ).to_s
+                                PYTHON_ONLY_SOURCE_PATHS.include?(path) &&
+                                  build_file.uuid != missing_file.uuid
+                              end
+                            when :frameworks
+                              phase.files.find do |build_file|
+                                build_file.product_ref&.product_name == 'ReticulumSwift'
+                              end
+                            when :resources
+                              nil
+                            end
+        refute_nil contaminated_file, "fixture lacks contamination candidate for #{kind}" unless kind == :resources
         protected_local_phase = if kind == :frameworks
                                   extension.frameworks_build_phase
                                 else
                                   extension.source_build_phase
                                 end
         protected_local_phase_id = protected_local_phase.uuid
-        contaminated_file_id = contaminated_file.uuid
+        contaminated_file_id = contaminated_file&.uuid
         missing_file.remove_from_project
         # Save the missing-member mutation first, then inject the canonical phase
         # UUID into the extension target. Xcodeproj normalizes a shared phase if
@@ -807,15 +824,17 @@ class ModelBTargetIsolationTests < Minitest::Test
           insertion_point,
           "\t\t\t\t#{shared_phase_id} /* malformed shared shipping #{kind} phase */,\n"
         )
-        protected_header = "\t\t#{protected_local_phase_id} /* #{protected_local_phase.display_name} */ = {"
-        protected_start = pbxproj.index(protected_header) or raise 'missing protected local phase in fixture'
-        protected_files_start = pbxproj.index("\t\t\tfiles = (\n", protected_start) or
-          raise 'missing protected local phase files in fixture'
-        protected_insertion = protected_files_start + "\t\t\tfiles = (\n".length
-        pbxproj.insert(
-          protected_insertion,
-          "\t\t\t\t#{contaminated_file_id} /* malformed independently shared build file */,\n"
-        )
+        if contaminated_file_id
+          protected_header = "\t\t#{protected_local_phase_id} /* #{protected_local_phase.display_name} */ = {"
+          protected_start = pbxproj.index(protected_header) or raise 'missing protected local phase in fixture'
+          protected_files_start = pbxproj.index("\t\t\tfiles = (\n", protected_start) or
+            raise 'missing protected local phase files in fixture'
+          protected_insertion = protected_files_start + "\t\t\tfiles = (\n".length
+          pbxproj.insert(
+            protected_insertion,
+            "\t\t\t\t#{contaminated_file_id} /* malformed independently shared build file */,\n"
+          )
+        end
         File.write(pbxproj_path, pbxproj)
 
         mutated = Xcodeproj::Project.open(temporary_project)
@@ -825,10 +844,12 @@ class ModelBTargetIsolationTests < Minitest::Test
                         "#{kind} shipping phase mutation did not survive serialization"
         assert_includes mutated_extension.build_phases.map(&:uuid), shared_phase_id,
                         "#{kind} shared-phase mutation did not survive serialization"
-        assert mutated_extension.build_phases.any? { |candidate|
-          candidate.uuid == protected_local_phase_id &&
-            candidate.files.any? { |build_file| build_file.uuid == contaminated_file_id }
-        }, "#{kind} independently shared build-file mutation did not survive serialization"
+        if contaminated_file_id
+          assert mutated_extension.build_phases.any? { |candidate|
+            candidate.uuid == protected_local_phase_id &&
+              candidate.files.any? { |build_file| build_file.uuid == contaminated_file_id }
+          }, "#{kind} independently shared build-file mutation did not survive serialization"
+        end
         run_reconciler(temporary_project, "shared-shipping-#{kind}")
         reconciled = Xcodeproj::Project.open(temporary_project)
         reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
@@ -839,9 +860,11 @@ class ModelBTargetIsolationTests < Minitest::Test
                      "shipping retained protected shared #{kind} phase"
         assert_equal protected_extension_before, target_graph_signature(reconciled_extension),
                      "#{kind} localization mutated protected extension phase/build-file UUIDs or metadata"
-        refute_includes reconciled_extension.build_phases.flat_map(&:files).map(&:uuid),
-                        contaminated_file_id,
-                        "#{kind} repair retained an independently shared shipping PBXBuildFile"
+        if contaminated_file_id
+          refute_includes reconciled_extension.build_phases.flat_map(&:files).map(&:uuid),
+                          contaminated_file_id,
+                          "#{kind} repair retained an independently shared shipping PBXBuildFile"
+        end
         assert_empty protected_phase_file_ids & local_phase.files.map(&:uuid),
                      "#{kind} localization reused protected PBXBuildFiles"
         assert_equal canonical_signature, {
@@ -869,6 +892,98 @@ class ModelBTargetIsolationTests < Minitest::Test
         assert phase_owners.values.all?(&:one?), "#{kind} repair retained a shared phase"
         assert all_build_files.all? { |build_file| build_file_owners[build_file.uuid].one? },
                "#{kind} repair retained an orphan/shared PBXBuildFile"
+        assert_second_run_byte_idempotent(temporary_project)
+      end
+    end
+  end
+
+  def test_reconciler_removes_build_file_only_contamination_from_protected_phases
+    cases = %i[source framework resource package]
+    cases.each do |kind|
+      Dir.mktmpdir("columba-shared-shipping-build-file-#{kind}") do |directory|
+        temporary_project = File.join(directory, 'Columba.xcodeproj')
+        FileUtils.cp_r(PROJECT_PATH, temporary_project)
+        fixture = Xcodeproj::Project.open(temporary_project)
+        shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+        extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+        shipping_phase, protected_phase, build_file = case kind
+                                                      when :source
+                                                        phase = shipping.source_build_phase
+                                                        file = phase.files.find do |candidate|
+                                                          phase_file_paths(fixture, phase, directory)
+                                                            .include?(PYTHON_ONLY_SOURCE_PATHS.first) &&
+                                                            candidate.file_ref&.real_path&.relative_path_from(
+                                                              Pathname.new(directory)
+                                                            )&.to_s == PYTHON_ONLY_SOURCE_PATHS.first
+                                                        end
+                                                        [phase, extension.source_build_phase, file]
+                                                      when :framework
+                                                        phase = shipping.frameworks_build_phase
+                                                        file = phase.files.find do |candidate|
+                                                          candidate.file_ref&.real_path&.relative_path_from(
+                                                            Pathname.new(directory)
+                                                          )&.to_s == PYTHON_FRAMEWORK_PATH
+                                                        end
+                                                        [phase, extension.frameworks_build_phase, file]
+                                                      when :resource
+                                                        phase = shipping.resources_build_phase
+                                                        file = phase.files.find do |candidate|
+                                                          candidate.file_ref&.real_path&.relative_path_from(
+                                                            Pathname.new(directory)
+                                                          )&.to_s == PYTHON_RESOURCE_PATH
+                                                        end
+                                                        [phase, extension.source_build_phase, file]
+                                                      when :package
+                                                        phase = shipping.frameworks_build_phase
+                                                        file = phase.files.find do |candidate|
+                                                          candidate.product_ref&.product_name == 'ReticulumSwift'
+                                                        end
+                                                        [phase, extension.frameworks_build_phase, file]
+                                                      end
+        refute_nil build_file, "fixture lacks shipping #{kind} build file"
+        shipping_phase_id = shipping_phase.uuid
+        build_file_id = build_file.uuid
+        shipping_phase_before = phase_signature(shipping_phase)
+        extension_before = target_graph_signature(extension)
+        protected_phase_id = protected_phase.uuid
+        protected_phase_name = protected_phase.display_name
+        fixture.save
+
+        pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+        pbxproj = File.read(pbxproj_path)
+        phase_header = "\t\t#{protected_phase_id} /* #{protected_phase_name} */ = {"
+        phase_start = pbxproj.index(phase_header) or raise 'missing protected phase in fixture'
+        files_start = pbxproj.index("\t\t\tfiles = (\n", phase_start) or
+          raise 'missing protected phase files in fixture'
+        insertion = files_start + "\t\t\tfiles = (\n".length
+        pbxproj.insert(
+          insertion,
+          "\t\t\t\t#{build_file_id} /* malformed build-file-only contamination */,\n"
+        )
+        File.write(pbxproj_path, pbxproj)
+
+        mutated = Xcodeproj::Project.open(temporary_project)
+        mutated_extension = mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+        assert_includes mutated_extension.build_phases.flat_map(&:files).map(&:uuid), build_file_id
+
+        run_reconciler(temporary_project, "build-file-only-#{kind}")
+        reconciled = Xcodeproj::Project.open(temporary_project)
+        reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+        reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+        local_shipping_phase = reconciled_shipping.build_phases.find do |phase|
+          phase.uuid == shipping_phase_id
+        end
+        refute_nil local_shipping_phase
+        assert_equal shipping_phase_before, phase_signature(local_shipping_phase),
+                     "#{kind} cleanup changed the canonical shipping phase"
+        assert_equal extension_before, target_graph_signature(reconciled_extension),
+                     "#{kind} cleanup did not restore the protected extension graph"
+        refute_includes reconciled_extension.build_phases.flat_map(&:files).map(&:uuid), build_file_id
+        assert_includes local_shipping_phase.files.map(&:uuid), build_file_id
+        owners = reconciled.objects.select do |object|
+          object.respond_to?(:files) && object.files.any? { |candidate| candidate.uuid == build_file_id }
+        end
+        assert_equal [shipping_phase_id], owners.map(&:uuid)
         assert_second_run_byte_idempotent(temporary_project)
       end
     end

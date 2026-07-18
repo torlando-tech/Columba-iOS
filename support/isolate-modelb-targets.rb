@@ -209,6 +209,28 @@ module ModelBTargetIsolation
     destination
   end
 
+  def authoritative_shipping_build_file?(project, shipping, phase, build_file)
+    if build_file.product_ref
+      return shipping.package_product_dependencies.any? do |dependency|
+        dependency.uuid == build_file.product_ref.uuid
+      end
+    end
+    return false unless build_file.file_ref
+
+    path = source_path(project, build_file.file_ref)
+    expected_metadata = if phase.is_a?(Xcodeproj::Project::Object::PBXSourcesBuildPhase) &&
+                           PYTHON_ONLY_SOURCE_METADATA.key?(path)
+                          PYTHON_ONLY_SOURCE_METADATA.fetch(path)
+                        elsif phase.is_a?(Xcodeproj::Project::Object::PBXFrameworksBuildPhase) &&
+                              build_file.file_ref.display_name == File.basename(PYTHON_FRAMEWORK_PATH)
+                          EMPTY_SOURCE_BUILD_FILE_METADATA
+                        elsif phase.is_a?(Xcodeproj::Project::Object::PBXResourcesBuildPhase) &&
+                              build_file.file_ref.display_name == File.basename(PYTHON_RESOURCE_PATH)
+                          EMPTY_SOURCE_BUILD_FILE_METADATA
+                        end
+    expected_metadata && build_file_metadata(build_file) == expected_metadata
+  end
+
   # The canonical shipping phases are authoritative mutation points below. A
   # malformed project may also attach one of them to Model B, the extension,
   # tests, or several protected targets. Replace only shipping's ownership with
@@ -233,6 +255,22 @@ module ModelBTargetIsolation
         shared_index = model_b.build_phases.index { |phase| phase.uuid == source.uuid }
         model_b.build_phases.delete_at(shared_index)
       end
+      # PBXBuildFiles are phase-owned. Even when the canonical shipping phase is
+      # itself local, one of its build files may be independently referenced by
+      # a protected target's phase in a malformed graph. Keep the shipping owner
+      # and detach every foreign reference before the sole-owner fast path.
+      source.files.compact.each do |build_file|
+        next unless authoritative_shipping_build_file?(project, shipping, source, build_file)
+
+        project.objects.each do |object|
+          next unless object.respond_to?(:files) && object.uuid != source.uuid
+
+          (object.files.length - 1).downto(0) do |file_index|
+            candidate = object.files[file_index]
+            object.files.delete_at(file_index) if candidate&.uuid == build_file.uuid
+          end
+        end
+      end
       next if phase_owners(project, source).map(&:uuid) == [shipping.uuid]
 
       index = shipping.build_phases.index { |phase| phase.uuid == source.uuid }
@@ -245,21 +283,7 @@ module ModelBTargetIsolation
       source.files.compact.each do |build_file|
         destination.files << clone_build_file(project, build_file)
       end
-      # A malformed graph can also attach one of the old canonical phase's
-      # PBXBuildFiles independently to a protected target's local phase. Those
-      # exact objects are shipping-owned contamination; the local shipping clone
-      # already has distinct replacements, so detach every stale cross-phase
-      # reference before deleting the old phase.
-      source.files.compact.each do |build_file|
-        project.objects.each do |object|
-          next unless object.respond_to?(:files) && object.uuid != source.uuid
 
-          (object.files.length - 1).downto(0) do |file_index|
-            candidate = object.files[file_index]
-            object.files.delete_at(file_index) if candidate&.uuid == build_file.uuid
-          end
-        end
-      end
       phase_owners(project, source).each do |owner|
         owner_index = owner.build_phases.index { |phase| phase.uuid == source.uuid }
         owner.build_phases.delete_at(owner_index) if owner_index
