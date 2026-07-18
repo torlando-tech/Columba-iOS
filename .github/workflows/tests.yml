@@ -12,107 +12,110 @@ concurrency:
 
 jobs:
   test:
-    # macos-26 carries Xcode 26.x, which the embedded-Python (Columba) scheme
+    # macos-26 carries Xcode 26.x, which the embedded-Python shipping scheme
     # needs — the Python.framework clang module map fails to resolve under
-    # Xcode 16.x ("module 'Python' … not defined in any loaded module map"),
-    # which is what devs build with locally (26.x). See the Select Xcode step.
+    # Xcode 16.x ("module 'Python' … not defined in any loaded module map").
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
       - name: Clone sibling packages
         run: |
+          set -euo pipefail
           git clone https://github.com/torlando-tech/reticulum-swift.git ../reticulum-swift
           git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
           git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
 
-      # The Python-backend (`Columba`) scheme links Python.xcframework + the
-      # bundled wheels; without these the build phase that copies them fails.
-      # Fetch them before any xcodebuild step (pinned deps → reproducible).
+      # The shipping (`Columba`) scheme links Python.xcframework and bundles
+      # wheels. Fetch both before resolving or building either flavor.
       - name: Fetch Python framework + wheels
         run: |
+          set -euo pipefail
           support/fetch-python.sh
           support/fetch-wheels.sh
 
       - name: Select Xcode
         run: |
+          set -euo pipefail
           echo "Available Xcodes:"; ls -d /Applications/Xcode_*.app 2>/dev/null || true
-          # Pick the newest Xcode on the runner (was pinned to 16.x, which can't
-          # build the Python scheme — see runs-on comment). Version-sort so 26.x
-          # wins over 16.x regardless of exact point release.
           XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
           echo "Using $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
-      # Resolve the local Swift packages (reticulum-swift / LXMF-swift / LXST-swift)
-      # once, up front. Without this the `xcodebuild test` action can intermittently
-      # fail to resolve LXMFSwift/ReticulumSwift for the ColumbaAppTests target even
-      # though the app build steps resolved them fine — a fresh-runner resolution
-      # race. One explicit resolve makes every later build/test step reuse it.
+      # Resolve both explicit flavor schemes up front so all later actions
+      # reuse the same local Swift package resolution.
       - name: Resolve Swift packages
         run: |
-          # Pre-warm both schemes' package deps (same sibling packages, same
-          # .xcodeproj, but be explicit so the Swift-native build benefits too).
+          set -euo pipefail
           xcodebuild -resolvePackageDependencies \
             -project Columba.xcodeproj \
             -scheme Columba
           xcodebuild -resolvePackageDependencies \
             -project Columba.xcodeproj \
-            -scheme Columba-Swift
+            -scheme Columba-ModelB
 
       - name: Find simulator
         id: sim
         run: |
+          set -euo pipefail
           DEVICE_ID=$(xcrun simctl list devices available -j \
             | python3 -c "import sys,json; devs=json.load(sys.stdin)['devices']; print(next(d['udid'] for rt in devs for d in devs[rt] if 'iPhone' in d['name']))")
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      - name: Build (Python backend — default)
+      - name: Build shipping artifact (embedded Python)
         run: |
+          set -euo pipefail
           xcodebuild build \
             -project Columba.xcodeproj \
             -scheme Columba \
+            -configuration Debug \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER=""
+            -derivedDataPath "$PWD/DerivedData-Python" \
+            CODE_SIGNING_ALLOWED=NO
 
-      # Verify the native reticulum-swift/LXMF-swift backend variant also builds
-      # (COLUMBA_BACKEND_SWIFT). The UI/AppServices are backend-agnostic, so this
-      # guards against the Swift backend or its seam drifting out of compile.
-      - name: Build (Swift-native backend)
+      - name: Verify shipping artifact isolation
         run: |
+          set -euo pipefail
+          SHIPPING_APP="$PWD/DerivedData-Python/Build/Products/Debug-iphonesimulator/ColumbaApp.app"
+          python3 support/verify-flavor-artifact.py shipping "$SHIPPING_APP"
+
+      # The Model B scheme explicitly builds its app and network extension.
+      - name: Build Model B artifact
+        run: |
+          set -euo pipefail
           xcodebuild build \
             -project Columba.xcodeproj \
-            -scheme Columba-Swift \
+            -scheme Columba-ModelB \
+            -configuration Debug \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER=""
+            -derivedDataPath "$PWD/DerivedData-ModelB" \
+            CODE_SIGNING_ALLOWED=NO
 
-      - name: Build and run tests
+      - name: Verify Model B artifact isolation
         run: |
+          set -euo pipefail
+          MODELB_APP="$PWD/DerivedData-ModelB/Build/Products/Debug-iphonesimulator/ColumbaModelBApp.app"
+          python3 support/verify-flavor-artifact.py modelb "$MODELB_APP"
+
+      - name: Build and run shipping tests
+        run: |
+          set -euo pipefail
+          rm -rf TestResults.xcresult
           xcodebuild test \
             -project Columba.xcodeproj \
             -scheme Columba \
+            -configuration Debug \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
+            -derivedDataPath "$PWD/DerivedData-Python" \
             -only-testing:ColumbaAppTests \
             -resultBundlePath TestResults.xcresult \
             -enableCodeCoverage YES \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER=""
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Export coverage report (function-level lcov)
         run: |
