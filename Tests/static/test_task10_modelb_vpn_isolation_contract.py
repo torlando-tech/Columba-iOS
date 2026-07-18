@@ -100,6 +100,29 @@ def lexical_brace_depth(masked_source: str, offset: int) -> int:
     return depth
 
 
+def lexical_block_ancestry(masked_source: str, offset: int) -> list[tuple[int, str]]:
+    """Return the lexically enclosing brace events and their fail-closed kinds."""
+    ancestry: list[tuple[int, str]] = []
+    previous_event = 0
+    for index, character in enumerate(masked_source[:offset]):
+        if character == "{":
+            prefix = masked_source[previous_event:index]
+            if re.search(r"\bdo\s*$", prefix):
+                kind = "do"
+            elif re.search(r"\b(?:func|init|deinit|subscript)\b", prefix):
+                kind = "function"
+            else:
+                kind = "other"
+            ancestry.append((index, kind))
+            previous_event = index + 1
+        elif character == "}":
+            if not ancestry:
+                raise AssertionError("source has an unmatched closing brace")
+            ancestry.pop()
+            previous_event = index + 1
+    return ancestry
+
+
 def assert_model_b_tunnel_wait_precedes_backend_start(source: str) -> None:
     """Prove the mandatory Model-B wait is direct, awaited, and first on the start path."""
     start_function = function_source(
@@ -121,11 +144,26 @@ def assert_model_b_tunnel_wait_precedes_backend_start(source: str) -> None:
         raise AssertionError(
             f"startPythonBackend must contain exactly one executable backend.start; found {len(backend_starts)}"
         )
+    backend_ancestry = lexical_block_ancestry(
+        masked_function, backend_starts[0].start()
+    )
+    if (
+        len(backend_ancestry) != 2
+        or backend_ancestry[0][1] != "function"
+        or backend_ancestry[1][1] != "do"
+    ):
+        raise AssertionError(
+            "backend.start must remain in the direct canonical do block after the tunnel wait, not in a local function, closure, Task, async let, defer, or nested helper"
+        )
     if wait_calls[0].start() >= backend_starts[0].start():
         raise AssertionError("Model-B tunnel wait must precede backend.start")
     if lexical_brace_depth(masked_function, wait_calls[0].start()) != 1:
         raise AssertionError(
             "Model-B tunnel wait must be a direct method-body statement, not nested in a closure, Task, local function, or control block"
+        )
+    if backend_ancestry[1][0] <= wait_calls[0].start():
+        raise AssertionError(
+            "backend.start canonical do block must open after the direct tunnel wait"
         )
 
     with tempfile.TemporaryDirectory() as directory:
@@ -197,6 +235,52 @@ def replace_guarded_wait(source: str, replacement: str) -> str:
     if mutated == source:
         raise AssertionError("tunnel-wait mutation did not change source")
     return mutated
+
+
+def relocate_backend_start(
+    source: str,
+    container: str,
+    replacement: str,
+    *,
+    before_wait: str = "",
+    declare_before_wait: bool = False,
+) -> str:
+    """Move the unique backend.start expression into an adversarial nested container."""
+    start_function = function_source(
+        source,
+        r"\bprivate\s+func\s+startPythonBackend\s*\(",
+    )
+    masked = swift_lexical_mask(start_function, ())
+    start_call = re.search(r"\btry\s+await\s+backend\.start\s*\(", masked)
+    if start_call is None:
+        raise AssertionError("could not locate backend.start mutation point")
+    depth = 0
+    call_end = None
+    for index in range(start_call.end() - 1, len(masked)):
+        if masked[index] == "(":
+            depth += 1
+        elif masked[index] == ")":
+            depth -= 1
+            if depth == 0:
+                call_end = index + 1
+                break
+    if call_end is None:
+        raise AssertionError("backend.start call has unbalanced parentheses")
+
+    expression = start_function[start_call.start():call_end]
+    mutated_function = (
+        start_function[:start_call.start()] + replacement + start_function[call_end:]
+    )
+    wait_block = guarded_tunnel_wait_block(source)
+    insertion = container.replace("BACKEND_START_EXPRESSION", expression)
+    if declare_before_wait:
+        wait_replacement = insertion + before_wait + wait_block
+    else:
+        wait_replacement = before_wait + wait_block + insertion
+    mutated_function = mutated_function.replace(wait_block, wait_replacement, 1)
+    if mutated_function == start_function:
+        raise AssertionError("backend.start relocation mutation did not change source")
+    return source.replace(start_function, mutated_function, 1)
 
 
 class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
@@ -367,6 +451,71 @@ class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
             with self.subTest(arrangement=name):
                 mutated = replace_guarded_wait(source, replacement)
                 with self.assertRaises(AssertionError):
+                    assert_model_b_tunnel_wait_precedes_backend_start(mutated)
+
+    def test_backend_start_contract_rejects_exact_pre_wait_helper_mutation(self) -> None:
+        source = self.source(APP_SERVICES)
+        mutated = relocate_backend_start(
+            source,
+            "\n"
+            "        func startBeforeTunnel() async throws -> LocalInfo {\n"
+            "            return BACKEND_START_EXPRESSION\n"
+            "        }\n",
+            "previouslyStarted!",
+            before_wait="        let previouslyStarted = try? await startBeforeTunnel()\n\n",
+        )
+        with self.assertRaisesRegex(AssertionError, "direct canonical do block"):
+            assert_model_b_tunnel_wait_precedes_backend_start(mutated)
+
+    def test_backend_start_contract_rejects_local_helper_relocations(self) -> None:
+        source = self.source(APP_SERVICES)
+        mutations = {
+            "local function declared before wait": relocate_backend_start(
+                source,
+                "        func relocatedBackendStart() async throws -> LocalInfo {\n"
+                "            return BACKEND_START_EXPRESSION\n"
+                "        }\n\n",
+                "try await relocatedBackendStart()",
+                declare_before_wait=True,
+            ),
+            "local function declared after wait": relocate_backend_start(
+                source,
+                "\n        func relocatedBackendStart() async throws -> LocalInfo {\n"
+                "            return BACKEND_START_EXPRESSION\n"
+                "        }\n",
+                "try await relocatedBackendStart()",
+            ),
+            "local function wrapping do": relocate_backend_start(
+                source,
+                "\n        func relocatedBackendStart() async throws -> LocalInfo {\n"
+                "            do {\n"
+                "                return BACKEND_START_EXPRESSION\n"
+                "            }\n"
+                "        }\n",
+                "try await relocatedBackendStart()",
+            ),
+            "closure wrapping do": relocate_backend_start(
+                source,
+                "\n        let relocatedBackendStart: () async throws -> LocalInfo = {\n"
+                "            do {\n"
+                "                return BACKEND_START_EXPRESSION\n"
+                "            }\n"
+                "        }\n",
+                "try await relocatedBackendStart()",
+            ),
+            "Task wrapping do": relocate_backend_start(
+                source,
+                "\n        let relocatedBackendStart = Task {\n"
+                "            do {\n"
+                "                return BACKEND_START_EXPRESSION\n"
+                "            }\n"
+                "        }\n",
+                "try await relocatedBackendStart.value",
+            ),
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(relocation=name):
+                with self.assertRaisesRegex(AssertionError, "direct canonical do block"):
                     assert_model_b_tunnel_wait_precedes_backend_start(mutated)
 
     def test_tunnel_wait_direct_depth_ignores_comment_and_string_braces(self) -> None:
