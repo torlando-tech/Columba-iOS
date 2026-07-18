@@ -445,8 +445,9 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     /// Merge an incoming reaction into the target message's reactions_json and
     /// delete the reaction message. The target update also records the reaction
     /// control hash, making replay idempotent across a crash before deletion.
-    /// - Returns: `true` if the reaction was applied, already applied, or invalid;
-    ///   `false` only if the durable target update failed transiently.
+    /// - Returns: `true` if the reaction was applied/already applied and its
+    ///   control message was consumed, or if it was invalid; `false` for a
+    ///   transient target-update or control-deletion failure.
     @discardableResult
     private func handleIncomingReaction(
         targetMessageHex: String,
@@ -490,15 +491,22 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
             logger.error("Failed to merge reaction: \(error.localizedDescription)")
             mergeOK = false
         }
+        guard mergeOK else {
+            // Keep the control message durable so ModelBInboundReplay can retry
+            // the merge by hash. Deleting after a failed merge would lose it.
+            return false
+        }
 
-        // Best-effort cleanup. A failure is safe: the durable ledger causes the
-        // next replay to skip the toggle and retry this deletion only.
+        // Delete the reaction control message only after the target contains the
+        // durable idempotency marker. A transient delete failure is retryable:
+        // the next pass sees the marker, skips the toggle, and retries deletion.
         do {
             try await messageRepository.deleteMessage(reactionMessageHash)
+            return true
         } catch {
-            logger.error("Failed to delete reaction message: \(error.localizedDescription)")
+            logger.error("Failed to delete reaction control message: \(error.localizedDescription, privacy: .public)")
+            return false
         }
-        return mergeOK
     }
 
     /// Convert hex string to Data.
