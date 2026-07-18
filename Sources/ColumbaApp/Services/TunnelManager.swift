@@ -5,11 +5,11 @@
 //  Manages the Network Extension (NEPacketTunnelProvider) lifecycle.
 //  Handles loading, starting, stopping, and sending messages to the extension.
 //
-//  Requires paid Apple Developer account. Enable by adding ENABLE_NETWORK_EXTENSION
-//  to Swift Active Compilation Conditions in the ColumbaApp target build settings.
+//  Compiled only into the experimental Model B app, whose configurations also
+//  carry the Network Extension capability and entitlement.
 //
 
-#if ENABLE_NETWORK_EXTENSION
+#if COLUMBA_RUNTIME_MODEL_B
 
 import Foundation
 import RNSAPI

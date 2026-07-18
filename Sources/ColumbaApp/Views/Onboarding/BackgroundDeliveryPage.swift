@@ -1,4 +1,4 @@
-#if COLUMBA_ONBOARDING_ENABLED
+#if COLUMBA_ONBOARDING_ENABLED && COLUMBA_RUNTIME_MODEL_B
 //
 //  BackgroundDeliveryPage.swift
 //  ColumbaApp

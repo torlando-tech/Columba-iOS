@@ -96,7 +96,7 @@ struct NetworkStatusView: View {
                     .foregroundStyle(Theme.textPrimary)
             }
 
-            #if ENABLE_NETWORK_EXTENSION
+            #if COLUMBA_RUNTIME_MODEL_B
             // Background transport status
             if let tunnel = appServices.tunnelManager {
                 HStack(spacing: 10) {

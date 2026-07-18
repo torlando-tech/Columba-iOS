@@ -106,6 +106,7 @@ struct OnboardingView: View {
                             }
                         )
                     case 4:
+                        #if COLUMBA_RUNTIME_MODEL_B
                         BackgroundDeliveryPage(
                             onEnable: {
                                 // Create the identity now (idempotent) so the NE can
@@ -126,6 +127,9 @@ struct OnboardingView: View {
                             },
                             onBack: { viewModel.previousPage() }
                         )
+                        #else
+                        EmptyView()
+                        #endif
                     case 5:
                         CompletePage(
                             displayName: viewModel.effectiveDisplayName,

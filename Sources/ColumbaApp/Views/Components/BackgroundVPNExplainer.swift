@@ -1,4 +1,4 @@
-#if ENABLE_NETWORK_EXTENSION || COLUMBA_ONBOARDING_ENABLED
+#if COLUMBA_RUNTIME_MODEL_B
 //
 //  BackgroundVPNExplainer.swift
 //  ColumbaApp

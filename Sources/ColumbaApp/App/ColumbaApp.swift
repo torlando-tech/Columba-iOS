@@ -543,7 +543,7 @@ struct RootView: View {
                 // backend starts until the NE/VPN tunnel is up; on first launch that
                 // means showing the background-delivery gate instead of an indefinite
                 // "Connecting to network…" spinner on a tunnel that doesn't exist yet.
-                #if ENABLE_NETWORK_EXTENSION
+                #if COLUMBA_RUNTIME_MODEL_B
                 if appServices.needsBackgroundDeliveryApproval {
                     BackgroundDeliveryGateView(appServices: appServices)
                 } else {
@@ -700,6 +700,7 @@ struct RootView: View {
     private func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
 
+        #if COLUMBA_RUNTIME_MODEL_B
         // Surface the Network Extension's App-Group diagnostic log into Documents
         // so it's retrievable via `devicectl ... copy from` alongside diag.log.
         // The NE (sandboxed) writes ext-diag.log to the shared container; the host
@@ -709,6 +710,7 @@ struct RootView: View {
         // Keep that copy LIVE (not just this launch's snapshot) so on-device NE
         // diagnostics can be tailed in real time. DEBUG-only.
         DiagLog.startExtDiagLiveCopy()
+        #endif
         #endif
 
         // Retry the entire init up to 5 times with increasing delay —

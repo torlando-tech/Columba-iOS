@@ -50,6 +50,7 @@ enum DiagLog {
         }
     }
 
+    #if COLUMBA_RUNTIME_MODEL_B
     /// Copy the Network Extension's App-Group diagnostic log
     /// (`ExtensionDiagLog`'s `ext-diag.log`) into the app's Documents directory
     /// as `ext-diag.log` so it's retrievable alongside `diag.log` via
@@ -82,6 +83,7 @@ enum DiagLog {
             startExtDiagLiveCopy()
         }
     }
+    #endif
     #endif
 }
 
@@ -300,7 +302,7 @@ public final class AppServices {
     /// happen on the main actor, no extra lock needed.
     private var destinationLinkCallbacks: [Data: @Sendable (Link) async -> Void] = [:]
 
-    #if ENABLE_NETWORK_EXTENSION
+    #if COLUMBA_RUNTIME_MODEL_B
     /// Network Extension tunnel manager.
     public private(set) var tunnelManager: TunnelManager?
 
@@ -657,6 +659,7 @@ public final class AppServices {
     /// reliably probe while locked), and persist the identity into that shared group
     /// so the NE can load it (`...AfterFirstUnlockThisDeviceOnly`, NE-readable while
     /// locked after first unlock). No-op on unsigned/simulator builds (group == nil).
+    #if COLUMBA_RUNTIME_MODEL_B
     private static func shareIdentityForModelB(_ identity: Identity) {
         guard let group = sharedKeychainAccessGroup() else {
             DiagLog.log("[IDENTITY] Model B share: shared keychain group unresolved")
@@ -670,6 +673,7 @@ public final class AppServices {
             DiagLog.log("[IDENTITY] Model B share: keychain save failed: \(error.localizedDescription)")
         }
     }
+    #endif
 
     /// - Returns: The loaded or newly created identity
     private static func loadOrCreateIdentity() -> Identity {
@@ -987,7 +991,7 @@ public final class AppServices {
     /// `InterfaceEntity` records from `InterfaceRepository`). No host/port
     /// is hardcoded — if `interfaces` is empty the app starts offline and
     /// the user adds an interface in Settings → Manage Interfaces.
-    #if ENABLE_NETWORK_EXTENSION
+    #if COLUMBA_RUNTIME_MODEL_B
     /// Create + wire the tunnel manager exactly once (idempotent). Called by
     /// `initialize()` and by the onboarding background-delivery step, which may bring
     /// the tunnel up before `initialize()` runs.
@@ -1131,7 +1135,7 @@ public final class AppServices {
         // the tunnel, then calls the non-isolated async `proxySend`. When Model B
         // is off (the default) `make` ignores `proxySend` and returns the
         // Swift/Python backend, so this wiring is inert until the flag is flipped.
-        #if ENABLE_NETWORK_EXTENSION
+        #if COLUMBA_RUNTIME_MODEL_B
         let proxySend: @Sendable (Data) async -> Data? = { [weak self] data in
             // Read the @MainActor-isolated `tunnelManager` via `MainActor.run`
             // (the established pattern in this file for crossing into MainActor
@@ -1149,7 +1153,7 @@ public final class AppServices {
         #endif
         self.backend = backend
 
-        #if ENABLE_NETWORK_EXTENSION
+        #if COLUMBA_RUNTIME_MODEL_B
         // Model B: bring up the app-side BLE host — reticulum-swift's
         // `CoreBluetoothBLEDriver` (CoreBluetooth can't run in the NE) + the
         // `AppGroupBLEServer` that bridges it to the NE's `BLEInterface` over the
@@ -1158,9 +1162,7 @@ public final class AppServices {
         // (ModelBBLEService lives in its own file because it `import ReticulumSwift`
         // for the REAL driver — here `CoreBluetoothBLEDriver` would be the RNSAPI
         // Compat stub.) `SwiftBLEBridge` is gated off under Model B at launch.
-        if BackendPreference.modelB {
-            ModelBBLEService.shared.start(identityHash: identity.hash)
-        }
+        ModelBBLEService.shared.start(identityHash: identity.hash)
         #endif
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -1196,16 +1198,14 @@ public final class AppServices {
         let identityBytes = try? identity.exportPrivateKeys()
         DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
 
-        #if ENABLE_NETWORK_EXTENSION
+        #if COLUMBA_RUNTIME_MODEL_B
         // Model B: `backend` is the thin-client proxy; `backend.start()` round-trips to
         // the NE node over the VPN tunnel session, so the tunnel MUST be connected first.
         // A fresh install has no VPN config at all — without this, start() would spin
         // ~30×8s on a dead session (the "stuck on Connecting to network… for minutes"
         // bug). Bring the tunnel up, gating first-run on the background-delivery approval
         // gate so the iOS VPN prompt is a deliberate user step, not a silent hang.
-        if BackendPreference.modelB {
-            await ensureBackgroundDeliveryTunnel()
-        }
+        await ensureBackgroundDeliveryTunnel()
         #endif
 
         do {
@@ -2081,7 +2081,7 @@ public final class AppServices {
             await hotAddInterface(entity, backend: backend)
         }
 
-        #if ENABLE_NETWORK_EXTENSION
+        #if COLUMBA_RUNTIME_MODEL_B
         // 4. Newly hot-added interfaces are created in normal (local-socket) mode.
         // The tunnel-mode coordinator (`applyTunnelModeToInterfaces`) only fires on
         // VPN *status* changes, not interface changes — so if background transport
@@ -2527,7 +2527,9 @@ public final class AppServices {
         // Model B: make this identity reachable by the in-NE node. This overload
         // receives the identity pre-loaded (multi-identity path) and never calls
         // loadOrCreateIdentity, so do the NE-sharing here.
+        #if COLUMBA_RUNTIME_MODEL_B
         Self.shareIdentityForModelB(identity)
+        #endif
 
         // 2. Create path table for routing with persistence
         let pathDbPath = Self.pathTableFilePath
@@ -2652,7 +2654,7 @@ public final class AppServices {
             DiagLog.log("[INIT2] Transport mode enabled")
         }
 
-        #if ENABLE_NETWORK_EXTENSION
+        #if COLUMBA_RUNTIME_MODEL_B
         // 12. Set up extension frame reader for background transport
         let reader = ExtensionFrameReader()
         self.extensionFrameReader = reader
@@ -2694,7 +2696,7 @@ public final class AppServices {
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
 
-    #if ENABLE_NETWORK_EXTENSION
+    #if COLUMBA_RUNTIME_MODEL_B
     /// Switch every TCPInterface and AutoInterface into or out of
     /// tunnel mode in response to the VPN extension's status.
     ///
@@ -2962,7 +2964,7 @@ public final class AppServices {
         try await transport.addAutoInterface(newAutoInterface)
         logger.info("AutoInterface started with group: \(groupId)")
 
-        #if ENABLE_NETWORK_EXTENSION
+        #if COLUMBA_RUNTIME_MODEL_B
         // Same launch-race fix as connectTCPInterface: if the tunnel is already up,
         // bring this freshly-registered interface into tunnel mode.
         await reapplyTunnelModeIfActive()
@@ -3678,7 +3680,7 @@ public final class AppServices {
 
         startStateObserver()
 
-        #if ENABLE_NETWORK_EXTENSION
+        #if COLUMBA_RUNTIME_MODEL_B
         // Launch-race fix: the persistent background-transport tunnel can already be
         // `.connected` when the app cold-starts, so `onStatusChange` fires (and tunnel
         // mode is applied) BEFORE this interface is registered — leaving it in

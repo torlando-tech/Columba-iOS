@@ -1,4 +1,4 @@
-#if ENABLE_NETWORK_EXTENSION
+#if COLUMBA_RUNTIME_MODEL_B
 //
 //  BackgroundTransportView.swift
 //  ColumbaApp
@@ -12,8 +12,8 @@
 //  explainer screen reached from Settings (see `backgroundTransportCard` in
 //  SettingsView) rather than forced into the mandatory onboarding flow.
 //
-//  The whole file is `ENABLE_NETWORK_EXTENSION`-gated because `TunnelManager`
-//  only exists under that flag.
+//  The whole file is `COLUMBA_RUNTIME_MODEL_B`-gated because `TunnelManager`
+//  belongs exclusively to the experimental Model B app.
 //
 
 import SwiftUI

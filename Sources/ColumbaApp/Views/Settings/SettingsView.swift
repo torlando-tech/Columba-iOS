@@ -12,7 +12,7 @@ import RNSAPI
 import CoreLocation
 import UIKit
 #endif
-#if ENABLE_NETWORK_EXTENSION
+#if COLUMBA_RUNTIME_MODEL_B
 // For NEVPNStatus, used by the background-transport status helpers below.
 import NetworkExtension
 #endif
@@ -48,7 +48,7 @@ struct SettingsView: View {
     @State private var showNetworkStatus = false
     @State private var showBLEConnections = false
     @State private var showDataMigration = false
-    #if ENABLE_NETWORK_EXTENSION
+    #if COLUMBA_RUNTIME_MODEL_B
     /// Presents the background-transport explainer / enable sheet.
     @State private var showBackgroundTransport = false
     #endif
@@ -67,17 +67,11 @@ struct SettingsView: View {
                         // Network
                         networkCard(vm)
 
-                        // Background Transport — the Network Extension VPN
-                        // tunnel that keeps RNS alive when the app is
-                        // backgrounded. Hidden under the Python RNS stack
-                        // because the previous implementation routed
-                        // reticulum-swift's TCP socket through
-                        // PacketTunnelProvider; Python's RNS owns its
-                        // sockets and needs a different architecture
-                        // (likely a Network Extension that pumps the
-                        // Python event loop, or a background-task wake
-                        // approach). Phase 2 work.
-                        #if ENABLE_NETWORK_EXTENSION
+                        // Background Transport — the Model B Network Extension VPN
+                        // tunnel that keeps the experimental native node alive when
+                        // the app is backgrounded. It is compiled entirely out of the
+                        // shipping Python product.
+                        #if COLUMBA_RUNTIME_MODEL_B
                         backgroundTransportCard()
                         #endif
 
@@ -400,20 +394,11 @@ struct SettingsView: View {
         }
     }
 
-    #if ENABLE_NETWORK_EXTENSION
+    #if COLUMBA_RUNTIME_MODEL_B
     // MARK: - Background Transport Card
     //
-    // Currently compile-guarded off. The previous wiring tied each
-    // toggle into reticulum-swift's `TCPInterface.beginTunnelMode` /
-    // `endTunnelMode`, which routed outbound bytes through the
-    // PacketTunnelProvider extension. The Python RNS migration deletes
-    // that entire path (the Compat-layer TCPInterface has no tunnel
-    // mode) and replaces it with rns_bridge.py's own socket. Bringing
-    // background transport back means re-architecting the NE side to
-    // either (a) drive Python's event loop from within the extension
-    // (heavy — needs CPython embedded twice) or (b) re-wake the app
-    // via BGProcessingTask + silent push when a peer announces and
-    // immediately polls drain_events. Phase 2/3.
+    // Model B owns the Network Extension and its tunnel lifecycle. The entire
+    // card and its NetworkExtension types are absent from the shipping Python app.
 
     @ViewBuilder
     private func backgroundTransportCard() -> some View {
