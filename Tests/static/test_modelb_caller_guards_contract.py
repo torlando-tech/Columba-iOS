@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Static compile-region contract for declarations absent from the Python target."""
 
+from functools import lru_cache
 from pathlib import Path
-import itertools
 import re
 import tempfile
 import unittest
@@ -39,26 +39,49 @@ class ConditionalFrame(TypedDict):
 
 
 def swift_lexical_mask(source: str) -> str:
-    """Blank Swift comments and strings while preserving newlines and offsets."""
+    """Blank Swift comments, strings, and regexes while preserving source layout."""
     output = list(source)
     index = 0
     block_depth = 0
     state = "code"
+    hashes = 0
+    literal_start = 0
 
     def blank(position: int) -> None:
         if output[position] not in "\r\n":
             output[position] = " "
 
+    def blank_span(start: int, end: int) -> None:
+        for position in range(start, end):
+            blank(position)
+
+    def exact_extended_close(position: int, marker: str) -> bool:
+        closing = marker + ("#" * hashes)
+        return source.startswith(closing, position) and not source.startswith(
+            "#", position + len(closing)
+        )
+
+    def starts_bare_regex(position: int) -> bool:
+        """Recognize `/.../` only where Swift expects an expression operand."""
+        previous = position - 1
+        while previous >= 0 and source[previous] in " \t":
+            previous -= 1
+        if previous < 0 or source[previous] in "\r\n=([{,:;!?&|":
+            return True
+        word = re.search(r"([A-Za-z_][A-Za-z0-9_]*)$", source[: previous + 1])
+        return bool(
+            word
+            and word.group(1) in {"case", "return", "throw", "try", "await", "in"}
+        )
+
     while index < len(source):
         if block_depth:
             if source.startswith("/*", index):
-                blank(index)
-                blank(index + 1)
+                blank_span(index, index + 2)
                 block_depth += 1
                 index += 2
             elif source.startswith("*/", index):
-                blank(index)
-                blank(index + 1)
+                blank_span(index, index + 2)
                 block_depth -= 1
                 index += 2
             else:
@@ -89,12 +112,10 @@ def swift_lexical_mask(source: str) -> str:
 
         if state == "multiline_string":
             if source[index] == "\\" and index + 1 < len(source):
-                blank(index)
-                blank(index + 1)
+                blank_span(index, index + 2)
                 index += 2
             elif source.startswith('"""', index):
-                for offset in range(3):
-                    blank(index + offset)
+                blank_span(index, index + 3)
                 index += 3
                 state = "code"
             else:
@@ -102,34 +123,105 @@ def swift_lexical_mask(source: str) -> str:
                 index += 1
             continue
 
-        if source.startswith("//", index):
+        if state in {"raw_string", "raw_multiline_string", "extended_regex"}:
+            if state == "raw_string" and source[index] in "\r\n":
+                raise ValueError("unterminated Swift raw string literal before newline")
+            marker = {
+                "raw_string": '"',
+                "raw_multiline_string": '"""',
+                "extended_regex": "/",
+            }[state]
+            if exact_extended_close(index, marker):
+                end = index + len(marker) + hashes
+                blank_span(index, end)
+                index = end
+                state = "code"
+                hashes = 0
+            else:
+                blank(index)
+                index += 1
+            continue
+
+        if state == "bare_regex":
             blank(index)
-            blank(index + 1)
+            if source[index] == "\\" and index + 1 < len(source):
+                blank(index + 1)
+                index += 2
+            elif source[index] == "/":
+                literal = source[literal_start:index + 1]
+                if any(
+                    re.search(rf"\b{re.escape(token)}\b", literal)
+                    for token in MODEL_B_DECLARATIONS
+                ):
+                    raise ValueError(
+                        "ambiguous Swift bare regex contains a tracked declaration"
+                    )
+                state = "code"
+                index += 1
+            elif source[index] in "\r\n":
+                raise ValueError("unterminated Swift bare regex literal before newline")
+            else:
+                index += 1
+            continue
+
+        if source[index] == "#":
+            end = index
+            while end < len(source) and source[end] == "#":
+                end += 1
+            delimiter_hashes = end - index
+            if source.startswith('"""', end):
+                hashes = delimiter_hashes
+                blank_span(index, end + 3)
+                index = end + 3
+                state = "raw_multiline_string"
+            elif end < len(source) and source[end] == '"':
+                hashes = delimiter_hashes
+                blank_span(index, end + 1)
+                index = end + 1
+                state = "raw_string"
+            elif end < len(source) and source[end] == "/":
+                hashes = delimiter_hashes
+                blank_span(index, end + 1)
+                index = end + 1
+                state = "extended_regex"
+            else:
+                index += 1
+        elif source.startswith("//", index):
+            blank_span(index, index + 2)
             index += 2
             state = "line_comment"
         elif source.startswith("/*", index):
-            blank(index)
-            blank(index + 1)
+            blank_span(index, index + 2)
             index += 2
             block_depth = 1
         elif source.startswith('"""', index):
-            for offset in range(3):
-                blank(index + offset)
+            blank_span(index, index + 3)
             index += 3
             state = "multiline_string"
         elif source[index] == '"':
             blank(index)
             index += 1
             state = "string"
+        elif source[index] == "/" and starts_bare_regex(index):
+            literal_start = index
+            blank(index)
+            index += 1
+            state = "bare_regex"
         else:
             index += 1
 
     if block_depth:
         raise ValueError("unterminated Swift block comment")
-    if state == "multiline_string":
-        raise ValueError("unterminated Swift multiline string")
-    if state == "string":
-        raise ValueError("unterminated Swift string literal")
+    errors = {
+        "multiline_string": "unterminated Swift multiline string",
+        "string": "unterminated Swift string literal",
+        "raw_string": "unterminated Swift raw string literal",
+        "raw_multiline_string": "unterminated Swift raw multiline string",
+        "extended_regex": "unterminated Swift extended regex literal",
+        "bare_regex": "unterminated Swift bare regex literal",
+    }
+    if state in errors:
+        raise ValueError(errors[state])
     return "".join(output)
 
 
@@ -242,28 +334,62 @@ def atoms(formula: Formula) -> set[str]:
     return atoms(formula[1]) | atoms(formula[2])
 
 
-def evaluate(formula: Formula, values: dict[str, bool]) -> bool:
+def simplify(formula: Formula, values: dict[str, bool]) -> Formula:
+    """Substitute known atoms and simplify Boolean identities structurally."""
     kind = formula[0]
     if kind == "const":
-        return formula[1]
+        return formula
     if kind == "atom":
-        return values[formula[1]]
+        return ("const", values[formula[1]]) if formula[1] in values else formula
     if kind == "not":
-        return not evaluate(formula[1], values)
+        operand = simplify(formula[1], values)
+        if operand[0] == "const":
+            return ("const", not operand[1])
+        if operand[0] == "not":
+            return operand[1]
+        return ("not", operand)
+
+    left = simplify(formula[1], values)
+    right = simplify(formula[2], values)
     if kind == "and":
-        return evaluate(formula[1], values) and evaluate(formula[2], values)
-    if kind == "or":
-        return evaluate(formula[1], values) or evaluate(formula[2], values)
-    raise AssertionError(f"unknown formula node {kind}")
+        if left == TRUE:
+            return right
+        if right == TRUE:
+            return left
+        if left[0] == "const" and not left[1]:
+            return left
+        if right[0] == "const" and not right[1]:
+            return right
+    elif kind == "or":
+        if left[0] == "const" and left[1]:
+            return left
+        if right[0] == "const" and right[1]:
+            return right
+        if left[0] == "const" and not left[1]:
+            return right
+        if right[0] == "const" and not right[1]:
+            return left
+    else:
+        raise AssertionError(f"unknown formula node {kind}")
+    if left == right:
+        return left
+    return (kind, left, right)
+
+
+@lru_cache(maxsize=None)
+def satisfiable(formula: Formula) -> bool:
+    """Decide satisfiability with memoized, short-circuiting Shannon expansion."""
+    if formula[0] == "const":
+        return formula[1]
+    name = min(atoms(formula))
+    return satisfiable(simplify(formula, {name: False})) or satisfiable(
+        simplify(formula, {name: True})
+    )
 
 
 def guarantees_model_b(formula: Formula) -> bool:
-    names = sorted(atoms(formula) | {MODEL_B_FLAG})
-    for bits in itertools.product((False, True), repeat=len(names)):
-        values = dict(zip(names, bits))
-        if evaluate(formula, values) and not values[MODEL_B_FLAG]:
-            return False
-    return True
+    without_model_b = simplify(formula, {MODEL_B_FLAG: False})
+    return not satisfiable(without_model_b)
 
 
 def unguarded_references(path: Path) -> list[tuple[int, str]]:
@@ -352,6 +478,52 @@ class ModelBCallerGuardContractTests(unittest.TestCase):
         snippet = 'let normal = "ModelBRNodeService \\\"quoted\\\""\nlet multiline = """\nRNodeSeamConfig\n"""\n'
         self.assertEqual([], self.references(snippet))
 
+    def test_raw_string_closure_exposes_following_executable_reference(self) -> None:
+        snippet = 'let text = #"embedded quote: ""#; ModelBRNodeService.shared.start() // "\n'
+        self.assertEqual([(1, snippet.strip())], self.references(snippet))
+
+    def test_identifiers_and_ordinary_quotes_inside_raw_strings_are_ignored(self) -> None:
+        snippet = '''let normal = ##"ModelBRNodeService " and "" and #" plus \\##(RNodeSeamConfig)"##
+let multiline = #"""
+RNodeSeamConfig " and """ without the matching hash and \\#(ModelBInboundReplay)
+AppGroupRNodeServer // not a comment
+"""#
+'''
+        self.assertEqual([], self.references(snippet))
+
+    def test_unterminated_raw_literals_fail_clearly(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unterminated Swift raw string literal"):
+            self.references('let value = ##"ModelBRNodeService"#\n')
+        with self.assertRaisesRegex(ValueError, "unterminated Swift raw multiline string"):
+            self.references('let value = #"""\nRNodeSeamConfig\n"""\n')
+
+    def test_raw_url_and_comment_markers_do_not_affect_lexing(self) -> None:
+        snippet = '''let url = #"https://example.test/a/* ModelBRNodeService */"#
+// #"RNodeSeamConfig"#
+AppGroupRNodeServer.start()
+'''
+        self.assertEqual([(3, "AppGroupRNodeServer.start()")], self.references(snippet))
+
+    def test_declaration_names_inside_extended_regex_are_ignored(self) -> None:
+        extended = 'let pattern = ##/AppGroupRNodeServer / and #/ RNodeSeamConfig/##\n'
+        self.assertEqual([], self.references(extended))
+
+    def test_tracked_declaration_inside_ambiguous_bare_regex_fails_clearly(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError, "ambiguous Swift bare regex contains a tracked declaration"
+        ):
+            self.references('let pattern = /ModelBRNodeService|RNodeSeamConfig/\n')
+
+    def test_regex_closure_exposes_following_executable_reference(self) -> None:
+        extended = 'let pattern = #/https://example.test/ModelBRNodeService/#; RNodeSeamConfig.load()\n'
+        bare = 'let pattern = /safe\\/pattern/; AppGroupRNodeServer.start()\n'
+        self.assertEqual([(1, extended.strip())], self.references(extended))
+        self.assertEqual([(1, bare.strip())], self.references(bare))
+
+    def test_unterminated_extended_regex_fails_clearly(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unterminated Swift extended regex literal"):
+            self.references('let pattern = ##/ModelBRNodeService/#\n')
+
     def test_url_string_does_not_hide_following_executable_reference(self) -> None:
         snippet = 'let url = "https://example.test"; ModelBRNodeService.shared.start()\n'
         self.assertEqual([(1, snippet.strip())], self.references(snippet))
@@ -374,6 +546,27 @@ class ModelBCallerGuardContractTests(unittest.TestCase):
         disjunction = "#if COLUMBA_RUNTIME_MODEL_B || os(iOS)\nRNodeSeamConfig.load()\n#endif\n"
         self.assertEqual(1, len(self.references(negated)))
         self.assertEqual(1, len(self.references(disjunction)))
+
+    def test_many_atom_conjunctive_guard_short_circuits_after_substitution(self) -> None:
+        alternatives = " || ".join(f"FEATURE_{index}" for index in range(80))
+        snippet = (
+            f"#if COLUMBA_RUNTIME_MODEL_B && ({alternatives})\n"
+            "ModelBRNodeService.shared.start()\n"
+            "#endif\n"
+        )
+        self.assertEqual([], self.references(snippet))
+
+    def test_logical_implication_handles_nested_negation_and_disjunction(self) -> None:
+        implied = """#if COLUMBA_RUNTIME_MODEL_B || (FEATURE_A && !FEATURE_A)
+ModelBRNodeService.shared.start()
+#endif
+"""
+        not_implied = """#if (COLUMBA_RUNTIME_MODEL_B && FEATURE_A) || !FEATURE_A
+RNodeSeamConfig.load()
+#endif
+"""
+        self.assertEqual([], self.references(implied))
+        self.assertEqual([2], [line for line, _ in self.references(not_implied)])
 
     def test_nested_else_and_elseif_paths_preserve_branch_semantics(self) -> None:
         nested = """#if COLUMBA_RUNTIME_MODEL_B
