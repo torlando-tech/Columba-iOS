@@ -109,6 +109,7 @@ public final class CallManager {
     /// 2. Registers a destination link callback so incoming links are routed to Telephone
     /// 3. Wires up ringing/established/ended callbacks for UI state updates
     func initialize(identity: Identity, transport: ReticulumTransport, pathTable: PathTable?, database: LXMFDatabase?) async {
+        #if COLUMBA_RUNTIME_PYTHON
         self.pathTable = pathTable
         self.transport = transport
         self.database = database
@@ -262,6 +263,14 @@ public final class CallManager {
         #endif
 
         logger.error("[CALL] CallManager initialized")
+        #elseif COLUMBA_RUNTIME_MODEL_B
+        // Model B excludes PythonNetworkTransport. Its app process is a thin
+        // ProxyRnsBackend client and must not recreate a local RNS node.
+        self.pathTable = pathTable
+        self.transport = transport
+        self.database = database
+        logger.info("[CALL] unavailable in Model B app runtime")
+        #endif
     }
 
     // MARK: - Call Actions

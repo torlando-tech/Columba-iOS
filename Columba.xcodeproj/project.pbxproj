@@ -117,9 +117,7 @@
 		11DE32B4ABEF3646B6B42728 /* MaterialDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F036 /* MaterialDesignIcons.swift */; };
 		13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */; };
 		140E03C294121F7FA2D478A9 /* ContactCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011 /* ContactCard.swift */; };
-		147126F57E3694F2C63CBBAB /* app in Resources */ = {isa = PBXBuildFile; fileRef = D001472BC7DFD3CD7BF27F0C /* app */; };
 		147A84617097826BCE5DBD49 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030 /* InterfaceManagementViewModel.swift */; };
-		150F9B06F1516792D01A1A72 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
 		15D4C7BF2F5EBFB685022ED2 /* BackgroundDeliveryGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */; };
 		181FFC68FA29599C2E5C88A4 /* MicronDocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F082 /* MicronDocumentView.swift */; };
 		1BC630C0471DC5E53AFA3E74 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046 /* BLEDevicePickerSheet.swift */; };
@@ -134,14 +132,12 @@
 		266929D6972E8D373E7A926D /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 021FA3D73B6F8B711A97D40F /* ReticulumSwift */; };
 		26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */; };
 		26D6E3545012268714C637D9 /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065 /* ThemeManager.swift */; };
-		2718B286F42FAF0930FFF7FC /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
 		2AFE85F0CA5EFEDF75A7C1E5 /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4C54CECCAF0B117FB6C197 /* IncomingCallScreen.swift */; };
 		2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */; };
 		2C21D06B5E27DB547378A9D9 /* DeviceDiscoveryStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F055 /* DeviceDiscoveryStep.swift */; };
 		2C8DBC92FB549628044532C4 /* BackgroundTransportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGTF /* BackgroundTransportView.swift */; };
 		2DAA350A34E3332DEC1545B0 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		2DEF38CCE53F632284B5A50D /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
-		2EA5BEC6310B2956DE0B49A6 /* PyConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D8CBCF7E546028A043E1C7 /* PyConversation.swift */; };
 		2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8222FC732AF00235991 /* LXMFSwift */; };
 		31F207DBD45E2CA682A3F830 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
 		32BFE0E43B1F4246502992E3 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047 /* RNodeConfigSheet.swift */; };
@@ -160,7 +156,6 @@
 		3D93C9AD83DBD69265B1F5EF /* ColumbaNetworkExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = EPROD /* ColumbaNetworkExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
 		3E8EDA16402CE9043F338509 /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A /* AddContactSheet.swift */; };
 		40EBFB15B9FD4D5081AF4EBC /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
-		41CCA462C5577FAA283B541C /* PyLocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */; };
 		422AB44ACCB2031F9DD721B2 /* ConnectivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04F /* ConnectivityPage.swift */; };
 		429607039454543AB6316748 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
 		45C9E9AFAC34D61BFB3797AA /* RNodeSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43A7FF6A056815712B1D13D9 /* RNodeSeam.swift */; };
@@ -183,7 +178,6 @@
 		5C05E5EC2A287FEAD018BB36 /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
 		5C7438876260CE1CD77FC20A /* AppGroupRNodeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E36D94E7D28E35241C46426 /* AppGroupRNodeServer.swift */; };
 		5F1FF2954475331208BAAD47 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */; };
-		60BA839E62DE06E288F28947 /* PythonBLECallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */; };
 		6176037A389D1F97BB47992B /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		6327E961A4DD4234D71E1D03 /* MicronParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07E /* MicronParser.swift */; };
 		655FFFEC5C528B994F08822E /* NetworkStatusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F034 /* NetworkStatusViewModel.swift */; };
@@ -194,7 +188,6 @@
 		697B28367B07702842284116 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
 		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
 		6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
-		6D99248103F010707D69AF48 /* PythonRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */; };
 		6DFD1336E74B3E8F8131A97B /* AppGroupBLEDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAGD /* AppGroupBLEDriver.swift */; };
 		71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
 		73B2FC9ECC25BA7B4AFF3D96 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 030380C51B178354F4D4E88F /* ReticulumSwift */; };
@@ -226,11 +219,9 @@
 		8EB34878FB401C9E5F9F5202 /* FrequencySlotStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F058 /* FrequencySlotStep.swift */; };
 		8EF58D2BD45FCDF79EDB49AB /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031 /* InterfaceManagementScreen.swift */; };
 		8F65ED2745669655D14B1C43 /* CompletePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F051 /* CompletePage.swift */; };
-		906AAC4C151F816F189BBD34 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */; };
 		90BD158667A5C627CFB1DEBF /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsRepository.swift */; };
 		922658C82CEEA53695143F9B /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = DBD8F3A253D413F087742BC0 /* MapLibre */; };
 		92DDF4AE0AB493CC2AA0BA20 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6000D5CED2C3C89F74999BC1 /* LXSTSwift */; };
-		955E3E04C2EDF727A0DCBBE6 /* PythonNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = PNT002 /* PythonNetworkTransport.swift */; };
 		9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */; };
 		9673457897893BF9DE512A0F /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006 /* SettingsViewModel.swift */; };
 		973B4BBFD50C0935D1525F8E /* NomadNetBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F081 /* NomadNetBrowserView.swift */; };
@@ -252,7 +243,6 @@
 		ADABD423CE22B9E00BC5D7F3 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
 		AF0B30F4F05BB35FCC50D99F /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* ChatsView.swift */; };
 		AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
-		AFC83FFCE2A93CCFE0FCB141 /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		AGB2B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
 		AGP1B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
 		AGP2B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
@@ -261,7 +251,6 @@
 		B2EF01CCB8B50326073D8171 /* NodeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F032 /* NodeDetailsView.swift */; };
 		B4C378BDA13BC155719B5440 /* IdentityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04E /* IdentityPage.swift */; };
 		B5A7B590DEFA2B213D8D5754 /* InterfaceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F029 /* InterfaceRepository.swift */; };
-		B71560E3EE02D25E85A1FD3F /* PyMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBD293157E715F490613984 /* PyMessage.swift */; };
 		B71F90BE936BAF660BA0821B /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007 /* MainTabView.swift */; };
 		BB2453727F7CFDAF2E0B196F /* AppGroupRNodeSeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */; };
 		BBF80EA2BC42E6E7FF17A171 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
@@ -295,7 +284,6 @@
 		D93546FFCB0106CF3F68B2C5 /* MessageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F073 /* MessageDetailView.swift */; };
 		D970871E33F40AA65F2CE793 /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
 		D996B56197DBCF9E68B21D9D /* MapLibre in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 265C043240DBCD7A542021FC /* MapLibre */; };
-		DA9B76C74A2D40EB7906938B /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
 		DAF36A8899258710724C1FF9 /* ConversationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F009 /* ConversationRow.swift */; };
 		DCD98FD7695F22CC597C3FC4 /* AppGroupRNodeSeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */; };
 		DE9220E1D4ABF9A4C2CBA761 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
@@ -361,17 +349,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		438CA46655C33FC127529EBB /* Embed Frameworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				AFC83FFCE2A93CCFE0FCB141 /* Python.xcframework in Embed Frameworks */,
-			);
-			name = "Embed Frameworks";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		7435EA87224EF17F5BA3D04A /* Embed App Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -585,7 +562,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				D996B56197DBCF9E68B21D9D /* MapLibre in Frameworks */,
-				DA9B76C74A2D40EB7906938B /* Python.xcframework in Frameworks */,
 				FC15AC0D65E2B67821CAFEE3 /* LXSTSwift in Frameworks */,
 				11D0621686D1D65C9602C911 /* RNSAPI in Frameworks */,
 				876F4CCF3FA441B67D08BBEC /* SwiftBLEBridge in Frameworks */,
@@ -1096,8 +1072,6 @@
 				72A5174A252C574FFD0D17FD /* Sources */,
 				B94B76698EB730570790D133 /* Frameworks */,
 				0431DD0443BE7ACF0A521890 /* Resources */,
-				438CA46655C33FC127529EBB /* Embed Frameworks */,
-				A0DD36D8C9B35E228CFC964B /* Install Python stdlib & process dylibs */,
 				7435EA87224EF17F5BA3D04A /* Embed App Extensions */,
 			);
 			buildRules = (
@@ -1250,7 +1224,6 @@
 			files = (
 				D116F7C8ADEB284C5AF41963 /* Assets.xcassets in Resources */,
 				485B8EFF327C28C1A5F0727B /* materialdesignicons.ttf in Resources */,
-				147126F57E3694F2C63CBBAB /* app in Resources */,
 				AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */,
 				C17B4B4AD850DBC3CD27AEC0 /* JetBrainsMono-Bold.ttf in Resources */,
 				DF2A7839A4D81C4DAEEF6A2A /* lucide.ttf in Resources */,
@@ -1273,27 +1246,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		A0DD36D8C9B35E228CFC964B /* Install Python stdlib & process dylibs */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh",
-			);
-			name = "Install Python stdlib & process dylibs";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -e\n\n# Swift-native backend build (COLUMBA_BACKEND_SWIFT): no embedded Python,\n# so skip the wheels copy + install_python entirely (leaner build, no\n# multi-hundred-MB app_packages copy). The Python.xcframework is still\n# linked (build phases are not config-scoped) — full unlink is Phase 4 (two\n# targets / gen-time).\ncase \" $SWIFT_ACTIVE_COMPILATION_CONDITIONS \" in\n  *\" COLUMBA_BACKEND_SWIFT \"*) echo \"note: Swift backend — skipping Python wheels/install\"; exit 0 ;;\nesac\n\n# Copy platform-appropriate wheels into <app>/app_packages/ before\n# install_python processes the .so extensions inside them.\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || {\n  echo \"error: $WHEELS_SRC missing — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages";
-			showEnvVarsInLog = 0;
-		};
 		CF4F87412D5E39178E82799E /* Install Python stdlib & process dylibs */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -1312,7 +1264,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n\n# Swift-native backend build (COLUMBA_BACKEND_SWIFT): no embedded Python,\n# so skip the wheels copy + install_python entirely (leaner build, no\n# multi-hundred-MB app_packages copy). The Python.xcframework is still\n# linked (build phases are not config-scoped) — full unlink is Phase 4 (two\n# targets / gen-time).\ncase \" $SWIFT_ACTIVE_COMPILATION_CONDITIONS \" in\n  *\" COLUMBA_BACKEND_SWIFT \"*) echo \"note: Swift backend — skipping Python wheels/install\"; exit 0 ;;\nesac\n\n# Copy platform-appropriate wheels into <app>/app_packages/ before\n# install_python processes the .so extensions inside them.\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || {\n  echo \"error: $WHEELS_SRC missing — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages";
+			shellScript = "set -e\n\n# Copy platform-appropriate wheels into <app>/app_packages/ before\n# install_python processes the .so extensions inside them.\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || {\n  echo \"error: $WHEELS_SRC missing — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
@@ -1417,25 +1369,16 @@
 				D3F8A25E2E3D415E8F9779D0 /* MicronRenderContainer.swift in Sources */,
 				2DEF38CCE53F632284B5A50D /* MonospaceLineView.swift in Sources */,
 				40EBFB15B9FD4D5081AF4EBC /* ZoomableScrollView.swift in Sources */,
-				2718B286F42FAF0930FFF7FC /* PyAnnounce.swift in Sources */,
-				B71560E3EE02D25E85A1FD3F /* PyMessage.swift in Sources */,
-				2EA5BEC6310B2956DE0B49A6 /* PyConversation.swift in Sources */,
-				41CCA462C5577FAA283B541C /* PyLocalIdentity.swift in Sources */,
-				906AAC4C151F816F189BBD34 /* PythonBridge.swift in Sources */,
-				150F9B06F1516792D01A1A72 /* PythonRuntime.swift in Sources */,
-				6D99248103F010707D69AF48 /* PythonRNSBackend.swift in Sources */,
 				AA9D3715FB399E675BD53B41 /* PythonConfigWriter.swift in Sources */,
 				0B768533EC90008D3E23C326 /* AudioManager.swift in Sources */,
 				FC1149733FD2E4E009612DDF /* CallKitManager.swift in Sources */,
 				7A8C0A9310AA29BD5DA75FB5 /* CallManager.swift in Sources */,
-				955E3E04C2EDF727A0DCBBE6 /* PythonNetworkTransport.swift in Sources */,
 				D970871E33F40AA65F2CE793 /* CallControlButton.swift in Sources */,
 				82010207856E1B25E8137512 /* CodecSelectionSheet.swift in Sources */,
 				2AFE85F0CA5EFEDF75A7C1E5 /* IncomingCallScreen.swift in Sources */,
 				E63DE54C6FD31D240E66BD5B /* PttButton.swift in Sources */,
 				E079C55745CBDD622CA51842 /* VoiceCallScreen.swift in Sources */,
 				0651ADD246B2BD2C0006305E /* CodecProfileInfo.swift in Sources */,
-				60BA839E62DE06E288F28947 /* PythonBLECallbackBridge.swift in Sources */,
 				ADABD423CE22B9E00BC5D7F3 /* BackendPreference.swift in Sources */,
 				E21364EEE2883AB0D1012CE0 /* CeaseTelemetry.swift in Sources */,
 				E280C50039F108EE9AF83F86 /* DiscoveredDevice.swift in Sources */,
@@ -1903,7 +1846,6 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_ONBOARDING_ENABLED COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -2007,7 +1949,6 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -2100,7 +2041,6 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_ONBOARDING_ENABLED COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -2261,7 +2201,6 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

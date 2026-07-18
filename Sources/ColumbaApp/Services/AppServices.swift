@@ -227,9 +227,11 @@ public final class AppServices {
     public private(set) var backend: (any RnsBackend)?
 
     /// The bound backend downcast to the Python impl — for Python-only wiring
-    /// (BLE/RNode callback bridges, diagnose_* deeplinks). nil when a non-Python
-    /// backend is active; those paths are then correctly skipped.
+    /// (BLE callback bridge and diagnose_* deep links). This API is compiled
+    /// only into shipping because Model B does not own the concrete Python source.
+    #if COLUMBA_RUNTIME_PYTHON
     public var pythonBackend: PythonRNSBackend? { backend as? PythonRNSBackend }
+    #endif
 
     /// What the active backend supports — drives UI capability gating. `.unknown`
     /// (everything unsupported) until a backend is bound; re-evaluated via
@@ -1434,6 +1436,7 @@ public final class AppServices {
             #endif
         }
 
+        #if COLUMBA_RUNTIME_PYTHON
         // Diagnose IOSBLEInterface load: exec the file in the same fresh
         // namespace RNS uses, surface any exception to DiagLog. Helps when
         // panic_on_interface_error=no silently swallows external-iface
@@ -1493,6 +1496,7 @@ public final class AppServices {
                 }
             }
         }
+        #endif
 
         // Phase 6 smoke test: dump current connection details (Android parity).
         addPythonObserver("ColumbaTestBLEPeerList") { _ in
@@ -1562,6 +1566,7 @@ public final class AppServices {
             #endif
         }
 
+        #if COLUMBA_RUNTIME_PYTHON
         // Phase 2 smoke test: Swift→Python BLE callback round-trip.
         // Installs `_test_roundtrip` Python callback that returns
         // True iff its int arg is even, then invokes it through the
@@ -1588,6 +1593,7 @@ public final class AppServices {
                 DiagLog.log("[TEST-BLE-CB] value=\(value) even=\(evenResult) odd=\(oddResult) \(pass ? "PASS" : "FAIL")")
             }
         }
+        #endif
 
         // lxma://test-answer — accept the currently-ringing call.
         addPythonObserver("ColumbaTestAnswer") { [weak self] _ in
@@ -3012,6 +3018,7 @@ public final class AppServices {
         // 1. Files deployed eagerly during startPythonBackend — see
         //    deployIOSBLEPythonFilesIfPossible. No-op here.
 
+        #if COLUMBA_RUNTIME_PYTHON
         // 2. Wire Swift→Python callback bridge.
         if let backend = pythonBackend {
             let invoker = PythonBLECallbackBridge(pythonBridge: backend.pythonBridge)
@@ -3021,6 +3028,7 @@ public final class AppServices {
         } else {
             DiagLog.log("[BLE_DIAG] WARNING: no pythonBackend yet — bridge invoker not installed")
         }
+        #endif
 
         // 3. Update the Compat BLEInterface stub so UI binding has a target.
         let config = InterfaceConfig(

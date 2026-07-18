@@ -39,6 +39,7 @@ struct ColumbaApp: App {
     // MARK: - Init
 
     init() {
+        #if COLUMBA_RUNTIME_PYTHON
         // Boot embedded CPython once, before anything else can touch it.
         // PythonBridge / PythonRNSBackend depend on this; without it
         // PyGILState_Ensure deadlocks.
@@ -48,6 +49,7 @@ struct ColumbaApp: App {
         case .failure(let err):
             logger.error("Python runtime failed: \(err.localizedDescription, privacy: .public)")
         }
+        #endif
 
         #if os(iOS) && canImport(CoreBluetooth)
         // Track C8 — background BLE wake / CoreBluetooth state restoration.

@@ -55,6 +55,42 @@ MODEL_B_ONLY_SOURCE_METADATA['Sources/ColumbaApp/Services/ModelBInboundReplay.sw
 }
 MODEL_B_ONLY_SOURCE_METADATA.each_value(&:freeze)
 MODEL_B_ONLY_SOURCE_METADATA.freeze
+PYTHON_ONLY_SOURCE_PATHS = %w[
+  Sources/ColumbaApp/Python/Models/PyAnnounce.swift
+  Sources/ColumbaApp/Python/Models/PyMessage.swift
+  Sources/ColumbaApp/Python/Models/PyConversation.swift
+  Sources/ColumbaApp/Python/Models/PyLocalIdentity.swift
+  Sources/PythonBridge/PythonBridge.swift
+  Sources/PythonBridge/PythonRuntime.swift
+  Sources/RNSBackendPy/PythonRNSBackend.swift
+  Sources/ColumbaApp/Services/PythonNetworkTransport.swift
+  Sources/PythonBridge/PythonBLECallbackBridge.swift
+].freeze
+PYTHON_FRAMEWORK_PATH = 'Frameworks/Python.xcframework'
+PYTHON_RESOURCE_PATH = 'app'
+PYTHON_BRIDGING_HEADER = 'Sources/PythonBridge/ColumbaPython-Bridging-Header.h'
+PYTHON_EMBED_PHASE_NAME = 'Embed Frameworks'
+PYTHON_SHELL_PHASE_NAME = 'Install Python stdlib & process dylibs'
+PYTHON_INSTALL_SCRIPT = <<~'SH'.freeze
+  set -e
+
+  # Copy platform-appropriate wheels into <app>/app_packages/ before
+  # install_python processes the .so extensions inside them.
+  case "$EFFECTIVE_PLATFORM_NAME" in
+    -iphoneos)         WHEELS_SRC="$PROJECT_DIR/wheels-iphoneos" ;;
+    -iphonesimulator)  WHEELS_SRC="$PROJECT_DIR/wheels-iphonesimulator" ;;
+    *) echo "error: unsupported platform $EFFECTIVE_PLATFORM_NAME" >&2; exit 1 ;;
+  esac
+  [ -d "$WHEELS_SRC" ] || {
+    echo "error: $WHEELS_SRC missing — run support/fetch-wheels.sh" >&2
+    exit 1
+  }
+  mkdir -p "$CODESIGNING_FOLDER_PATH/app_packages"
+  rsync -au --delete "$WHEELS_SRC/" "$CODESIGNING_FOLDER_PATH/app_packages/"
+
+  source "$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh"
+  install_python Frameworks/Python.xcframework app_packages
+SH
 MODEL_B_ONLY_TEST_SOURCE_PATHS = %w[
   Tests/ColumbaAppTests/BLESeamDriverTests.swift
   Tests/ColumbaAppTests/RNodeSeamTests.swift
@@ -90,9 +126,6 @@ MODEL_B_DECLARATIONS_ABSENT_FROM_SHIPPING = %w[
 ].freeze
 SHIPPING_REQUIRED_SOURCE_PATHS = %w[
   Sources/ColumbaApp/Services/MessageRepository.swift
-  Sources/PythonBridge/PythonBridge.swift
-  Sources/PythonBridge/PythonRuntime.swift
-  Sources/RNSBackendPy/PythonRNSBackend.swift
   Sources/Shared/SharedFrameQueue.swift
   Sources/Shared/ExtensionDiagLog.swift
 ].freeze
@@ -145,6 +178,31 @@ class ModelBTargetIsolationTests < Minitest::Test
     target.source_build_phase.files.map do |build_file|
       build_file.file_ref.real_path.relative_path_from(Pathname.new(root)).to_s
     end
+  end
+
+  def phase_file_paths(project, phase, root = REPOSITORY_ROOT)
+    phase.files.each_with_object([]) do |build_file, paths|
+      next unless build_file.file_ref
+
+      paths << build_file.file_ref.real_path.relative_path_from(Pathname.new(root)).to_s
+    end
+  end
+
+  def python_shell_metadata(phase)
+    {
+      name: phase.name,
+      shell_path: phase.shell_path,
+      shell_script: phase.shell_script,
+      input_paths: phase.input_paths,
+      output_paths: phase.output_paths,
+      input_file_list_paths: phase.input_file_list_paths,
+      output_file_list_paths: phase.output_file_list_paths,
+      always_out_of_date: phase.always_out_of_date,
+      show_env_vars_in_log: phase.show_env_vars_in_log,
+      dependency_file: phase.dependency_file,
+      build_action_mask: phase.build_action_mask,
+      run_only_for_deployment_postprocessing: phase.run_only_for_deployment_postprocessing
+    }
   end
 
   def isolated_source_metadata(target, root = REPOSITORY_ROOT)
@@ -297,19 +355,18 @@ class ModelBTargetIsolationTests < Minitest::Test
 
   def test_application_membership_is_authoritatively_partitioned
     assert_equal 24, MODEL_B_ONLY_SOURCE_PATHS.size
+    assert_equal 9, PYTHON_ONLY_SOURCE_PATHS.size
     shipping_phases = @shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
     model_phases = @model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
-    assert_equal shipping_phases.map { |phase| phase_signature(phase) },
+    assert_equal [
+      Xcodeproj::Project::Object::PBXSourcesBuildPhase,
+      Xcodeproj::Project::Object::PBXFrameworksBuildPhase,
+      Xcodeproj::Project::Object::PBXResourcesBuildPhase,
+      Xcodeproj::Project::Object::PBXCopyFilesBuildPhase,
+      Xcodeproj::Project::Object::PBXShellScriptBuildPhase
+    ], shipping_phases.map(&:class)
+    assert_equal shipping_phases.first(3).map { |phase| phase_signature(phase) },
                  model_phases.map { |phase| phase_signature(phase) }
-
-    shipping_phases.zip(model_phases).each do |shipping_phase, model_phase|
-      next if shipping_phase.is_a?(Xcodeproj::Project::Object::PBXSourcesBuildPhase) ||
-              shipping_phase.is_a?(Xcodeproj::Project::Object::PBXFrameworksBuildPhase)
-
-      assert_equal shipping_phase.files.map { |file| build_file_signature(file) },
-                   model_phase.files.map { |file| build_file_signature(file) },
-                   "phase membership differs for #{phase_signature(shipping_phase)}"
-    end
 
     shipping_sources = source_paths(@shipping)
     model_b_sources = source_paths(@model_b)
@@ -317,8 +374,68 @@ class ModelBTargetIsolationTests < Minitest::Test
     assert_empty MODEL_B_ONLY_SOURCE_PATHS - model_b_sources
     assert_empty SHIPPING_REQUIRED_SOURCE_PATHS - shipping_sources
     assert_empty SHIPPING_REQUIRED_SOURCE_PATHS - model_b_sources
-    assert_equal shipping_sources + MODEL_B_ONLY_SOURCE_PATHS, model_b_sources
+    assert_empty PYTHON_ONLY_SOURCE_PATHS - shipping_sources
+    assert_empty PYTHON_ONLY_SOURCE_PATHS & model_b_sources
+    assert_equal (shipping_sources - PYTHON_ONLY_SOURCE_PATHS) + MODEL_B_ONLY_SOURCE_PATHS,
+                 model_b_sources
     assert_equal MODEL_B_ONLY_SOURCE_METADATA, isolated_source_metadata(@model_b)
+
+    shipping_framework_paths = phase_file_paths(@project, @shipping.frameworks_build_phase)
+    model_framework_paths = phase_file_paths(@project, @model_b.frameworks_build_phase)
+    assert_equal 1, shipping_framework_paths.count(PYTHON_FRAMEWORK_PATH)
+    refute_includes model_framework_paths, PYTHON_FRAMEWORK_PATH
+    assert_equal shipping_framework_paths - [PYTHON_FRAMEWORK_PATH], model_framework_paths
+
+    shipping_resource_paths = phase_file_paths(@project, @shipping.resources_build_phase)
+    model_resource_paths = phase_file_paths(@project, @model_b.resources_build_phase)
+    assert_equal 1, shipping_resource_paths.count(PYTHON_RESOURCE_PATH)
+    refute_includes model_resource_paths, PYTHON_RESOURCE_PATH
+    assert_equal shipping_resource_paths - [PYTHON_RESOURCE_PATH], model_resource_paths
+
+    embed_phases = @shipping.build_phases.select do |phase|
+      phase.respond_to?(:name) && phase.name == PYTHON_EMBED_PHASE_NAME
+    end
+    assert_equal 1, embed_phases.size
+    embed = embed_phases.first
+    assert_equal [PYTHON_FRAMEWORK_PATH], phase_file_paths(@project, embed)
+    assert_equal({ 'ATTRIBUTES' => %w[CodeSignOnCopy RemoveHeadersOnCopy] }, embed.files.first.settings)
+    assert_equal '', embed.dst_path
+    assert_equal '10', embed.dst_subfolder_spec.to_s
+    assert_equal '2147483647', embed.build_action_mask
+    assert_equal '0', embed.run_only_for_deployment_postprocessing
+
+    shell_phases = @shipping.build_phases.select do |phase|
+      phase.respond_to?(:name) && phase.name == PYTHON_SHELL_PHASE_NAME
+    end
+    assert_equal 1, shell_phases.size
+    assert_equal({
+      name: PYTHON_SHELL_PHASE_NAME,
+      shell_path: '/bin/sh',
+      shell_script: PYTHON_INSTALL_SCRIPT,
+      input_paths: ['$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh'],
+      output_paths: [],
+      input_file_list_paths: [],
+      output_file_list_paths: [],
+      always_out_of_date: '1',
+      show_env_vars_in_log: '0',
+      dependency_file: nil,
+      build_action_mask: '2147483647',
+      run_only_for_deployment_postprocessing: '0'
+    }, python_shell_metadata(shell_phases.first))
+    refute_includes shell_phases.first.shell_script, 'COLUMBA_BACKEND_SWIFT'
+    assert_equal [nil, nil, nil, PYTHON_EMBED_PHASE_NAME, PYTHON_SHELL_PHASE_NAME],
+                 shipping_phases.map { |phase| phase.respond_to?(:name) ? phase.name : nil }
+    model_b_python_phases = @model_b.build_phases.select do |phase|
+      phase.respond_to?(:name) && [PYTHON_EMBED_PHASE_NAME, PYTHON_SHELL_PHASE_NAME].include?(phase.name)
+    end
+    assert_empty model_b_python_phases
+    @shipping.build_configurations.each do |configuration|
+      assert_equal PYTHON_BRIDGING_HEADER,
+                   configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER']
+    end
+    @model_b.build_configurations.each do |configuration|
+      refute configuration.build_settings.key?('SWIFT_OBJC_BRIDGING_HEADER')
+    end
 
     shipping_products = @shipping.package_product_dependencies.map(&:product_name)
     model_b_products = @model_b.package_product_dependencies.map(&:product_name)
@@ -428,7 +545,8 @@ class ModelBTargetIsolationTests < Minitest::Test
       reconciled_shipping_sources = source_paths(reconciled_shipping, File.dirname(temporary_project))
       reconciled_model_b_sources = source_paths(reconciled_model_b, File.dirname(temporary_project))
       assert_empty MODEL_B_ONLY_SOURCE_PATHS & reconciled_shipping_sources
-      assert_equal reconciled_shipping_sources + MODEL_B_ONLY_SOURCE_PATHS, reconciled_model_b_sources
+      assert_equal (reconciled_shipping_sources - PYTHON_ONLY_SOURCE_PATHS) + MODEL_B_ONLY_SOURCE_PATHS,
+                   reconciled_model_b_sources
       assert_equal MODEL_B_ONLY_SOURCE_METADATA,
                    isolated_source_metadata(reconciled_model_b, File.dirname(temporary_project))
       retained_stale_file = reconciled_model_b.source_build_phase.files.find do |file|
@@ -454,6 +572,176 @@ class ModelBTargetIsolationTests < Minitest::Test
       refute_equal shipping_reticulum_id, shipping_reticulum_file.first.product_ref.uuid,
                    'fixture did not force recreation of shipping ReticulumSwift linkage'
       assert_equal extension_before, target_graph_signature(reconciled_extension)
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
+  def test_reconciler_repairs_complete_python_ownership_matrix_and_malformed_sharing
+    Dir.mktmpdir('columba-python-ownership-mutation') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      canonical_shipping = target_semantic_signature(fixture, shipping)
+      canonical_model_b = target_semantic_signature(fixture, model_b)
+
+      references = fixture.files.to_h do |reference|
+        absolute = Pathname.new(File.expand_path(reference.real_path.to_s, directory))
+        [absolute.relative_path_from(Pathname.new(directory)).to_s, reference]
+      end
+      removed_shipping_ids = []
+      PYTHON_ONLY_SOURCE_PATHS.each do |path|
+        build_file = shipping.source_build_phase.files.find do |candidate|
+          candidate.file_ref&.uuid == references.fetch(path).uuid
+        end
+        refute_nil build_file, "fixture lacks shipping Python source #{path}"
+        removed_shipping_ids << build_file.uuid
+        build_file.remove_from_project
+
+        leaked = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+        leaked.file_ref = references.fetch(path)
+        leaked.settings = { 'COMPILER_FLAGS' => '-DSTALE_PYTHON_IN_MODEL_B' }
+        leaked.platform_filter = 'macos'
+        leaked.platform_filters = %w[ios macos]
+        model_b.source_build_phase.files << leaked
+      end
+
+      [
+        [shipping.frameworks_build_phase, model_b.frameworks_build_phase, PYTHON_FRAMEWORK_PATH],
+        [shipping.resources_build_phase, model_b.resources_build_phase, PYTHON_RESOURCE_PATH]
+      ].each do |shipping_phase, model_phase, path|
+        build_file = shipping_phase.files.find do |candidate|
+          candidate.file_ref&.uuid == references.fetch(path).uuid
+        end
+        refute_nil build_file, "fixture lacks shipping Python membership #{path}"
+        removed_shipping_ids << build_file.uuid
+        build_file.remove_from_project
+
+        leaked = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+        leaked.file_ref = references.fetch(path)
+        leaked.settings = { 'ATTRIBUTES' => ['StaleModelBLeak'] }
+        model_phase.files << leaked
+      end
+
+      shipping.build_configurations.each do |configuration|
+        configuration.build_settings.delete('SWIFT_OBJC_BRIDGING_HEADER')
+      end
+      model_b.build_configurations.each do |configuration|
+        configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = 'Stale/Python.h'
+      end
+
+      embed = shipping.build_phases.find do |phase|
+        phase.respond_to?(:name) && phase.name == PYTHON_EMBED_PHASE_NAME
+      end
+      shell = shipping.build_phases.find do |phase|
+        phase.respond_to?(:name) && phase.name == PYTHON_SHELL_PHASE_NAME
+      end
+      refute_nil embed
+      refute_nil shell
+      embed.dst_path = 'stale/embed/path'
+      embed.dst_subfolder_spec = '7'
+      embed.build_action_mask = '1'
+      embed.run_only_for_deployment_postprocessing = '1'
+      embed.files.first.settings = { 'ATTRIBUTES' => ['StaleEmbedMetadata'] }
+      shell.shell_path = '/bin/false'
+      shell.shell_script = 'echo stale'
+      shell.input_paths = ['stale-input']
+      shell.output_paths = ['stale-output']
+      shell.input_file_list_paths = ['stale-input-list']
+      shell.output_file_list_paths = ['stale-output-list']
+      shell.always_out_of_date = '0'
+      shell.show_env_vars_in_log = '1'
+      shell.dependency_file = 'stale-dependency'
+      shell.build_action_mask = '1'
+      shell.run_only_for_deployment_postprocessing = '1'
+
+      # These malformed shared phases must be detached from both app targets,
+      # not globally deleted or edited, because the protected extension owns them.
+      extension.build_phases << embed
+      extension.build_phases << shell
+      model_b.build_phases << embed
+      model_b.build_phases << shell
+
+      protected_build_file = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      protected_build_file.file_ref = references.fetch(PYTHON_ONLY_SOURCE_PATHS.first)
+      protected_build_file.settings = { 'COMPILER_FLAGS' => '-DPROTECTED_EXTENSION_OWNER' }
+      extension.source_build_phase.files << protected_build_file
+      protected_ids = [embed.uuid, shell.uuid, embed.files.first.uuid, protected_build_file.uuid]
+      fixture.save
+
+      # xcodeproj cannot serialize a PBXBuildFile under multiple phases. Inject
+      # the protected extension build file into both malformed app Sources phases.
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      [shipping.source_build_phase.uuid, model_b.source_build_phase.uuid].each do |phase_id|
+        phase_header = "\t\t#{phase_id} /* Sources */ = {"
+        phase_start = pbxproj.index(phase_header) or raise "missing Sources phase #{phase_id}"
+        files_start = pbxproj.index("\t\t\tfiles = (\n", phase_start) or raise 'missing Sources files'
+        insertion_point = files_start + "\t\t\tfiles = (\n".length
+        pbxproj.insert(
+          insertion_point,
+          "\t\t\t\t#{protected_build_file.uuid} /* malformed shared Python source */,\n"
+        )
+      end
+      File.write(pbxproj_path, pbxproj)
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_shipping = mutated.targets.find { |target| target.name == 'ColumbaApp' }
+      mutated_model_b = mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      mutated_extension = mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      assert_empty PYTHON_ONLY_SOURCE_PATHS - source_paths(mutated_model_b, directory)
+      assert_equal 1, source_paths(mutated_shipping, directory).count(PYTHON_ONLY_SOURCE_PATHS.first)
+      assert_empty removed_shipping_ids & mutated.objects_by_uuid.keys
+      assert_empty protected_ids - mutated.objects_by_uuid.keys
+      assert_equal 'Stale/Python.h',
+                   mutated_model_b.build_configurations.first.build_settings['SWIFT_OBJC_BRIDGING_HEADER']
+      extension_before = target_graph_signature(mutated_extension)
+      tests_before = target_graph_signature(
+        mutated.targets.find { |target| target.name == 'ColumbaAppTests' }
+      )
+
+      run_reconciler(temporary_project, 'complete-python-ownership')
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+      reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      reconciled_tests = reconciled.targets.find { |target| target.name == 'ColumbaAppTests' }
+
+      assert_equal canonical_shipping, target_semantic_signature(reconciled, reconciled_shipping),
+                   'shipping Python source/resource/framework/phase/config matrix was not restored exactly'
+      assert_equal canonical_model_b, target_semantic_signature(reconciled, reconciled_model_b),
+                   'Model B did not return to its exact Python-free graph'
+      assert_equal extension_before, target_graph_signature(reconciled_extension),
+                   'repair mutated the protected extension graph'
+      assert_equal tests_before, target_graph_signature(reconciled_tests),
+                   'repair mutated the Task 7 shipping-test graph'
+      assert_empty removed_shipping_ids & reconciled.objects_by_uuid.keys,
+                   'removed target-local Python build files became orphans'
+      assert_empty protected_ids - reconciled.objects_by_uuid.keys,
+                   'protected shared phase/build-file objects were globally deleted'
+      assert_empty protected_ids & reconciled_shipping.build_phases.map(&:uuid)
+      assert_empty protected_ids & reconciled_model_b.build_phases.map(&:uuid)
+      refute_includes reconciled_shipping.source_build_phase.files.map(&:uuid), protected_build_file.uuid
+      refute_includes reconciled_model_b.source_build_phase.files.map(&:uuid), protected_build_file.uuid
+
+      phase_owners = Hash.new { |hash, key| hash[key] = [] }
+      build_file_owners = Hash.new { |hash, key| hash[key] = [] }
+      reconciled.targets.each do |target|
+        target.build_phases.each { |phase| phase_owners[phase.uuid] << target.uuid }
+      end
+      reconciled.objects.each do |object|
+        next unless object.respond_to?(:files)
+
+        object.files.each { |build_file| build_file_owners[build_file.uuid] << object.uuid }
+      end
+      all_build_files = reconciled.objects.select do |object|
+        object.is_a?(Xcodeproj::Project::Object::PBXBuildFile)
+      end
+      assert phase_owners.values.all?(&:one?), 'repair retained a multi-owner build phase'
+      assert all_build_files.all? { |build_file| build_file_owners[build_file.uuid].one? },
+             'repair retained an orphan or multi-owner PBXBuildFile'
       assert_second_run_byte_idempotent(temporary_project)
     end
   end

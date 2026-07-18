@@ -280,6 +280,7 @@ public final class PropagationNodeManager {
         // is what actually affects delivery.
         let stampCost = node?.info.stampCost ?? 0
         selectedNodeStampCost = stampCost
+        #if COLUMBA_RUNTIME_PYTHON
         if let backend = appServices?.pythonBackend {
             do {
                 _ = try await backend.setPropagationNode(destHashHex: hash.toHex(), stampCost: stampCost)
@@ -287,6 +288,7 @@ public final class PropagationNodeManager {
                 logger.error("setPropagationNode failed: \(error.localizedDescription)")
             }
         }
+        #endif
         // Keep the Compat-layer var in sync so any UI that still reads
         // router.outboundPropagationNode shows the right value.
         await appServices?.router?.setOutboundPropagationNode(hash)
@@ -303,6 +305,7 @@ public final class PropagationNodeManager {
         selectedNodeName = nil
         selectedNodeStampCost = 0
 
+        #if COLUMBA_RUNTIME_PYTHON
         if let backend = appServices?.pythonBackend {
             do {
                 _ = try await backend.setPropagationNode(destHashHex: "", stampCost: 0)
@@ -310,6 +313,7 @@ public final class PropagationNodeManager {
                 logger.error("clear propagation node failed: \(error.localizedDescription)")
             }
         }
+        #endif
         await appServices?.router?.setOutboundPropagationNode(nil)
         await appServices?.router?.setPropagationStampCost(0)
 

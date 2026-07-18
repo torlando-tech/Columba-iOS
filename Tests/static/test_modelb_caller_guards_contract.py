@@ -40,7 +40,7 @@ class ConditionalFrame(TypedDict):
     has_else: bool
 
 
-def swift_lexical_mask(source: str) -> str:
+def swift_lexical_mask(source: str, tracked_declarations: tuple[str, ...] = MODEL_B_DECLARATIONS) -> str:
     """Blank Swift literal text/comments but preserve code inside interpolation."""
     output = list(source)
     index = 0
@@ -180,7 +180,7 @@ def swift_lexical_mask(source: str) -> str:
                 literal = source[literal_start:index + 1]
                 if any(
                     re.search(rf"\b{re.escape(token)}\b", literal)
-                    for token in MODEL_B_DECLARATIONS
+                    for token in tracked_declarations
                 ):
                     raise ValueError(
                         "ambiguous Swift bare regex contains a tracked declaration"
@@ -432,16 +432,24 @@ def satisfiable(formula: Formula) -> bool:
     )
 
 
-def guarantees_model_b(formula: Formula) -> bool:
-    without_model_b = simplify(formula, {MODEL_B_FLAG: False})
+def guarantees_flag(formula: Formula, required_flag: str) -> bool:
+    without_model_b = simplify(formula, {required_flag: False})
     return not satisfiable(without_model_b)
 
 
-def unguarded_references(path: Path) -> list[tuple[int, str]]:
+def guarantees_model_b(formula: Formula) -> bool:
+    return guarantees_flag(formula, MODEL_B_FLAG)
+
+
+def unguarded_references(
+    path: Path,
+    tracked_declarations: tuple[str, ...] = MODEL_B_DECLARATIONS,
+    required_flag: str = MODEL_B_FLAG,
+) -> list[tuple[int, str]]:
     """Return executable references not guaranteed by the active Model B path."""
     source = path.read_text()
     try:
-        masked = swift_lexical_mask(source)
+        masked = swift_lexical_mask(source, tracked_declarations)
     except ValueError as error:
         raise ValueError(f"{path}: {error}") from error
 
@@ -491,8 +499,8 @@ def unguarded_references(path: Path) -> list[tuple[int, str]]:
                 raise ValueError(f"{path}:{number}: malformed #{kind}: {error}") from error
             continue
 
-        if any(re.search(rf"\b{re.escape(token)}\b", code) for token in MODEL_B_DECLARATIONS):
-            if not guarantees_model_b(current):
+        if any(re.search(rf"\b{re.escape(token)}\b", code) for token in tracked_declarations):
+            if not guarantees_flag(current, required_flag):
                 failures.append((number, raw_line.strip()))
 
     if frames:

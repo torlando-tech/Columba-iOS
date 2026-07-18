@@ -73,6 +73,66 @@ MODEL_B_ONLY_SOURCE_METADATA = {
   }.freeze
 }.freeze
 MODEL_B_ONLY_SOURCE_PATHS = MODEL_B_ONLY_SOURCE_METADATA.keys.freeze
+PYTHON_ONLY_SOURCE_METADATA = {
+  'Sources/ColumbaApp/Python/Models/PyAnnounce.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Python/Models/PyMessage.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Python/Models/PyConversation.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Python/Models/PyLocalIdentity.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/PythonBridge/PythonBridge.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/PythonBridge/PythonRuntime.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/RNSBackendPy/PythonRNSBackend.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/ColumbaApp/Services/PythonNetworkTransport.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/PythonBridge/PythonBLECallbackBridge.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA
+}.freeze
+PYTHON_ONLY_SOURCE_PATHS = PYTHON_ONLY_SOURCE_METADATA.keys.freeze
+# PythonConfigWriter.swift intentionally remains shared. It is a pure config-text
+# formatter with no CPython/Python.h dependency; shipping AppServices writes the
+# embedded runtime's config while Model B's SwiftRNSBackend reuses its stable
+# section naming. Keeping the formatter does not retain any Python source,
+# framework, resource, packaging phase, or bridging header in Model B.
+PYTHON_SOURCE_PREDECESSORS = {
+  'Sources/ColumbaApp/Python/Models/PyAnnounce.swift' =>
+    'Sources/ColumbaApp/Views/NomadNet/ZoomableScrollView.swift',
+  'Sources/ColumbaApp/Python/Models/PyMessage.swift' =>
+    'Sources/ColumbaApp/Python/Models/PyAnnounce.swift',
+  'Sources/ColumbaApp/Python/Models/PyConversation.swift' =>
+    'Sources/ColumbaApp/Python/Models/PyMessage.swift',
+  'Sources/ColumbaApp/Python/Models/PyLocalIdentity.swift' =>
+    'Sources/ColumbaApp/Python/Models/PyConversation.swift',
+  'Sources/PythonBridge/PythonBridge.swift' =>
+    'Sources/ColumbaApp/Python/Models/PyLocalIdentity.swift',
+  'Sources/PythonBridge/PythonRuntime.swift' => 'Sources/PythonBridge/PythonBridge.swift',
+  'Sources/RNSBackendPy/PythonRNSBackend.swift' => 'Sources/PythonBridge/PythonRuntime.swift',
+  'Sources/ColumbaApp/Services/PythonNetworkTransport.swift' =>
+    'Sources/ColumbaApp/Services/CallManager.swift',
+  'Sources/PythonBridge/PythonBLECallbackBridge.swift' =>
+    'Sources/ColumbaApp/Models/CodecProfileInfo.swift'
+}.freeze
+PYTHON_FRAMEWORK_PATH = 'Frameworks/Python.xcframework'
+PYTHON_RESOURCE_PATH = 'app'
+PYTHON_BRIDGING_HEADER = 'Sources/PythonBridge/ColumbaPython-Bridging-Header.h'
+PYTHON_EMBED_PHASE_NAME = 'Embed Frameworks'
+PYTHON_SHELL_PHASE_NAME = 'Install Python stdlib & process dylibs'
+PYTHON_INSTALL_SCRIPT = <<~'SH'.freeze
+  set -e
+
+  # Copy platform-appropriate wheels into <app>/app_packages/ before
+  # install_python processes the .so extensions inside them.
+  case "$EFFECTIVE_PLATFORM_NAME" in
+    -iphoneos)         WHEELS_SRC="$PROJECT_DIR/wheels-iphoneos" ;;
+    -iphonesimulator)  WHEELS_SRC="$PROJECT_DIR/wheels-iphonesimulator" ;;
+    *) echo "error: unsupported platform $EFFECTIVE_PLATFORM_NAME" >&2; exit 1 ;;
+  esac
+  [ -d "$WHEELS_SRC" ] || {
+    echo "error: $WHEELS_SRC missing — run support/fetch-wheels.sh" >&2
+    exit 1
+  }
+  mkdir -p "$CODESIGNING_FOLDER_PATH/app_packages"
+  rsync -au --delete "$WHEELS_SRC/" "$CODESIGNING_FOLDER_PATH/app_packages/"
+
+  source "$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh"
+  install_python Frameworks/Python.xcframework app_packages
+SH
 # Task 9 will assign these seam tests to an explicit Model B XCTest host. Until
 # that target exists, they must remain file references only: shipping's sole
 # XCTest target cannot compile declarations intentionally absent from its app.
@@ -169,6 +229,134 @@ module ModelBTargetIsolation
     MODEL_B_ONLY_SOURCE_PATHS.map do |path|
       references.fetch(path) { raise "Missing Model B source reference: #{path}" }
     end
+  end
+
+  def project_file_reference(project, path)
+    project.files.find { |reference| source_path(project, reference) == path } or
+      raise "Missing project file reference: #{path}"
+  end
+
+  def local_build_file_for_reference(project, phase, reference)
+    matching = phase.files.select { |build_file| build_file.file_ref&.uuid == reference.uuid }
+    retained = matching.find do |build_file|
+      build_file_owners(project, build_file).map(&:uuid) == [phase.uuid]
+    end
+    retained ||= project.new(Xcodeproj::Project::Object::PBXBuildFile)
+    matching.reject { |build_file| build_file.uuid == retained.uuid }.each do |build_file|
+      remove_build_file_from_phase(project, phase, build_file)
+    end
+    retained.file_ref = reference
+    retained.product_ref = nil
+    phase.files << retained unless phase.files.any? { |build_file| build_file.uuid == retained.uuid }
+    retained
+  end
+
+  def place_build_file_after(project, phase, build_file, predecessor_path)
+    phase.files.delete(build_file)
+    predecessor_index = phase.files.index do |candidate|
+      candidate.file_ref && source_path(project, candidate.file_ref) == predecessor_path
+    end
+    raise "Missing authoritative predecessor #{predecessor_path}" unless predecessor_index
+
+    phase.files.insert(predecessor_index + 1, build_file)
+  end
+
+  def place_build_file_at(phase, build_file, index)
+    phase.files.delete(build_file)
+    phase.files.insert(index, build_file)
+  end
+
+  def reconcile_shipping_python_sources(project, shipping)
+    PYTHON_ONLY_SOURCE_PATHS.each do |path|
+      reference = project_file_reference(project, path)
+      build_file = local_build_file_for_reference(project, shipping.source_build_phase, reference)
+      apply_build_file_metadata(build_file, PYTHON_ONLY_SOURCE_METADATA.fetch(path))
+      place_build_file_after(
+        project, shipping.source_build_phase, build_file, PYTHON_SOURCE_PREDECESSORS.fetch(path)
+      )
+    end
+  end
+
+  def reconcile_shipping_python_files(project, shipping)
+    framework_reference = project_file_reference(project, PYTHON_FRAMEWORK_PATH)
+    framework_file = local_build_file_for_reference(
+      project, shipping.frameworks_build_phase, framework_reference
+    )
+    apply_build_file_metadata(framework_file, EMPTY_SOURCE_BUILD_FILE_METADATA)
+    place_build_file_at(shipping.frameworks_build_phase, framework_file, 1)
+
+    resource_reference = project_file_reference(project, PYTHON_RESOURCE_PATH)
+    resource_file = local_build_file_for_reference(project, shipping.resources_build_phase, resource_reference)
+    apply_build_file_metadata(resource_file, EMPTY_SOURCE_BUILD_FILE_METADATA)
+    place_build_file_at(shipping.resources_build_phase, resource_file, 2)
+  end
+
+  def python_embed_phase?(phase)
+    phase.is_a?(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase) &&
+      phase.name == PYTHON_EMBED_PHASE_NAME
+  end
+
+  def python_install_phase?(phase)
+    phase.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase) &&
+      phase.name == PYTHON_SHELL_PHASE_NAME
+  end
+
+  def reconcile_shipping_python_phases(project, shipping)
+    embed_candidates = shipping.build_phases.select { |phase| python_embed_phase?(phase) }
+    embed = embed_candidates.find do |phase|
+      phase_owners(project, phase).map(&:uuid) == [shipping.uuid]
+    end || project.new(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
+    embed_candidates.reject { |phase| phase.uuid == embed.uuid }.each do |phase|
+      remove_phase_for_target(project, shipping, phase)
+    end
+    embed.name = PYTHON_EMBED_PHASE_NAME
+    embed.dst_path = ''
+    embed.dst_subfolder_spec = '10'
+    embed.build_action_mask = '2147483647'
+    embed.run_only_for_deployment_postprocessing = '0'
+    framework_reference = project_file_reference(project, PYTHON_FRAMEWORK_PATH)
+    embed_file = local_build_file_for_reference(project, embed, framework_reference)
+    embed.files.dup.reject { |build_file| build_file.uuid == embed_file.uuid }.each do |build_file|
+      remove_build_file_from_phase(project, embed, build_file)
+    end
+    apply_build_file_metadata(
+      embed_file,
+      settings: { 'ATTRIBUTES' => %w[CodeSignOnCopy RemoveHeadersOnCopy] },
+      platform_filter: nil,
+      platform_filters: nil
+    )
+    embed.files.clear
+    embed.files << embed_file
+
+    shell_candidates = shipping.build_phases.select { |phase| python_install_phase?(phase) }
+    shell = shell_candidates.find do |phase|
+      phase_owners(project, phase).map(&:uuid) == [shipping.uuid]
+    end || project.new(Xcodeproj::Project::Object::PBXShellScriptBuildPhase)
+    shell_candidates.reject { |phase| phase.uuid == shell.uuid }.each do |phase|
+      remove_phase_for_target(project, shipping, phase)
+    end
+    shell.name = PYTHON_SHELL_PHASE_NAME
+    shell.shell_path = '/bin/sh'
+    shell.shell_script = PYTHON_INSTALL_SCRIPT
+    shell.input_paths = ['$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh']
+    shell.output_paths = []
+    shell.input_file_list_paths = []
+    shell.output_file_list_paths = []
+    shell.always_out_of_date = '1'
+    shell.show_env_vars_in_log = '0'
+    shell.dependency_file = nil
+    shell.build_action_mask = '2147483647'
+    shell.run_only_for_deployment_postprocessing = '0'
+
+    shipping.build_phases.delete(embed)
+    shipping.build_phases.delete(shell)
+    resources_index = shipping.build_phases.index do |phase|
+      phase.uuid == shipping.resources_build_phase.uuid
+    end
+    raise 'shipping Resources phase is missing' unless resources_index
+
+    shipping.build_phases.insert(resources_index + 1, embed)
+    shipping.build_phases.insert(resources_index + 2, shell)
   end
 
   def root_reticulum_package_reference(project)
@@ -404,8 +592,12 @@ module ModelBTargetIsolation
   end
 
   def reconcile_phase_files(project, source, destination, package_map,
-                            extra_file_refs: [], extra_file_metadata: {}, extra_products: [])
-    desired = source.files.map do |source_build_file|
+                            extra_file_refs: [], extra_file_metadata: {}, extra_products: [],
+                            excluded_file_paths: [])
+    desired = source.files.reject do |source_build_file|
+      source_build_file.file_ref &&
+        excluded_file_paths.include?(source_path(project, source_build_file.file_ref))
+    end.map do |source_build_file|
       if source_build_file.product_ref
         [source_build_file, :product, package_map.fetch(source_build_file.product_ref),
          build_file_metadata(source_build_file)]
@@ -448,7 +640,9 @@ module ModelBTargetIsolation
   end
 
   def reconcile_regular_phases(project, shipping, model_b, package_map, model_b_sources)
-    source_phases = shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
+    source_phases = shipping.build_phases.reject do |phase|
+      extension_embed_phase?(phase) || python_embed_phase?(phase) || python_install_phase?(phase)
+    end
     available = model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
                              .select { |phase| phase_owners(project, phase).map(&:uuid) == [model_b.uuid] }
                              .group_by { |phase| phase_key(phase) }
@@ -460,10 +654,20 @@ module ModelBTargetIsolation
       extra_file_metadata = extra_file_refs.to_h do |reference|
         [reference.uuid, MODEL_B_ONLY_SOURCE_METADATA.fetch(source_path(project, reference))]
       end
+      excluded_file_paths = if source.is_a?(Xcodeproj::Project::Object::PBXSourcesBuildPhase)
+                              PYTHON_ONLY_SOURCE_PATHS
+                            elsif source.is_a?(Xcodeproj::Project::Object::PBXFrameworksBuildPhase)
+                              [PYTHON_FRAMEWORK_PATH]
+                            elsif source.is_a?(Xcodeproj::Project::Object::PBXResourcesBuildPhase)
+                              [PYTHON_RESOURCE_PATH]
+                            else
+                              []
+                            end
       reconcile_phase_files(
         project, source, destination, package_map,
         extra_file_refs: extra_file_refs,
-        extra_file_metadata: extra_file_metadata
+        extra_file_metadata: extra_file_metadata,
+        excluded_file_paths: excluded_file_paths
       )
       destination
     end
@@ -531,6 +735,7 @@ module ModelBTargetIsolation
       configuration.base_configuration_reference = source.base_configuration_reference
       configuration.build_settings = duplicate_value(source.build_settings)
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = MODEL_B_ENTITLEMENTS
+      configuration.build_settings.delete('SWIFT_OBJC_BRIDGING_HEADER')
       required = destination_tokens
       required << 'COLUMBA_ONBOARDING_ENABLED' if source.name.end_with?('-Swift')
       required.concat(MODEL_B_FLAGS)
@@ -548,6 +753,7 @@ module ModelBTargetIsolation
 
     shipping.build_configurations.each do |configuration|
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = SHIPPING_ENTITLEMENTS
+      configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = PYTHON_BRIDGING_HEADER
       set_compilation_tokens(
         configuration,
         ['COLUMBA_RUNTIME_PYTHON'],
@@ -729,10 +935,28 @@ module ModelBTargetIsolation
     end
     leaked_sources = shipping_sources & MODEL_B_ONLY_SOURCE_PATHS
     raise "shipping retained Model B sources: #{leaked_sources.join(', ')}" unless leaked_sources.empty?
+    missing_python_sources = PYTHON_ONLY_SOURCE_PATHS - shipping_sources
+    unless missing_python_sources.empty?
+      raise "shipping lost Python-only sources: #{missing_python_sources.join(', ')}"
+    end
+    leaked_python_sources = model_b_sources & PYTHON_ONLY_SOURCE_PATHS
+    unless leaked_python_sources.empty?
+      raise "Model B retained Python-only sources: #{leaked_python_sources.join(', ')}"
+    end
     missing_sources = MODEL_B_ONLY_SOURCE_PATHS - model_b_sources
     raise "Model B lost isolated sources: #{missing_sources.join(', ')}" unless missing_sources.empty?
-    unless model_b_sources == shipping_sources + MODEL_B_ONLY_SOURCE_PATHS
-      raise 'Model B source membership is not shipping plus the authoritative isolated source set'
+    expected_model_sources = (shipping_sources - PYTHON_ONLY_SOURCE_PATHS) + MODEL_B_ONLY_SOURCE_PATHS
+    unless model_b_sources == expected_model_sources
+      raise 'Model B source membership is not shared shipping sources plus the isolated source set'
+    end
+    PYTHON_ONLY_SOURCE_METADATA.each do |path, expected_metadata|
+      build_file = shipping.source_build_phase.files.find do |candidate|
+        source_path(project, candidate.file_ref) == path
+      end
+      actual_metadata = build_file_metadata(build_file)
+      next if actual_metadata == expected_metadata
+
+      raise "shipping Python source metadata mismatch for #{path}"
     end
     MODEL_B_ONLY_SOURCE_METADATA.each do |path, expected_metadata|
       build_file = model_b.source_build_phase.files.find do |candidate|
@@ -744,6 +968,70 @@ module ModelBTargetIsolation
       raise "Model B source metadata mismatch for #{path}: " \
             "expected #{expected_metadata.inspect}, got #{actual_metadata.inspect}"
     end
+
+    shipping_framework_paths = shipping.frameworks_build_phase.files.each_with_object([]) do |file, paths|
+      paths << source_path(project, file.file_ref) if file.file_ref
+    end
+    model_framework_paths = model_b.frameworks_build_phase.files.each_with_object([]) do |file, paths|
+      paths << source_path(project, file.file_ref) if file.file_ref
+    end
+    raise 'shipping Python framework linkage is not unique' unless
+      shipping_framework_paths.count(PYTHON_FRAMEWORK_PATH) == 1
+    raise 'Model B retained Python framework linkage' if
+      model_framework_paths.include?(PYTHON_FRAMEWORK_PATH)
+
+    shipping_resource_paths = shipping.resources_build_phase.files.map do |file|
+      source_path(project, file.file_ref)
+    end
+    model_resource_paths = model_b.resources_build_phase.files.map do |file|
+      source_path(project, file.file_ref)
+    end
+    raise 'shipping Python resource tree is not unique' unless
+      shipping_resource_paths.count(PYTHON_RESOURCE_PATH) == 1
+    raise 'Model B retained Python resource tree' if model_resource_paths.include?(PYTHON_RESOURCE_PATH)
+
+    embed_phases = shipping.build_phases.select { |phase| python_embed_phase?(phase) }
+    raise 'shipping Python embed phase is not unique' unless embed_phases.one?
+    embed = embed_phases.first
+    embed_paths = embed.files.map { |file| source_path(project, file.file_ref) }
+    raise 'shipping Python embed membership is incorrect' unless embed_paths == [PYTHON_FRAMEWORK_PATH]
+    expected_embed_settings = { 'ATTRIBUTES' => %w[CodeSignOnCopy RemoveHeadersOnCopy] }
+    raise 'shipping Python embed metadata is incorrect' unless
+      embed.files.first.settings == expected_embed_settings && embed.dst_path == '' &&
+      embed.dst_subfolder_spec.to_s == '10' && embed.build_action_mask == '2147483647' &&
+      embed.run_only_for_deployment_postprocessing == '0'
+
+    shell_phases = shipping.build_phases.select { |phase| python_install_phase?(phase) }
+    raise 'shipping Python install phase is not unique' unless shell_phases.one?
+    shell = shell_phases.first
+    shell_metadata_ok = shell.shell_path == '/bin/sh' && shell.shell_script == PYTHON_INSTALL_SCRIPT &&
+      shell.input_paths == ['$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh'] &&
+      shell.output_paths == [] && shell.input_file_list_paths == [] &&
+      shell.output_file_list_paths == [] && shell.always_out_of_date == '1' &&
+      shell.show_env_vars_in_log == '0' && shell.dependency_file.nil? &&
+      shell.build_action_mask == '2147483647' && shell.run_only_for_deployment_postprocessing == '0'
+    raise 'shipping Python install phase metadata is incorrect' unless shell_metadata_ok
+    expected_shipping_phase_names = [nil, nil, nil, PYTHON_EMBED_PHASE_NAME, PYTHON_SHELL_PHASE_NAME]
+    shipping_phase_names = shipping.build_phases.map do |phase|
+      phase.respond_to?(:name) ? phase.name : nil
+    end
+    unless shipping_phase_names == expected_shipping_phase_names
+      raise 'shipping Python phase order is incorrect'
+    end
+    if model_b.build_phases.any? { |phase| python_embed_phase?(phase) || python_install_phase?(phase) }
+      raise 'Model B retained a Python packaging phase'
+    end
+    model_b.build_configurations.each do |configuration|
+      if configuration.build_settings.key?('SWIFT_OBJC_BRIDGING_HEADER')
+        raise "Model B retained Python bridging header in #{configuration.name}"
+      end
+    end
+    shipping.build_configurations.each do |configuration|
+      unless configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] == PYTHON_BRIDGING_HEADER
+        raise "shipping lost Python bridging header in #{configuration.name}"
+      end
+    end
+
     shipping_products = shipping.package_product_dependencies.map(&:product_name)
     model_b_products = model_b.package_product_dependencies.map(&:product_name)
     unless shipping_products.count(RETICULUM_PRODUCT_NAME) == 1
@@ -875,6 +1163,9 @@ end
 model_b_sources = ModelBTargetIsolation.model_b_source_references(project)
 ModelBTargetIsolation.strip_shipping_model_b_membership(project, shipping)
 ModelBTargetIsolation.strip_shipping_extension_graph(project, shipping, extension)
+ModelBTargetIsolation.reconcile_shipping_python_sources(project, shipping)
+ModelBTargetIsolation.reconcile_shipping_python_files(project, shipping)
+ModelBTargetIsolation.reconcile_shipping_python_phases(project, shipping)
 ModelBTargetIsolation.reconcile_required_package_product(
   project, shipping, RETICULUM_PRODUCT_NAME, reticulum_package
 )
