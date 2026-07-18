@@ -989,6 +989,84 @@ class ModelBTargetIsolationTests < Minitest::Test
     end
   end
 
+  def test_reconciler_preserves_inverse_protected_build_file_contamination
+    %i[source framework resource].each do |kind|
+      Dir.mktmpdir("columba-inverse-build-file-#{kind}") do |directory|
+        temporary_project = File.join(directory, 'Columba.xcodeproj')
+        FileUtils.cp_r(PROJECT_PATH, temporary_project)
+        fixture = Xcodeproj::Project.open(temporary_project)
+        shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+        extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+        shipping_phase, protected_phase, canonical = case kind
+                                                     when :source
+                                                       phase = shipping.source_build_phase
+                                                       file = phase.files.find do |candidate|
+                                                         candidate.file_ref&.real_path&.relative_path_from(
+                                                           Pathname.new(directory)
+                                                         )&.to_s == PYTHON_ONLY_SOURCE_PATHS.first
+                                                       end
+                                                       [phase, extension.source_build_phase, file]
+                                                     when :framework
+                                                       phase = shipping.frameworks_build_phase
+                                                       file = phase.files.find do |candidate|
+                                                         candidate.file_ref&.display_name == File.basename(PYTHON_FRAMEWORK_PATH)
+                                                       end
+                                                       [phase, extension.frameworks_build_phase, file]
+                                                     when :resource
+                                                       phase = shipping.resources_build_phase
+                                                       file = phase.files.find do |candidate|
+                                                         candidate.file_ref&.display_name == File.basename(PYTHON_RESOURCE_PATH)
+                                                       end
+                                                       [phase, extension.source_build_phase, file]
+                                                     end
+        refute_nil canonical, "fixture lacks canonical shipping #{kind} build file"
+        protected = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+        protected.file_ref = canonical.file_ref
+        protected.settings = deep_copy(canonical.settings)
+        protected.platform_filter = canonical.platform_filter
+        protected.platform_filters = deep_copy(canonical.platform_filters)
+        protected_phase.files << protected
+        protected_id = protected.uuid
+        shipping_phase_id = shipping_phase.uuid
+        original_shipping_id = canonical.uuid
+        fixture.save
+
+        normalized = Xcodeproj::Project.open(temporary_project)
+        shipping_before = target_graph_signature(
+          normalized.targets.find { |target| target.name == 'ColumbaApp' }
+        )
+        extension_before = target_graph_signature(
+          normalized.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+        )
+        pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+        pbxproj = File.read(pbxproj_path)
+        phase_header = "\t\t#{shipping_phase_id} /* #{shipping_phase.display_name} */ = {"
+        phase_start = pbxproj.index(phase_header) or raise 'missing shipping phase in fixture'
+        files_start = pbxproj.index("\t\t\tfiles = (\n", phase_start) or
+          raise 'missing shipping phase files in fixture'
+        insertion = files_start + "\t\t\tfiles = (\n".length
+        pbxproj.insert(
+          insertion,
+          "\t\t\t\t#{protected_id} /* protected-owned inverse contamination */,\n"
+        )
+        File.write(pbxproj_path, pbxproj)
+
+        run_reconciler(temporary_project, "inverse-build-file-#{kind}")
+        reconciled = Xcodeproj::Project.open(temporary_project)
+        reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+        reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+        assert_equal shipping_before, target_graph_signature(reconciled_shipping),
+                     "#{kind} inverse cleanup changed shipping's canonical graph"
+        assert_equal extension_before, target_graph_signature(reconciled_extension),
+                     "#{kind} inverse cleanup deleted protected ownership"
+        assert_includes reconciled_shipping.build_phases.flat_map(&:files).map(&:uuid), original_shipping_id
+        refute_includes reconciled_shipping.build_phases.flat_map(&:files).map(&:uuid), protected_id
+        assert_includes reconciled_extension.build_phases.flat_map(&:files).map(&:uuid), protected_id
+        assert_second_run_byte_idempotent(temporary_project)
+      end
+    end
+  end
+
   def test_reconciler_recreates_completely_missing_model_b_target_from_root_package_reference
     Dir.mktmpdir('columba-modelb-missing-target') do |directory|
       temporary_project = File.join(directory, 'Columba.xcodeproj')

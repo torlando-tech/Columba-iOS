@@ -259,12 +259,36 @@ module ModelBTargetIsolation
       # itself local, one of its build files may be independently referenced by
       # a protected target's phase in a malformed graph. Keep the shipping owner
       # and detach every foreign reference before the sole-owner fast path.
-      source.files.compact.each do |build_file|
+      source.files.compact.dup.each do |build_file|
         next unless authoritative_shipping_build_file?(project, shipping, source, build_file)
 
-        project.objects.each do |object|
-          next unless object.respond_to?(:files) && object.uuid != source.uuid
+        foreign_phases = build_file_owners(project, build_file).reject do |phase|
+          phase.uuid == source.uuid
+        end
+        next if foreign_phases.empty?
 
+        # If shipping already has a distinct local build file for the same
+        # reference, this shared object originated in a protected phase and was
+        # injected into shipping. Remove only shipping's duplicate reference and
+        # preserve the protected UUID/metadata. Without such a local sibling the
+        # shared object is shipping's canonical owner, so remove foreign refs.
+        local_sibling = source.files.compact.find do |candidate|
+          next false if candidate.uuid == build_file.uuid
+
+          same_reference = if build_file.product_ref
+                             candidate.product_ref&.uuid == build_file.product_ref.uuid
+                           else
+                             candidate.file_ref&.uuid == build_file.file_ref&.uuid
+                           end
+          same_reference && build_file_owners(project, candidate).map(&:uuid) == [source.uuid]
+        end
+        if local_sibling
+          index = source.files.index { |candidate| candidate&.uuid == build_file.uuid }
+          source.files.delete_at(index) if index
+          next
+        end
+
+        foreign_phases.each do |object|
           (object.files.length - 1).downto(0) do |file_index|
             candidate = object.files[file_index]
             object.files.delete_at(file_index) if candidate&.uuid == build_file.uuid
