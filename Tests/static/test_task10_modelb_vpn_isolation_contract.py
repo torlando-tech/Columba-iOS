@@ -87,8 +87,21 @@ def function_source(source: str, declaration: str) -> str:
     raise AssertionError("matching function has unbalanced braces")
 
 
+def lexical_brace_depth(masked_source: str, offset: int) -> int:
+    """Return brace depth at an executable offset, failing closed if unbalanced."""
+    depth = 0
+    for character in masked_source[:offset]:
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth < 0:
+                raise AssertionError("source has an unmatched closing brace")
+    return depth
+
+
 def assert_model_b_tunnel_wait_precedes_backend_start(source: str) -> None:
-    """Prove the mandatory Model-B wait is in, and first on, the start path."""
+    """Prove the mandatory Model-B wait is direct, awaited, and first on the start path."""
     start_function = function_source(
         source,
         r"\bprivate\s+func\s+startPythonBackend\s*\(",
@@ -110,6 +123,10 @@ def assert_model_b_tunnel_wait_precedes_backend_start(source: str) -> None:
         )
     if wait_calls[0].start() >= backend_starts[0].start():
         raise AssertionError("Model-B tunnel wait must precede backend.start")
+    if lexical_brace_depth(masked_function, wait_calls[0].start()) != 1:
+        raise AssertionError(
+            "Model-B tunnel wait must be a direct method-body statement, not nested in a closure, Task, local function, or control block"
+        )
 
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "StartPythonBackend.swift"
@@ -171,6 +188,15 @@ def move_guarded_wait_after_backend_start(source: str) -> str:
                 )
                 return source.replace(start_function, mutated_function, 1)
     raise AssertionError("backend.start call has unbalanced parentheses")
+
+
+def replace_guarded_wait(source: str, replacement: str) -> str:
+    """Replace the canonical guarded wait with an adversarial arrangement."""
+    wait_block = guarded_tunnel_wait_block(source)
+    mutated = source.replace(wait_block, replacement, 1)
+    if mutated == source:
+        raise AssertionError("tunnel-wait mutation did not change source")
+    return mutated
 
 
 class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
@@ -297,6 +323,62 @@ class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
                 mutated = moved.replace(target, decoy + target, 1)
                 with self.assertRaisesRegex(AssertionError, "must precede backend.start"):
                     assert_model_b_tunnel_wait_precedes_backend_start(mutated)
+
+    def test_tunnel_wait_contract_rejects_uninvoked_nested_closure(self) -> None:
+        source = self.source(APP_SERVICES)
+        mutated = replace_guarded_wait(
+            source,
+            "        let deferredTunnelWait: () async -> Void = {\n"
+            "            #if COLUMBA_RUNTIME_MODEL_B\n"
+            "            await ensureBackgroundDeliveryTunnel()\n"
+            "            #endif\n"
+            "        }\n"
+            "        _ = deferredTunnelWait\n",
+        )
+        with self.assertRaisesRegex(AssertionError, "direct method-body statement"):
+            assert_model_b_tunnel_wait_precedes_backend_start(mutated)
+
+    def test_tunnel_wait_contract_rejects_deferred_task_arrangements(self) -> None:
+        source = self.source(APP_SERVICES)
+        replacements = {
+            "task": (
+                "        #if COLUMBA_RUNTIME_MODEL_B\n"
+                "        Task {\n"
+                "            await ensureBackgroundDeliveryTunnel()\n"
+                "        }\n"
+                "        #endif\n"
+            ),
+            "invoked closure in task": (
+                "        #if COLUMBA_RUNTIME_MODEL_B\n"
+                "        let deferredTunnelWait: () async -> Void = {\n"
+                "            await ensureBackgroundDeliveryTunnel()\n"
+                "        }\n"
+                "        Task { await deferredTunnelWait() }\n"
+                "        #endif\n"
+            ),
+            "async let": (
+                "        #if COLUMBA_RUNTIME_MODEL_B\n"
+                "        async let deferredTunnelWait: Void = ensureBackgroundDeliveryTunnel()\n"
+                "        _ = deferredTunnelWait\n"
+                "        #endif\n"
+            ),
+        }
+        for name, replacement in replacements.items():
+            with self.subTest(arrangement=name):
+                mutated = replace_guarded_wait(source, replacement)
+                with self.assertRaises(AssertionError):
+                    assert_model_b_tunnel_wait_precedes_backend_start(mutated)
+
+    def test_tunnel_wait_direct_depth_ignores_comment_and_string_braces(self) -> None:
+        source = self.source(APP_SERVICES)
+        wait_block = guarded_tunnel_wait_block(source)
+        mutated = replace_guarded_wait(
+            source,
+            "        let braceDecoys = (\"}\", #\"{\"#) // }}}\n"
+            "        /* {{{ */\n"
+            + wait_block,
+        )
+        assert_model_b_tunnel_wait_precedes_backend_start(mutated)
 
     def test_tunnel_wait_contract_rejects_nested_debug_narrowing(self) -> None:
         source = self.source(APP_SERVICES)
