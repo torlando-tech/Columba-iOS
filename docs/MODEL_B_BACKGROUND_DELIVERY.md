@@ -1,36 +1,40 @@
-# Model B — Background LXMF Delivery
+# Model B — Experimental Background LXMF Delivery
 
-How Columba-iOS delivers an LXMF message (and a notification) while the app is
-backgrounded, suspended, or **locked**, without APNS — by running the real
-Reticulum + LXMF stack inside a Network Extension that *completes* delivery
-(proves, decrypts, persists, notifies), rather than just sniffing.
-
-> Status: inbound delivery + announce propagation **verified on-device**
-> (2026-06-02, iPhone 14). See "Verified on-device" below.
+> **Status:** Experimental/deferred app flavor. Model B is built by the
+> `ColumbaModelBApp` target and `Columba-ModelB` scheme. It is not included in
+> the shipping `ColumbaApp` artifact or the standard `Columba` scheme.
 >
-> Companion docs: the per-phase implementation spec lives in the Obsidian vault
-> (`80 Assistant/Memory/Columba-iOS/track_a_model_b_implementation_spec.md`,
-> A0–A5, cited to `file:line`); NE security threat model in
-> `track_c5_ne_security_threat_model.md`; App-Store framing in
-> `app_store_review_packet_tunnel_ne.md`.
+> The on-device results dated 2026-06-02 below are historical evidence for the
+> topology, not verification of the current target split. See
+> [Current verification](#current-verification) for the checks required now.
+
+Model B explores delivery of an LXMF message and local notification while its app is backgrounded, suspended, or locked, without APNS. A Network Extension runs the Reticulum/LXMF node and completes proof, decryption, persistence, and notification rather than only sniffing traffic.
+
+The shipping Python flavor does not make this guarantee. Its default Internet TCP delivery is foreground/opportunistic.
 
 ---
 
 ## Why this shape ("Model B")
 
-A suspended iOS app cannot be woken to finish network work (Apple DTS 769398), so
-the only way to deliver an LXMF message while the phone is locked is to have a
-**separately-scheduled process** that owns the messaging endpoint and completes
-delivery itself. The `NEPacketTunnelProvider` Network Extension (NE) is that
-process: iOS keeps it running for the active VPN/tunnel, independent of the app's
-lifecycle.
+A suspended iOS app cannot be woken to finish arbitrary network work, so background delivery requires a separately scheduled process that owns the messaging endpoint and completes delivery. In this experiment, `NEPacketTunnelProvider` is that process: iOS schedules it for the active VPN/tunnel independently of the app lifecycle.
 
-**Model B = the NE is the *canonical* node.** It owns the single
-`lxmf.delivery` destination and terminates every transfer. The app is a
-transport/UI satellite. The alternative (Model A: app owns the node, NE sniffs
-and hands off) was rejected — two processes contending for one destination causes
-path-flap, link double-response, and cross-process receive-dedup races. Model B
-has exactly one node, one writer, one place for dedup.
+**Model B makes the extension the canonical node.** It owns the single `lxmf.delivery` destination and terminates every transfer. The app is a transport/UI satellite. The rejected Model A topology let the app own the node while the extension sniffed and handed off; two processes contending for one destination creates path-flap, link double-response, and cross-process receive-dedup races. Model B instead has one node, one writer, and one deduplication authority.
+
+## Flavor boundary
+
+Model B is selected only by compiling the explicit `ColumbaModelBApp` target with `COLUMBA_RUNTIME_MODEL_B`. Build flavor is not selected by user defaults or settings. `BackendPreference.modelB`, persisted `useSwiftBackend`, the `COLUMBA_BACKEND_SWIFT` condition, `Debug-Swift`/`Release-Swift` configurations, and the `Columba-Swift` scheme are retired.
+
+The experimental app owns:
+
+- `ProxyRnsBackend` and the Model B host/proxy lifecycle;
+- App Group control IPC, frame bridges, outbox, and BLE/RNode seams;
+- background-delivery onboarding and gate behavior;
+- VPN permission, tunnel install/start/wait, status/settings UI, and extension diagnostics;
+- direct ReticulumSwift linkage and a target dependency plus signed embed for `ColumbaNetworkExtension`.
+
+It contains no `Python.xcframework`, Python-only bridge/runtime/backend/model sources, Python `app/` resource tree, wheels or standard-library packaging, bridging header, or Python install/embed phases.
+
+The shipping `ColumbaApp` has the reciprocal ownership: embedded Python RNS/LXMF and its packaging, with no Network Extension dependency/embed, packet-tunnel entitlement, or Model B lifecycle/UI/proxy behavior. Shipping retains a direct ReticulumSwift link only because shared public `MessageRepository`/`LXMFSwift` signatures expose ReticulumSwift types, not because it runs Model B.
 
 ---
 
@@ -48,193 +52,130 @@ has exactly one node, one writer, one place for dedup.
                  │     • writes plaintext ─▶ shared App-Group GRDB store  │   │
                  │     • posts UNUserNotification + dbChanged Darwin notif │   │
                  │                                                        │   │
-                 │   App process (ColumbaApp)                             │   │
+                 │   App process (ColumbaModelBApp)                       │   │
   BLE / RNode ───┼─▶  • radio drivers (Auto / BLE / RNode)                │   │
  (radio peers)   │    • pumps radio frames ─────────────────────────────┘   │
                  │    • ProxyRnsBackend: send/announce/status → NE via IPC   │
                  │    • UI reads the shared GRDB (read-only)                 │
                  └──────────────────────────────────────────────────────────┘
- ONE destination on the NE, reachable via two transport paths: direct over the
- NE's TCP relay, or peer→radio→app→App-Group bridge→NE. Standard multi-path
- routing — no duplicate-destination anomaly.
+ ONE destination on the NE, reachable through two transport paths: direct over
+ the NE's TCP relay, or peer→radio→app→App-Group bridge→NE. This is standard
+ multi-path routing, not a duplicate-destination topology.
 ```
 
 ### Who owns what
 
 | Concern | Owner | Notes |
 |---|---|---|
-| `lxmf.delivery` destination + identity | **NE** | identity loaded from the shared keychain access group |
-| ReticulumSwift transport + `LXMRouter` | **NE** | the only RNS/LXMF node in the system |
-| TCP relay interface (`ne-tcp-relay`) | **NE** | its own `NWConnection`; see "TCP egress" note |
+| `lxmf.delivery` destination + identity | **NE** | Identity loaded from the shared keychain access group |
+| ReticulumSwift transport + `LXMRouter` | **NE** | The only RNS/LXMF node in this flavor |
+| TCP relay interface (`ne-tcp-relay`) | **NE** | Its own `NWConnection`; see the TCP egress note |
 | Inbound prove/decrypt/persist/notify | **NE** | `NEDeliveryDelegate` |
-| Self-announce of the delivery dest | **NE** | app can't announce while suspended |
-| Radio interfaces (Auto / BLE / RNode) | **App** | frames bridged to the NE |
-| Send / announce / status requests | **App → NE** | via `ProxyRnsBackend` over IPC |
-| UI, shared-store reads | **App** | read-only reader of the NE's GRDB store |
+| Self-announce of the delivery destination | **NE** | The app cannot announce while suspended |
+| Radio interfaces (Auto / BLE / RNode) | **App** | Frames bridged to the NE |
+| Send / announce / status requests | **App → NE** | `ProxyRnsBackend` over IPC |
+| UI and shared-store reads | **App** | Read-only reader of the NE's GRDB store |
 
----
+## Inbound delivery flow
 
-## Inbound delivery flow (the headline path)
+1. A sender resolves a path to `lxmf.delivery`, learned from the NE's announce, and opens an RNS link or sends opportunistically.
+2. Frames arrive at the NE directly over the TCP relay or through radio peer → app radio driver → App Group bridge → NE transport.
+3. ReticulumSwift handles the link/resource. LXMFSwift validates the signature, duplicate status, and stamp; decrypts; and persists plaintext to the shared App Group GRDB store.
+4. `NEDeliveryDelegate.router(_:didReceiveMessage:)` posts a local `UNUserNotification` and a `dbChanged` Darwin notification for foreground refresh.
+5. The sender receives an RNS delivery proof.
+6. On next open, the app reads the persisted message from shared GRDB without re-fetching it.
 
-1. A sender resolves a path to `lxmf.delivery` (learned from the NE's announce)
-   and opens an RNS **link**, or sends opportunistically.
-2. Frames arrive at the NE either directly over the **TCP relay**, or via a
-   radio peer → app radio driver → **AppGroupBridge** → NE transport.
-3. The NE's `ReticulumSwift` transport handles the link / resource; the
-   `LXMFSwift` `LXMRouter` validates (signature / duplicate / stamp), decrypts,
-   and **persists** the plaintext to the shared App-Group GRDB store.
-4. `NEDeliveryDelegate.router(_:didReceiveMessage:)` fires:
-   - posts a local `UNUserNotification` (sender + short preview), and
-   - posts a `dbChanged` Darwin notification so a foregrounded app refreshes.
-5. The sender receives a **delivery proof** (RNS link delivery).
-6. On next open, the app reads the message from the shared GRDB — no re-fetch.
+This path is designed to run in the extension while `ColumbaModelBApp` is suspended or locked.
 
-This whole path runs in the NE while the app is suspended/locked.
+## Outbound/send flow
 
-## Outbound / send flow
-
-1. The app composes a message and calls `ProxyRnsBackend.sendLxmfMessage(...)`.
-2. That marshals a `composeOutbound` envelope (dest, content, `LxmfFieldCodec`-
-   packed fields, method) over the IPC seam to the NE.
-3. The NE's `sendLxmfForIPC(...)` builds the `LXMessage` with the **shared**
-   identity, persists it, and `transport.send` selects the path automatically
-   (path-table lookup → TCP direct, or via the AppGroupBridge → app → radio).
-4. Outbound state flows back via the GRDB `messages.state` column + `dbChanged`.
-5. **Durable outbox:** if the NE isn't up when the app sends, the request is
-   persisted to an App-Group outbox and drained on the next NE start
-   (`NEReticulumNode.drainOutbox`).
+1. The app calls `ProxyRnsBackend.sendLxmfMessage(...)`.
+2. The proxy marshals a `composeOutbound` envelope over IPC to the extension.
+3. `sendLxmfForIPC(...)` builds the `LXMessage` with the shared identity, persists it, and lets the transport select TCP or the App Group radio bridge.
+4. Outbound state returns through the GRDB `messages.state` column and `dbChanged`.
+5. If the extension is unavailable, the app stores the request in the App Group outbox; `NEReticulumNode.drainOutbox` drains it on the next extension start.
 
 ## Announce flow
 
-The NE announces its own `lxmf.delivery` destination — the app can't drive
-announces while suspended:
+The extension announces its own `lxmf.delivery` destination:
 
-- **on node start**, once the relay reports connected (`startAnnounceScheduler`
-  → `waitForRelayConnected` → `selfAnnounce`);
-- **on relay (re)connect** (`onRelayReconnected`, wired via
-  `transport.setOnInterfaceConnected`) — so a relay that restarted (and lost its
-  path table) promptly relearns us, instead of waiting for the interval;
-- **periodically**, on the user's configured interval (mirrors the app's
-  `AutoAnnounceManager`).
+- on node start, after the relay reports connected;
+- on relay reconnect, so a restarted relay promptly relearns the path; and
+- periodically at the configured interval.
 
-The app's "announce now" button routes through `ProxyRnsBackend.announce` → IPC
-→ `NEReticulumNode.announceForIPC`.
+The app's announce action routes through `ProxyRnsBackend.announce` → IPC → `NEReticulumNode.announceForIPC`.
 
 ---
 
-## IPC + bridge mechanics
+## IPC and bridge mechanics
 
-- **Control IPC** (`Sources/Shared/ProxyIPC.swift`): a Foundation-only
-  `ProxyRequest`/`ProxyResponse` envelope (magic + version framed). The app's
-  `ProxyRnsBackend` (`Sources/RNSBackendProxy/`) sends it over
-  `NETunnelProviderSession.sendProviderMessage`; the NE decodes it in
-  `PacketTunnelProvider.handleAppMessage` and dispatches to `NEReticulumNode`'s
-  `…ForIPC` methods. The seam is Foundation-only so the NE never imports RNSAPI
-  (see the collision rule).
-- **Frame bridge** (`Sources/Shared/AppGroupBridgeInterface.swift`): a real
-  `ReticulumSwift.NetworkInterface` (`mode = .full`, so announces propagate both
-  ways) registered on the NE's transport. It carries radio frames app↔NE over an
-  App-Group `SharedFrameQueue` (POSIX-flock'd file, restart-idempotent — survives
-  NE jetsam) split into two named unidirectional queues (`a2e` / `e2a`), with a
-  `radioFrameReady` Darwin notification app→NE and `packetReady` NE→app.
+- **Control IPC** (`Sources/Shared/ProxyIPC.swift`) defines Foundation-only `ProxyRequest`/`ProxyResponse` envelopes. `ProxyRnsBackend` (`Sources/RNSBackendProxy/`) sends them with `NETunnelProviderSession.sendProviderMessage`; `PacketTunnelProvider.handleAppMessage` decodes and dispatches to `NEReticulumNode` methods. Keeping this seam Foundation-only prevents RNSAPI/ReticulumSwift types from crossing it.
+- **Frame bridge** (`Sources/Shared/AppGroupBridgeInterface.swift`) is a ReticulumSwift `NetworkInterface` registered on the extension transport. It carries app↔extension radio frames through restart-persistent App Group queues (`a2e` and `e2a`) and Darwin notifications.
 
 ## Shared state
 
-- **Identity:** shared keychain access group
-  (`$(AppIdentifierPrefix)network.columba.Columba.shared`). The app creates the
-  identity and writes it to the shared group; the NE reads it
-  (`NEReticulumNode.loadSharedIdentity`). Accessibility
-  `…AfterFirstUnlockThisDeviceOnly` (NE-readable while locked, post-first-unlock).
-  The app also publishes the *resolved* group name to App-Group UserDefaults so
-  the NE can resolve it even when the bundle-seed probe can't run (locked).
-- **Message store:** `LXMFSwift.LXMFDatabase` (GRDB, WAL) in the App-Group
-  container. **Single writer = the NE**; the app opens it **read-only**. Cross-
-  process refresh is the `dbChanged` Darwin notification (GRDB observation does
-  not cross processes). File protection
-  `completeUntilFirstUserAuthentication` so it's writable while locked.
-
----
+- **Identity:** The app creates the identity in the shared keychain access group; the extension reads it. `AfterFirstUnlockThisDeviceOnly` accessibility permits extension access while locked after first unlock. App Group defaults carry the resolved group name for locked-start cases.
+- **Message store:** LXMFSwift's GRDB/WAL database lives in the App Group. The extension is the single writer and the app opens it read-only. `dbChanged` provides cross-process refresh. `completeUntilFirstUserAuthentication` file protection permits writes while locked after first unlock.
 
 ## Load-bearing invariants
 
-1. **Single node = the NE.** The app owns no `lxmf.delivery` destination and no
-   `LXMRouter`. On launch the app must NOT start a competing destination-owning
-   backend (gated for Model B in `AppServices` / the startup interface loop —
-   e.g. it skips the app-side TCP interface).
-2. **Single writer = the NE.** The app is read-only on the GRDB store; outbound
-   composed in-app is *handed to the NE to send + persist*.
-3. **Durable dedup.** Dedup keys on the path-independent
-   `LXMessage.hash`; it lives in the GRDB store (`messageExists`) so it survives
-   an NE restart and spans transport paths (TCP copy == BLE copy).
-4. **Always-the-node.** The node identity is a pure function of (shared identity
-   + shared store), so NE jetsam/restart is transparent — it comes back as the
-   same node. On-demand connect (`NEOnDemandRuleConnect`) relaunches it.
-5. **The RNSAPI / ReticulumSwift collision rule.** RNSAPI's `Compat` layer
-   re-declares the same type names as `ReticulumSwift`. Files that conform to
-   `ReticulumSwift` protocols or use its types import **ReticulumSwift (+
-   Foundation) ONLY, never RNSAPI**. The NE target is entirely RNSAPI-free; the
-   proxy seam (`ProxyIPC`) is Foundation-only so no RNSAPI/ReticulumSwift type
-   ever crosses it. `AppServices` stays RNSAPI-typed; LXMFSwift is confined to
-   `MessageRepository`.
+1. **Single node:** The extension alone owns `lxmf.delivery` and `LXMRouter`; `ColumbaModelBApp` does not start a competing destination-owning backend or TCP interface.
+2. **Single writer:** The extension alone writes the GRDB store. App-composed outbound messages are handed to it for sending and persistence.
+3. **Durable deduplication:** Deduplication uses path-independent `LXMessage.hash` persisted in GRDB, surviving extension restarts and spanning TCP and radio paths.
+4. **Stable node identity:** Shared identity plus shared store recreates the same node after extension restart; on-demand connection can relaunch it.
+5. **RNSAPI/ReticulumSwift collision rule:** Files conforming to ReticulumSwift protocols or using its types import ReticulumSwift and Foundation, never RNSAPI. The extension is RNSAPI-free, and the Foundation-only proxy seam carries neither library's types.
 
 ---
 
-## Build / packaging gotchas
+## Build and packaging
 
-- **Build the NE via the `ColumbaNetworkExtension` scheme**, not the
-  `Columba-Swift` app scheme — the app scheme does NOT compile the NE (a false-
-  green trap). See `reference_ne_build_scheme.md`.
-- Model B code is on the **`Debug-Swift` / `Release-Swift`** configs
-  (`COLUMBA_BACKEND_SWIFT` + `ENABLE_NETWORK_EXTENSION`).
-- The NE is embedded + signed via `support/embed-ne.rb`; its deps
-  (ReticulumSwift + LXMFSwift) via `support/add-ne-backend-deps.rb`.
-- **Runtime gate:** `BackendPreference.modelB` (app) and
-  `NEReticulumNode.modelBNodeEnabled` (NE) read the shared App-Group flag
-  `modelBBackgroundNE`. Model B only works on the Swift backend.
+Use the explicit experimental scheme:
+
+```sh
+xcodebuild -project Columba.xcodeproj \
+  -scheme Columba-ModelB \
+  -configuration Debug \
+  -destination 'generic/platform=iOS Simulator' \
+  build
+```
+
+`Columba-ModelB` is the canonical workflow. Its Build action includes `ColumbaModelBApp` and `ColumbaNetworkExtension`, and its Test action includes `ColumbaModelBAppTests`; use `build-for-testing` when all three must be compiled. Do not instruct users to build the extension separately as the normal path. Physical-device verification requires signing and provisioning for both the app and extension, including Network Extension and App Group capabilities.
+
+`support/isolate-modelb-targets.rb` is the authoritative target/scheme reconciler. `support/configure-xcodeproj.rb` and `support/add-swift-backend-config.rb` are retired and fail closed. `support/embed-ne.rb` delegates to the authoritative reconciler, while `support/add-ne-backend-deps.rb` remains narrowly scoped to extension package dependencies.
+
+A release/build-artifact review should confirm both directions of isolation at a high level: shipping contains no extension or Model B crossover, and Model B contains the signed extension but no Python framework, resources, wheels, bridging header, or packaging output. These checks belong in build verification; this document does not define CI implementation.
 
 ### TCP egress from inside the tunnel
-`reticulum-swift`'s `TCPTransport` sets `bypassTunnelEgress`
-(`prohibitedInterfaceTypes = [.other]`) when the NE host enables it, so the
-relay socket uses a physical interface rather than the provider's own utun.
-(Note: as of the 2026-06-02 bring-up this turned out *not* to be the actual
-egress fix — the NE socket was already egressing fine; it's retained as a
-defensive measure. See `track_modelb_tcp_egress_announce_2026-06-02.md`.)
+
+ReticulumSwift's `TCPTransport` can set `bypassTunnelEgress` (`prohibitedInterfaceTypes = [.other]`) for a physical-interface relay socket rather than routing through the provider's utun. Historical June 2 bring-up showed that the socket was already egressing; this remains a defensive measure rather than the demonstrated fix.
 
 ---
 
-## Verified on-device (2026-06-02, iPhone 14)
+## Historical on-device evidence (2026-06-02, iPhone 14)
 
-- **Announce-out:** the NE's announce for `lxmf.delivery` is cryptographically
-  valid (verified the on-wire bytes against RNS's own `validate_announce` —
-  signature + destination hash) and the relay installs a path to it.
-- **Inbound LXMF delivery (headline):** a real LXMF message sent from a desktop
-  peer to the delivery dest reached `state = DELIVERED` (delivery proof) on the
-  sender, and the NE logged `inbound message persisted` — LXMF-swift validated +
-  stored to the shared GRDB and `NEDeliveryDelegate` posted the notification.
+The following evidence predates the explicit app-target split and must not be presented as current verification:
 
-**How to re-test (desktop peer with RNS/LXMF):**
-1. Confirm reachability: `rnpath <delivery-dest-hash>` resolves on the relay
-   host. (If not, suspect a wedged relay daemon — see
-   `reference_mac_relay_wedge_diagnostic.md`.)
-2. Send an LXMF message to the dest (DIRECT). It should reach `DELIVERED`.
-3. Pull the NE's `ext-diag.log` (host copies it to the app's Documents on
-   launch; retrieve via `devicectl … copy from --domain-type appDataContainer`)
-   and confirm `inbound message persisted`.
+- **Announce-out:** The extension's `lxmf.delivery` announce was cryptographically validated against RNS `validate_announce`, and the relay installed a path.
+- **Inbound LXMF delivery:** A real desktop-peer DIRECT message reached `DELIVERED` at the sender. Extension diagnostics reported `inbound message persisted`; LXMFSwift validated and stored it, and `NEDeliveryDelegate` posted the notification.
 
----
+The June 2 run did not exercise locked-device delivery or the app-side radio relay path.
 
-## Known gaps / TODO (as of 2026-06-02)
+### Historical reproduction outline
 
-- **UI status reflects the app's interfaces, not the NE's.** In Model B the app
-  owns no TCP interface, so its interface card shows the TCP relay as
-  "disconnected" even though the NE's relay is connected. The card (and the
-  "announce" button) should read NE state via `ProxyRnsBackend.statusSnapshot` /
-  route through the proxy.
-- **Temporary bring-up state to revert before ship:** `BackendPreference.modelB`
-  and `NEReticulumNode.modelBNodeEnabled` are defaulted ON for testing; the NE
-  diagnostic logging (announce EMITTED / self-announce / relay-reconnect) and the
-  reticulum-swift `TCPTransport` egress diagnostic are temporary. Add a real UI
-  toggle for Model B.
-- **Not yet exercised:** delivery while the device is locked (mechanism is in
-  place — file protection + NE-runs-while-locked); the app-side radio relay
-  (Auto/BLE/RNode → AppGroupBridge → NE).
+1. Confirm `rnpath <delivery-dest-hash>` resolves through the relay.
+2. Send a DIRECT LXMF message and require sender state `DELIVERED`.
+3. Retrieve the extension's `ext-diag.log` from the app data container and confirm `inbound message persisted`.
+
+References named in the original engineering record include `reference_mac_relay_wedge_diagnostic.md` and `track_modelb_tcp_egress_announce_2026-06-02.md`; they are external working notes, not repository documentation links.
+
+## Current verification
+
+Current Model B changes require fresh evidence from the explicit flavor:
+
+1. Build/test the `Columba-ModelB` scheme as a unit so the app, Model B tests, and extension are all covered.
+2. Inspect products to confirm the extension is signed and embedded only in `ColumbaModelBApp`, with Model B capabilities present and Python artifacts absent.
+3. Inspect the shipping `Columba` product separately to confirm no extension, packet-tunnel entitlement, Model B sources/resources, or Model B runtime behavior is present.
+4. On a signed physical device, complete onboarding and its background-delivery gate, grant VPN permission, install/start/wait for the tunnel, and verify status/settings and extension diagnostics.
+5. Repeat announce, inbound proof/persist/notification, outbound, restart/outbox, locked-device, and app-radio bridge scenarios. Record device/OS, commit, signing/capability state, and diagnostics.
+
+Until those checks are rerun on the current target graph, the June 2 results remain useful historical evidence, not a claim that the experimental flavor or shipping app currently guarantees background delivery.
