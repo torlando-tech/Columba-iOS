@@ -39,7 +39,11 @@ final class OnboardingViewModel {
     var qrCodeString: String = ""
 
     /// Total number of onboarding pages.
+    #if COLUMBA_RUNTIME_MODEL_B
     static let pageCount = 6
+    #else
+    static let pageCount = 5
+    #endif
 
     // MARK: - Computed
 

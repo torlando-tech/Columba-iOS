@@ -12,12 +12,21 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 STATIC_TESTS = REPOSITORY_ROOT / "Tests/static"
 sys.path.insert(0, str(STATIC_TESTS))
 
-from test_modelb_caller_guards_contract import unguarded_references  # noqa: E402
+from test_modelb_caller_guards_contract import (  # noqa: E402
+    atoms,
+    guaranteed_for_every_flag_configuration,
+    guarantees_flag,
+    parse_condition,
+    reference_conditions,
+    simplify,
+    unguarded_references,
+)
 
 APP_ROOT = REPOSITORY_ROOT / "Sources/ColumbaApp"
 APP_SERVICES = APP_ROOT / "Services/AppServices.swift"
 APP_ENTRY = APP_ROOT / "App/ColumbaApp.swift"
 ONBOARDING = APP_ROOT / "Views/Onboarding/OnboardingView.swift"
+ONBOARDING_VIEW_MODEL = APP_ROOT / "ViewModels/OnboardingViewModel.swift"
 SETTINGS = APP_ROOT / "Views/Settings/SettingsView.swift"
 NETWORK_STATUS = APP_ROOT / "Views/Settings/NetworkStatusView.swift"
 
@@ -65,6 +74,45 @@ class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
             path.write_text(source, encoding="utf-8")
             return unguarded_references(path, symbols)
 
+    def preprocessed(self, source: str, enabled_flags: set[str]) -> str:
+        """Evaluate the simple Swift flag matrix used by onboarding sources."""
+        output: list[str] = []
+        frames: list[tuple[bool, bool]] = []
+        active = True
+        directive = re.compile(r"\s*#(if|elseif|else|endif)\b\s*(.*)$")
+
+        def evaluate(expression: str) -> bool:
+            formula = parse_condition(expression)
+            result = simplify(formula, {name: name in enabled_flags for name in atoms(formula)})
+            if result[0] != "const":
+                raise AssertionError(f"compile condition did not fully evaluate: {expression}")
+            return result[1]
+
+        for line in source.splitlines():
+            match = directive.fullmatch(line)
+            if not match:
+                if active:
+                    output.append(line)
+                continue
+            kind, expression = match.groups()
+            if kind == "if":
+                condition = evaluate(expression)
+                frames.append((active, condition))
+                active = active and condition
+            elif kind == "elseif":
+                outer, seen = frames[-1]
+                condition = evaluate(expression)
+                active = outer and not seen and condition
+                frames[-1] = (outer, seen or condition)
+            elif kind == "else":
+                outer, seen = frames[-1]
+                active = outer and not seen
+                frames[-1] = (outer, True)
+            else:
+                active, _ = frames.pop()
+        self.assertEqual([], frames, "unbalanced Swift conditional compilation")
+        return "\n".join(output)
+
     def test_app_side_vpn_guards_use_only_the_canonical_model_b_flag(self) -> None:
         for path in APP_ROOT.rglob("*.swift"):
             source = self.source(path)
@@ -105,27 +153,70 @@ class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
         start_body = source.split("private func startPythonBackend(", 1)[1].split(
             "// Outbound LXMF now goes directly", 1
         )[0]
-        model_b_regions = list(
-            re.finditer(
-                r"#if COLUMBA_RUNTIME_MODEL_B\n(?P<body>.*?)\n\s*#endif",
-                start_body,
-                re.DOTALL,
-            )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "StartPath.swift"
+            path.write_text(start_body, encoding="utf-8")
+            waits = reference_conditions(path, ("ensureBackgroundDeliveryTunnel",))
+        self.assertEqual(1, len(waits), "start path must contain exactly one mandatory tunnel wait")
+        _, wait_line, condition = waits[0]
+        self.assertEqual("await ensureBackgroundDeliveryTunnel()", wait_line)
+        self.assertTrue(guarantees_flag(condition, "COLUMBA_RUNTIME_MODEL_B"))
+        self.assertTrue(
+            guaranteed_for_every_flag_configuration(condition, "COLUMBA_RUNTIME_MODEL_B"),
+            "tunnel wait must not be narrowed by DEBUG or another build condition",
         )
-        wait_regions = [
-            match for match in model_b_regions
-            if "await ensureBackgroundDeliveryTunnel()" in match.group("body")
-        ]
-        self.assertEqual(1, len(wait_regions))
-        without_model_b = start_body
-        for match in reversed(model_b_regions):
-            without_model_b = (
-                without_model_b[:match.start()] + without_model_b[match.end():]
-            )
+
+        without_model_b = self.preprocessed(start_body, set())
         for forbidden in ("ensureBackgroundDeliveryTunnel", "waitUntilConnected", "tunnel.install()", "tunnel.start()"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, without_model_b)
         self.assertIn("try await backend.start(", without_model_b)
+
+    def test_tunnel_wait_contract_rejects_nested_debug_narrowing(self) -> None:
+        source = self.source(APP_SERVICES)
+        mutated = source.replace(
+            "        await ensureBackgroundDeliveryTunnel()",
+            "        #if DEBUG\n        await ensureBackgroundDeliveryTunnel()\n        #endif",
+            1,
+        )
+        self.assertNotEqual(source, mutated)
+        start_body = mutated.split("private func startPythonBackend(", 1)[1].split(
+            "// Outbound LXMF now goes directly", 1
+        )[0]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "MutatedStartPath.swift"
+            path.write_text(start_body, encoding="utf-8")
+            waits = reference_conditions(path, ("ensureBackgroundDeliveryTunnel",))
+        self.assertEqual(1, len(waits))
+        self.assertTrue(guarantees_flag(waits[0][2], "COLUMBA_RUNTIME_MODEL_B"))
+        self.assertFalse(
+            guaranteed_for_every_flag_configuration(waits[0][2], "COLUMBA_RUNTIME_MODEL_B")
+        )
+
+    def test_onboarding_page_matrix_has_no_blank_or_unreachable_page(self) -> None:
+        view = self.source(ONBOARDING)
+        view_model = self.source(ONBOARDING_VIEW_MODEL)
+        for model_b, expected_count in ((False, 5), (True, 6)):
+            flags = {"COLUMBA_ONBOARDING_ENABLED"}
+            if model_b:
+                flags.add("COLUMBA_RUNTIME_MODEL_B")
+            rendered_view = self.preprocessed(view, flags)
+            rendered_model = self.preprocessed(view_model, flags)
+            count_match = re.search(r"static let pageCount = (\d+)", rendered_model)
+            if count_match is None:
+                self.fail("preprocessed onboarding view model has no pageCount")
+            self.assertEqual(expected_count, int(count_match.group(1)))
+
+            switch_body = rendered_view.split("switch viewModel.currentPage {", 1)[1].split(
+                "default:", 1
+            )[0]
+            cases = list(re.finditer(r"^\s*case\s+(\d+):", switch_body, re.MULTILINE))
+            self.assertEqual(list(range(expected_count)), [int(case.group(1)) for case in cases])
+            for index, case in enumerate(cases):
+                body_end = cases[index + 1].start() if index + 1 < len(cases) else len(switch_body)
+                body = switch_body[case.end():body_end]
+                with self.subTest(model_b=model_b, page=int(case.group(1))):
+                    self.assertRegex(body, r"\b(?:Welcome|Identity|Connectivity|Permissions|BackgroundDelivery|Complete)Page\(")
 
     def test_model_b_product_retains_gate_status_onboarding_and_manager_paths(self) -> None:
         self.assertIn("BackgroundDeliveryGateView(appServices: appServices)", self.source(APP_ENTRY))

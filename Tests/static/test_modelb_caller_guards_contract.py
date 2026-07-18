@@ -437,16 +437,22 @@ def guarantees_flag(formula: Formula, required_flag: str) -> bool:
     return not satisfiable(without_model_b)
 
 
+def guaranteed_for_every_flag_configuration(formula: Formula, required_flag: str) -> bool:
+    """Return whether enabling required_flag always makes formula active."""
+    required = ("atom", required_flag)
+    narrowed_path = combine("and", required, negate(formula))
+    return not satisfiable(narrowed_path)
+
+
 def guarantees_model_b(formula: Formula) -> bool:
     return guarantees_flag(formula, MODEL_B_FLAG)
 
 
-def unguarded_references(
+def reference_conditions(
     path: Path,
     tracked_declarations: tuple[str, ...] = MODEL_B_DECLARATIONS,
-    required_flag: str = MODEL_B_FLAG,
-) -> list[tuple[int, str]]:
-    """Return executable references not guaranteed by the active Model B path."""
+) -> list[tuple[int, str, Formula]]:
+    """Return executable tracked references and their full nested active conditions."""
     source = path.read_text()
     try:
         masked = swift_lexical_mask(source, tracked_declarations)
@@ -455,7 +461,7 @@ def unguarded_references(
 
     frames: list[ConditionalFrame] = []
     current = TRUE
-    failures: list[tuple[int, str]] = []
+    references: list[tuple[int, str, Formula]] = []
     directive_pattern = re.compile(r"\s*#(if|elseif|else|endif)\b\s*(.*)\Z")
 
     for number, (raw_line, code) in enumerate(zip(source.splitlines(), masked.splitlines()), 1):
@@ -500,12 +506,24 @@ def unguarded_references(
             continue
 
         if any(re.search(rf"\b{re.escape(token)}\b", code) for token in tracked_declarations):
-            if not guarantees_flag(current, required_flag):
-                failures.append((number, raw_line.strip()))
+            references.append((number, raw_line.strip(), current))
 
     if frames:
         raise ValueError(f"{path}: unbalanced conditional compilation: {len(frames)} missing #endif")
-    return failures
+    return references
+
+
+def unguarded_references(
+    path: Path,
+    tracked_declarations: tuple[str, ...] = MODEL_B_DECLARATIONS,
+    required_flag: str = MODEL_B_FLAG,
+) -> list[tuple[int, str]]:
+    """Return executable references not guaranteed by the active Model B path."""
+    return [
+        (number, line)
+        for number, line, condition in reference_conditions(path, tracked_declarations)
+        if not guarantees_flag(condition, required_flag)
+    ]
 
 
 class ModelBCallerGuardContractTests(unittest.TestCase):

@@ -3,7 +3,7 @@
 //  OnboardingView.swift
 //  ColumbaApp
 //
-//  Top-level 5-page onboarding flow container.
+//  Top-level onboarding flow container (six Model B pages, five otherwise).
 //  Manual navigation only (no swipe), with page indicator dots and skip button.
 //
 
@@ -105,8 +105,8 @@ struct OnboardingView: View {
                                 viewModel.nextPage()
                             }
                         )
+                    #if COLUMBA_RUNTIME_MODEL_B
                     case 4:
-                        #if COLUMBA_RUNTIME_MODEL_B
                         BackgroundDeliveryPage(
                             onEnable: {
                                 // Create the identity now (idempotent) so the NE can
@@ -127,10 +127,10 @@ struct OnboardingView: View {
                             },
                             onBack: { viewModel.previousPage() }
                         )
-                        #else
-                        EmptyView()
-                        #endif
                     case 5:
+                    #else
+                    case 4:
+                    #endif
                         CompletePage(
                             displayName: viewModel.effectiveDisplayName,
                             interfaceNames: viewModel.selectedInterfaceNames,
