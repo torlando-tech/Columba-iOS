@@ -39,13 +39,15 @@ class ConditionalFrame(TypedDict):
 
 
 def swift_lexical_mask(source: str) -> str:
-    """Blank Swift comments, strings, and regexes while preserving source layout."""
+    """Blank Swift literal text/comments but preserve code inside interpolation."""
     output = list(source)
     index = 0
     block_depth = 0
     state = "code"
     hashes = 0
     literal_start = 0
+    interpolation_literals: list[tuple[str, int, int]] = []
+    interpolation_depths: list[int] = []
 
     def blank(position: int) -> None:
         if output[position] not in "\r\n":
@@ -60,6 +62,18 @@ def swift_lexical_mask(source: str) -> str:
         return source.startswith(closing, position) and not source.startswith(
             "#", position + len(closing)
         )
+
+    def interpolation_length(position: int, delimiter_hashes: int) -> int:
+        introducer = "\\" + ("#" * delimiter_hashes) + "("
+        return len(introducer) if source.startswith(introducer, position) else 0
+
+    def begin_interpolation(position: int, length: int) -> int:
+        nonlocal state
+        blank_span(position, position + length)
+        interpolation_literals.append((state, hashes, literal_start))
+        interpolation_depths.append(1)
+        state = "code"
+        return position + length
 
     def starts_bare_regex(position: int) -> bool:
         """Recognize `/.../` only where Swift expects an expression operand."""
@@ -97,21 +111,28 @@ def swift_lexical_mask(source: str) -> str:
             continue
 
         if state == "string":
-            blank(index)
-            if source[index] in "\r\n":
+            length = interpolation_length(index, 0)
+            if length:
+                index = begin_interpolation(index, length)
+            elif source[index] in "\r\n":
                 raise ValueError("unterminated Swift string literal before newline")
-            if source[index] == "\\" and index + 1 < len(source):
-                blank(index + 1)
+            elif source[index] == "\\" and index + 1 < len(source):
+                blank_span(index, index + 2)
                 index += 2
             elif source[index] == '"':
+                blank(index)
                 state = "code"
                 index += 1
             else:
+                blank(index)
                 index += 1
             continue
 
         if state == "multiline_string":
-            if source[index] == "\\" and index + 1 < len(source):
+            length = interpolation_length(index, 0)
+            if length:
+                index = begin_interpolation(index, length)
+            elif source[index] == "\\" and index + 1 < len(source):
                 blank_span(index, index + 2)
                 index += 2
             elif source.startswith('"""', index):
@@ -131,7 +152,10 @@ def swift_lexical_mask(source: str) -> str:
                 "raw_multiline_string": '"""',
                 "extended_regex": "/",
             }[state]
-            if exact_extended_close(index, marker):
+            length = interpolation_length(index, hashes)
+            if length:
+                index = begin_interpolation(index, length)
+            elif exact_extended_close(index, marker):
                 end = index + len(marker) + hashes
                 blank_span(index, end)
                 index = end
@@ -143,11 +167,14 @@ def swift_lexical_mask(source: str) -> str:
             continue
 
         if state == "bare_regex":
-            blank(index)
-            if source[index] == "\\" and index + 1 < len(source):
-                blank(index + 1)
+            length = interpolation_length(index, 0)
+            if length:
+                index = begin_interpolation(index, length)
+            elif source[index] == "\\" and index + 1 < len(source):
+                blank_span(index, index + 2)
                 index += 2
             elif source[index] == "/":
+                blank(index)
                 literal = source[literal_start:index + 1]
                 if any(
                     re.search(rf"\b{re.escape(token)}\b", literal)
@@ -161,7 +188,21 @@ def swift_lexical_mask(source: str) -> str:
             elif source[index] in "\r\n":
                 raise ValueError("unterminated Swift bare regex literal before newline")
             else:
+                blank(index)
                 index += 1
+            continue
+
+        if interpolation_depths and source[index] == "(":
+            interpolation_depths[-1] += 1
+            index += 1
+            continue
+        if interpolation_depths and source[index] == ")":
+            interpolation_depths[-1] -= 1
+            if interpolation_depths[-1] == 0:
+                blank(index)
+                interpolation_depths.pop()
+                state, hashes, literal_start = interpolation_literals.pop()
+            index += 1
             continue
 
         if source[index] == "#":
@@ -210,6 +251,8 @@ def swift_lexical_mask(source: str) -> str:
         else:
             index += 1
 
+    if interpolation_depths:
+        raise ValueError("unterminated Swift interpolation")
     if block_depth:
         raise ValueError("unterminated Swift block comment")
     errors = {
@@ -478,14 +521,61 @@ class ModelBCallerGuardContractTests(unittest.TestCase):
         snippet = 'let normal = "ModelBRNodeService \\\"quoted\\\""\nlet multiline = """\nRNodeSeamConfig\n"""\n'
         self.assertEqual([], self.references(snippet))
 
+    def test_tracked_references_in_string_interpolation_remain_executable(self) -> None:
+        ordinary = 'let value = "service: \\(ModelBRNodeService.shared)"\n'
+        multiline = 'let value = """\nconfig: \\(RNodeSeamConfig.load())\n"""\n'
+        nested = 'let value = "service: \\(decorate((ModelBRNodeService.shared), with: \")"))"\n'
+        self.assertEqual([(1, ordinary.strip())], self.references(ordinary))
+        self.assertEqual([(2, "config: \\(RNodeSeamConfig.load())")], self.references(multiline))
+        self.assertEqual([(1, nested.strip())], self.references(nested))
+
+    def test_tracked_references_in_raw_string_interpolation_remain_executable(self) -> None:
+        raw = 'let value = #"config: \\#(RNodeSeamConfig.load())"#\n'
+        raw_multiline = 'let value = ##"""\nservice: \\##(ModelBRNodeService.shared)\n"""##\n'
+        self.assertEqual([(1, raw.strip())], self.references(raw))
+        self.assertEqual([(2, "service: \\##(ModelBRNodeService.shared)")],
+                         self.references(raw_multiline))
+
+    def test_tracked_references_in_regex_interpolation_cannot_be_hidden(self) -> None:
+        extended = 'let pattern = #/prefix-\\#(RNodeSeamConfig.load())/#\n'
+        self.assertEqual([(1, extended.strip())], self.references(extended))
+        with self.assertRaisesRegex(ValueError, "tracked declaration"):
+            self.references('let pattern = /prefix-\\(ModelBRNodeService.shared)/\n')
+
+    def test_harmless_interpolation_and_escaped_introducers_remain_accepted(self) -> None:
+        snippet = '''logger.info("state: \\(state)")
+let escaped = "literal: \\\\(ModelBRNodeService.shared)"
+let wrongRawDelimiter = ##"literal: \\#(RNodeSeamConfig.load())"##
+let literalNames = "ModelBRNodeService RNodeSeamConfig"
+let nestedLiteral = "value: \\(decorate("ModelBRNodeService" /* RNodeSeamConfig */))"
+'''
+        guarded = '''#if COLUMBA_RUNTIME_MODEL_B
+let value = "service: \\(ModelBRNodeService.shared)"
+#endif
+'''
+        self.assertEqual([], self.references(snippet))
+        self.assertEqual([], self.references(guarded))
+
+    def test_unterminated_interpolation_fails_clearly(self) -> None:
+        snippets = (
+            'let value = "service: \\(make(ModelBRNodeService.shared)\n',
+            'let value = """service: \\(ModelBRNodeService.shared\n',
+            'let value = #"service: \\#(ModelBRNodeService.shared\n',
+            'let pattern = #/service-\\#(ModelBRNodeService.shared\n',
+        )
+        for snippet in snippets:
+            with self.subTest(snippet=snippet):
+                with self.assertRaisesRegex(ValueError, "unterminated Swift interpolation"):
+                    self.references(snippet)
+
     def test_raw_string_closure_exposes_following_executable_reference(self) -> None:
         snippet = 'let text = #"embedded quote: ""#; ModelBRNodeService.shared.start() // "\n'
         self.assertEqual([(1, snippet.strip())], self.references(snippet))
 
     def test_identifiers_and_ordinary_quotes_inside_raw_strings_are_ignored(self) -> None:
-        snippet = '''let normal = ##"ModelBRNodeService " and "" and #" plus \\##(RNodeSeamConfig)"##
+        snippet = '''let normal = ##"ModelBRNodeService " and "" and #" plus \\#(RNodeSeamConfig)"##
 let multiline = #"""
-RNodeSeamConfig " and """ without the matching hash and \\#(ModelBInboundReplay)
+RNodeSeamConfig " and """ without the matching hash and \\##(ModelBInboundReplay)
 AppGroupRNodeServer // not a comment
 """#
 '''
