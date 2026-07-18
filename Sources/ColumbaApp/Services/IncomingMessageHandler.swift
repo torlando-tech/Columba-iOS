@@ -11,7 +11,48 @@ import RNSAPI
 import UserNotifications
 import os.log
 
-/// Encodes a durable idempotency ledger inside the target message's existing
+/// Serializes every app-process read/modify/write of `reactions_json` across
+/// incoming handlers and local UI writes. The database update remains the
+/// durable commit point; the gate prevents stale concurrent snapshots from
+/// overwriting another reaction or its replay ledger entry.
+actor ReactionMutationGate {
+    static let shared = ReactionMutationGate()
+
+    private var held = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func withLock<T>(_ operation: () async throws -> T) async rethrows -> T {
+        await acquire()
+        do {
+            let result = try await operation()
+            release()
+            return result
+        } catch {
+            release()
+            throw error
+        }
+    }
+
+    private func acquire() async {
+        if !held {
+            held = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            held = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
+/// Encodes a durable idempotency ledger inside the target message's single
 /// `reactions_json` column. Updating the visible reaction and recording the
 /// control-message hash therefore happen in one database UPDATE. If the app is
 /// terminated before the separate control-row deletion, replay sees the hash
@@ -462,36 +503,36 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
             return true  // malformed — nothing to retry
         }
 
-        // Read-modify-write reactions on the target message
-        var mergeOK = true
+        // The shared gate covers every reactions_json writer in the app process.
+        // Holding it across both repository awaits makes this read/modify/write
+        // serial with local UI reactions and concurrent inbound tasks.
         do {
-            var reactionsDict: [String: [String]] = [:]
-            if let json = try await messageRepository.getReactionsJson(targetHash),
-               let data = json.data(using: .utf8),
-               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
-                reactionsDict = dict
-            }
+            try await ReactionMutationGate.shared.withLock {
+                var reactionsDict: [String: [String]] = [:]
+                if let json = try await messageRepository.getReactionsJson(targetHash),
+                   let data = json.data(using: .utf8),
+                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
+                    reactionsDict = dict
+                }
 
-            let reactionHashHex = reactionMessageHash.map {
-                String(format: "%02x", $0)
-            }.joined()
-            let result = ReactionLedger.applying(
-                emoji: emoji,
-                sender: senderHex,
-                reactionMessageHash: reactionHashHex,
-                to: reactionsDict
-            )
+                let reactionHashHex = reactionMessageHash.map {
+                    String(format: "%02x", $0)
+                }.joined()
+                let result = ReactionLedger.applying(
+                    emoji: emoji,
+                    sender: senderHex,
+                    reactionMessageHash: reactionHashHex,
+                    to: reactionsDict
+                )
 
-            if result.didApply {
-                let jsonData = try JSONSerialization.data(withJSONObject: result.state)
-                let jsonStr = String(decoding: jsonData, as: UTF8.self)
-                try await messageRepository.updateReactions(targetHash, reactionsJson: jsonStr)
+                if result.didApply {
+                    let jsonData = try JSONSerialization.data(withJSONObject: result.state)
+                    let jsonStr = String(decoding: jsonData, as: UTF8.self)
+                    try await messageRepository.updateReactions(targetHash, reactionsJson: jsonStr)
+                }
             }
         } catch {
             logger.error("Failed to merge reaction: \(error.localizedDescription)")
-            mergeOK = false
-        }
-        guard mergeOK else {
             // Keep the control message durable so ModelBInboundReplay can retry
             // the merge by hash. Deleting after a failed merge would lose it.
             return false
