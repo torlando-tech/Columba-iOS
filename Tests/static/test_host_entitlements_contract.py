@@ -12,8 +12,18 @@ RESOURCES = REPOSITORY_ROOT / "Sources/ColumbaApp/Resources"
 SHIPPING_ENTITLEMENTS = RESOURCES / "ColumbaApp.entitlements"
 MODEL_B_ENTITLEMENTS = RESOURCES / "ColumbaModelBApp.entitlements"
 PROJECT_FILE = REPOSITORY_ROOT / "Columba.xcodeproj/project.pbxproj"
-NETWORK_EXTENSION_KEY = "com.apple.developer.networking.networkextension"
-PACKET_TUNNEL_PROVIDER = "packet-tunnel-provider"
+SHIPPING_ENTITLEMENTS_EXPECTED = {
+    "com.apple.security.application-groups": ["group.network.columba.Columba"],
+    "keychain-access-groups": [
+        "$(AppIdentifierPrefix)network.columba.Columba.shared"
+    ],
+}
+MODEL_B_ENTITLEMENTS_EXPECTED = {
+    **SHIPPING_ENTITLEMENTS_EXPECTED,
+    "com.apple.developer.networking.networkextension": [
+        "packet-tunnel-provider"
+    ],
+}
 
 
 class HostEntitlementsContractTests(unittest.TestCase):
@@ -25,24 +35,11 @@ class HostEntitlementsContractTests(unittest.TestCase):
             cls.model_b = plistlib.load(plist_file)
         cls.project = PROJECT_FILE.read_text(encoding="utf-8")
 
-    def test_shipping_host_does_not_request_network_extension(self) -> None:
-        self.assertNotIn(NETWORK_EXTENSION_KEY, self.shipping)
+    def test_shipping_host_entitlements_match_complete_contract(self) -> None:
+        self.assertEqual(self.shipping, SHIPPING_ENTITLEMENTS_EXPECTED)
 
-    def test_model_b_host_retains_packet_tunnel_provider(self) -> None:
-        self.assertEqual(
-            self.model_b.get(NETWORK_EXTENSION_KEY),
-            [PACKET_TUNNEL_PROVIDER],
-        )
-
-    def test_shared_host_entitlements_remain_identical(self) -> None:
-        shared_keys = (
-            "com.apple.security.application-groups",
-            "keychain-access-groups",
-        )
-        for key in shared_keys:
-            with self.subTest(key=key):
-                self.assertIn(key, self.shipping)
-                self.assertEqual(self.shipping[key], self.model_b[key])
+    def test_model_b_host_entitlements_match_complete_contract(self) -> None:
+        self.assertEqual(self.model_b, MODEL_B_ENTITLEMENTS_EXPECTED)
 
     def test_columba_app_configurations_use_flavor_specific_entitlements(self) -> None:
         for filename in ("ColumbaApp.entitlements", "ColumbaModelBApp.entitlements"):
