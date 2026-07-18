@@ -17,7 +17,7 @@ The shipping app owns `Python.xcframework`, the Python bridge and runtime, Pytho
 
 The experimental app owns `ProxyRnsBackend`, Model B host/proxy/App Group IPC sources, direct ReticulumSwift linkage, and the dependency and signed embed for `ColumbaNetworkExtension`. It excludes the Python framework, Python-only sources and resources, wheels, bridging header, and Python packaging phases. See [Model B — Background LXMF Delivery](docs/MODEL_B_BACKGROUND_DELIVERY.md).
 
-Build flavor is fixed at compile time. Each app target has exactly one canonical runtime flag. The old `Columba-Swift` scheme, `Debug-Swift`/`Release-Swift` configurations, `COLUMBA_BACKEND_SWIFT` condition, and `BackendPreference.modelB` runtime selector are retired. A persisted `useSwiftBackend` value does not select the architecture.
+Build flavor is fixed at compile time. Each app target has exactly one canonical runtime flag. The old `Columba-Swift` scheme, `Debug-Swift`/`Release-Swift` configurations, and `BackendPreference.modelB` runtime selector are retired. `COLUMBA_BACKEND_SWIFT` remains on Model B as a temporary compatibility condition for a transport-settings branch; it is not the architecture selector. A persisted `useSwiftBackend` value does not select the architecture.
 
 ## Building
 

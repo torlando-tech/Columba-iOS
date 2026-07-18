@@ -18,11 +18,11 @@ The shipping Python flavor does not make this guarantee. Its default Internet TC
 
 A suspended iOS app cannot be woken to finish arbitrary network work, so background delivery requires a separately scheduled process that owns the messaging endpoint and completes delivery. In this experiment, `NEPacketTunnelProvider` is that process: iOS schedules it for the active VPN/tunnel independently of the app lifecycle.
 
-**Model B makes the extension the canonical node.** It owns the single `lxmf.delivery` destination and terminates every transfer. The app is a transport/UI satellite. The rejected Model A topology let the app own the node while the extension sniffed and handed off; two processes contending for one destination creates path-flap, link double-response, and cross-process receive-dedup races. Model B instead has one node, one writer, and one deduplication authority.
+**Model B makes the extension the canonical node.** It owns the single `lxmf.delivery` destination and terminates every transfer. The app is a transport/UI satellite. The rejected Model A topology let the app own the node while the extension sniffed and handed off; two processes contending for one destination creates path-flap, link double-response, and cross-process receive-dedup races. Model B instead has one delivery node and one deduplication authority.
 
 ## Flavor boundary
 
-Model B is selected only by compiling the explicit `ColumbaModelBApp` target with `COLUMBA_RUNTIME_MODEL_B`. Build flavor is not selected by user defaults or settings. `BackendPreference.modelB`, persisted `useSwiftBackend`, the `COLUMBA_BACKEND_SWIFT` condition, `Debug-Swift`/`Release-Swift` configurations, and the `Columba-Swift` scheme are retired.
+Model B is selected only by compiling the explicit `ColumbaModelBApp` target with `COLUMBA_RUNTIME_MODEL_B`. Build flavor is not selected by user defaults or settings. `BackendPreference.modelB`, persisted `useSwiftBackend`, the `Debug-Swift`/`Release-Swift` configurations, and the `Columba-Swift` scheme are retired as architecture selectors. `COLUMBA_BACKEND_SWIFT` remains defined on Model B as a temporary compatibility condition for transport settings; it does not select the flavor.
 
 The experimental app owns:
 
@@ -50,13 +50,13 @@ The shipping `ColumbaApp` has the reciprocal ownership: embedded Python RNS/LXMF
                  │     • AppGroupBridgeInterface ◀──────────────────────┐   │
                  │     • prove / link / resource / decrypt — ALL here    │   │
                  │     • writes plaintext ─▶ shared App-Group GRDB store  │   │
-                 │     • posts UNUserNotification + dbChanged Darwin notif │   │
+                 │     • posts user notification + newMessage Darwin signal │   │
                  │                                                        │   │
                  │   App process (ColumbaModelBApp)                       │   │
   BLE / RNode ───┼─▶  • radio drivers (Auto / BLE / RNode)                │   │
  (radio peers)   │    • pumps radio frames ─────────────────────────────┘   │
                  │    • ProxyRnsBackend: send/announce/status → NE via IPC   │
-                 │    • UI reads the shared GRDB (read-only)                 │
+                 │    • UI reads and mutates shared GRDB state              │
                  └──────────────────────────────────────────────────────────┘
  ONE destination on the NE, reachable through two transport paths: direct over
  the NE's TCP relay, or peer→radio→app→App-Group bridge→NE. This is standard
@@ -74,14 +74,14 @@ The shipping `ColumbaApp` has the reciprocal ownership: embedded Python RNS/LXMF
 | Self-announce of the delivery destination | **NE** | The app cannot announce while suspended |
 | Radio interfaces (Auto / BLE / RNode) | **App** | Frames bridged to the NE |
 | Send / announce / status requests | **App → NE** | `ProxyRnsBackend` over IPC |
-| UI and shared-store reads | **App** | Read-only reader of the NE's GRDB store |
+| UI and shared-store operations | **App** | Reads messages and performs conversation/message UI mutations in the shared GRDB store |
 
 ## Inbound delivery flow
 
 1. A sender resolves a path to `lxmf.delivery`, learned from the NE's announce, and opens an RNS link or sends opportunistically.
 2. Frames arrive at the NE directly over the TCP relay or through radio peer → app radio driver → App Group bridge → NE transport.
 3. ReticulumSwift handles the link/resource. LXMFSwift validates the signature, duplicate status, and stamp; decrypts; and persists plaintext to the shared App Group GRDB store.
-4. `NEDeliveryDelegate.router(_:didReceiveMessage:)` posts a local `UNUserNotification` and a `dbChanged` Darwin notification for foreground refresh.
+4. `NEDeliveryDelegate.router(_:didReceiveMessage:)` posts a local `UNUserNotification` and the `network.columba.newMessage` Darwin notification for foreground refresh.
 5. The sender receives an RNS delivery proof.
 6. On next open, the app reads the persisted message from shared GRDB without re-fetching it.
 
@@ -92,7 +92,7 @@ This path is designed to run in the extension while `ColumbaModelBApp` is suspen
 1. The app calls `ProxyRnsBackend.sendLxmfMessage(...)`.
 2. The proxy marshals a `composeOutbound` envelope over IPC to the extension.
 3. `sendLxmfForIPC(...)` builds the `LXMessage` with the shared identity, persists it, and lets the transport select TCP or the App Group radio bridge.
-4. Outbound state returns through the GRDB `messages.state` column and `dbChanged`.
+4. Outbound state returns through the GRDB `messages.state` column and the `network.columba.newMessage` Darwin notification.
 5. If the extension is unavailable, the app stores the request in the App Group outbox; `NEReticulumNode.drainOutbox` drains it on the next extension start.
 
 ## Announce flow
@@ -115,12 +115,12 @@ The app's announce action routes through `ProxyRnsBackend.announce` → IPC → 
 ## Shared state
 
 - **Identity:** The app creates the identity in the shared keychain access group; the extension reads it. `AfterFirstUnlockThisDeviceOnly` accessibility permits extension access while locked after first unlock. App Group defaults carry the resolved group name for locked-start cases.
-- **Message store:** LXMFSwift's GRDB/WAL database lives in the App Group. The extension is the single writer and the app opens it read-only. `dbChanged` provides cross-process refresh. `completeUntilFirstUserAuthentication` file protection permits writes while locked after first unlock.
+- **Message store:** LXMFSwift's GRDB/WAL database lives in the App Group. The extension owns inbound delivery persistence and outbound delivery-state updates. `ColumbaModelBApp` currently opens the same database read-write because UI operations update conversations and messages. The `network.columba.newMessage` Darwin notification triggers cross-process refresh. `completeUntilFirstUserAuthentication` file protection permits writes while locked after first unlock.
 
 ## Load-bearing invariants
 
 1. **Single node:** The extension alone owns `lxmf.delivery` and `LXMRouter`; `ColumbaModelBApp` does not start a competing destination-owning backend or TCP interface.
-2. **Single writer:** The extension alone writes the GRDB store. App-composed outbound messages are handed to it for sending and persistence.
+2. **Single delivery authority:** The extension handles inbound delivery persistence and app-composed outbound send/persist work. The app may still write UI-managed conversation and message state, but it does not run a second `LXMRouter` or independently terminate inbound transfers.
 3. **Durable deduplication:** Deduplication uses path-independent `LXMessage.hash` persisted in GRDB, surviving extension restarts and spanning TCP and radio paths.
 4. **Stable node identity:** Shared identity plus shared store recreates the same node after extension restart; on-demand connection can relaunch it.
 5. **RNSAPI/ReticulumSwift collision rule:** Files conforming to ReticulumSwift protocols or using its types import ReticulumSwift and Foundation, never RNSAPI. The extension is RNSAPI-free, and the Foundation-only proxy seam carries neither library's types.

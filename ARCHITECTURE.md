@@ -17,7 +17,7 @@ Columba has one shipping app target and one isolated experimental app target. Fl
 
 Both apps retain shared product/UI code. `ColumbaModelBApp` links ReticulumSwift directly because it runs the native stack. `ColumbaApp` also has a target-local ReticulumSwift link only because retained public `MessageRepository`/`LXMFSwift` signatures expose ReticulumSwift types; it does not run native Model B.
 
-Each app target must define exactly one canonical runtime condition. `Columba-Swift`, `Debug-Swift`, `Release-Swift`, `COLUMBA_BACKEND_SWIFT`, and the `BackendPreference.modelB` selector are retired. Persisted `useSwiftBackend` state has no architectural effect. Debug and Release choose optimization, not runtime flavor.
+Each app target must define exactly one canonical runtime condition. `Columba-Swift`, `Debug-Swift`, `Release-Swift`, and the `BackendPreference.modelB` selector are retired. `COLUMBA_BACKEND_SWIFT` remains on Model B as a temporary compatibility condition for transport settings, but it does not select the runtime architecture. Persisted `useSwiftBackend` state has no architectural effect. Debug and Release choose optimization, not runtime flavor.
 
 ## Scheme and target graph
 
