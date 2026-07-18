@@ -19,7 +19,7 @@ from pathlib import Path
 import plistlib
 import subprocess
 import sys
-from typing import Callable, Dict, Iterable, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 NETWORK_EXTENSION_LOAD = b"/NetworkExtension.framework/"
@@ -158,6 +158,62 @@ def _linked_libraries(executable: Path, label: str, run: Callable) -> bytes:
     )
 
 
+def _bundle_linkage(
+    bundle: Path,
+    executable: Path,
+    label: str,
+    app_root: Path,
+    run: Callable,
+) -> Tuple[bytes, List[Path]]:
+    """Return recursive load commands and in-bundle code images.
+
+    Xcode Debug products use a tiny executable that loads a sibling
+    ``*.debug.dylib`` containing the application code. Checking only the plist
+    executable misses the real framework linkage and symbols.
+    """
+    queue = [executable]
+    images = []
+    seen = set()
+    outputs = []
+    while queue:
+        image = queue.pop(0)
+        resolved = _resolve_contained(
+            image, app_root, "{} code image".format(label)
+        )
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        images.append(image)
+        output = _linked_libraries(image, label, run)
+        outputs.append(output)
+        for raw_line in output.splitlines()[1:]:
+            stripped = raw_line.strip()
+            dependency = stripped.split(None, 1)[0] if stripped else b""
+            if (
+                not dependency.startswith(b"@rpath/")
+                or not dependency.endswith(b".debug.dylib")
+            ):
+                continue
+            try:
+                relative = dependency[len(b"@rpath/") :].decode("utf-8")
+            except UnicodeDecodeError:
+                raise VerificationError(
+                    "{} contains a non-UTF-8 @rpath dependency".format(label)
+                )
+            for candidate in (bundle / relative, bundle / "Frameworks" / relative):
+                if candidate.exists():
+                    _resolve_contained(
+                        candidate, app_root, "{} @rpath image".format(label)
+                    )
+                    if not candidate.is_file():
+                        raise VerificationError(
+                            "{} @rpath image is not a file".format(label)
+                        )
+                    queue.append(candidate)
+                    break
+    return b"\n".join(outputs), images
+
+
 def _defined_symbols(executable: Path, label: str, run: Callable) -> bytes:
     return _command_output(
         ("nm", "-jU", str(executable)),
@@ -255,20 +311,31 @@ def _is_python_packaging_path(path: Path, app: Path) -> bool:
 
 
 def _verify_shipping(
-    app: Path, app_root: Path, executable: Path, libraries: bytes, run: Callable
+    app: Path,
+    app_root: Path,
+    code_images: Sequence[Path],
+    libraries: bytes,
+    run: Callable,
 ) -> None:
     forbidden = next(iter(_shipping_forbidden_paths(app)), None)
     if forbidden is not None:
         raise VerificationError("shipping artifact contains forbidden path or PlugIns: {}".format(forbidden))
     if NETWORK_EXTENSION_LOAD in libraries:
         raise VerificationError("shipping executable links NetworkExtension.framework")
-    symbols = _defined_symbols(executable, "shipping app", run)
+    symbols = b"\n".join(
+        _defined_symbols(image, "shipping app code image", run)
+        for image in code_images
+    )
     marker = next((name for name in MODEL_B_SYMBOLS if name in symbols), None)
     if marker is not None:
         raise VerificationError(
             "shipping executable contains active Model B symbol {}".format(
                 marker.decode("ascii")
             )
+        )
+    if PYTHON_LOAD not in libraries:
+        raise VerificationError(
+            "shipping application code does not link Python.framework"
         )
     framework = app / "Frameworks/Python.framework"
     if not _contains_regular_file(framework, app_root, "shipping Python.framework"):
@@ -341,8 +408,12 @@ def _verify_modelb(
     extension_executable = _bundle_executable(
         extension, extension_metadata, "Model B extension", app_root
     )
-    extension_libraries = _linked_libraries(
-        extension_executable, "Model B extension", run
+    extension_libraries, _extension_images = _bundle_linkage(
+        extension,
+        extension_executable,
+        "Model B extension",
+        app_root,
+        run,
     )
     if NETWORK_EXTENSION_LOAD not in libraries:
         raise VerificationError("Model B host does not link NetworkExtension.framework")
@@ -399,9 +470,15 @@ def verify_artifact(
     executable = _bundle_executable(
         app, metadata, "{} app".format(flavor), app_root
     )
-    libraries = _linked_libraries(executable, "{} app".format(flavor), run)
+    libraries, code_images = _bundle_linkage(
+        app,
+        executable,
+        "{} app".format(flavor),
+        app_root,
+        run,
+    )
     if flavor == "shipping":
-        _verify_shipping(app, app_root, executable, libraries, run)
+        _verify_shipping(app, app_root, code_images, libraries, run)
     else:
         _verify_modelb(
             app,

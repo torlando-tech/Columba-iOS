@@ -142,6 +142,53 @@ class ArtifactCheckerTests(unittest.TestCase):
             fixture = ArtifactFixture(Path(directory), "modelb", "NotModelBApp")
             self.verify(fixture, "modelb")
 
+    def test_debug_dylib_products_are_inspected_as_application_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "shipping")
+            executable = fixture.app / fixture.executable
+            debug_image = fixture.app / "Shipping.debug.dylib"
+            debug_image.write_bytes(b"Mach-O")
+            fixture.outputs[("otool", str(executable))] = (
+                b"stub:\n\t@rpath/Shipping.debug.dylib\n"
+            )
+            fixture.outputs[("otool", str(debug_image))] = (
+                b"debug:\n\t@rpath/Python.framework/Python\n"
+            )
+            fixture.outputs[("nm", str(debug_image))] = b"_$s7Columba13ShippingGraphV\n"
+            self.verify(fixture, "shipping")
+            fixture.outputs[("nm", str(debug_image))] += (
+                b"_$s7Columba19PacketTunnelProviderC\n"
+            )
+            self.assert_rejected(fixture, "shipping", "Model B symbol")
+
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "modelb")
+            host_executable = fixture.app / fixture.executable
+            host_debug = fixture.app / "ModelB.debug.dylib"
+            host_debug.write_bytes(b"Mach-O")
+            fixture.outputs[("otool", str(host_executable))] = (
+                b"stub:\n\t@rpath/ModelB.debug.dylib\n"
+            )
+            fixture.outputs[("otool", str(host_debug))] = (
+                b"debug:\n"
+                b"\t/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension\n"
+            )
+            extension_executable = next(
+                path
+                for path in fixture.extension.iterdir()
+                if path.name not in ("Info.plist",)
+            )
+            extension_debug = fixture.extension / "Extension.debug.dylib"
+            extension_debug.write_bytes(b"Mach-O")
+            fixture.outputs[("otool", str(extension_executable))] = (
+                b"stub:\n\t@rpath/Extension.debug.dylib\n"
+            )
+            fixture.outputs[("otool", str(extension_debug))] = (
+                b"debug:\n"
+                b"\t/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension\n"
+            )
+            self.verify(fixture, "modelb")
+
     def test_shipping_rejects_plugins_even_without_an_appex(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "shipping")
