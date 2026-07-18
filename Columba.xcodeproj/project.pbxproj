@@ -99,8 +99,6 @@
 		073 /* MessageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F073 /* MessageDetailView.swift */; };
 		074B /* SharedDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = F074 /* SharedDefaults.swift */; };
 		076B /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
-		077B /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F077 /* TunnelManager.swift */; };
-		078B /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
 		079B /* OnboardingRestoreSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F079 /* OnboardingRestoreSheet.swift */; };
 		07AB /* PlatformCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07A /* PlatformCompat.swift */; };
 		07CB /* MicronDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07D /* MicronDocument.swift */; };
@@ -113,13 +111,8 @@
 		083B /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		084B /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
 		0A7FF8FA55B27781DF23C7E8 /* ThemeColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F064 /* ThemeColors.swift */; };
-		0AGD /* AppGroupBLEDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAGD /* AppGroupBLEDriver.swift */; };
 		0B768533EC90008D3E23C326 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
-		0BDS /* BLEDriverSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDS /* BLEDriverSeam.swift */; };
-		0BST /* AppGroupBLESeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBST /* AppGroupBLESeamTransport.swift */; };
-		0BSV /* AppGroupBLEServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBSV /* AppGroupBLEServer.swift */; };
 		0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */; };
-		0MBS /* ModelBBLEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FMBS /* ModelBBLEService.swift */; };
 		113FFF9C5A228CC0C294A3D9 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		11D0621686D1D65C9602C911 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */; };
 		11DE32B4ABEF3646B6B42728 /* MaterialDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F036 /* MaterialDesignIcons.swift */; };
@@ -145,13 +138,11 @@
 		2718B286F42FAF0930FFF7FC /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
 		2AFE85F0CA5EFEDF75A7C1E5 /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4C54CECCAF0B117FB6C197 /* IncomingCallScreen.swift */; };
 		2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */; };
-		2B502D5AFE0E2C0D54CC144C /* BackgroundVPNExplainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */; };
 		2C21D06B5E27DB547378A9D9 /* DeviceDiscoveryStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F055 /* DeviceDiscoveryStep.swift */; };
 		2C8DBC92FB549628044532C4 /* BackgroundTransportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGTF /* BackgroundTransportView.swift */; };
 		2DAA350A34E3332DEC1545B0 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		2DEF38CCE53F632284B5A50D /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		2EA5BEC6310B2956DE0B49A6 /* PyConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D8CBCF7E546028A043E1C7 /* PyConversation.swift */; };
-		2F8EC8212FC732AB00235991 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8202FC732AB00235991 /* ReticulumSwift */; };
 		2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8222FC732AF00235991 /* LXMFSwift */; };
 		31F207DBD45E2CA682A3F830 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
 		32BFE0E43B1F4246502992E3 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047 /* RNodeConfigSheet.swift */; };
@@ -219,7 +210,6 @@
 		7A9BCAF4AA8130159163BA6C /* OnboardingRestoreSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F079 /* OnboardingRestoreSheet.swift */; };
 		7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */; };
 		7E4FB7E6B06FAF5FFC9354B8 /* SharedDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = F074 /* SharedDefaults.swift */; };
-		80D0868B2491DB301F772D63 /* BackgroundDeliveryPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */; };
 		80D6B89564EAC050DD8FC6EC /* Identicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F019 /* Identicon.swift */; };
 		81B38F51CE308680ACB9ACB2 /* MigrationExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05D /* MigrationExporter.swift */; };
 		82010207856E1B25E8137512 /* CodecSelectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */; };
@@ -269,7 +259,6 @@
 		AF0B30F4F05BB35FCC50D99F /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* ChatsView.swift */; };
 		AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
 		AFC83FFCE2A93CCFE0FCB141 /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		AGB1B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
 		AGB2B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
 		AGP1B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
 		AGP2B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
@@ -286,7 +275,6 @@
 		BDEAB854FC0F5ABB7188A865 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
 		BE3C19C7804FA366826A5A7A /* OfflineMapsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F063 /* OfflineMapsScreen.swift */; platformFilter = ios; };
 		BED8754AAD30B1CB58755EF8 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013 /* MessagingView.swift */; };
-		BGTB /* BackgroundTransportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGTF /* BackgroundTransportView.swift */; };
 		BKF001 /* BackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKF002 /* BackendFactory.swift */; };
 		C0904C776958B1A10E0A8128 /* WelcomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04D /* WelcomePage.swift */; };
 		C126E88E13D9DB7CCE7AD8A0 /* MicronDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07D /* MicronDocument.swift */; };
@@ -347,7 +335,6 @@
 		F6BEF0E7AFA4ADE1168F08F1 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044 /* IdentityManagerView.swift */; };
 		F774614F8150F2E6F3F92796 /* Lucide.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA586EB5F8EB62D2579CEAAB /* Lucide.swift */; };
 		F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
-		F83A2212E43B329830919AFF /* BackgroundDeliveryGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */; };
 		FB2F3248AE405614B36BC798 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = E049A7D4D6D58690C0B674CE /* RNSAPI */; };
 		FC1149733FD2E4E009612DDF /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F7375908681A4DF99F125C7 /* CallKitManager.swift */; };
 		FC15AC0D65E2B67821CAFEE3 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = FE4D25F362FFD8A793C143FC /* LXSTSwift */; };
@@ -357,11 +344,8 @@
 		NERN2 /* NEReticulumNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = NERN1 /* NEReticulumNode.swift */; };
 		NMF1B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
 		NMF2B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
-		OBQ1B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		OBQ2B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		PNT001 /* PythonNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = PNT002 /* PythonNetworkTransport.swift */; };
-		PRB001 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
-		PXI1B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		RFT002 /* RuntimeFlavorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RFT001 /* RuntimeFlavorTests.swift */; };
 		SRB001 /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
@@ -615,8 +599,8 @@
 				FC15AC0D65E2B67821CAFEE3 /* LXSTSwift in Frameworks */,
 				11D0621686D1D65C9602C911 /* RNSAPI in Frameworks */,
 				876F4CCF3FA441B67D08BBEC /* SwiftBLEBridge in Frameworks */,
-				73B2FC9ECC25BA7B4AFF3D96 /* ReticulumSwift in Frameworks */,
 				E34B504A6DCC8F5E7F44E491 /* LXMFSwift in Frameworks */,
+				73B2FC9ECC25BA7B4AFF3D96 /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -638,7 +622,6 @@
 				5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */,
 				F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */,
 				13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */,
-				2F8EC8212FC732AB00235991 /* ReticulumSwift in Frameworks */,
 				2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1137,8 +1120,8 @@
 				FE4D25F362FFD8A793C143FC /* LXSTSwift */,
 				F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */,
 				5D099DB326374C07812E3FBD /* SwiftBLEBridge */,
-				030380C51B178354F4D4E88F /* ReticulumSwift */,
 				E0DE32143A4DF2A0284C1911 /* LXMFSwift */,
+				030380C51B178354F4D4E88F /* ReticulumSwift */,
 			);
 			productName = ColumbaModelBApp;
 			productReference = E59ED1029D4A906764BC582F /* ColumbaModelBApp.app */;
@@ -1184,7 +1167,6 @@
 				A49337EFC55C10979AEB702B /* LXSTSwift */,
 				0FD6A68A52A54D21FDB70324 /* RNSAPI */,
 				5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */,
-				2F8EC8202FC732AB00235991 /* ReticulumSwift */,
 				2F8EC8222FC732AF00235991 /* LXMFSwift */,
 			);
 			productName = ColumbaApp;
@@ -1431,20 +1413,9 @@
 				33CCBDB91636352EFC4A7790 /* BLEConnectionsView.swift in Sources */,
 				7E4FB7E6B06FAF5FFC9354B8 /* SharedDefaults.swift in Sources */,
 				113FFF9C5A228CC0C294A3D9 /* SharedFrameQueue.swift in Sources */,
-				895BF78C85D1C5471DA53961 /* AppGroupBLESeamTransport.swift in Sources */,
-				384033BE99794CB11185E99C /* AppGroupBLEServer.swift in Sources */,
-				36AA591CD5DF055FA6124E7D /* BLEDriverSeam.swift in Sources */,
-				6DFD1336E74B3E8F8131A97B /* AppGroupBLEDriver.swift in Sources */,
-				5C05E5EC2A287FEAD018BB36 /* AppGroupBridgeInterface.swift in Sources */,
 				2332846F7A8E0E2234D7EF8D /* ExtensionDiagLog.swift in Sources */,
 				CE8E3B8292DA54170D020367 /* AppGroupPaths.swift in Sources */,
-				884E998DD3B41BE3CAE55B70 /* ProxyIPC.swift in Sources */,
 				6965E7A95909A97BDBA20535 /* NomadNetFetch.swift in Sources */,
-				E154CBBB80370FD16B8319CA /* OutboxQueue.swift in Sources */,
-				46C333262AE771054EDF0231 /* TunnelManager.swift in Sources */,
-				2C8DBC92FB549628044532C4 /* BackgroundTransportView.swift in Sources */,
-				577EE1AF377E314E961710B3 /* ExtensionFrameReader.swift in Sources */,
-				DF6654D386454C56AF75302E /* ModelBBLEService.swift in Sources */,
 				7A9BCAF4AA8130159163BA6C /* OnboardingRestoreSheet.swift in Sources */,
 				58560228AFEDBA4201D9F9D4 /* PlatformCompat.swift in Sources */,
 				C126E88E13D9DB7CCE7AD8A0 /* MicronDocument.swift in Sources */,
@@ -1464,7 +1435,6 @@
 				150F9B06F1516792D01A1A72 /* PythonRuntime.swift in Sources */,
 				6D99248103F010707D69AF48 /* PythonRNSBackend.swift in Sources */,
 				33E0E91CAEFB07F13C04637D /* SwiftRNSBackend.swift in Sources */,
-				BDEAB854FC0F5ABB7188A865 /* ProxyRnsBackend.swift in Sources */,
 				AA9D3715FB399E675BD53B41 /* PythonConfigWriter.swift in Sources */,
 				0B768533EC90008D3E23C326 /* AudioManager.swift in Sources */,
 				FC1149733FD2E4E009612DDF /* CallKitManager.swift in Sources */,
@@ -1492,9 +1462,21 @@
 				F774614F8150F2E6F3F92796 /* Lucide.swift in Sources */,
 				47FC07D2AE8ECD5D88A868BA /* PropagationSeam.swift in Sources */,
 				C4F369EC98C2B903701CE74A /* SyncStatusBottomSheet.swift in Sources */,
+				BDEAB854FC0F5ABB7188A865 /* ProxyRnsBackend.swift in Sources */,
+				46C333262AE771054EDF0231 /* TunnelManager.swift in Sources */,
+				577EE1AF377E314E961710B3 /* ExtensionFrameReader.swift in Sources */,
+				DF6654D386454C56AF75302E /* ModelBBLEService.swift in Sources */,
+				2C8DBC92FB549628044532C4 /* BackgroundTransportView.swift in Sources */,
 				3C22AABC6B36F30028DF5A5A /* BackgroundVPNExplainer.swift in Sources */,
 				15D4C7BF2F5EBFB685022ED2 /* BackgroundDeliveryGateView.swift in Sources */,
 				3D759EC171FEA82AD5A804DB /* BackgroundDeliveryPage.swift in Sources */,
+				5C05E5EC2A287FEAD018BB36 /* AppGroupBridgeInterface.swift in Sources */,
+				6DFD1336E74B3E8F8131A97B /* AppGroupBLEDriver.swift in Sources */,
+				895BF78C85D1C5471DA53961 /* AppGroupBLESeamTransport.swift in Sources */,
+				384033BE99794CB11185E99C /* AppGroupBLEServer.swift in Sources */,
+				36AA591CD5DF055FA6124E7D /* BLEDriverSeam.swift in Sources */,
+				884E998DD3B41BE3CAE55B70 /* ProxyIPC.swift in Sources */,
+				E154CBBB80370FD16B8319CA /* OutboxQueue.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1610,20 +1592,9 @@
 				071B /* BLEConnectionsView.swift in Sources */,
 				074B /* SharedDefaults.swift in Sources */,
 				076B /* SharedFrameQueue.swift in Sources */,
-				0BST /* AppGroupBLESeamTransport.swift in Sources */,
-				0BSV /* AppGroupBLEServer.swift in Sources */,
-				0BDS /* BLEDriverSeam.swift in Sources */,
-				0AGD /* AppGroupBLEDriver.swift in Sources */,
-				AGB1B /* AppGroupBridgeInterface.swift in Sources */,
 				EDL1B /* ExtensionDiagLog.swift in Sources */,
 				AGP1B /* AppGroupPaths.swift in Sources */,
-				PXI1B /* ProxyIPC.swift in Sources */,
 				NMF1B /* NomadNetFetch.swift in Sources */,
-				OBQ1B /* OutboxQueue.swift in Sources */,
-				077B /* TunnelManager.swift in Sources */,
-				BGTB /* BackgroundTransportView.swift in Sources */,
-				078B /* ExtensionFrameReader.swift in Sources */,
-				0MBS /* ModelBBLEService.swift in Sources */,
 				079B /* OnboardingRestoreSheet.swift in Sources */,
 				07AB /* PlatformCompat.swift in Sources */,
 				07CB /* MicronDocument.swift in Sources */,
@@ -1643,7 +1614,6 @@
 				C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */,
 				668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */,
 				SRB001 /* SwiftRNSBackend.swift in Sources */,
-				PRB001 /* ProxyRnsBackend.swift in Sources */,
 				69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */,
 				71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */,
 				D33B15C781E3C98A5CBD06F3 /* CallKitManager.swift in Sources */,
@@ -1671,9 +1641,6 @@
 				F4E9991226B4D464017DA247 /* Lucide.swift in Sources */,
 				AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */,
 				1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */,
-				2B502D5AFE0E2C0D54CC144C /* BackgroundVPNExplainer.swift in Sources */,
-				F83A2212E43B329830919AFF /* BackgroundDeliveryGateView.swift in Sources */,
-				80D0868B2491DB301F772D63 /* BackgroundDeliveryPage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2633,11 +2600,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
 			productName = MapLibre;
-		};
-		2F8EC8202FC732AB00235991 /* ReticulumSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
-			productName = ReticulumSwift;
 		};
 		2F8EC8222FC732AF00235991 /* LXMFSwift */ = {
 			isa = XCSwiftPackageProductDependency;

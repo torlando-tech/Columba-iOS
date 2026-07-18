@@ -3,11 +3,10 @@
 
 # Authoritatively split the Model B host from the shipping Python host.
 #
-# This script intentionally starts ColumbaModelBApp with the same app sources,
-# resources, frameworks, package products, copy phases, shell scripts, and build
-# settings as ColumbaApp. Later isolation tasks subtract flavor-specific content.
-# The Network Extension dependency and PlugIns embed are the only memberships
-# moved here.
+# Shared app content is cloned from ColumbaApp, then the explicit Model B source
+# and package additions below are reconciled onto ColumbaModelBApp. Shipping
+# exclusions are repaired first, so a stale project cannot leak those additions
+# back through the clone operation.
 
 require 'xcodeproj'
 
@@ -31,6 +30,24 @@ MODEL_B_FLAGS = %w[
   COLUMBA_RUNTIME_MODEL_B
   ENABLE_NETWORK_EXTENSION
   COLUMBA_BACKEND_SWIFT
+].freeze
+RETICULUM_PRODUCT_NAME = 'ReticulumSwift'
+MODEL_B_ONLY_SOURCE_PATHS = %w[
+  Sources/RNSBackendProxy/ProxyRnsBackend.swift
+  Sources/ColumbaApp/Services/TunnelManager.swift
+  Sources/ColumbaApp/Services/ExtensionFrameReader.swift
+  Sources/ColumbaApp/Services/ModelBBLEService.swift
+  Sources/ColumbaApp/Views/Settings/BackgroundTransportView.swift
+  Sources/ColumbaApp/Views/Components/BackgroundVPNExplainer.swift
+  Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryGateView.swift
+  Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift
+  Sources/Shared/AppGroupBridgeInterface.swift
+  Sources/Shared/AppGroupBLEDriver.swift
+  Sources/Shared/AppGroupBLESeamTransport.swift
+  Sources/Shared/AppGroupBLEServer.swift
+  Sources/Shared/BLEDriverSeam.swift
+  Sources/Shared/ProxyIPC.swift
+  Sources/Shared/OutboxQueue.swift
 ].freeze
 
 module ModelBTargetIsolation
@@ -109,6 +126,47 @@ module ModelBTargetIsolation
   def package_dependency_referenced?(project, dependency)
     package_dependency_owners(project, dependency).any? ||
       package_dependency_build_file_users(project, dependency).any?
+  end
+
+  def source_path(project, file_reference)
+    absolute = Pathname.new(File.expand_path(file_reference.real_path.to_s, project.path.dirname.to_s))
+    absolute.relative_path_from(Pathname.new(File.expand_path(project.path.dirname.to_s))).to_s
+  end
+
+  def model_b_source_references(project)
+    references = project.files.to_h { |reference| [source_path(project, reference), reference] }
+    MODEL_B_ONLY_SOURCE_PATHS.map do |path|
+      references.fetch(path) { raise "Missing Model B source reference: #{path}" }
+    end
+  end
+
+  def strip_shipping_model_b_membership(project, shipping)
+    shipping.source_build_phase.files.dup.each do |build_file|
+      next unless MODEL_B_ONLY_SOURCE_PATHS.include?(source_path(project, build_file.file_ref))
+
+      remove_build_file_from_phase(project, shipping.source_build_phase, build_file)
+    end
+
+    shipping.build_phases.each do |phase|
+      next unless phase.respond_to?(:files)
+
+      phase.files.dup.each do |build_file|
+        next unless build_file.product_ref&.product_name == RETICULUM_PRODUCT_NAME
+
+        remove_build_file_from_phase(project, phase, build_file)
+      end
+    end
+    stale = shipping.package_product_dependencies.select do |dependency|
+      dependency.product_name == RETICULUM_PRODUCT_NAME
+    end
+    retained = shipping.package_product_dependencies.reject do |dependency|
+      dependency.product_name == RETICULUM_PRODUCT_NAME
+    end
+    shipping.package_product_dependencies.clear
+    retained.each { |dependency| shipping.package_product_dependencies << dependency }
+    stale.each do |dependency|
+      dependency.remove_from_project unless package_dependency_referenced?(project, dependency)
+    end
   end
 
   def remove_phase_for_target(project, target, phase)
@@ -190,18 +248,22 @@ module ModelBTargetIsolation
     project.new(source.class)
   end
 
-  def reconcile_package_products(project, shipping, model_b)
+  def reconcile_package_products(project, shipping, model_b, reticulum_package)
     original = model_b.package_product_dependencies.to_a
     existing_by_name = original.select do |dependency|
       package_dependency_reusable_for_target?(project, dependency, model_b)
     end.group_by(&:product_name)
-    ordered = shipping.package_product_dependencies.map do |shipping_dependency|
-      candidates = existing_by_name.fetch(shipping_dependency.product_name, [])
+    templates = shipping.package_product_dependencies.map do |dependency|
+      [dependency.product_name, dependency.package, dependency]
+    end
+    templates << [RETICULUM_PRODUCT_NAME, reticulum_package, nil]
+    ordered = templates.map do |product_name, package, _shipping_dependency|
+      candidates = existing_by_name.fetch(product_name, [])
       dependency = candidates.shift || project.new(
         Xcodeproj::Project::Object::XCSwiftPackageProductDependency
       )
-      dependency.product_name = shipping_dependency.product_name
-      dependency.package = shipping_dependency.package
+      dependency.product_name = product_name
+      dependency.package = package
       dependency
     end
 
@@ -223,7 +285,11 @@ module ModelBTargetIsolation
     stale.each do |dependency|
       dependency.remove_from_project unless package_dependency_referenced?(project, dependency)
     end
-    shipping.package_product_dependencies.zip(ordered).to_h
+    package_map = {}
+    templates.zip(ordered).each do |(_name, _package, shipping_dependency), model_dependency|
+      package_map[shipping_dependency] = model_dependency if shipping_dependency
+    end
+    [package_map, ordered.last]
   end
 
   def build_file_key(build_file)
@@ -236,19 +302,22 @@ module ModelBTargetIsolation
     end
   end
 
-  def reconcile_phase_files(project, source, destination, package_map)
-    desired_refs = source.files.map do |source_build_file|
+  def reconcile_phase_files(project, source, destination, package_map,
+                            extra_file_refs: [], extra_products: [])
+    desired = source.files.map do |source_build_file|
       if source_build_file.product_ref
-        [:product, package_map.fetch(source_build_file.product_ref)]
+        [source_build_file, :product, package_map.fetch(source_build_file.product_ref)]
       else
-        [:file, source_build_file.file_ref]
+        [source_build_file, :file, source_build_file.file_ref]
       end
     end
+    desired.concat(extra_file_refs.map { |reference| [nil, :file, reference] })
+    desired.concat(extra_products.map { |dependency| [nil, :product, dependency] })
 
     existing = destination.files.select do |build_file|
       build_file_owners(project, build_file).map(&:uuid) == [destination.uuid]
     end.group_by { |build_file| build_file_key(build_file) }
-    ordered = source.files.zip(desired_refs).map do |source_build_file, (kind, reference)|
+    ordered = desired.map do |source_build_file, kind, reference|
       key = [kind, reference.uuid]
       build_file = existing.fetch(key, []).shift || project.new(
         Xcodeproj::Project::Object::PBXBuildFile
@@ -260,9 +329,9 @@ module ModelBTargetIsolation
         build_file.file_ref = reference
         build_file.product_ref = nil
       end
-      build_file.settings = duplicate_value(source_build_file.settings)
-      build_file.platform_filter = source_build_file.platform_filter
-      build_file.platform_filters = duplicate_value(source_build_file.platform_filters)
+      build_file.settings = source_build_file ? duplicate_value(source_build_file.settings) : nil
+      build_file.platform_filter = source_build_file&.platform_filter
+      build_file.platform_filters = source_build_file ? duplicate_value(source_build_file.platform_filters) : nil
       build_file
     end
 
@@ -274,7 +343,8 @@ module ModelBTargetIsolation
     ordered.each { |build_file| destination.files << build_file }
   end
 
-  def reconcile_regular_phases(project, shipping, model_b, package_map)
+  def reconcile_regular_phases(project, shipping, model_b, package_map,
+                               model_b_sources, reticulum_dependency)
     source_phases = shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
     available = model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
                              .select { |phase| phase_owners(project, phase).map(&:uuid) == [model_b.uuid] }
@@ -283,7 +353,12 @@ module ModelBTargetIsolation
     ordered = source_phases.map do |source|
       destination = available.fetch(phase_key(source), []).shift || new_phase(project, source)
       copy_common_phase_attributes(source, destination)
-      reconcile_phase_files(project, source, destination, package_map)
+      extra_file_refs = source.is_a?(Xcodeproj::Project::Object::PBXSourcesBuildPhase) ? model_b_sources : []
+      extra_products = source.is_a?(Xcodeproj::Project::Object::PBXFrameworksBuildPhase) ? [reticulum_dependency] : []
+      reconcile_phase_files(
+        project, source, destination, package_map,
+        extra_file_refs: extra_file_refs, extra_products: extra_products
+      )
       destination
     end
 
@@ -533,6 +608,29 @@ module ModelBTargetIsolation
     attributes = Array(embed_files.first.settings&.fetch('ATTRIBUTES', nil))
     raise 'Model B extension embed lacks CodeSignOnCopy' unless attributes.include?('CodeSignOnCopy')
 
+    shipping_sources = shipping.source_build_phase.files.map do |file|
+      source_path(project, file.file_ref)
+    end
+    model_b_sources = model_b.source_build_phase.files.map do |file|
+      source_path(project, file.file_ref)
+    end
+    leaked_sources = shipping_sources & MODEL_B_ONLY_SOURCE_PATHS
+    raise "shipping retained Model B sources: #{leaked_sources.join(', ')}" unless leaked_sources.empty?
+    missing_sources = MODEL_B_ONLY_SOURCE_PATHS - model_b_sources
+    raise "Model B lost isolated sources: #{missing_sources.join(', ')}" unless missing_sources.empty?
+    unless model_b_sources == shipping_sources + MODEL_B_ONLY_SOURCE_PATHS
+      raise 'Model B source membership is not shipping plus the authoritative isolated source set'
+    end
+    shipping_products = shipping.package_product_dependencies.map(&:product_name)
+    model_b_products = model_b.package_product_dependencies.map(&:product_name)
+    raise 'shipping retained ReticulumSwift' if shipping_products.include?(RETICULUM_PRODUCT_NAME)
+    unless model_b_products == shipping_products + [RETICULUM_PRODUCT_NAME]
+      raise 'Model B package membership is not shipping plus ReticulumSwift'
+    end
+    if shipping.build_phases.flat_map(&:files).any? { |file| file.product_ref&.product_name == RETICULUM_PRODUCT_NAME }
+      raise 'shipping retained a ReticulumSwift build file'
+    end
+
     phase_ownership = Hash.new { |hash, key| hash[key] = [] }
     project.targets.each do |target|
       target.build_phases.each { |phase| phase_ownership[phase.uuid] << target.name }
@@ -612,10 +710,22 @@ shipping = project.targets.find { |target| target.name == SHIPPING_TARGET_NAME }
   abort "Missing #{SHIPPING_TARGET_NAME} target"
 extension = project.targets.find { |target| target.name == EXTENSION_TARGET_NAME } or
   abort "Missing #{EXTENSION_TARGET_NAME} target"
+existing_model_b = project.targets.find { |target| target.name == MODEL_B_TARGET_NAME }
+reticulum_package = [existing_model_b, shipping].compact.lazy.map do |target|
+  target.package_product_dependencies.find do |dependency|
+    dependency.product_name == RETICULUM_PRODUCT_NAME
+  end&.package
+end.find(&:itself) or abort "Missing #{RETICULUM_PRODUCT_NAME} package reference"
+model_b_sources = ModelBTargetIsolation.model_b_source_references(project)
+ModelBTargetIsolation.strip_shipping_model_b_membership(project, shipping)
 ModelBTargetIsolation.strip_shipping_extension_graph(project, shipping, extension)
 model_b = ModelBTargetIsolation.create_or_find_model_b(project, shipping)
-package_map = ModelBTargetIsolation.reconcile_package_products(project, shipping, model_b)
-regular_phases = ModelBTargetIsolation.reconcile_regular_phases(project, shipping, model_b, package_map)
+package_map, reticulum_dependency = ModelBTargetIsolation.reconcile_package_products(
+  project, shipping, model_b, reticulum_package
+)
+regular_phases = ModelBTargetIsolation.reconcile_regular_phases(
+  project, shipping, model_b, package_map, model_b_sources, reticulum_dependency
+)
 ModelBTargetIsolation.reconcile_extension_dependency(model_b, extension)
 embed_phase = ModelBTargetIsolation.reconcile_extension_embed(project, model_b, extension)
 model_b.build_phases.clear

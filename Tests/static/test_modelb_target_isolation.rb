@@ -19,6 +19,38 @@ CANONICAL_FLAGS = %w[
   COLUMBA_BACKEND_SWIFT
 ].freeze
 ONBOARDING_FLAG = 'COLUMBA_ONBOARDING_ENABLED'
+MODEL_B_ONLY_SOURCE_PATHS = %w[
+  Sources/RNSBackendProxy/ProxyRnsBackend.swift
+  Sources/ColumbaApp/Services/TunnelManager.swift
+  Sources/ColumbaApp/Services/ExtensionFrameReader.swift
+  Sources/ColumbaApp/Services/ModelBBLEService.swift
+  Sources/ColumbaApp/Views/Settings/BackgroundTransportView.swift
+  Sources/ColumbaApp/Views/Components/BackgroundVPNExplainer.swift
+  Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryGateView.swift
+  Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift
+  Sources/Shared/AppGroupBridgeInterface.swift
+  Sources/Shared/AppGroupBLEDriver.swift
+  Sources/Shared/AppGroupBLESeamTransport.swift
+  Sources/Shared/AppGroupBLEServer.swift
+  Sources/Shared/BLEDriverSeam.swift
+  Sources/Shared/ProxyIPC.swift
+  Sources/Shared/OutboxQueue.swift
+].freeze
+SHIPPING_REQUIRED_SOURCE_PATHS = %w[
+  Sources/ColumbaApp/Services/MessageRepository.swift
+  Sources/PythonBridge/PythonBridge.swift
+  Sources/PythonBridge/PythonRuntime.swift
+  Sources/RNSBackendPy/PythonRNSBackend.swift
+  Sources/Shared/NomadNetFetch.swift
+  Sources/Shared/SharedFrameQueue.swift
+  Sources/Shared/ExtensionDiagLog.swift
+  Sources/Shared/PropagationSeam.swift
+  Sources/Shared/RNodeSeam.swift
+  Sources/Shared/AppGroupRNodeSeamWire.swift
+  Sources/Shared/AppGroupRNodeSeamTransport.swift
+  Sources/Shared/AppGroupRNodeServer.swift
+  Sources/ColumbaApp/Services/ModelBRNodeService.swift
+].freeze
 
 class ModelBTargetIsolationTests < Minitest::Test
   def setup
@@ -62,6 +94,12 @@ class ModelBTargetIsolationTests < Minitest::Test
 
   def deep_copy(value)
     Marshal.load(Marshal.dump(value))
+  end
+
+  def source_paths(target, root = REPOSITORY_ROOT)
+    target.source_build_phase.files.map do |build_file|
+      build_file.file_ref.real_path.relative_path_from(Pathname.new(root)).to_s
+    end
   end
 
   def target_graph_signature(target)
@@ -109,7 +147,8 @@ class ModelBTargetIsolationTests < Minitest::Test
       dependencies: target.dependencies.map do |dependency|
         proxy = dependency.target_proxy
         [dependency.uuid, dependency.name, dependency.target&.uuid, proxy&.uuid,
-         proxy&.container_portal&.uuid, proxy&.proxy_type,
+         proxy&.container_portal.respond_to?(:uuid) ? proxy.container_portal.uuid : proxy&.container_portal.to_s,
+         proxy&.proxy_type,
          proxy&.remote_global_id_string, proxy&.remote_info]
       end
     }
@@ -156,23 +195,97 @@ class ModelBTargetIsolationTests < Minitest::Test
     assert_includes embeds.first.settings.fetch('ATTRIBUTES'), 'CodeSignOnCopy'
   end
 
-  def test_initial_app_phase_and_package_membership_is_cloned
+  def test_application_membership_is_authoritatively_partitioned
     shipping_phases = @shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
     model_phases = @model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
     assert_equal shipping_phases.map { |phase| phase_signature(phase) },
                  model_phases.map { |phase| phase_signature(phase) }
 
     shipping_phases.zip(model_phases).each do |shipping_phase, model_phase|
+      next if shipping_phase.is_a?(Xcodeproj::Project::Object::PBXSourcesBuildPhase) ||
+              shipping_phase.is_a?(Xcodeproj::Project::Object::PBXFrameworksBuildPhase)
+
       assert_equal shipping_phase.files.map { |file| build_file_signature(file) },
                    model_phase.files.map { |file| build_file_signature(file) },
                    "phase membership differs for #{phase_signature(shipping_phase)}"
     end
 
-    assert_equal @shipping.package_product_dependencies.map(&:product_name),
-                 @model_b.package_product_dependencies.map(&:product_name)
-    @shipping.package_product_dependencies.zip(@model_b.package_product_dependencies).each do |left, right|
+    shipping_sources = source_paths(@shipping)
+    model_b_sources = source_paths(@model_b)
+    assert_empty MODEL_B_ONLY_SOURCE_PATHS & shipping_sources
+    assert_empty MODEL_B_ONLY_SOURCE_PATHS - model_b_sources
+    assert_empty SHIPPING_REQUIRED_SOURCE_PATHS - shipping_sources
+    assert_empty SHIPPING_REQUIRED_SOURCE_PATHS - model_b_sources
+    assert_equal shipping_sources + MODEL_B_ONLY_SOURCE_PATHS, model_b_sources
+
+    shipping_products = @shipping.package_product_dependencies.map(&:product_name)
+    model_b_products = @model_b.package_product_dependencies.map(&:product_name)
+    refute_includes shipping_products, 'ReticulumSwift'
+    assert_includes model_b_products, 'ReticulumSwift'
+    assert_includes shipping_products, 'LXMFSwift'
+    assert_equal shipping_products + ['ReticulumSwift'], model_b_products
+    @shipping.package_product_dependencies.each do |left|
+      right = @model_b.package_product_dependencies.find do |candidate|
+        candidate.product_name == left.product_name
+      end
+      refute_nil right
       refute_same left, right
       assert_same left.package, right.package
+    end
+  end
+
+  def test_reconciler_repairs_shipping_source_and_reticulum_mutations
+    Dir.mktmpdir('columba-modelb-source-package-mutation') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+
+      excluded_path = MODEL_B_ONLY_SOURCE_PATHS.first
+      excluded_ref = model_b.source_build_phase.files.find do |file|
+        file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == excluded_path
+      end.file_ref
+      seeded_source = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      seeded_source.file_ref = excluded_ref
+      shipping.source_build_phase.files << seeded_source
+
+      model_reticulum = model_b.package_product_dependencies.find do |dependency|
+        dependency.product_name == 'ReticulumSwift'
+      end
+      seeded_reticulum = fixture.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
+      seeded_reticulum.product_name = 'ReticulumSwift'
+      seeded_reticulum.package = model_reticulum.package
+      shipping.package_product_dependencies << seeded_reticulum
+      seeded_framework = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      seeded_framework.product_ref = seeded_reticulum
+      shipping.frameworks_build_phase.files << seeded_framework
+      fixture.save
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_shipping = mutated.targets.find { |target| target.name == 'ColumbaApp' }
+      assert_includes source_paths(mutated_shipping, File.dirname(temporary_project)), excluded_path
+      assert_includes mutated_shipping.package_product_dependencies.map(&:product_name), 'ReticulumSwift'
+      model_before = target_graph_signature(
+        mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      )
+      extension_before = target_graph_signature(
+        mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      )
+
+      run_reconciler(temporary_project, 'source-package-mutation')
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+      reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      refute_includes source_paths(reconciled_shipping, File.dirname(temporary_project)), excluded_path
+      refute_includes reconciled_shipping.package_product_dependencies.map(&:product_name), 'ReticulumSwift'
+      refute(reconciled_shipping.frameworks_build_phase.files.any? do |file|
+        file.product_ref&.product_name == 'ReticulumSwift'
+      end)
+      assert_equal model_before, target_graph_signature(reconciled_model_b)
+      assert_equal extension_before, target_graph_signature(reconciled_extension)
+      assert_second_run_byte_idempotent(temporary_project)
     end
   end
 
