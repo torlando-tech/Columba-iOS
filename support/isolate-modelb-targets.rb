@@ -12,6 +12,7 @@
 # back through the clone operation.
 
 require 'fileutils'
+require 'fiddle'
 require 'securerandom'
 require 'xcodeproj'
 
@@ -1878,17 +1879,45 @@ ModelBTargetIsolation.reconcile_shared_schemes(
 # A successful reopen catches malformed references immediately on Linux too.
 reopened = Xcodeproj::Project.open(PROJECT_PATH)
 ModelBTargetIsolation.assert_graph!(reopened)
-
-# Staging and source paths share a filesystem, so rename publishes the validated
-# project tree without exposing a partially rewritten project. If the second
-# second rename fails, restore the original before surfacing the error.
-backup_path = "#{SOURCE_PROJECT_PATH}.backup-#{SecureRandom.hex(6)}"
-File.rename(SOURCE_PROJECT_PATH, backup_path)
-begin
-  File.rename(PROJECT_PATH, SOURCE_PROJECT_PATH)
-rescue StandardError
-  File.rename(backup_path, SOURCE_PROJECT_PATH)
-  raise
+def commit_staged_project!
+  atomic_exchange_paths!(PROJECT_PATH, SOURCE_PROJECT_PATH)
 end
-FileUtils.rm_rf(backup_path)
+
+def atomic_exchange_paths!(left, right)
+  handle = Fiddle::Handle::DEFAULT
+
+  result = if RUBY_PLATFORM.include?('darwin')
+             # renamex_np(..., RENAME_SWAP) atomically exchanges both directory
+             # entries. The canonical project path therefore never disappears.
+             renamex_np = Fiddle::Function.new(
+               handle['renamex_np'],
+               [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT],
+               Fiddle::TYPE_INT
+             )
+             renamex_np.call(left, right, 0x00000002) # RENAME_SWAP
+           elsif RUBY_PLATFORM.include?('linux')
+             # Linux equivalent used by portable/static mutation tests.
+             renameat2 = Fiddle::Function.new(
+               handle['renameat2'],
+               [
+                 Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP,
+                 Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP,
+                 Fiddle::TYPE_INT
+               ],
+               Fiddle::TYPE_INT
+             )
+             renameat2.call(-100, left, -100, right, 0x00000002) # RENAME_EXCHANGE
+           else
+             abort "Atomic project publication is unsupported on #{RUBY_PLATFORM}"
+           end
+
+  return if result.zero?
+
+  raise SystemCallError.new(
+    "Atomic exchange failed for #{left} and #{right}",
+    Fiddle.last_error
+  )
+end
+
+commit_staged_project!
 puts "Reconciled #{MODEL_B_TARGET_NAME}; #{SHIPPING_TARGET_NAME} no longer ships #{EXTENSION_TARGET_NAME}."

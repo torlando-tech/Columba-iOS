@@ -150,7 +150,8 @@ memory** and drive load from a desktop peer — no debugger needed.
   open). Use the in-app `[DIAG-STORE]` log instead, or copy the DB to Documents
   from app code if raw rows are needed.
 - Relay bounce (clears a wedged daemon): `launchctl kickstart -k gui/$(id -u)/network.reticulum.rnsd` and `…/network.lxmf.lxmd`.
-- Build and test with the shared `Columba-ModelB` scheme. Its build action owns
-  `ColumbaModelBApp`, `ColumbaModelBAppTests`, and `ColumbaNetworkExtension`.
-  **Verify the host, tests, and extension together** — an app-only build is a
-  false green for Network Extension changes.
+- Build and test with the shared `Columba-ModelB` scheme. The **Build** action
+  owns `ColumbaModelBApp` and `ColumbaNetworkExtension`; the **Test** action owns
+  `ColumbaModelBAppTests`. Use `build-for-testing` or the Test action when all
+  three products must compile together. **Verify the host, tests, and extension
+  together** — an app-only build is a false green for Network Extension changes.
