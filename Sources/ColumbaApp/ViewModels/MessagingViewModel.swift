@@ -533,7 +533,7 @@ public final class MessagingViewModel {
         // Update UI
         if let index = messages.firstIndex(where: { $0.id == targetMessageId }) {
             withAnimation(.easeInOut(duration: 0.15)) {
-                messages[index].reactions = reactionsDict.map { emojiKey, senderList in
+                messages[index].reactions = ReactionLedger.visibleReactions(reactionsDict).map { emojiKey, senderList in
                     ReactionDisplay(
                         emoji: emojiKey,
                         count: senderList.count,

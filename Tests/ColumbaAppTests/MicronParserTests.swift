@@ -961,6 +961,36 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         assertAttachmentsRecovered(LxmfFieldCodec.unpack(lx.packed ?? Data()), "wire/mapToLXMessage.packed")
     }
 
+    func testReactionLedgerMakesReplayIdempotentAndHidesMetadata() {
+        let first = ReactionLedger.applying(
+            emoji: "👍",
+            sender: "peer-a",
+            reactionMessageHash: "reaction-1",
+            to: [:]
+        )
+        XCTAssertTrue(first.didApply)
+        XCTAssertEqual(first.state["👍"], ["peer-a"])
+        XCTAssertEqual(ReactionLedger.visibleReactions(first.state), ["👍": ["peer-a"]])
+
+        let replay = ReactionLedger.applying(
+            emoji: "👍",
+            sender: "peer-a",
+            reactionMessageHash: "reaction-1",
+            to: first.state
+        )
+        XCTAssertFalse(replay.didApply)
+        XCTAssertEqual(replay.state, first.state, "replay must not toggle the reaction back off")
+
+        let distinctToggle = ReactionLedger.applying(
+            emoji: "👍",
+            sender: "peer-a",
+            reactionMessageHash: "reaction-2",
+            to: replay.state
+        )
+        XCTAssertTrue(distinctToggle.didApply)
+        XCTAssertNil(ReactionLedger.visibleReactions(distinctToggle.state)["👍"])
+    }
+
     // Note: the empty/field-map/wire discriminator is covered through the public
     // adapters by testFieldMapRowRecoversAttachments + testWireRowRecoversAttachments
     // (which call mapRecord/mapToLXMessage -> the internal recoverFields/normalizedFieldMap).

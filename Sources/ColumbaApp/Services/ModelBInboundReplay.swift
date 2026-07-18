@@ -35,8 +35,9 @@
 //      transient failure keeps the message in a durable retry set (fetched by hash
 //      next drain, independent of the watermark) so it's neither lost (the
 //      watermark would skip it) nor head-of-line-blocking (the watermark still
-//      advances past it). This matters because a reaction merge is a TOGGLE, not
-//      idempotent — re-running an already-applied reaction would undo it.
+//      advances past it). Reaction controls are additionally idempotent: their
+//      message hash is persisted in the target's reactions_json in the same UPDATE
+//      as the toggle, so a crash before control-row deletion cannot undo a reaction.
 //    • The watermark, boundary-dedup set, and retry set are persisted as ONE
 //      atomic `Checkpoint` blob under a single per-identity key, so a stop between
 //      writes can't leave a mixed state (advance the watermark past a failure not

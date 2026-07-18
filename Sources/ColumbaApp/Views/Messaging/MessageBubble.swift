@@ -458,7 +458,7 @@ public struct Message: Identifiable, Equatable {
            let data = json.data(using: .utf8),
            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
             let localHashHex = localHash.map { String(format: "%02x", $0) }.joined()
-            self.reactions = dict.map { emoji, senders in
+            self.reactions = ReactionLedger.visibleReactions(dict).map { emoji, senders in
                 ReactionDisplay(
                     emoji: emoji,
                     count: senders.count,

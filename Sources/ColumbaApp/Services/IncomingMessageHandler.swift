@@ -11,6 +11,53 @@ import RNSAPI
 import UserNotifications
 import os.log
 
+/// Encodes a durable idempotency ledger inside the target message's existing
+/// `reactions_json` column. Updating the visible reaction and recording the
+/// control-message hash therefore happen in one database UPDATE. If the app is
+/// terminated before the separate control-row deletion, replay sees the hash
+/// and cannot toggle the reaction a second time.
+enum ReactionLedger {
+    static let processedKey = "__columba_internal_processed_reaction_hashes_v1"
+
+    struct ApplyResult {
+        let state: [String: [String]]
+        let didApply: Bool
+    }
+
+    static func applying(
+        emoji: String,
+        sender: String,
+        reactionMessageHash: String,
+        to current: [String: [String]]
+    ) -> ApplyResult {
+        var state = current
+        var processed = state[processedKey] ?? []
+        guard !processed.contains(reactionMessageHash) else {
+            return ApplyResult(state: state, didApply: false)
+        }
+
+        var senders = state[emoji] ?? []
+        if senders.contains(sender) {
+            senders.removeAll { $0 == sender }
+        } else {
+            senders.append(sender)
+        }
+        if senders.isEmpty {
+            state.removeValue(forKey: emoji)
+        } else {
+            state[emoji] = senders
+        }
+
+        processed.append(reactionMessageHash)
+        state[processedKey] = processed
+        return ApplyResult(state: state, didApply: true)
+    }
+
+    static func visibleReactions(_ state: [String: [String]]) -> [String: [String]] {
+        state.filter { $0.key != processedKey }
+    }
+}
+
 /// Handler for incoming LXMF messages.
 ///
 /// Conforms to `LXMRouterDelegate` to receive callbacks when messages arrive.
@@ -395,15 +442,11 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
     // MARK: - Reaction Handling
 
-    /// Merge an incoming reaction into the target message's reactions_json and delete the reaction message.
-    /// - Returns: `true` if the reaction was applied (or there was nothing valid
-    ///   to apply), `false` only if the read-modify-write of the target's
-    ///   reactions failed transiently. The Model B replay treats `false` as
-    ///   "retry this message" and does NOT checkpoint it — critical because the
-    ///   merge is a TOGGLE (add/remove), so a re-run of an already-applied
-    ///   reaction would incorrectly undo it. Frame deletion is best-effort and
-    ///   does not affect the result (a stray control frame is cosmetic; forcing a
-    ///   retry over it would re-toggle the applied reaction).
+    /// Merge an incoming reaction into the target message's reactions_json and
+    /// delete the reaction message. The target update also records the reaction
+    /// control hash, making replay idempotent across a crash before deletion.
+    /// - Returns: `true` if the reaction was applied, already applied, or invalid;
+    ///   `false` only if the durable target update failed transiently.
     @discardableResult
     private func handleIncomingReaction(
         targetMessageHex: String,
@@ -428,25 +471,19 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 reactionsDict = dict
             }
 
-            // Toggle: if sender already reacted with this emoji, remove; otherwise add
-            var senders = reactionsDict[emoji] ?? []
-            if senders.contains(senderHex) {
-                senders.removeAll { $0 == senderHex }
-            } else {
-                senders.append(senderHex)
-            }
+            let reactionHashHex = reactionMessageHash.map {
+                String(format: "%02x", $0)
+            }.joined()
+            let result = ReactionLedger.applying(
+                emoji: emoji,
+                sender: senderHex,
+                reactionMessageHash: reactionHashHex,
+                to: reactionsDict
+            )
 
-            if senders.isEmpty {
-                reactionsDict.removeValue(forKey: emoji)
-            } else {
-                reactionsDict[emoji] = senders
-            }
-
-            // Serialize and save
-            if reactionsDict.isEmpty {
-                try await messageRepository.updateReactions(targetHash, reactionsJson: "")
-            } else if let jsonData = try? JSONSerialization.data(withJSONObject: reactionsDict),
-                      let jsonStr = String(data: jsonData, encoding: .utf8) {
+            if result.didApply {
+                let jsonData = try JSONSerialization.data(withJSONObject: result.state)
+                let jsonStr = String(decoding: jsonData, as: UTF8.self)
                 try await messageRepository.updateReactions(targetHash, reactionsJson: jsonStr)
             }
         } catch {
@@ -454,9 +491,8 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
             mergeOK = false
         }
 
-        // Delete the reaction message from DB (it's a control message, not a visible
-        // message). Best-effort: a delete failure does NOT flip `mergeOK`, so the
-        // replay won't retry (and re-toggle) an already-merged reaction.
+        // Best-effort cleanup. A failure is safe: the durable ledger causes the
+        // next replay to skip the toggle and retry this deletion only.
         do {
             try await messageRepository.deleteMessage(reactionMessageHash)
         } catch {
