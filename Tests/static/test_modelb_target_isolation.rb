@@ -35,6 +35,13 @@ MODEL_B_ONLY_SOURCE_PATHS = %w[
   Sources/Shared/BLEDriverSeam.swift
   Sources/Shared/ProxyIPC.swift
   Sources/Shared/OutboxQueue.swift
+  Sources/ColumbaApp/Services/ModelBRNodeService.swift
+  Sources/Shared/AppGroupRNodeSeamTransport.swift
+  Sources/Shared/AppGroupRNodeSeamWire.swift
+  Sources/Shared/AppGroupRNodeServer.swift
+  Sources/Shared/RNodeSeam.swift
+  Sources/Shared/PropagationSeam.swift
+  Sources/ColumbaApp/Services/ModelBInboundReplay.swift
 ].freeze
 SHIPPING_REQUIRED_SOURCE_PATHS = %w[
   Sources/ColumbaApp/Services/MessageRepository.swift
@@ -44,12 +51,6 @@ SHIPPING_REQUIRED_SOURCE_PATHS = %w[
   Sources/Shared/NomadNetFetch.swift
   Sources/Shared/SharedFrameQueue.swift
   Sources/Shared/ExtensionDiagLog.swift
-  Sources/Shared/PropagationSeam.swift
-  Sources/Shared/RNodeSeam.swift
-  Sources/Shared/AppGroupRNodeSeamWire.swift
-  Sources/Shared/AppGroupRNodeSeamTransport.swift
-  Sources/Shared/AppGroupRNodeServer.swift
-  Sources/ColumbaApp/Services/ModelBRNodeService.swift
 ].freeze
 
 class ModelBTargetIsolationTests < Minitest::Test
@@ -196,6 +197,7 @@ class ModelBTargetIsolationTests < Minitest::Test
   end
 
   def test_application_membership_is_authoritatively_partitioned
+    assert_equal 22, MODEL_B_ONLY_SOURCE_PATHS.size
     shipping_phases = @shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
     model_phases = @model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
     assert_equal shipping_phases.map { |phase| phase_signature(phase) },
@@ -242,13 +244,22 @@ class ModelBTargetIsolationTests < Minitest::Test
       shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
       model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
 
-      excluded_path = MODEL_B_ONLY_SOURCE_PATHS.first
-      excluded_ref = model_b.source_build_phase.files.find do |file|
-        file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == excluded_path
-      end.file_ref
-      seeded_source = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
-      seeded_source.file_ref = excluded_ref
-      shipping.source_build_phase.files << seeded_source
+      excluded_refs = model_b.source_build_phase.files.filter_map do |file|
+        path = file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s
+        [path, file.file_ref] if MODEL_B_ONLY_SOURCE_PATHS.include?(path)
+      end.to_h
+      assert_equal MODEL_B_ONLY_SOURCE_PATHS.sort, excluded_refs.keys.sort
+      excluded_refs.each_value do |excluded_ref|
+        seeded_source = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+        seeded_source.file_ref = excluded_ref
+        shipping.source_build_phase.files << seeded_source
+      end
+      removed_model_b_path = 'Sources/ColumbaApp/Services/ModelBInboundReplay.swift'
+      removed_model_b_file = model_b.source_build_phase.files.find do |file|
+        file.file_ref.real_path.relative_path_from(Pathname.new(directory)).to_s == removed_model_b_path
+      end
+      refute_nil removed_model_b_file
+      removed_model_b_file.remove_from_project
 
       model_reticulum = model_b.package_product_dependencies.find do |dependency|
         dependency.product_name == 'ReticulumSwift'
@@ -264,11 +275,11 @@ class ModelBTargetIsolationTests < Minitest::Test
 
       mutated = Xcodeproj::Project.open(temporary_project)
       mutated_shipping = mutated.targets.find { |target| target.name == 'ColumbaApp' }
-      assert_includes source_paths(mutated_shipping, File.dirname(temporary_project)), excluded_path
+      mutated_model_b = mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      mutated_shipping_sources = source_paths(mutated_shipping, File.dirname(temporary_project))
+      assert_empty MODEL_B_ONLY_SOURCE_PATHS - mutated_shipping_sources
+      refute_includes source_paths(mutated_model_b, File.dirname(temporary_project)), removed_model_b_path
       assert_includes mutated_shipping.package_product_dependencies.map(&:product_name), 'ReticulumSwift'
-      model_before = target_graph_signature(
-        mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
-      )
       extension_before = target_graph_signature(
         mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
       )
@@ -278,12 +289,14 @@ class ModelBTargetIsolationTests < Minitest::Test
       reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
       reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
       reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
-      refute_includes source_paths(reconciled_shipping, File.dirname(temporary_project)), excluded_path
+      reconciled_shipping_sources = source_paths(reconciled_shipping, File.dirname(temporary_project))
+      reconciled_model_b_sources = source_paths(reconciled_model_b, File.dirname(temporary_project))
+      assert_empty MODEL_B_ONLY_SOURCE_PATHS & reconciled_shipping_sources
+      assert_equal reconciled_shipping_sources + MODEL_B_ONLY_SOURCE_PATHS, reconciled_model_b_sources
       refute_includes reconciled_shipping.package_product_dependencies.map(&:product_name), 'ReticulumSwift'
       refute(reconciled_shipping.frameworks_build_phase.files.any? do |file|
         file.product_ref&.product_name == 'ReticulumSwift'
       end)
-      assert_equal model_before, target_graph_signature(reconciled_model_b)
       assert_equal extension_before, target_graph_signature(reconciled_extension)
       assert_second_run_byte_idempotent(temporary_project)
     end

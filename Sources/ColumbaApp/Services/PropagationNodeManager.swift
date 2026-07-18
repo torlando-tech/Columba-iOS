@@ -102,7 +102,9 @@ public final class PropagationNodeManager {
     /// Observer token for the NE's propagation sync-state channel (Model B). The NE
     /// owns the router/sync, so live progress arrives as App-Group snapshots bridged
     /// to `propagationSyncStateChangedInApp`; we mirror them into `syncState`.
+    #if COLUMBA_RUNTIME_MODEL_B
     private var syncStateObserverToken: NSObjectProtocol?
+    #endif
 
     // MARK: - Initialization
 
@@ -114,6 +116,7 @@ public final class PropagationNodeManager {
 
     /// Start listening for propagation node announces on the path table.
     public func startListening() {
+        #if COLUMBA_RUNTIME_MODEL_B
         // Model B: mirror the NE's sync-state snapshots into `syncState` so the in-app
         // sync sheet reflects live progress (the NE owns the router; the app can't read
         // its transfer state directly).
@@ -126,6 +129,7 @@ public final class PropagationNodeManager {
                 Task { @MainActor [weak self] in self?.applySyncStateSnapshot() }
             }
         }
+        #endif
 
         guard let pathTable = appServices?.pathTable else {
             return
@@ -151,12 +155,15 @@ public final class PropagationNodeManager {
     public func stopListening() {
         listenTask?.cancel()
         listenTask = nil
+        #if COLUMBA_RUNTIME_MODEL_B
         if let token = syncStateObserverToken {
             NotificationCenter.default.removeObserver(token)
             syncStateObserverToken = nil
         }
+        #endif
     }
 
+    #if COLUMBA_RUNTIME_MODEL_B
     /// Read the NE's latest sync-state snapshot (Model B) and mirror it into
     /// `syncState`, which the in-app sync sheet observes.
     private func applySyncStateSnapshot() {
@@ -182,6 +189,7 @@ public final class PropagationNodeManager {
         case .failed: return .transferFailed
         }
     }
+    #endif
 
     /// Process a path entry to check if it's a propagation node.
     private func processPathEntry(_ entry: PathEntry) async {
@@ -334,7 +342,8 @@ public final class PropagationNodeManager {
         // Darwin trigger. Real progress arrives back via the sync-state channel
         // (PropagationSyncStateSnapshot → syncState); the NE's overlap guard makes
         // repeated taps safe.
-        if BackendPreference.modelB {
+        #if COLUMBA_RUNTIME_MODEL_B
+        do {
             if selectedNodeHash == nil && autoSelectEnabled,
                let best = knownNodes.first(where: { $0.isOnline }) ?? knownNodes.first {
                 await selectNode(hash: best.hash)
@@ -352,6 +361,7 @@ public final class PropagationNodeManager {
             logger.info("[SYNC] Model B: posted sync-now to NE")
             return
         }
+        #elseif COLUMBA_RUNTIME_PYTHON
 
         guard let backend = appServices?.pythonBackend else {
             logger.error("[SYNC] Python backend not available")
@@ -400,6 +410,7 @@ public final class PropagationNodeManager {
             syncState.errorDescription = error.localizedDescription
             logger.error("[SYNC] Sync failed: \(error.localizedDescription)")
         }
+        #endif
     }
 
     /// Translate Python LXMRouter PR_* state names to Compat
@@ -421,13 +432,13 @@ public final class PropagationNodeManager {
 
     /// Start periodic sync on the configured interval.
     public func startPeriodicSync() {
+        #if COLUMBA_RUNTIME_MODEL_B
         // Model B: the NE owns the sync cadence (it owns the router). Publish the
         // current interval/enabled to the seam; the NE's scheduler honors
         // `periodicSyncEnabled` and re-kicks on the config-changed notification.
-        if BackendPreference.modelB {
-            publishPropagationSeam()
-            return
-        }
+        publishPropagationSeam()
+        return
+        #elseif COLUMBA_RUNTIME_PYTHON
 
         guard periodicSyncEnabled else { return }
 
@@ -439,6 +450,7 @@ public final class PropagationNodeManager {
                 await syncNow()
             }
         }
+        #endif
     }
 
     /// Stop periodic sync.
@@ -495,7 +507,9 @@ public final class PropagationNodeManager {
         _ = defaultMethod // Used by SettingsViewModel
 
         // Model B: hand the restored PN + sync settings to the NE's router.
+        #if COLUMBA_RUNTIME_MODEL_B
         publishPropagationSeam()
+        #endif
     }
 
     /// Save preferences to SettingsRepository.
@@ -527,16 +541,18 @@ public final class PropagationNodeManager {
         }
 
         // Model B: republish the seam so PN selection / sync-setting edits reach the
-        // NE's router. No-op on the python build (the app owns the router there).
+        // NE's router. The Python build owns the router and has no seam declarations.
+        #if COLUMBA_RUNTIME_MODEL_B
         publishPropagationSeam()
+        #endif
     }
 
+    #if COLUMBA_RUNTIME_MODEL_B
     /// Model B: cross the App-Group seam to the NE's in-NE `LXMRouter`. The NE wires
     /// the PN + sync settings onto its router and runs the periodic sync there (the
-    /// app can't call it directly). No-op on the python build, where the app owns the
-    /// router and `selectNode`/`syncNow` drive it in-process.
+    /// app can't call it directly). The Python build owns the router in-process and
+    /// does not compile this helper.
     private func publishPropagationSeam() {
-        guard BackendPreference.modelB else { return }
         if let hash = selectedNodeHash {
             PropagationSeamConfig(
                 propagationNodeHash: hash,
@@ -548,6 +564,7 @@ public final class PropagationNodeManager {
             PropagationSeamConfig.clearFromAppGroup()
         }
     }
+    #endif
 }
 
 // MARK: - LXMRouter Helper

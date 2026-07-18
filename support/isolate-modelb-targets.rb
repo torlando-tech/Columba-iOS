@@ -48,6 +48,13 @@ MODEL_B_ONLY_SOURCE_PATHS = %w[
   Sources/Shared/BLEDriverSeam.swift
   Sources/Shared/ProxyIPC.swift
   Sources/Shared/OutboxQueue.swift
+  Sources/ColumbaApp/Services/ModelBRNodeService.swift
+  Sources/Shared/AppGroupRNodeSeamTransport.swift
+  Sources/Shared/AppGroupRNodeSeamWire.swift
+  Sources/Shared/AppGroupRNodeServer.swift
+  Sources/Shared/RNodeSeam.swift
+  Sources/Shared/PropagationSeam.swift
+  Sources/ColumbaApp/Services/ModelBInboundReplay.swift
 ].freeze
 
 module ModelBTargetIsolation

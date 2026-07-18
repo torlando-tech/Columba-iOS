@@ -3150,14 +3150,15 @@ public final class AppServices {
 
     /// Start an RNode BLE interface with the given radio configuration.
     ///
-    /// Creates an RNodeInterface, configures the radio, and registers it with
-    /// the transport layer (which calls connect()). If the base stack hasn't
-    /// been initialized yet, initializes it first.
+    /// Starts the Model B App-Group RNode seam with the given radio configuration.
+    /// The Python runtime keeps this shared API available but reports RNode as
+    /// unavailable; it does not create a tunnel or restore the historical stack.
     ///
     /// - Parameters:
     ///   - config: RNode radio configuration (device name, frequency, etc.)
     ///   - name: Display name for the interface
     public func startRNodeInterface(config rnodeConfig: RNodeConfig, name: String) async throws {
+        #if COLUMBA_RUNTIME_MODEL_B
         // Model B: the RNode protocol stack (RNodeInterface + KISS framing) runs in the
         // Network Extension — the app hosts ONLY the CoreBluetooth NUS radio. Start the
         // app-side seam server FIRST (so it's listening when the NE responds), then
@@ -3205,10 +3206,20 @@ public final class AppServices {
         seamConfig.saveToAppGroup()  // posts rnodeConfigChanged → NE (re)builds its RNodeInterface
 
         logger.info("RNodeInterface (Model B) started: \(name)")
+        #elseif COLUMBA_RUNTIME_PYTHON
+        // The Python host does not ship the Model B App-Group seam. Keep the shared
+        // API/UI object available without claiming that an RNode tunnel was started.
+        let uiInterface = RNodeInterface(config: rnodeConfig, name: name)
+        uiInterface.state = .connectionFailed(underlying: "RNode is unavailable in the Python runtime")
+        self.rnodeInterface = uiInterface
+        NotificationObserver.postNetworkStateChanged()
+        logger.warning("RNode start requested, but RNode is unavailable in the Python runtime")
+        #endif
     }
 
-    /// Stop the RNode interface (Model B).
+    /// Stop or clear the runtime's RNode interface state.
     public func stopRNodeInterface() async {
+        #if COLUMBA_RUNTIME_MODEL_B
         rnodeConnectWatchdog?.cancel()
         rnodeConnectWatchdog = nil
         // Clear the NE's RNode config (→ it tears down its RNodeInterface) and stop the
@@ -3217,8 +3228,14 @@ public final class AppServices {
         ModelBRNodeService.shared.stop()
         rnodeInterface = nil
         logger.info("RNodeInterface (Model B) stopped")
+        #elseif COLUMBA_RUNTIME_PYTHON
+        rnodeInterface = nil
+        NotificationObserver.postNetworkStateChanged()
+        logger.info("Cleared unavailable Python-runtime RNode interface")
+        #endif
     }
 
+    #if COLUMBA_RUNTIME_MODEL_B
     /// Reflect the app-side RNode radio's BLE link state onto the UI-facing Compat
     /// interface object + refresh the UI. The NE owns the authoritative `RNodeInterface`;
     /// the BLE link state is a good-enough proxy for the Settings "connected" indicator.
@@ -3243,6 +3260,7 @@ public final class AppServices {
             NotificationObserver.postNetworkStateChanged()
         }
     }
+    #endif
 
     /// Resolve a peer's LXST **telephony** destination hash from their LXMF
     /// delivery hash, so the conversation/contact UI can place a voice call.

@@ -161,7 +161,6 @@
 		3D93C9AD83DBD69265B1F5EF /* ColumbaNetworkExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = EPROD /* ColumbaNetworkExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
 		3E8EDA16402CE9043F338509 /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A /* AddContactSheet.swift */; };
 		40EBFB15B9FD4D5081AF4EBC /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
-		4120DE0B1AC043758779DD40 /* ModelBRNodeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A676BFC846C7D1174C3A20CD /* ModelBRNodeService.swift */; };
 		41CCA462C5577FAA283B541C /* PyLocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */; };
 		422AB44ACCB2031F9DD721B2 /* ConnectivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04F /* ConnectivityPage.swift */; };
 		429607039454543AB6316748 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
@@ -172,7 +171,7 @@
 		47FC07D2AE8ECD5D88A868BA /* PropagationSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */; };
 		485B8EFF327C28C1A5F0727B /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039 /* materialdesignicons.ttf */; };
 		489A5C72A9C4C3FAB742F3E2 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027 /* NotificationObserver.swift */; };
-		4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB02 /* ModelBInboundReplay.swift */; platformFilter = ios; };
+		4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB02 /* ModelBInboundReplay.swift */; };
 		4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */; };
 		5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A49337EFC55C10979AEB702B /* LXSTSwift */; };
 		557D530BBEDAEBE9A6A0BE41 /* PyConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D8CBCF7E546028A043E1C7 /* PyConversation.swift */; };
@@ -196,7 +195,6 @@
 		697B28367B07702842284116 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
 		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
 		6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
-		6CFC16593387554678F3928F /* RNodeSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43A7FF6A056815712B1D13D9 /* RNodeSeam.swift */; };
 		6D99248103F010707D69AF48 /* PythonRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */; };
 		6DFD1336E74B3E8F8131A97B /* AppGroupBLEDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAGD /* AppGroupBLEDriver.swift */; };
 		71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
@@ -248,11 +246,7 @@
 		A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */; };
 		A40504A5D79C49DA50996680 /* NomadNetBrowserViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F080 /* NomadNetBrowserViewModel.swift */; };
 		A48DAD459DFDFDC94AC92B5A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016 /* SettingsView.swift */; };
-		A6EA4093A9929FCEAB44C4B6 /* AppGroupRNodeSeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */; };
-		A746EE4A4494C45D97908924 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
-		A9DB03705BE9BA74A494310C /* AppGroupRNodeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E36D94E7D28E35241C46426 /* AppGroupRNodeServer.swift */; };
 		AA9D3715FB399E675BD53B41 /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
-		AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */; };
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		ACT02 /* AnnounceClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACT01 /* AnnounceClassificationTests.swift */; };
 		ADABD423CE22B9E00BC5D7F3 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
@@ -340,7 +334,6 @@
 		FC15AC0D65E2B67821CAFEE3 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = FE4D25F362FFD8A793C143FC /* LXSTSwift */; };
 		FCCD8B0C2F027D65D2DD8759 /* NomadNetBrowserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07F /* NomadNetBrowserService.swift */; };
 		FDE0DB7957C9D877D3E67367 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
-		MB01 /* ModelBInboundReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB02 /* ModelBInboundReplay.swift */; platformFilter = ios; };
 		NERN2 /* NEReticulumNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = NERN1 /* NEReticulumNode.swift */; };
 		NMF1B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
 		NMF2B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
@@ -1380,7 +1373,6 @@
 				764C62709969DFDB3AC7D820 /* QRScannerView.swift in Sources */,
 				3E8EDA16402CE9043F338509 /* AddContactSheet.swift in Sources */,
 				A0883D932913C56C3C7FD394 /* LocationSharingManager.swift in Sources */,
-				4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */,
 				861533706E74F637CD32C1CC /* OnboardingView.swift in Sources */,
 				C0904C776958B1A10E0A8128 /* WelcomePage.swift in Sources */,
 				B4C378BDA13BC155719B5440 /* IdentityPage.swift in Sources */,
@@ -1454,13 +1446,7 @@
 				2DAA350A34E3332DEC1545B0 /* PeerChildInterfaceRegistry.swift in Sources */,
 				697B28367B07702842284116 /* TCPClientWizardViewModel.swift in Sources */,
 				EB373633ECFEC7ED56EF72E4 /* TCPClientWizard.swift in Sources */,
-				CC036F8B85839F5FC3C138E2 /* RNodeSeam.swift in Sources */,
-				429607039454543AB6316748 /* AppGroupRNodeSeamWire.swift in Sources */,
-				DCD98FD7695F22CC597C3FC4 /* AppGroupRNodeSeamTransport.swift in Sources */,
-				5C7438876260CE1CD77FC20A /* AppGroupRNodeServer.swift in Sources */,
-				236B504FBA8BC82FA4808C19 /* ModelBRNodeService.swift in Sources */,
 				F774614F8150F2E6F3F92796 /* Lucide.swift in Sources */,
-				47FC07D2AE8ECD5D88A868BA /* PropagationSeam.swift in Sources */,
 				C4F369EC98C2B903701CE74A /* SyncStatusBottomSheet.swift in Sources */,
 				BDEAB854FC0F5ABB7188A865 /* ProxyRnsBackend.swift in Sources */,
 				46C333262AE771054EDF0231 /* TunnelManager.swift in Sources */,
@@ -1477,6 +1463,13 @@
 				36AA591CD5DF055FA6124E7D /* BLEDriverSeam.swift in Sources */,
 				884E998DD3B41BE3CAE55B70 /* ProxyIPC.swift in Sources */,
 				E154CBBB80370FD16B8319CA /* OutboxQueue.swift in Sources */,
+				236B504FBA8BC82FA4808C19 /* ModelBRNodeService.swift in Sources */,
+				DCD98FD7695F22CC597C3FC4 /* AppGroupRNodeSeamTransport.swift in Sources */,
+				429607039454543AB6316748 /* AppGroupRNodeSeamWire.swift in Sources */,
+				5C7438876260CE1CD77FC20A /* AppGroupRNodeServer.swift in Sources */,
+				CC036F8B85839F5FC3C138E2 /* RNodeSeam.swift in Sources */,
+				47FC07D2AE8ECD5D88A868BA /* PropagationSeam.swift in Sources */,
+				4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1559,7 +1552,6 @@
 				049B /* QRScannerView.swift in Sources */,
 				04AB /* AddContactSheet.swift in Sources */,
 				04BB /* LocationSharingManager.swift in Sources */,
-				MB01 /* ModelBInboundReplay.swift in Sources */,
 				04CB /* OnboardingView.swift in Sources */,
 				04DB /* WelcomePage.swift in Sources */,
 				04EB /* IdentityPage.swift in Sources */,
@@ -1633,13 +1625,7 @@
 				AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */,
 				EDF2F6B945FAA23366617FD6 /* TCPClientWizardViewModel.swift in Sources */,
 				55F3BF7D600C32E07B7B8C26 /* TCPClientWizard.swift in Sources */,
-				6CFC16593387554678F3928F /* RNodeSeam.swift in Sources */,
-				A746EE4A4494C45D97908924 /* AppGroupRNodeSeamWire.swift in Sources */,
-				A6EA4093A9929FCEAB44C4B6 /* AppGroupRNodeSeamTransport.swift in Sources */,
-				A9DB03705BE9BA74A494310C /* AppGroupRNodeServer.swift in Sources */,
-				4120DE0B1AC043758779DD40 /* ModelBRNodeService.swift in Sources */,
 				F4E9991226B4D464017DA247 /* Lucide.swift in Sources */,
-				AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */,
 				1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
