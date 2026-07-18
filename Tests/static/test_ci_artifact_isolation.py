@@ -189,6 +189,27 @@ class ArtifactCheckerTests(unittest.TestCase):
             )
             self.verify(fixture, "modelb")
 
+    def test_debug_dylib_resolution_rejects_missing_or_ambiguous_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "shipping")
+            executable = fixture.app / fixture.executable
+            fixture.outputs[("otool", str(executable))] = (
+                b"stub:\n\t@rpath/Missing.debug.dylib\n"
+            )
+            self.assert_rejected(fixture, "shipping", "missing debug code image")
+
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "shipping")
+            executable = fixture.app / fixture.executable
+            fixture.outputs[("otool", str(executable))] = (
+                b"stub:\n\t@rpath/Ambiguous.debug.dylib\n"
+            )
+            root_image = fixture.app / "Ambiguous.debug.dylib"
+            framework_image = fixture.app / "Frameworks/Ambiguous.debug.dylib"
+            root_image.write_bytes(b"clean")
+            framework_image.write_bytes(b"PacketTunnelProvider")
+            self.assert_rejected(fixture, "shipping", "ambiguous locations")
+
     def test_shipping_rejects_plugins_even_without_an_appex(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "shipping")
@@ -499,7 +520,7 @@ class ArtifactCheckerTests(unittest.TestCase):
             fixture.write_plist(fixture.extension / "Info.plist", metadata)
             with self.assertRaisesRegex(
                 self.checker.VerificationError,
-                "Model B extension effective entitlement",
+                "DTPlatformName values must match",
             ):
                 self.checker.verify_artifact(
                     "modelb",

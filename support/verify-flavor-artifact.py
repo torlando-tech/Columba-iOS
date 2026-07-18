@@ -200,17 +200,29 @@ def _bundle_linkage(
                 raise VerificationError(
                     "{} contains a non-UTF-8 @rpath dependency".format(label)
                 )
-            for candidate in (bundle / relative, bundle / "Frameworks" / relative):
-                if candidate.exists():
-                    _resolve_contained(
-                        candidate, app_root, "{} @rpath image".format(label)
+            candidates = (bundle / relative, bundle / "Frameworks" / relative)
+            existing = [candidate for candidate in candidates if candidate.exists()]
+            if not existing:
+                raise VerificationError(
+                    "{} references a missing debug code image: {}".format(
+                        label, dependency.decode("utf-8")
                     )
-                    if not candidate.is_file():
-                        raise VerificationError(
-                            "{} @rpath image is not a file".format(label)
-                        )
-                    queue.append(candidate)
-                    break
+                )
+            if len(existing) != 1:
+                raise VerificationError(
+                    "{} has ambiguous locations for debug code image: {}".format(
+                        label, dependency.decode("utf-8")
+                    )
+                )
+            candidate = existing[0]
+            _resolve_contained(
+                candidate, app_root, "{} @rpath image".format(label)
+            )
+            if not candidate.is_file():
+                raise VerificationError(
+                    "{} @rpath image is not a file".format(label)
+                )
+            queue.append(candidate)
     return b"\n".join(outputs), images
 
 
@@ -427,6 +439,17 @@ def _verify_modelb(
     )
     if leaked is not None:
         raise VerificationError("Model B artifact contains Python packaging output: {}".format(leaked))
+    host_platform = app_metadata.get("DTPlatformName")
+    extension_platform = extension_metadata.get("DTPlatformName")
+    if host_platform != extension_platform:
+        raise VerificationError(
+            "Model B host and extension DTPlatformName values must match"
+        )
+    allow_empty_for_both = (
+        allow_empty_simulator_entitlements
+        and host_platform == "iphonesimulator"
+        and extension_platform == "iphonesimulator"
+    )
     _verify_entitlements_if_signed(
         app,
         "modelb",
@@ -434,7 +457,7 @@ def _verify_modelb(
         app_root,
         run,
         app_metadata.get("DTPlatformName"),
-        allow_empty_simulator_entitlements,
+        allow_empty_for_both,
     )
     _verify_entitlements_if_signed(
         extension,
@@ -443,7 +466,7 @@ def _verify_modelb(
         app_root,
         run,
         extension_metadata.get("DTPlatformName"),
-        allow_empty_simulator_entitlements,
+        allow_empty_for_both,
     )
 
 
