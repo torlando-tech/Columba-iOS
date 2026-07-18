@@ -260,12 +260,23 @@ module ModelBTargetIsolation
       # a protected target's phase in a malformed graph. Keep the shipping owner
       # and detach every foreign reference before the sole-owner fast path.
       source.files.compact.dup.each do |build_file|
-        next unless authoritative_shipping_build_file?(project, shipping, source, build_file)
-
         foreign_phases = build_file_owners(project, build_file).reject do |phase|
           phase.uuid == source.uuid
         end
         next if foreign_phases.empty?
+
+        # A package build file referencing a dependency not owned by shipping is
+        # unambiguously protected-origin contamination. Remove only shipping's
+        # reference before Python framework ordering is reconciled.
+        if build_file.product_ref && !shipping.package_product_dependencies.any? { |dependency|
+             dependency.uuid == build_file.product_ref.uuid
+           }
+          index = source.files.index { |candidate| candidate&.uuid == build_file.uuid }
+          source.files.delete_at(index) if index
+          next
+        end
+
+        next unless authoritative_shipping_build_file?(project, shipping, source, build_file)
 
         # If shipping already has a distinct local build file for the same
         # reference, this shared object originated in a protected phase and was
@@ -280,7 +291,9 @@ module ModelBTargetIsolation
                            else
                              candidate.file_ref&.uuid == build_file.file_ref&.uuid
                            end
-          same_reference && build_file_owners(project, candidate).map(&:uuid) == [source.uuid]
+          same_reference &&
+            authoritative_shipping_build_file?(project, shipping, source, candidate) &&
+            build_file_owners(project, candidate).map(&:uuid) == [source.uuid]
         end
         if local_sibling
           index = source.files.index { |candidate| candidate&.uuid == build_file.uuid }

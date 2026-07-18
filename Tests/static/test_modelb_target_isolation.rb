@@ -941,6 +941,14 @@ class ModelBTargetIsolationTests < Minitest::Test
                                                         [phase, extension.frameworks_build_phase, file]
                                                       end
         refute_nil build_file, "fixture lacks shipping #{kind} build file"
+        stale_duplicate_id = nil
+        if kind == :source
+          stale_duplicate = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+          stale_duplicate.file_ref = build_file.file_ref
+          stale_duplicate.settings = { 'COMPILER_FLAGS' => '-DSTALE_SHIPPING_DUPLICATE' }
+          shipping_phase.files << stale_duplicate
+          stale_duplicate_id = stale_duplicate.uuid
+        end
         shipping_phase_id = shipping_phase.uuid
         build_file_id = build_file.uuid
         shipping_phase_before = phase_signature(shipping_phase)
@@ -980,6 +988,10 @@ class ModelBTargetIsolationTests < Minitest::Test
                      "#{kind} cleanup did not restore the protected extension graph"
         refute_includes reconciled_extension.build_phases.flat_map(&:files).map(&:uuid), build_file_id
         assert_includes local_shipping_phase.files.map(&:uuid), build_file_id
+        if stale_duplicate_id
+          refute_includes local_shipping_phase.files.map(&:uuid), stale_duplicate_id
+          refute_includes reconciled.objects_by_uuid.keys, stale_duplicate_id
+        end
         owners = reconciled.objects.select do |object|
           object.respond_to?(:files) && object.files.any? { |candidate| candidate.uuid == build_file_id }
         end
@@ -1064,6 +1076,51 @@ class ModelBTargetIsolationTests < Minitest::Test
         assert_includes reconciled_extension.build_phases.flat_map(&:files).map(&:uuid), protected_id
         assert_second_run_byte_idempotent(temporary_project)
       end
+    end
+  end
+
+  def test_reconciler_preserves_inverse_protected_package_build_file
+    Dir.mktmpdir('columba-inverse-package-build-file') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      shipping_phase = shipping.frameworks_build_phase
+      protected = extension.frameworks_build_phase.files.find do |build_file|
+        build_file.product_ref&.product_name == 'ReticulumSwift'
+      end
+      shipping_reticulum = shipping_phase.files.find do |build_file|
+        build_file.product_ref&.product_name == 'ReticulumSwift'
+      end
+      refute_nil protected
+      refute_nil shipping_reticulum
+      protected_id = protected.uuid
+      shipping_id = shipping_reticulum.uuid
+      shipping_before = target_graph_signature(shipping)
+      extension_before = target_graph_signature(extension)
+      fixture.save
+
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      phase_header = "\t\t#{shipping_phase.uuid} /* Frameworks */ = {"
+      phase_start = pbxproj.index(phase_header) or raise 'missing shipping Frameworks phase'
+      files_start = pbxproj.index("\t\t\tfiles = (\n", phase_start) or
+        raise 'missing shipping Frameworks files'
+      insertion = files_start + "\t\t\tfiles = (\n".length
+      pbxproj.insert(insertion, "\t\t\t\t#{protected_id} /* protected package contamination */,\n")
+      File.write(pbxproj_path, pbxproj)
+
+      run_reconciler(temporary_project, 'inverse-package-build-file')
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+      reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      assert_equal shipping_before, target_graph_signature(reconciled_shipping)
+      assert_equal extension_before, target_graph_signature(reconciled_extension)
+      assert_includes reconciled_shipping.frameworks_build_phase.files.map(&:uuid), shipping_id
+      refute_includes reconciled_shipping.frameworks_build_phase.files.map(&:uuid), protected_id
+      assert_includes reconciled_extension.frameworks_build_phase.files.map(&:uuid), protected_id
+      assert_second_run_byte_idempotent(temporary_project)
     end
   end
 
