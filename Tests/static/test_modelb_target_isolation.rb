@@ -60,6 +60,76 @@ class ModelBTargetIsolationTests < Minitest::Test
       .flat_map { |value| value.to_s.split }
   end
 
+  def deep_copy(value)
+    Marshal.load(Marshal.dump(value))
+  end
+
+  def target_graph_signature(target)
+    {
+      uuid: target.uuid,
+      identity: [target.name, target.product_name, target.product_type],
+      product: target.product_reference && [
+        target.product_reference.uuid,
+        target.product_reference.path,
+        target.product_reference.name,
+        target.product_reference.explicit_file_type,
+        target.product_reference.source_tree
+      ],
+      phases: target.build_phases.map do |phase|
+        {
+          uuid: phase.uuid,
+          isa: phase.isa,
+          scalar_attributes: phase.class.simple_attributes.to_h do |attribute|
+            [attribute.name, deep_copy(phase.public_send(attribute.name))]
+          end,
+          files: phase.files.map do |build_file|
+            {
+              uuid: build_file.uuid,
+              file_ref: build_file.file_ref&.uuid,
+              product_ref: build_file.product_ref&.uuid,
+              settings: deep_copy(build_file.settings),
+              platform_filter: build_file.platform_filter,
+              platform_filters: deep_copy(build_file.platform_filters)
+            }
+          end
+        }
+      end,
+      package_products: target.package_product_dependencies.map do |dependency|
+        [dependency.uuid, dependency.product_name, dependency.package&.uuid]
+      end,
+      configurations: target.build_configurations.map do |configuration|
+        [configuration.uuid, configuration.name, configuration.base_configuration_reference&.uuid,
+         deep_copy(configuration.build_settings)]
+      end,
+      configuration_list: [
+        target.build_configuration_list.uuid,
+        target.build_configuration_list.default_configuration_name,
+        target.build_configuration_list.default_configuration_is_visible
+      ],
+      dependencies: target.dependencies.map do |dependency|
+        proxy = dependency.target_proxy
+        [dependency.uuid, dependency.name, dependency.target&.uuid, proxy&.uuid,
+         proxy&.container_portal&.uuid, proxy&.proxy_type,
+         proxy&.remote_global_id_string, proxy&.remote_info]
+      end
+    }
+  end
+
+  def run_reconciler(temporary_project, label)
+    output, error, status = Open3.capture3(
+      { 'COLUMBA_PROJECT_PATH' => temporary_project }, RbConfig.ruby, SCRIPT_PATH
+    )
+    assert status.success?, "#{label} reconciliation failed:\n#{output}\n#{error}"
+  end
+
+  def assert_second_run_byte_idempotent(temporary_project)
+    pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+    first_hash = Digest::SHA256.file(pbxproj_path).hexdigest
+    run_reconciler(temporary_project, 'second')
+    second_hash = Digest::SHA256.file(pbxproj_path).hexdigest
+    assert_equal first_hash, second_hash, 'second reconciliation changed project.pbxproj bytes'
+  end
+
   def test_both_application_targets_exist_and_are_ios_apps
     assert_equal 'com.apple.product-type.application', @shipping.product_type
     assert_equal 'com.apple.product-type.application', @model_b.product_type
@@ -223,10 +293,7 @@ class ModelBTargetIsolationTests < Minitest::Test
       assert shared_file_survived, 'shared build-file mutation did not survive serialization'
       shipping_semantic = mutated_shipping.to_hash
 
-      output, error, status = Open3.capture3(
-        { 'COLUMBA_PROJECT_PATH' => temporary_project }, RbConfig.ruby, SCRIPT_PATH
-      )
-      assert status.success?, "ownership reconciliation failed:\n#{output}\n#{error}"
+      run_reconciler(temporary_project, 'ownership')
 
       reconciled = Xcodeproj::Project.open(temporary_project)
       reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
@@ -254,6 +321,7 @@ class ModelBTargetIsolationTests < Minitest::Test
       end
       assert phase_owners.values.all?(&:one?), 'a phase still has multiple target owners'
       assert build_file_owners.values.all?(&:one?), 'a build file still has multiple phase owners'
+      assert_second_run_byte_idempotent(temporary_project)
     end
   end
 
@@ -267,6 +335,11 @@ class ModelBTargetIsolationTests < Minitest::Test
       duplicate = fixture.new_target(:application, 'ColumbaModelBApp', :ios, nil)
       duplicate_id = duplicate.uuid
       duplicate_product_id = duplicate.product_reference.uuid
+      duplicate_graph_ids = (
+        duplicate.build_phases.flat_map { |phase| [phase.uuid] + phase.files.map(&:uuid) } +
+        duplicate.build_configurations.map(&:uuid) +
+        [duplicate.build_configuration_list.uuid]
+      )
       fixture.root_object.attributes['TargetAttributes'][duplicate_id] = { 'CreatedOnToolsVersion' => 'stale' }
       retained.add_dependency(duplicate)
       fixture.save
@@ -279,10 +352,7 @@ class ModelBTargetIsolationTests < Minitest::Test
       assert_equal 2, duplicate_products
       assert mutated.root_object.attributes['TargetAttributes'].key?(duplicate_id)
 
-      output, error, status = Open3.capture3(
-        { 'COLUMBA_PROJECT_PATH' => temporary_project }, RbConfig.ruby, SCRIPT_PATH
-      )
-      assert status.success?, "duplicate-target reconciliation failed:\n#{output}\n#{error}"
+      run_reconciler(temporary_project, 'duplicate-target')
 
       reconciled = Xcodeproj::Project.open(temporary_project)
       model_b_targets = reconciled.targets.select { |target| target.name == 'ColumbaModelBApp' }
@@ -293,6 +363,8 @@ class ModelBTargetIsolationTests < Minitest::Test
       assert_equal [model_b_targets.first.product_reference.uuid], products.map(&:uuid)
       refute reconciled.objects_by_uuid.key?(duplicate_id)
       refute reconciled.objects_by_uuid.key?(duplicate_product_id)
+      assert_empty duplicate_graph_ids & reconciled.objects_by_uuid.keys,
+                   'duplicate target left orphaned phase/build-file/configuration objects'
       attributes = reconciled.root_object.attributes.fetch('TargetAttributes', {})
       assert_empty attributes.keys - reconciled.targets.map(&:uuid)
       stale_proxy = reconciled.objects.any? do |object|
@@ -300,6 +372,111 @@ class ModelBTargetIsolationTests < Minitest::Test
           object.remote_global_id_string == duplicate_id
       end
       refute stale_proxy
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
+  def test_shipping_cleanup_preserves_shared_extension_owned_graph
+    Dir.mktmpdir('columba-shared-extension-product') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      extension = fixture.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      protected_phase = fixture.new(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
+      protected_phase.name = 'Embed App Extensions'
+      protected_phase.symbol_dst_subfolder_spec = :plug_ins
+      protected_file = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
+      protected_file.file_ref = extension.product_reference
+      protected_file.settings = { 'ATTRIBUTES' => ['ProtectedExtensionOwner'] }
+      protected_phase.files << protected_file
+      extension.build_phases << protected_phase
+      shipping.build_phases << protected_phase
+      fixture.save
+
+      # Also share the extension-product build file with a non-embed shipping
+      # phase. xcodeproj cannot serialize two PBXBuildFile parents, so inject the
+      # second phase membership into the otherwise-valid fixture.
+      pbxproj_path = File.join(temporary_project, 'project.pbxproj')
+      pbxproj = File.read(pbxproj_path)
+      shipping_phase_id = shipping.frameworks_build_phase.uuid
+      phase_header = "\t\t#{shipping_phase_id} /* Frameworks */ = {"
+      phase_start = pbxproj.index(phase_header) or raise 'missing shipping Frameworks phase'
+      files_start = pbxproj.index("\t\t\tfiles = (\n", phase_start) or raise 'missing shipping Frameworks files'
+      insertion_point = files_start + "\t\t\tfiles = (\n".length
+      pbxproj.insert(insertion_point,
+                     "\t\t\t\t#{protected_file.uuid} /* malformed shared extension product */,\n")
+      File.write(pbxproj_path, pbxproj)
+
+      mutated = Xcodeproj::Project.open(temporary_project)
+      mutated_shipping = mutated.targets.find { |target| target.name == 'ColumbaApp' }
+      mutated_extension = mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      assert_includes mutated_shipping.build_phases.map(&:uuid), protected_phase.uuid
+      assert mutated_shipping.frameworks_build_phase.files.any? { |file| file.uuid == protected_file.uuid }
+      before = target_graph_signature(mutated_extension)
+
+      run_reconciler(temporary_project, 'shared-extension-ownership')
+
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+      reconciled_extension = reconciled.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      refute reconciled_shipping.dependencies.any? { |dependency| dependency.target == reconciled_extension }
+      refute reconciled_shipping.build_phases.any? { |phase| extension_embed_phase?(phase) }
+      refute(reconciled_shipping.build_phases.flat_map(&:files).any? do |file|
+        file.file_ref == reconciled_extension.product_reference
+      end)
+      assert_equal before, target_graph_signature(reconciled_extension),
+                   'shipping cleanup mutated the protected extension graph'
+
+      phase_owners = Hash.new { |hash, key| hash[key] = [] }
+      build_file_owners = Hash.new { |hash, key| hash[key] = [] }
+      reconciled.targets.each do |target|
+        target.build_phases.each { |phase| phase_owners[phase.uuid] << target.uuid }
+      end
+      reconciled.objects.each do |object|
+        next unless object.respond_to?(:files)
+
+        object.files.each { |file| build_file_owners[file.uuid] << object.uuid }
+      end
+      assert phase_owners.values.all?(&:one?), 'a phase still has multiple target owners'
+      assert build_file_owners.values.all?(&:one?), 'a build file still has multiple phase owners'
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
+  def test_reconciler_authoritatively_repairs_model_b_onboarding_mapping
+    Dir.mktmpdir('columba-modelb-onboarding') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      debug = model_b.build_configurations.find { |configuration| configuration.name == 'Debug' }
+      debug_swift = model_b.build_configurations.find { |configuration| configuration.name == 'Debug-Swift' }
+      debug.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
+        (compilation_tokens(debug) + [ONBOARDING_FLAG, 'UNRELATED_MODEL_B_CONDITION']).uniq.join(' ')
+      debug_swift.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
+        (compilation_tokens(debug_swift) - [ONBOARDING_FLAG] + ['OTHER_MODEL_B_CONDITION']).uniq.join(' ')
+      fixture.save
+
+      run_reconciler(temporary_project, 'onboarding-mapping')
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+      reconciled_model_b.build_configurations.each do |configuration|
+        tokens = compilation_tokens(configuration)
+        if configuration.name.end_with?('-Swift')
+          assert_includes tokens, ONBOARDING_FLAG, configuration.name
+        else
+          refute_includes tokens, ONBOARDING_FLAG, configuration.name
+        end
+      end
+      assert_includes compilation_tokens(
+        reconciled_model_b.build_configurations.find { |configuration| configuration.name == 'Debug' }
+      ), 'UNRELATED_MODEL_B_CONDITION'
+      assert_includes compilation_tokens(
+        reconciled_model_b.build_configurations.find { |configuration| configuration.name == 'Debug-Swift' }
+      ), 'OTHER_MODEL_B_CONDITION'
+      assert_second_run_byte_idempotent(temporary_project)
     end
   end
 
@@ -340,7 +517,9 @@ class ModelBTargetIsolationTests < Minitest::Test
       mutated_model_b = mutated.targets.find { |target| target.name == 'ColumbaModelBApp' }
       assert_operator mutated_model_b.dependencies.size, :>=, 3,
                       'dependency mutations did not survive project serialization'
-      before = mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }.to_hash
+      before = target_graph_signature(
+        mutated.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
+      )
 
       first_output, first_error, first_status = Open3.capture3(
         { 'COLUMBA_PROJECT_PATH' => temporary_project }, RbConfig.ruby, SCRIPT_PATH
@@ -363,7 +542,7 @@ class ModelBTargetIsolationTests < Minitest::Test
       assert_equal [reconciled_extension.uuid],
                    reconciled_model_b.dependencies.map { |dependency| dependency.target&.uuid },
                    'Model B dependencies were not authoritatively reconciled'
-      assert_equal before, reconciled_extension.to_hash,
+      assert_equal before, target_graph_signature(reconciled_extension),
                    'extension target changed during reconciliation'
 
       second_output, second_error, second_status = Open3.capture3(

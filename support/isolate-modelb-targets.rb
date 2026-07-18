@@ -102,7 +102,7 @@ module ModelBTargetIsolation
     end
   end
 
-  def strip_shipping_extension_graph(shipping, extension)
+  def strip_shipping_extension_graph(project, shipping, extension)
     shipping.dependencies.dup.each do |dependency|
       remove_dependency(dependency) if dependency.target == extension
     end
@@ -110,10 +110,19 @@ module ModelBTargetIsolation
     shipping.build_phases.dup.each do |phase|
       next unless phase.respond_to?(:files)
 
-      phase.files.dup.each do |build_file|
-        remove_build_file(build_file) if build_file.file_ref == extension.product_reference
+      # A malformed project can attach another target's embed phase to shipping.
+      # Detach that phase without editing its files; the other owner must remain
+      # byte-for-byte intact.
+      if extension_embed_phase?(phase)
+        remove_phase_for_target(project, shipping, phase)
+        next
       end
-      remove_phase(phase) if extension_embed_phase?(phase) && phase.files.empty?
+
+      phase.files.dup.each do |build_file|
+        next unless build_file.file_ref == extension.product_reference
+
+        remove_build_file_from_phase(project, phase, build_file)
+      end
     end
   end
 
@@ -300,14 +309,15 @@ module ModelBTargetIsolation
       configuration = existing.fetch(source.name, []).shift || project.new(
         Xcodeproj::Project::Object::XCBuildConfiguration
       )
-      preserves_onboarding = (compilation_tokens(source) + compilation_tokens(configuration))
-                             .include?('COLUMBA_ONBOARDING_ENABLED')
+      destination_tokens = compilation_tokens(configuration).reject do |token|
+        SHIPPING_FORBIDDEN_FLAGS.include?(token)
+      end
       configuration.name = source.name
       configuration.base_configuration_reference = source.base_configuration_reference
       configuration.build_settings = duplicate_value(source.build_settings)
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = MODEL_B_ENTITLEMENTS
-      required = []
-      required << 'COLUMBA_ONBOARDING_ENABLED' if preserves_onboarding
+      required = destination_tokens
+      required << 'COLUMBA_ONBOARDING_ENABLED' if source.name.end_with?('-Swift')
       required.concat(MODEL_B_FLAGS)
       set_compilation_tokens(configuration, required, removed: SHIPPING_FORBIDDEN_FLAGS)
       configuration
@@ -374,6 +384,16 @@ module ModelBTargetIsolation
     end
     duplicate.dependencies.dup.each { |dependency| remove_dependency(dependency) }
 
+    duplicate.build_phases.dup.each do |phase|
+      remove_phase_for_target(project, duplicate, phase)
+    end
+    duplicate.build_configurations.dup.each(&:remove_from_project)
+    duplicate.build_configuration_list.remove_from_project
+    duplicate.package_product_dependencies.dup.each do |dependency|
+      duplicate.package_product_dependencies.delete(dependency)
+      dependency.remove_from_project if dependency.referrers.empty?
+    end
+
     product = duplicate.product_reference
     product_id = product&.uuid
     # PBX objects compare by semantic content in xcodeproj. Give the stale
@@ -432,6 +452,9 @@ module ModelBTargetIsolation
     model_b = model_b.first
     extension = extension.first
     raise 'shipping target still depends on extension' if shipping.dependencies.any? { |dep| dep.target == extension }
+    raise 'shipping target retained an extension embed phase' if shipping.build_phases.any? do |phase|
+      extension_embed_phase?(phase)
+    end
     raise 'shipping target still embeds extension' if shipping.build_phases.any? do |phase|
       phase.respond_to?(:files) && phase.files.any? { |file| file.file_ref == extension.product_reference }
     end
@@ -458,6 +481,13 @@ module ModelBTargetIsolation
       next unless compilation_tokens(configuration).include?('COLUMBA_ONBOARDING_ENABLED')
 
       raise "shipping configuration retained Model B onboarding in #{configuration.name}"
+    end
+    model_b.build_configurations.each do |configuration|
+      has_onboarding = compilation_tokens(configuration).include?('COLUMBA_ONBOARDING_ENABLED')
+      expected = configuration.name.end_with?('-Swift')
+      next if has_onboarding == expected
+
+      raise "Model B onboarding mapping is incorrect in #{configuration.name}"
     end
 
     embed_phases = model_b.build_phases.select { |phase| extension_embed_phase?(phase) }
@@ -515,6 +545,7 @@ shipping = project.targets.find { |target| target.name == SHIPPING_TARGET_NAME }
   abort "Missing #{SHIPPING_TARGET_NAME} target"
 extension = project.targets.find { |target| target.name == EXTENSION_TARGET_NAME } or
   abort "Missing #{EXTENSION_TARGET_NAME} target"
+ModelBTargetIsolation.strip_shipping_extension_graph(project, shipping, extension)
 model_b = ModelBTargetIsolation.create_or_find_model_b(project, shipping)
 package_map = ModelBTargetIsolation.reconcile_package_products(project, shipping, model_b)
 regular_phases = ModelBTargetIsolation.reconcile_regular_phases(project, shipping, model_b, package_map)
@@ -524,7 +555,6 @@ model_b.build_phases.clear
 (regular_phases + [embed_phase]).each { |phase| model_b.build_phases << phase }
 ModelBTargetIsolation.reconcile_configurations(project, shipping, model_b)
 ModelBTargetIsolation.reconcile_shipping_test_configurations(project, shipping)
-ModelBTargetIsolation.strip_shipping_extension_graph(shipping, extension)
 ModelBTargetIsolation.assert_graph!(project)
 project.save
 
