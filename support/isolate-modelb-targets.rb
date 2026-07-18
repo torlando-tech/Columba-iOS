@@ -213,7 +213,7 @@ module ModelBTargetIsolation
     if build_file.product_ref
       return shipping.package_product_dependencies.any? do |dependency|
         dependency.uuid == build_file.product_ref.uuid
-      end
+      end && build_file_metadata(build_file) == EMPTY_SOURCE_BUILD_FILE_METADATA
     end
     return false unless build_file.file_ref
 

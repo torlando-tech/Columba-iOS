@@ -942,9 +942,13 @@ class ModelBTargetIsolationTests < Minitest::Test
                                                       end
         refute_nil build_file, "fixture lacks shipping #{kind} build file"
         stale_duplicate_id = nil
-        if kind == :source
+        if %i[source package].include?(kind)
           stale_duplicate = fixture.new(Xcodeproj::Project::Object::PBXBuildFile)
-          stale_duplicate.file_ref = build_file.file_ref
+          if build_file.product_ref
+            stale_duplicate.product_ref = build_file.product_ref
+          else
+            stale_duplicate.file_ref = build_file.file_ref
+          end
           stale_duplicate.settings = { 'COMPILER_FLAGS' => '-DSTALE_SHIPPING_DUPLICATE' }
           shipping_phase.files << stale_duplicate
           stale_duplicate_id = stale_duplicate.uuid
