@@ -65,6 +65,7 @@ PYTHON_ONLY_SOURCE_PATHS = %w[
   Sources/RNSBackendPy/PythonRNSBackend.swift
   Sources/ColumbaApp/Services/PythonNetworkTransport.swift
   Sources/PythonBridge/PythonBLECallbackBridge.swift
+  Sources/PythonBridge/PythonRNodeBLEBridge.swift
 ].freeze
 PYTHON_FRAMEWORK_PATH = 'Frameworks/Python.xcframework'
 PYTHON_RESOURCE_PATH = 'app'
@@ -356,7 +357,7 @@ class ModelBTargetIsolationTests < Minitest::Test
 
   def test_application_membership_is_authoritatively_partitioned
     assert_equal 24, MODEL_B_ONLY_SOURCE_PATHS.size
-    assert_equal 9, PYTHON_ONLY_SOURCE_PATHS.size
+    assert_equal 10, PYTHON_ONLY_SOURCE_PATHS.size
     shipping_phases = @shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
     model_phases = @model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
     assert_equal [

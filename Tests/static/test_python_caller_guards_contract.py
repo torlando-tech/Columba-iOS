@@ -24,6 +24,7 @@ PYTHON_ONLY_SOURCES = (
     "Sources/RNSBackendPy/PythonRNSBackend.swift",
     "Sources/ColumbaApp/Services/PythonNetworkTransport.swift",
     "Sources/PythonBridge/PythonBLECallbackBridge.swift",
+    "Sources/PythonBridge/PythonRNodeBLEBridge.swift",
 )
 EXPLICIT_DECLARATIONS = (
     "PythonRuntime",
@@ -101,7 +102,7 @@ class PythonCallerGuardContractTests(unittest.TestCase):
             inventory.extend(path.relative_to(ROOT).as_posix() for path in directory.rglob("*.swift"))
         inventory.append("Sources/ColumbaApp/Services/PythonNetworkTransport.swift")
         self.assertEqual(set(PYTHON_ONLY_SOURCES), set(inventory))
-        self.assertEqual(9, len(PYTHON_ONLY_SOURCES))
+        self.assertEqual(10, len(PYTHON_ONLY_SOURCES))
 
         membership = source_membership()
         self.assertTrue(set(PYTHON_ONLY_SOURCES) <= set(membership["ColumbaApp"]))
