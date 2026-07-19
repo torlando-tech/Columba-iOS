@@ -632,6 +632,7 @@ class IOSRNodeInterface(Interface):
 
     def stop(self):
         """Stop the interface and disconnect."""
+        self.detached = True
         self._running.clear()
         self._reconnecting = False  # Stop any reconnection attempts
         self._set_online(False)
@@ -651,6 +652,10 @@ class IOSRNodeInterface(Interface):
             self._reconnect_thread.join(timeout=2.0)
 
         RNS.log(f"RNode interface '{self.name}' stopped", RNS.LOG_INFO)
+
+    def detach(self):
+        """RNS hot-remove/shutdown hook; stop all native and Python workers."""
+        self.stop()
 
     def _configure_device(self):
         """Detect and configure the RNode."""
@@ -1274,7 +1279,8 @@ class IOSRNodeInterface(Interface):
             self._set_online(False)
             self.detected = False
             # Start auto-reconnection if not already reconnecting
-            self._start_reconnection_loop()
+            if not self.detached:
+                self._start_reconnection_loop()
 
     def setOnErrorReceived(self, callback):
         """
@@ -1352,7 +1358,7 @@ class IOSRNodeInterface(Interface):
     def _reconnection_loop(self):
         """Background thread that attempts to reconnect to the RNode."""
         attempt = 0
-        while self._reconnecting and attempt < self._max_reconnect_attempts:
+        while self._reconnecting and not self.detached and attempt < self._max_reconnect_attempts:
             attempt += 1
             RNS.log(f"Reconnection attempt {attempt}/{self._max_reconnect_attempts} for {self.target_device_name}...", RNS.LOG_INFO)
 

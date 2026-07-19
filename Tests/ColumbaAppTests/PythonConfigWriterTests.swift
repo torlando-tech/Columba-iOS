@@ -108,10 +108,16 @@ extension PythonConfigWriterTests {
     func testPythonRNodeNativeBridgeConnectsBuffersAndWrites() {
         let fake = FakePythonRNodeTransport()
         let bridge = PythonRNodeBLEBridge(makeTransport: { _ in fake })
+        var published: [PythonRNodeLinkState] = []
+        bridge.setStateHandler { published.append($0) }
 
         XCTAssertTrue(bridge.connect(deviceName: "RNode 1234"))
         XCTAssertEqual(fake.connectCount, 1)
         XCTAssertEqual(bridge.snapshot().0, .connected)
+        XCTAssertEqual(published.last, .connecting,
+                       "BLE connection must not green the UI before RNode validation")
+        bridge.setInterfaceOnline(true)
+        XCTAssertEqual(published.last, .connected)
 
         fake.onDataReceived?(Data([0xC0, 0x08, 0x46, 0xC0]))
         XCTAssertEqual(bridge.read(maxBytes: 2), Data([0xC0, 0x08]))
@@ -139,6 +145,39 @@ extension PythonConfigWriterTests {
         XCTAssertEqual(bridge.snapshot().1, "pairing lost")
         XCTAssertEqual(observed?.0, .failed)
         XCTAssertEqual(observed?.1, "pairing lost")
+    }
+
+    func testPythonRNodeBridgeRejectsCompetingDeviceAndIgnoresStaleCallbacks() {
+        var transports: [FakePythonRNodeTransport] = []
+        let bridge = PythonRNodeBLEBridge(makeTransport: { _ in
+            let transport = FakePythonRNodeTransport()
+            transports.append(transport)
+            return transport
+        })
+
+        XCTAssertTrue(bridge.connect(deviceName: "RNode A"))
+        XCTAssertFalse(bridge.connect(deviceName: "RNode B"))
+        XCTAssertEqual(transports.count, 1)
+
+        let stale = transports[0]
+        bridge.disconnect()
+        XCTAssertTrue(bridge.connect(deviceName: "RNode B"))
+        XCTAssertEqual(transports.count, 2)
+        stale.onStateChange?(.failed, "stale failure")
+        XCTAssertEqual(bridge.snapshot().0, .connected)
+        XCTAssertNil(bridge.snapshot().1)
+    }
+
+    func testPythonRNodeBridgeFailsInsteadOfDroppingOnBufferOverflow() {
+        let fake = FakePythonRNodeTransport()
+        let bridge = PythonRNodeBLEBridge(makeTransport: { _ in fake })
+        XCTAssertTrue(bridge.connect(deviceName: "RNode A"))
+
+        fake.onDataReceived?(Data(repeating: 0xAA, count: 1_048_577))
+        XCTAssertEqual(bridge.snapshot().0, .failed)
+        XCTAssertEqual(bridge.snapshot().1, "RNode inbound buffer overflow")
+        XCTAssertEqual(fake.disconnectCount, 1)
+        XCTAssertTrue(bridge.read(maxBytes: 1).isEmpty)
     }
 }
 #endif

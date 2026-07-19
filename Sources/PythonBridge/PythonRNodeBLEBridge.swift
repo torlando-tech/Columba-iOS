@@ -73,6 +73,8 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     private var linkState: PythonRNodeLinkState = .disconnected
     private var failureReason: String?
     private var stateHandler: ((PythonRNodeLinkState, String?) -> Void)?
+    private var generation: UInt64 = 0
+    private var interfaceOnline = false
     private let maxBufferedBytes = 1_048_576
 
     init(makeTransport: @escaping (String) -> PythonRNodeTransporting = {
@@ -84,7 +86,7 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     public func setStateHandler(_ handler: ((PythonRNodeLinkState, String?) -> Void)?) {
         lock.lock()
         stateHandler = handler
-        let state = linkState
+        let state = publishedStateLocked()
         let reason = failureReason
         lock.unlock()
         handler?(state, reason)
@@ -95,28 +97,50 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
         return (linkState, failureReason)
     }
 
+    /// RNS calls this only after RNode detection and radio configuration finish.
+    /// Native BLE `.connected` alone is not proof that the interface is usable.
+    public func setInterfaceOnline(_ online: Bool) {
+        lock.lock()
+        interfaceOnline = online
+        let state = publishedStateLocked()
+        let reason = failureReason
+        let handler = stateHandler
+        lock.unlock()
+        handler?(state, reason)
+    }
+
     @discardableResult
     public func connect(deviceName requestedName: String) -> Bool {
         let requestedName = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !requestedName.isEmpty else { return false }
 
         lock.lock()
-        if deviceName == requestedName, let existing = transport,
+        if deviceName == requestedName, transport != nil,
            linkState == .connecting || linkState == .connected {
             lock.unlock()
-            if linkState == .disconnected { existing.connect() }
             return true
+        }
+        if transport != nil, deviceName != requestedName,
+           linkState == .connecting || linkState == .connected {
+            lock.unlock()
+            DiagLog.log("[RNODE_PY] rejected competing RNode '\(requestedName)'")
+            return false
         }
         let old = transport
         let radio = makeTransport(requestedName)
+        generation &+= 1
+        let currentGeneration = generation
         transport = radio
         deviceName = requestedName
         inbound.removeAll(keepingCapacity: true)
         linkState = .connecting
         failureReason = nil
-        radio.onDataReceived = { [weak self] data in self?.receive(data) }
+        interfaceOnline = false
+        radio.onDataReceived = { [weak self] data in
+            self?.receive(data, generation: currentGeneration)
+        }
         radio.onStateChange = { [weak self] state, reason in
-            self?.update(state: state, reason: reason)
+            self?.update(state: state, reason: reason, generation: currentGeneration)
         }
         let handler = stateHandler
         lock.unlock()
@@ -131,11 +155,13 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     public func disconnect() {
         lock.lock()
         let radio = transport
+        generation &+= 1
         transport = nil
         deviceName = nil
         inbound.removeAll(keepingCapacity: false)
         linkState = .disconnected
         failureReason = nil
+        interfaceOnline = false
         let handler = stateHandler
         lock.unlock()
         radio?.disconnect()
@@ -158,6 +184,7 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
         lock.lock()
         let radio = transport
         let connected = linkState == .connected
+        let writeGeneration = generation
         lock.unlock()
         guard connected, let radio else { return -1 }
 
@@ -170,36 +197,70 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
         }
         guard semaphore.wait(timeout: .now() + timeout) == .success else {
             DiagLog.log("[RNODE_PY] native BLE write timed out (\(data.count)B)")
+            disconnect()
             return -2
         }
         resultLock.lock(); let error = writeError; resultLock.unlock()
         if let error {
             DiagLog.log("[RNODE_PY] native BLE write failed: \(error.localizedDescription)")
+            disconnect()
             return -3
         }
-        return data.count
+        lock.lock()
+        let stillCurrent = generation == writeGeneration && linkState == .connected
+        lock.unlock()
+        return stillCurrent ? data.count : -4
     }
 
-    private func receive(_ data: Data) {
+    private func receive(_ data: Data, generation callbackGeneration: UInt64) {
         guard !data.isEmpty else { return }
         lock.lock()
+        guard generation == callbackGeneration else {
+            lock.unlock()
+            return
+        }
         if inbound.count + data.count > maxBufferedBytes {
-            let overflow = inbound.count + data.count - maxBufferedBytes
-            inbound.removeFirst(min(overflow, inbound.count))
-            DiagLog.log("[RNODE_PY] inbound buffer overflow; dropped \(overflow) oldest bytes")
+            inbound.removeAll(keepingCapacity: false)
+            linkState = .failed
+            failureReason = "RNode inbound buffer overflow"
+            interfaceOnline = false
+            generation &+= 1
+            let radio = transport
+            transport = nil
+            deviceName = nil
+            let handler = stateHandler
+            lock.unlock()
+            radio?.disconnect()
+            DiagLog.log("[RNODE_PY] inbound overflow; disconnected to preserve KISS framing")
+            handler?(.failed, "RNode inbound buffer overflow")
+            return
         }
         inbound.append(data)
         lock.unlock()
     }
 
-    private func update(state: PythonRNodeLinkState, reason: String?) {
+    private func update(
+        state: PythonRNodeLinkState,
+        reason: String?,
+        generation callbackGeneration: UInt64
+    ) {
         lock.lock()
+        guard generation == callbackGeneration else {
+            lock.unlock()
+            return
+        }
         linkState = state
         failureReason = reason
+        if state != .connected { interfaceOnline = false }
+        let publishedState = publishedStateLocked()
         let handler = stateHandler
         lock.unlock()
         DiagLog.log("[RNODE_PY] native BLE state=\(state.rawValue) reason=\(reason ?? "none")")
-        handler?(state, reason)
+        handler?(publishedState, reason)
+    }
+
+    private func publishedStateLocked() -> PythonRNodeLinkState {
+        linkState == .connected && !interfaceOnline ? .connecting : linkState
     }
 }
 
@@ -232,4 +293,10 @@ public func columba_rnode_read(_ output: UnsafeMutablePointer<UInt8>?, _ capacit
 public func columba_rnode_write(_ bytes: UnsafePointer<UInt8>?, _ count: Int32) -> Int32 {
     guard let bytes, count > 0 else { return 0 }
     return Int32(PythonRNodeBLEBridge.shared.writeSync(Data(bytes: bytes, count: Int(count))))
+}
+
+@_cdecl("columba_rnode_set_online")
+public func columba_rnode_set_online(_ online: Int32) -> Int32 {
+    PythonRNodeBLEBridge.shared.setInterfaceOnline(online != 0)
+    return 0
 }
