@@ -8,7 +8,7 @@
 //  Listens for Darwin notifications from the extension to wake and process frames.
 //
 
-#if ENABLE_NETWORK_EXTENSION
+#if COLUMBA_RUNTIME_MODEL_B
 
 import Foundation
 import RNSAPI

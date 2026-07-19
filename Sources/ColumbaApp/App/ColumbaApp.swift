@@ -39,6 +39,7 @@ struct ColumbaApp: App {
     // MARK: - Init
 
     init() {
+        #if COLUMBA_RUNTIME_PYTHON
         // Boot embedded CPython once, before anything else can touch it.
         // PythonBridge / PythonRNSBackend depend on this; without it
         // PyGILState_Ensure deadlocks.
@@ -48,6 +49,7 @@ struct ColumbaApp: App {
         case .failure(let err):
             logger.error("Python runtime failed: \(err.localizedDescription, privacy: .public)")
         }
+        #endif
 
         #if os(iOS) && canImport(CoreBluetooth)
         // Track C8 — background BLE wake / CoreBluetooth state restoration.
@@ -83,9 +85,10 @@ struct ColumbaApp: App {
         // restore `SwiftBLEBridge` only on the Python-backend (non-Model-B) path.
         // (Model B background-restore via CoreBluetoothBLEDriver's own restore
         // identifier is a further follow-on: it needs the identity at launch.)
-        if !BackendPreference.modelB {
-            SwiftBLEBridge.shared.restoreAtLaunch()
-        } else if ModelBRNodeService.rnodeBackgroundRestoreEnabled {
+        #if COLUMBA_RUNTIME_PYTHON
+        SwiftBLEBridge.shared.restoreAtLaunch()
+        #elseif COLUMBA_RUNTIME_MODEL_B
+        if ModelBRNodeService.rnodeBackgroundRestoreEnabled {
             // GATED (A9, RISK 5): re-materialize the RNode `BLETransport` central early so
             // iOS honors CoreBluetooth state restoration / a background relaunch-for-BLE for
             // a configured RNode. OFF by default — flip `rnodeBackgroundRestoreEnabled`
@@ -93,6 +96,7 @@ struct ColumbaApp: App {
             // that the mesh + RNode centrals don't collide on the shared restore identifier.
             ModelBRNodeService.shared.restore()
         }
+        #endif
         #endif
 
         #if os(iOS)
@@ -470,6 +474,9 @@ struct RootView: View {
     @State private var database: LXMFDatabase?
     @State private var messageRepository: MessageRepository?
     @State private var incomingMessageHandler: IncomingMessageHandler?
+    #if COLUMBA_RUNTIME_MODEL_B
+    @State private var modelBInboundReplay: ModelBInboundReplay?
+    #endif
     @State private var initError: String?
     @State private var isInitialized = false
     @State private var identitySwitchTrigger = UUID()
@@ -521,6 +528,9 @@ struct RootView: View {
                         isInitialized = false
                         messageRepository = nil
                         incomingMessageHandler = nil
+                        #if COLUMBA_RUNTIME_MODEL_B
+                        modelBInboundReplay = nil
+                        #endif
                         database = nil
                         initError = nil
                         identitySwitchTrigger = UUID()
@@ -533,7 +543,7 @@ struct RootView: View {
                 // backend starts until the NE/VPN tunnel is up; on first launch that
                 // means showing the background-delivery gate instead of an indefinite
                 // "Connecting to network…" spinner on a tunnel that doesn't exist yet.
-                #if ENABLE_NETWORK_EXTENSION
+                #if COLUMBA_RUNTIME_MODEL_B
                 if appServices.needsBackgroundDeliveryApproval {
                     BackgroundDeliveryGateView(appServices: appServices)
                 } else {
@@ -690,6 +700,7 @@ struct RootView: View {
     private func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
 
+        #if COLUMBA_RUNTIME_MODEL_B
         // Surface the Network Extension's App-Group diagnostic log into Documents
         // so it's retrievable via `devicectl ... copy from` alongside diag.log.
         // The NE (sandboxed) writes ext-diag.log to the shared container; the host
@@ -699,6 +710,7 @@ struct RootView: View {
         // Keep that copy LIVE (not just this launch's snapshot) so on-device NE
         // diagnostics can be tailed in real time. DEBUG-only.
         DiagLog.startExtDiagLiveCopy()
+        #endif
         #endif
 
         // Retry the entire init up to 5 times with increasing delay —
@@ -827,6 +839,21 @@ struct RootView: View {
             if let router = appServices.router {
                 await router.setDelegate(handler)
             }
+
+            #if COLUMBA_RUNTIME_MODEL_B
+            // Model B: the NE owns LXMF delivery, so the live `LXMRouter` delegate
+            // above never fires. Drive the SAME `handler`'s field side-channel
+            // processing (reactions / replies / telemetry → map pin / icon / cease)
+            // by replaying NE-persisted inbound messages from the shared store on
+            // each Darwin "new message" ping. See `ModelBInboundReplay`.
+            let replay = ModelBInboundReplay(
+                repository: repo,
+                handler: handler,
+                identityScope: appServices.grdbDatabasePath ?? ""
+            )
+            self.modelBInboundReplay = replay
+            replay.start()
+            #endif
 
             // 7. Start all enabled interfaces (non-blocking)
             DiagLog.log("[STARTUP] Step 7: starting \(enabledInterfaces.count) enabled interfaces")

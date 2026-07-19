@@ -3,6 +3,24 @@ import XCTest
 import RNSAPI
 import LXMFSwift
 
+private actor ReactionGateProbe {
+    private var active = 0
+    private var maximumActive = 0
+
+    func enter() {
+        active += 1
+        maximumActive = max(maximumActive, active)
+    }
+
+    func leave() {
+        active -= 1
+    }
+
+    func maximum() -> Int {
+        maximumActive
+    }
+}
+
 final class MicronParserTests: XCTestCase {
 
     // MARK: - Page Headers
@@ -959,6 +977,56 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         let lx = MessageRepository.mapToLXMessage(rec)
         assertAttachmentsRecovered(lx.fields, "wire/mapToLXMessage")
         assertAttachmentsRecovered(LxmfFieldCodec.unpack(lx.packed ?? Data()), "wire/mapToLXMessage.packed")
+    }
+
+    func testReactionLedgerMakesReplayIdempotentAndHidesMetadata() {
+        let first = ReactionLedger.applying(
+            emoji: "👍",
+            sender: "peer-a",
+            reactionMessageHash: "reaction-1",
+            to: [:]
+        )
+        XCTAssertTrue(first.didApply)
+        XCTAssertEqual(first.state["👍"], ["peer-a"])
+        XCTAssertEqual(ReactionLedger.visibleReactions(first.state), ["👍": ["peer-a"]])
+
+        let replay = ReactionLedger.applying(
+            emoji: "👍",
+            sender: "peer-a",
+            reactionMessageHash: "reaction-1",
+            to: first.state
+        )
+        XCTAssertFalse(replay.didApply)
+        XCTAssertEqual(replay.state, first.state, "replay must not toggle the reaction back off")
+
+        let distinctToggle = ReactionLedger.applying(
+            emoji: "👍",
+            sender: "peer-a",
+            reactionMessageHash: "reaction-2",
+            to: replay.state
+        )
+        XCTAssertTrue(distinctToggle.didApply)
+        XCTAssertNil(ReactionLedger.visibleReactions(distinctToggle.state)["👍"])
+    }
+
+    func testReactionMutationGateSerializesAcrossSuspensionPoints() async {
+        let gate = ReactionMutationGate()
+        let probe = ReactionGateProbe()
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<20 {
+                group.addTask {
+                    await gate.withLock {
+                        await probe.enter()
+                        try? await Task.sleep(nanoseconds: 1_000_000)
+                        await probe.leave()
+                    }
+                }
+            }
+        }
+
+        let maximumActive = await probe.maximum()
+        XCTAssertEqual(maximumActive, 1)
     }
 
     // Note: the empty/field-map/wire discriminator is covered through the public

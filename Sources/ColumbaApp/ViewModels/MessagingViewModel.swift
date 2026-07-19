@@ -503,37 +503,45 @@ public final class MessagingViewModel {
 
         let localHashHex = appServices.localIdentityHash.map { String(format: "%02x", $0) }.joined()
 
-        // Read-modify-write reactions in DB
-        var reactionsDict: [String: [String]] = [:]
-        if let json = try? await repository.getReactionsJson(hash),
-           let data = json.data(using: .utf8),
-           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
-            reactionsDict = dict
+        // Serialize the database read/modify/write with every incoming reaction
+        // merge. This prevents a stale local snapshot from erasing a visible
+        // reaction or its durable replay-ledger entry.
+        var committedReactions: [String: [String]]?
+        do {
+            committedReactions = try await ReactionMutationGate.shared.withLock {
+                var reactionsDict: [String: [String]] = [:]
+                if let json = try await repository.getReactionsJson(hash),
+                   let data = json.data(using: .utf8),
+                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
+                    reactionsDict = dict
+                }
+
+                var senders = reactionsDict[emoji] ?? []
+                if senders.contains(localHashHex) {
+                    senders.removeAll { $0 == localHashHex }
+                } else {
+                    senders.append(localHashHex)
+                }
+                if senders.isEmpty {
+                    reactionsDict.removeValue(forKey: emoji)
+                } else {
+                    reactionsDict[emoji] = senders
+                }
+
+                let jsonData = try JSONSerialization.data(withJSONObject: reactionsDict)
+                let jsonStr = String(decoding: jsonData, as: UTF8.self)
+                try await repository.updateReactions(hash, reactionsJson: jsonStr)
+                return reactionsDict
+            }
+        } catch {
+            logger.error("Failed to persist local reaction: \(error.localizedDescription)")
         }
 
-        // Toggle
-        var senders = reactionsDict[emoji] ?? []
-        if senders.contains(localHashHex) {
-            senders.removeAll { $0 == localHashHex }
-        } else {
-            senders.append(localHashHex)
-        }
-        if senders.isEmpty {
-            reactionsDict.removeValue(forKey: emoji)
-        } else {
-            reactionsDict[emoji] = senders
-        }
-
-        // Save to DB
-        if let jsonData = try? JSONSerialization.data(withJSONObject: reactionsDict),
-           let jsonStr = String(data: jsonData, encoding: .utf8) {
-            try? await repository.updateReactions(hash, reactionsJson: jsonStr)
-        }
-
-        // Update UI
-        if let index = messages.firstIndex(where: { $0.id == targetMessageId }) {
+        // Update UI only from a successfully committed database state.
+        if let reactionsDict = committedReactions,
+           let index = messages.firstIndex(where: { $0.id == targetMessageId }) {
             withAnimation(.easeInOut(duration: 0.15)) {
-                messages[index].reactions = reactionsDict.map { emojiKey, senderList in
+                messages[index].reactions = ReactionLedger.visibleReactions(reactionsDict).map { emojiKey, senderList in
                     ReactionDisplay(
                         emoji: emojiKey,
                         count: senderList.count,

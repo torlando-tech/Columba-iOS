@@ -466,10 +466,53 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     @discardableResult
     public func sendReaction(destHashHex: String, targetMessageHashHex: String, emoji: String) async throws -> SendOutcome {
-        // Model B: not proxied yet (would ride the same lxmf-send path NE-side;
-        // out of the A5b skeleton). Treat as not-started so the UI degrades like
-        // a stopped backend rather than crashing.
-        throw BackendError.unsupportedInProxy(feature: "sendReaction")
+        // Canonical FIELD_REACTION (0x40): {0x00: targetHashBytes, 0x01: emojiUTF8}
+        // — a nested integer-keyed map. Pack it app-side (LxmfFieldCodec handles the
+        // nested [UInt8:Any]) and route through the SAME `.lxmfSend` IPC path
+        // (durable-outbox fallback) as text/image, instead of throwing. The NE
+        // rebuilds the LXMessage from `fieldsData` and packs it onto the wire.
+        guard let targetHash = Self.hexToData(targetMessageHashHex), !targetHash.isEmpty else {
+            return .badHash
+        }
+        let reaction: [UInt8: Any] = [
+            LxmfFields.REACTION_TO: targetHash,
+            LxmfFields.REACTION_CONTENT: Data(emoji.utf8),
+        ]
+        let fieldsData = LxmfFieldCodec.pack([LxmfFields.FIELD_REACTION: reaction])
+        let method = LXDeliveryMethod.opportunistic.rawValue
+        let response: ProxyResponse
+        do {
+            response = try await roundTrip(
+                .lxmfSend(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData),
+                op: "lxmfSend(reaction)")
+        } catch {
+            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData)
+        }
+        switch response {
+        case .ok(let payload):
+            guard let payload,
+                  let outcome = try? JSONDecoder().decode(ProxySendOutcome.self, from: payload) else {
+                return .other("malformed send response")
+            }
+            return Self.sendOutcome(from: outcome)
+        case .error, .unsupported:
+            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData)
+        }
+    }
+
+    /// Lowercase/uppercase hex → `Data`. Local (RNSBackendProxy doesn't link the
+    /// app-target `Data(hexString:)`); returns nil on odd length / non-hex.
+    private static func hexToData(_ hex: String) -> Data? {
+        let chars = Array(hex)
+        guard chars.count % 2 == 0 else { return nil }
+        var out = Data(capacity: chars.count / 2)
+        var i = 0
+        while i < chars.count {
+            guard let byte = UInt8(String(chars[i...(i + 1)]), radix: 16) else { return nil }
+            out.append(byte)
+            i += 2
+        }
+        return out
     }
 
     @discardableResult
@@ -487,9 +530,19 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     @discardableResult
     public func sendLocationTelemetry(destHashHex: String, packed: Data, customMeta: Data?) async throws -> SendOutcome {
-        // Model B: not proxied yet (would route via the NE lxmf-send path with
-        // FIELD_TELEMETRY 0x02; out of the A5b skeleton).
-        throw BackendError.unsupportedInProxy(feature: "sendLocationTelemetry")
+        // Location telemetry is just an empty-content LXMF message carrying
+        // FIELD_TELEMETRY (0x02) + optional FIELD_CUSTOM_META (0xFD) — the exact
+        // shape SwiftRNSBackend / PythonRNSBackend produce. Route it through the
+        // same `.lxmfSend` IPC path (with durable-outbox fallback) the proxy uses
+        // for text/image, rather than throwing: the NE packs + sends it like any
+        // other LXMF message, so Sideband/Android peers render the shared location.
+        var extra: [UInt8: Data] = [LxmfFields.FIELD_TELEMETRY: packed]
+        if let customMeta { extra[LxmfFields.FIELD_CUSTOM_META] = customMeta }
+        return try await sendLxmfMessage(
+            destHashHex: destHashHex, content: "", method: .opportunistic,
+            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
+            replyToMessageHashHex: nil, replyQuotedContent: nil, extraFields: extra
+        )
     }
 
     // Collector-host mode is honest-unsupported on the Swift stack too — no-op
@@ -610,7 +663,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                 collectorHostMode: .unsupported,
                 storeOwnTelemetry: .unsupported,
                 allowedRequestersFilter: .unsupported,
-                degradationHint: "Model B proxy: telemetry/propagation/telephony/nomadnet/interface-admin are not proxied to the NE yet (A5b skeleton)."
+                degradationHint: "Model B proxy: peer-to-peer location telemetry (FIELD_TELEMETRY 0x02) IS wired via the NE lxmf-send path; collector-host mode and propagation/telephony/nomadnet/interface-admin are not proxied yet."
             ),
             performance: .init(batteryProfileTuning: .unsupported, sharedInstanceAvailabilityChecks: false)
         )

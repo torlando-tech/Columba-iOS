@@ -26,6 +26,7 @@
 		016 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016 /* SettingsView.swift */; };
 		017 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
 		018 /* ExpandableSettingsCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F018 /* ExpandableSettingsCard.swift */; };
+		0185FB044DEA937616265D23 /* CustomThemeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F067 /* CustomThemeEditorView.swift */; };
 		019 /* Identicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F019 /* Identicon.swift */; };
 		020 /* IdenticonGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F020 /* IdenticonGenerator.swift */; };
 		021 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* MapView.swift */; platformFilter = ios; };
@@ -37,6 +38,7 @@
 		027 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027 /* NotificationObserver.swift */; };
 		028 /* IncomingMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F028 /* IncomingMessageHandler.swift */; };
 		029 /* InterfaceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F029 /* InterfaceRepository.swift */; };
+		0295EC36525A8FF195D14B55 /* TcpCommunityServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F053 /* TcpCommunityServer.swift */; };
 		030 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030 /* InterfaceManagementViewModel.swift */; };
 		031 /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031 /* InterfaceManagementScreen.swift */; };
 		032 /* NodeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F032 /* NodeDetailsView.swift */; };
@@ -62,7 +64,6 @@
 		04AB /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A /* AddContactSheet.swift */; };
 		04BB /* LocationSharingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04B /* LocationSharingManager.swift */; platformFilter = ios; };
 		04CB /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04C /* OnboardingView.swift */; };
-		04D735AF318341AD65ABFE61 /* RNodeSeamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */; };
 		04DB /* WelcomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04D /* WelcomePage.swift */; };
 		04EB /* IdentityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04E /* IdentityPage.swift */; };
 		04FB /* ConnectivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04F /* ConnectivityPage.swift */; };
@@ -87,16 +88,16 @@
 		062B /* OfflineMapDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F062 /* OfflineMapDownloadView.swift */; platformFilter = ios; };
 		063B /* OfflineMapsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F063 /* OfflineMapsScreen.swift */; platformFilter = ios; };
 		064B /* ThemeColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F064 /* ThemeColors.swift */; };
+		0651ADD246B2BD2C0006305E /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */; };
 		065B /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065 /* ThemeManager.swift */; };
 		066B /* AppearanceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F066 /* AppearanceCard.swift */; };
 		067B /* CustomThemeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F067 /* CustomThemeEditorView.swift */; };
+		06974CD0DFFF5479418AA66D /* RegionSelectionStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F056 /* RegionSelectionStep.swift */; };
 		071B /* BLEConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F071 /* BLEConnectionsView.swift */; };
 		072B /* RNodeProbeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F072 /* RNodeProbeScanner.swift */; };
 		073 /* MessageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F073 /* MessageDetailView.swift */; };
 		074B /* SharedDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = F074 /* SharedDefaults.swift */; };
 		076B /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
-		077B /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F077 /* TunnelManager.swift */; };
-		078B /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
 		079B /* OnboardingRestoreSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F079 /* OnboardingRestoreSheet.swift */; };
 		07AB /* PlatformCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07A /* PlatformCompat.swift */; };
 		07CB /* MicronDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07D /* MicronDocument.swift */; };
@@ -108,106 +109,241 @@
 		082B /* MicronRenderContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F083 /* MicronRenderContainer.swift */; };
 		083B /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		084B /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
-		0AGD /* AppGroupBLEDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAGD /* AppGroupBLEDriver.swift */; };
-		0BDS /* BLEDriverSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDS /* BLEDriverSeam.swift */; };
-		0BST /* AppGroupBLESeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBST /* AppGroupBLESeamTransport.swift */; };
-		0BSV /* AppGroupBLEServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBSV /* AppGroupBLEServer.swift */; };
+		0A7FF8FA55B27781DF23C7E8 /* ThemeColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F064 /* ThemeColors.swift */; };
+		0B768533EC90008D3E23C326 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
+		0E85864BF022C4B2A2595D0F /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 15F82FBE10E56E30D4706B40 /* ReticulumSwift */; };
 		0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */; };
-		0MBS /* ModelBBLEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FMBS /* ModelBBLEService.swift */; };
+		113FFF9C5A228CC0C294A3D9 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
+		11D0621686D1D65C9602C911 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */; };
+		11DE32B4ABEF3646B6B42728 /* MaterialDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F036 /* MaterialDesignIcons.swift */; };
 		13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */; };
+		140E03C294121F7FA2D478A9 /* ContactCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011 /* ContactCard.swift */; };
+		147A84617097826BCE5DBD49 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030 /* InterfaceManagementViewModel.swift */; };
+		15D4C7BF2F5EBFB685022ED2 /* BackgroundDeliveryGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */; };
+		181FFC68FA29599C2E5C88A4 /* MicronDocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F082 /* MicronDocumentView.swift */; };
+		1BC630C0471DC5E53AFA3E74 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046 /* BLEDevicePickerSheet.swift */; };
+		1F678E51F2B3D1E715E9FF6F /* AutoAnnounceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041 /* AutoAnnounceManager.swift */; };
 		1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
+		20FE359F318BADBFD1AB0E2B /* MigrationCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05C /* MigrationCrypto.swift */; };
+		217501714D71B706FCBB3F35 /* RNodeProbeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F072 /* RNodeProbeScanner.swift */; };
+		22C0D4CEA5878FC810F04D1A /* ExpandableSettingsCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F018 /* ExpandableSettingsCard.swift */; };
+		2332846F7A8E0E2234D7EF8D /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
+		236B504FBA8BC82FA4808C19 /* ModelBRNodeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A676BFC846C7D1174C3A20CD /* ModelBRNodeService.swift */; };
 		238336F8024494A8B57F9419 /* CeaseTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF48C97880B30682DC35613C /* CeaseTelemetry.swift */; };
 		266929D6972E8D373E7A926D /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 021FA3D73B6F8B711A97D40F /* ReticulumSwift */; };
 		26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */; };
+		26D6E3545012268714C637D9 /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065 /* ThemeManager.swift */; };
+		2AFE85F0CA5EFEDF75A7C1E5 /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4C54CECCAF0B117FB6C197 /* IncomingCallScreen.swift */; };
 		2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */; };
-		2B502D5AFE0E2C0D54CC144C /* BackgroundVPNExplainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */; };
-		2F8EC8212FC732AB00235991 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8202FC732AB00235991 /* ReticulumSwift */; };
+		2C21D06B5E27DB547378A9D9 /* DeviceDiscoveryStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F055 /* DeviceDiscoveryStep.swift */; };
+		2C8DBC92FB549628044532C4 /* BackgroundTransportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGTF /* BackgroundTransportView.swift */; };
+		2DAA350A34E3332DEC1545B0 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
+		2DEF38CCE53F632284B5A50D /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8222FC732AF00235991 /* LXMFSwift */; };
+		31F207DBD45E2CA682A3F830 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
+		32BFE0E43B1F4246502992E3 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047 /* RNodeConfigSheet.swift */; };
+		33CCBDB91636352EFC4A7790 /* BLEConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F071 /* BLEConnectionsView.swift */; };
+		33E0E91CAEFB07F13C04637D /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
+		35AAE3A0AE037F5B9305CFC1 /* ContactsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F004 /* ContactsViewModel.swift */; };
 		35DF1F7406C71743BBE8C39B /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = DA31FE974552414C399D4949 /* ReticulumSwift */; };
+		35E623C9C072B898A0CB551D /* LocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F042 /* LocalIdentity.swift */; };
+		369F5A4E725880AF2972AFD2 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
+		36AA591CD5DF055FA6124E7D /* BLEDriverSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDS /* BLEDriverSeam.swift */; };
+		384033BE99794CB11185E99C /* AppGroupBLEServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBSV /* AppGroupBLEServer.swift */; };
 		3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
-		4120DE0B1AC043758779DD40 /* ModelBRNodeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A676BFC846C7D1174C3A20CD /* ModelBRNodeService.swift */; };
+		3AD864B112B2E1810E510599 /* BLESeamDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDT /* BLESeamDriverTests.swift */; };
+		3B33F02402537B1825B64EEC /* MessagingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F005 /* MessagingViewModel.swift */; };
+		3C22AABC6B36F30028DF5A5A /* BackgroundVPNExplainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */; };
+		3D759EC171FEA82AD5A804DB /* BackgroundDeliveryPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */; };
+		3D93C9AD83DBD69265B1F5EF /* ColumbaNetworkExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = EPROD /* ColumbaNetworkExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
+		3E8EDA16402CE9043F338509 /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A /* AddContactSheet.swift */; };
+		40EBFB15B9FD4D5081AF4EBC /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
+		422AB44ACCB2031F9DD721B2 /* ConnectivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04F /* ConnectivityPage.swift */; };
+		429607039454543AB6316748 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
 		45C9E9AFAC34D61BFB3797AA /* RNodeSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43A7FF6A056815712B1D13D9 /* RNodeSeam.swift */; };
+		469A907E6FC79CED8F8B5F8D /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* MapView.swift */; platformFilter = ios; };
+		46C333262AE771054EDF0231 /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F077 /* TunnelManager.swift */; };
 		4758210ABE17DE6E3BE0B3F6 /* AutoAnnouncePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F87296BB580791A95C977B6 /* AutoAnnouncePolicy.swift */; };
-		48B07E3EF989716BF75BFEE5 /* ColumbaNetworkExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = EPROD /* ColumbaNetworkExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
+		47FC07D2AE8ECD5D88A868BA /* PropagationSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */; };
+		485B8EFF327C28C1A5F0727B /* materialdesignicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F039 /* materialdesignicons.ttf */; };
+		489A5C72A9C4C3FAB742F3E2 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027 /* NotificationObserver.swift */; };
+		4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB02 /* ModelBInboundReplay.swift */; platformFilter = ios; };
 		4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710EBCE55DCC9E71A9AB0E86 /* PythonBridge.swift */; };
+		4CD5BF2A4CA7A4E0FB498406 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2B1D94BCDC14153F6C4D05B1 /* Foundation.framework */; };
 		5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A49337EFC55C10979AEB702B /* LXSTSwift */; };
 		557D530BBEDAEBE9A6A0BE41 /* PyConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D8CBCF7E546028A043E1C7 /* PyConversation.swift */; };
 		55F3BF7D600C32E07B7B8C26 /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EBCA636D502CF4367E32C7 /* TCPClientWizard.swift */; };
+		577EE1AF377E314E961710B3 /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
+		58560228AFEDBA4201D9F9D4 /* PlatformCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07A /* PlatformCompat.swift */; };
 		59CE6F635354725F7D445625 /* PyLocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */; };
+		5A782C77CC09D0601E7D945C /* RNodeSeamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */; };
+		5AB385A087D36D5CE40E54F1 /* MigrationImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05E /* MigrationImporter.swift */; };
+		5AFC71BEEE6F92017B41233F /* ProfileIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F037 /* ProfileIcon.swift */; };
+		5C05E5EC2A287FEAD018BB36 /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
+		5C7438876260CE1CD77FC20A /* AppGroupRNodeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E36D94E7D28E35241C46426 /* AppGroupRNodeServer.swift */; };
 		5F1FF2954475331208BAAD47 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */; };
 		6176037A389D1F97BB47992B /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		6327E961A4DD4234D71E1D03 /* MicronParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07E /* MicronParser.swift */; };
+		655FFFEC5C528B994F08822E /* NetworkStatusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F034 /* NetworkStatusViewModel.swift */; };
 		668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */; };
 		67079BBC2E8309A43DF576E5 /* app in Resources */ = {isa = PBXBuildFile; fileRef = D001472BC7DFD3CD7BF27F0C /* app */; };
+		68093499A352C7C6358465BD /* AutoAnnouncePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F87296BB580791A95C977B6 /* AutoAnnouncePolicy.swift */; };
+		6965E7A95909A97BDBA20535 /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
+		697B28367B07702842284116 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
 		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
 		6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
-		6CFC16593387554678F3928F /* RNodeSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43A7FF6A056815712B1D13D9 /* RNodeSeam.swift */; };
+		6DFD1336E74B3E8F8131A97B /* AppGroupBLEDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAGD /* AppGroupBLEDriver.swift */; };
 		71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
+		73B2FC9ECC25BA7B4AFF3D96 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 030380C51B178354F4D4E88F /* ReticulumSwift */; };
+		74FD5AD4D082F479A53DDA93 /* NetworkStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F035 /* NetworkStatusView.swift */; };
+		764C62709969DFDB3AC7D820 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F049 /* QRScannerView.swift */; platformFilter = ios; };
 		779118E89F4D38BF960DB3D0 /* PyAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C562D79BB3B6559A1B1EFDA /* PyAnnounce.swift */; };
+		795F109CB7D59D7EB2DD805C /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F010 /* ContactsView.swift */; };
+		7A8C0A9310AA29BD5DA75FB5 /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
+		7A98E91E6F7A88EDD4012019 /* MigrationScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F060 /* MigrationScreen.swift */; };
+		7A9BCAF4AA8130159163BA6C /* OnboardingRestoreSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F079 /* OnboardingRestoreSheet.swift */; };
 		7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */; };
-		80D0868B2491DB301F772D63 /* BackgroundDeliveryPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */; };
+		7E4FB7E6B06FAF5FFC9354B8 /* SharedDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = F074 /* SharedDefaults.swift */; };
+		80D6B89564EAC050DD8FC6EC /* Identicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F019 /* Identicon.swift */; };
+		81B38F51CE308680ACB9ACB2 /* MigrationExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05D /* MigrationExporter.swift */; };
+		82010207856E1B25E8137512 /* CodecSelectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */; };
+		83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A1380C075A9F67E1B173EA94 /* ReticulumSwift */; };
+		861533706E74F637CD32C1CC /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04C /* OnboardingView.swift */; };
+		8617F06252A9D8A0C052959B /* IconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F038 /* IconPickerView.swift */; };
+		86182491293F826E8940E753 /* RNodeWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F054 /* RNodeWizardView.swift */; };
+		87358446F5D54F616D07CCEE /* IncomingMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F028 /* IncomingMessageHandler.swift */; };
 		8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
+		876F4CCF3FA441B67D08BBEC /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5D099DB326374C07812E3FBD /* SwiftBLEBridge */; };
+		884E998DD3B41BE3CAE55B70 /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		886AB689C7699471510BAF9A /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
+		89551A07A2FB8693E6C465FC /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* ChatsViewModel.swift */; };
+		895BF78C85D1C5471DA53961 /* AppGroupBLESeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBST /* AppGroupBLESeamTransport.swift */; };
 		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
 		8A784DFE5A52489803B27984 /* lucide.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FF6CE45231CD48906B9C226D /* lucide.ttf */; };
+		8EB34878FB401C9E5F9F5202 /* FrequencySlotStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F058 /* FrequencySlotStep.swift */; };
+		8EF58D2BD45FCDF79EDB49AB /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031 /* InterfaceManagementScreen.swift */; };
+		8F65ED2745669655D14B1C43 /* CompletePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F051 /* CompletePage.swift */; };
+		90BD158667A5C627CFB1DEBF /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsRepository.swift */; };
 		922658C82CEEA53695143F9B /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = DBD8F3A253D413F087742BC0 /* MapLibre */; };
 		92DDF4AE0AB493CC2AA0BA20 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6000D5CED2C3C89F74999BC1 /* LXSTSwift */; };
 		9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */; };
+		9673457897893BF9DE512A0F /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006 /* SettingsViewModel.swift */; };
+		973B4BBFD50C0935D1525F8E /* NomadNetBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F081 /* NomadNetBrowserView.swift */; };
+		97FCC1B1FF91DD6EF2706B04 /* LoRaPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F045 /* LoRaPresets.swift */; };
 		98547ADE9B17DD692240E7F7 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 85B9530D8CAE0E16D5371319 /* LXMFSwift */; };
+		98FE1EAB00C655BFF7D46594 /* PropagationNodeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F033 /* PropagationNodeManager.swift */; };
+		9B31559BF8D3222DF028C72C /* RNodeWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05A /* RNodeWizardViewModel.swift */; };
+		9B76650A549992655449B019 /* MigrationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05F /* MigrationViewModel.swift */; };
+		9C2C61E20925DB726EC2C934 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* ColumbaApp.swift */; };
 		9D9069A3F6302111A4727454 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = DD88CFE74E7E22427BC4D163 /* SwiftBLEBridge */; };
 		9E99C06B5658EA687323CF82 /* AppGroupRNodeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E36D94E7D28E35241C46426 /* AppGroupRNodeServer.swift */; };
+		A0883D932913C56C3C7FD394 /* LocationSharingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04B /* LocationSharingManager.swift */; platformFilter = ios; };
 		A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */; };
-		A6EA4093A9929FCEAB44C4B6 /* AppGroupRNodeSeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */; };
-		A746EE4A4494C45D97908924 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
-		A9DB03705BE9BA74A494310C /* AppGroupRNodeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E36D94E7D28E35241C46426 /* AppGroupRNodeServer.swift */; };
-		AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */; };
+		A40504A5D79C49DA50996680 /* NomadNetBrowserViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F080 /* NomadNetBrowserViewModel.swift */; };
+		A48DAD459DFDFDC94AC92B5A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016 /* SettingsView.swift */; };
+		AA9D3715FB399E675BD53B41 /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		ACT02 /* AnnounceClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACT01 /* AnnounceClassificationTests.swift */; };
-		AGB1B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
+		ADABD423CE22B9E00BC5D7F3 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
+		AF0B30F4F05BB35FCC50D99F /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* ChatsView.swift */; };
+		AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
 		AGB2B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
 		AGP1B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
 		AGP2B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
+		B064E17BB904D8A0E1986686 /* PermissionsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F050 /* PermissionsPage.swift */; };
+		B1A5B614BBD418B4FEEEB06C /* AppearanceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F066 /* AppearanceCard.swift */; };
+		B2EF01CCB8B50326073D8171 /* NodeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F032 /* NodeDetailsView.swift */; };
+		B4C378BDA13BC155719B5440 /* IdentityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04E /* IdentityPage.swift */; };
+		B5A7B590DEFA2B213D8D5754 /* InterfaceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F029 /* InterfaceRepository.swift */; };
+		B71F90BE936BAF660BA0821B /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007 /* MainTabView.swift */; };
 		BB2453727F7CFDAF2E0B196F /* AppGroupRNodeSeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */; };
+		BBF80EA2BC42E6E7FF17A171 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
 		BDC9FF09929596ECF0A1037F /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */; };
-		BGTB /* BackgroundTransportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGTF /* BackgroundTransportView.swift */; };
+		BDEAB854FC0F5ABB7188A865 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
+		BE3C19C7804FA366826A5A7A /* OfflineMapsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F063 /* OfflineMapsScreen.swift */; platformFilter = ios; };
+		BED8754AAD30B1CB58755EF8 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013 /* MessagingView.swift */; };
 		BKF001 /* BackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKF002 /* BackendFactory.swift */; };
+		C0904C776958B1A10E0A8128 /* WelcomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04D /* WelcomePage.swift */; };
+		C126E88E13D9DB7CCE7AD8A0 /* MicronDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07D /* MicronDocument.swift */; };
+		C17B4B4AD850DBC3CD27AEC0 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */; };
+		C204F5778ABB560C1FD4DC60 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014 /* MessageBubble.swift */; };
 		C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
+		C4F369EC98C2B903701CE74A /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
+		C60C9313A6AFB95FCFB8969A /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
+		C6816EEC9864A2903840C8AC /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012 /* NetworkAnnouncesTab.swift */; };
 		C91321B8E0BA9F487D5E1AC8 /* PyMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBD293157E715F490613984 /* PyMessage.swift */; };
+		CC036F8B85839F5FC3C138E2 /* RNodeSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43A7FF6A056815712B1D13D9 /* RNodeSeam.swift */; };
+		CE8E3B8292DA54170D020367 /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
+		D116F7C8ADEB284C5AF41963 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022 /* Assets.xcassets */; };
+		D168BB4F9E33FF48BD5D53D1 /* MapLibreMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F048 /* MapLibreMapView.swift */; platformFilter = ios; };
 		D33B15C781E3C98A5CBD06F3 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F7375908681A4DF99F125C7 /* CallKitManager.swift */; };
+		D3F8A25E2E3D415E8F9779D0 /* MicronRenderContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F083 /* MicronRenderContainer.swift */; };
+		D4EB4102AAFA74BE78305EAA /* ModemPresetStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F057 /* ModemPresetStep.swift */; };
+		D5401B855C79A3F5DA1689F6 /* OnboardingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F052 /* OnboardingViewModel.swift */; };
+		D591F21C232FBE2AF23D50F5 /* BackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKF002 /* BackendFactory.swift */; };
+		D5A01F38C9E4B6B77C21B838 /* OfflineMapManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F061 /* OfflineMapManager.swift */; platformFilter = ios; };
+		D709D8EDF36F85DEB5AABEC4 /* MessageInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F015 /* MessageInputBar.swift */; };
+		D82A196EF2609A4F79F0D6B7 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F040 /* NotificationService.swift */; };
 		D85E5BBB51FACA138622FFFA /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4C54CECCAF0B117FB6C197 /* IncomingCallScreen.swift */; };
+		D93546FFCB0106CF3F68B2C5 /* MessageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F073 /* MessageDetailView.swift */; };
+		D970871E33F40AA65F2CE793 /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
+		D996B56197DBCF9E68B21D9D /* MapLibre in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 265C043240DBCD7A542021FC /* MapLibre */; };
+		DAF36A8899258710724C1FF9 /* ConversationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F009 /* ConversationRow.swift */; };
+		DCD98FD7695F22CC597C3FC4 /* AppGroupRNodeSeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */; };
 		DE9220E1D4ABF9A4C2CBA761 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
+		DF2A7839A4D81C4DAEEF6A2A /* lucide.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FF6CE45231CD48906B9C226D /* lucide.ttf */; };
+		DF6654D386454C56AF75302E /* ModelBBLEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FMBS /* ModelBBLEService.swift */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
+		E079C55745CBDD622CA51842 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
+		E154CBBB80370FD16B8319CA /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
+		E19091DE159BF3655E5593A3 /* OfflineMapDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F062 /* OfflineMapDownloadView.swift */; platformFilter = ios; };
+		E21364EEE2883AB0D1012CE0 /* CeaseTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF48C97880B30682DC35613C /* CeaseTelemetry.swift */; };
+		E280C50039F108EE9AF83F86 /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
+		E34B504A6DCC8F5E7F44E491 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = E0DE32143A4DF2A0284C1911 /* LXMFSwift */; };
 		E49B977D311DA1C9ACE14CAB /* CallManagerCallKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30A79B9ECDB4166F8A36A670 /* CallManagerCallKitTests.swift */; };
+		E52A4F911C392F54D134116D /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043 /* IdentityManager.swift */; };
+		E63DE54C6FD31D240E66BD5B /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
 		EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
 		EAGD /* AppGroupBLEDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAGD /* AppGroupBLEDriver.swift */; };
+		EB373633ECFEC7ED56EF72E4 /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EBCA636D502CF4367E32C7 /* TCPClientWizard.swift */; };
 		EBDS /* BLEDriverSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDS /* BLEDriverSeam.swift */; };
 		EBST /* AppGroupBLESeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBST /* AppGroupBLESeamTransport.swift */; };
 		EBSV /* AppGroupBLEServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBSV /* AppGroupBLEServer.swift */; };
 		EDF2F6B945FAA23366617FD6 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
 		EDL1B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
 		EDL2B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
+		F0B4F338DBAD9990B5E2617F /* IdenticonGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F020 /* IdenticonGenerator.swift */; };
+		F167B1253433E15BEC090E63 /* MigrationData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05B /* MigrationData.swift */; };
 		F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FD6A68A52A54D21FDB70324 /* RNSAPI */; };
 		F4E9991226B4D464017DA247 /* Lucide.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA586EB5F8EB62D2579CEAAB /* Lucide.swift */; };
+		F668FFF7B32D5423E62CCE4B /* ReviewConfigStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F059 /* ReviewConfigStep.swift */; };
+		F6BEF0E7AFA4ADE1168F08F1 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044 /* IdentityManagerView.swift */; };
+		F774614F8150F2E6F3F92796 /* Lucide.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA586EB5F8EB62D2579CEAAB /* Lucide.swift */; };
 		F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
-		F83A2212E43B329830919AFF /* BackgroundDeliveryGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */; };
 		FB2F3248AE405614B36BC798 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = E049A7D4D6D58690C0B674CE /* RNSAPI */; };
+		FC1149733FD2E4E009612DDF /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F7375908681A4DF99F125C7 /* CallKitManager.swift */; };
+		FC15AC0D65E2B67821CAFEE3 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = FE4D25F362FFD8A793C143FC /* LXSTSwift */; };
+		FCCD8B0C2F027D65D2DD8759 /* NomadNetBrowserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07F /* NomadNetBrowserService.swift */; };
 		FDE0DB7957C9D877D3E67367 /* AppGroupRNodeSeamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */; };
 		NERN2 /* NEReticulumNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = NERN1 /* NEReticulumNode.swift */; };
-		NMF1B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
 		NMF2B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
-		OBQ1B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		OBQ2B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		PNT001 /* PythonNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = PNT002 /* PythonNetworkTransport.swift */; };
-		PRB001 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
-		PXI1B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
-		SRB001 /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
+		RFT002 /* RuntimeFlavorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RFT001 /* RuntimeFlavorTests.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
-		TBDT /* BLESeamDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDT /* BLESeamDriverTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		C6825ACD06BF2495019C47AB /* PBXContainerItemProxy */ = {
+		7010CAD866AB1B15363DF273 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = PROJ /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4CAC30008285BCF92BD97428;
+			remoteInfo = ColumbaModelBApp;
+		};
+		FBE88AA266B2C98EA164D350 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = PROJ /* Project object */;
 			proxyType = 1;
@@ -218,19 +354,19 @@
 			isa = PBXContainerItemProxy;
 			containerPortal = PROJ /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = TTARG;
-			remoteInfo = ColumbaAppTests;
+			remoteGlobalIDString = TARG;
+			remoteInfo = ColumbaApp;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		039DD8D9BCB53A1A02C04D9C /* Embed App Extensions */ = {
+		7435EA87224EF17F5BA3D04A /* Embed App Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				48B07E3EF989716BF75BFEE5 /* ColumbaNetworkExtension.appex in Embed App Extensions */,
+				3D93C9AD83DBD69265B1F5EF /* ColumbaNetworkExtension.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -252,6 +388,7 @@
 		00A8D344945F752C18EF2D9E /* AudioManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 		11D4DB375C0C7BB62E8A8B23 /* ColumbaPython-Bridging-Header.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = "ColumbaPython-Bridging-Header.h"; sourceTree = "<group>"; };
 		1F7375908681A4DF99F125C7 /* CallKitManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
+		2B1D94BCDC14153F6C4D05B1 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		30A79B9ECDB4166F8A36A670 /* CallManagerCallKitTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallManagerCallKitTests.swift; sourceTree = "<group>"; };
 		34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PyLocalIdentity.swift; path = Python/Models/PyLocalIdentity.swift; sourceTree = "<group>"; };
 		34E6D26205158570EA4228EF /* AppGroupRNodeSeamWire.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppGroupRNodeSeamWire.swift; sourceTree = "<group>"; };
@@ -294,10 +431,12 @@
 		BKF002 /* BackendFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFactory.swift; sourceTree = "<group>"; };
 		CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonBLECallbackBridge.swift; sourceTree = "<group>"; };
 		D001472BC7DFD3CD7BF27F0C /* app */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = app; sourceTree = "<group>"; };
+		D33D0252383165C6829D2767 /* ColumbaModelBAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaModelBAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
 		DA586EB5F8EB62D2579CEAAB /* Lucide.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Lucide.swift; sourceTree = "<group>"; };
 		DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioRingBufferTests.swift; sourceTree = "<group>"; };
 		E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
+		E59ED1029D4A906764BC582F /* ColumbaModelBApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaModelBApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundVPNExplainer.swift; sourceTree = "<group>"; };
 		EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RNodeSeamTests.swift; sourceTree = "<group>"; };
 		EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonConfigWriter.swift; sourceTree = "<group>"; };
@@ -403,6 +542,7 @@
 		F083 /* MicronRenderContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronRenderContainer.swift; sourceTree = "<group>"; };
 		F084 /* MonospaceLineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonospaceLineView.swift; sourceTree = "<group>"; };
 		F085 /* ZoomableScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomableScrollView.swift; sourceTree = "<group>"; };
+		F0A5 /* ColumbaModelBApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaModelBApp.entitlements; sourceTree = "<group>"; };
 		FAGD /* AppGroupBLEDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBLEDriver.swift; sourceTree = "<group>"; };
 		FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackendPreference.swift; sourceTree = "<group>"; };
 		FBDS /* BLEDriverSeam.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEDriverSeam.swift; sourceTree = "<group>"; };
@@ -415,6 +555,7 @@
 		FF6CE45231CD48906B9C226D /* lucide.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = lucide.ttf; sourceTree = "<group>"; };
 		FMBS /* ModelBBLEService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelBBLEService.swift; sourceTree = "<group>"; };
 		FT03 /* MicronParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicronParserTests.swift; sourceTree = "<group>"; };
+		MB02 /* ModelBInboundReplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelBInboundReplay.swift; sourceTree = "<group>"; };
 		NERN1 /* NEReticulumNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEReticulumNode.swift; sourceTree = "<group>"; };
 		NMFF /* NomadNetFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NomadNetFetch.swift; sourceTree = "<group>"; };
 		OBQF /* OutboxQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxQueue.swift; sourceTree = "<group>"; };
@@ -422,11 +563,34 @@
 		PRB002 /* ProxyRnsBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProxyRnsBackend.swift; path = Sources/RNSBackendProxy/ProxyRnsBackend.swift; sourceTree = SOURCE_ROOT; };
 		PROD /* ColumbaApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		PXIF /* ProxyIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyIPC.swift; sourceTree = "<group>"; };
+		RFT001 /* RuntimeFlavorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RuntimeFlavorTests.swift; sourceTree = "<group>"; };
 		SRB002 /* SwiftRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwiftRNSBackend.swift; path = Sources/RNSBackendSwift/SwiftRNSBackend.swift; sourceTree = SOURCE_ROOT; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		B94B76698EB730570790D133 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D996B56197DBCF9E68B21D9D /* MapLibre in Frameworks */,
+				FC15AC0D65E2B67821CAFEE3 /* LXSTSwift in Frameworks */,
+				11D0621686D1D65C9602C911 /* RNSAPI in Frameworks */,
+				876F4CCF3FA441B67D08BBEC /* SwiftBLEBridge in Frameworks */,
+				E34B504A6DCC8F5E7F44E491 /* LXMFSwift in Frameworks */,
+				73B2FC9ECC25BA7B4AFF3D96 /* ReticulumSwift in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BA76B3E0FEB3B2D17ECBA3A8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4CD5BF2A4CA7A4E0FB498406 /* Foundation.framework in Frameworks */,
+				0E85864BF022C4B2A2595D0F /* ReticulumSwift in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		EFWBP /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -445,8 +609,8 @@
 				5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */,
 				F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */,
 				13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */,
-				2F8EC8212FC732AB00235991 /* ReticulumSwift in Frameworks */,
 				2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */,
+				83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -471,6 +635,14 @@
 			children = (
 			);
 			name = Util;
+			sourceTree = "<group>";
+		};
+		476B8AF0B6499F58B6425590 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				2B1D94BCDC14153F6C4D05B1 /* Foundation.framework */,
+			);
+			name = iOS;
 			sourceTree = "<group>";
 		};
 		4AD6205A86259FBAD00F37F1 /* RNSAPI */ = {
@@ -510,6 +682,7 @@
 			isa = PBXGroup;
 			children = (
 				3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */,
+				476B8AF0B6499F58B6425590 /* iOS */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -694,6 +867,7 @@
 				F023 /* Info.plist */,
 				F039 /* materialdesignicons.ttf */,
 				F075 /* ColumbaApp.entitlements */,
+				F0A5 /* ColumbaModelBApp.entitlements */,
 				E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */,
 				B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */,
 				FF6CE45231CD48906B9C226D /* lucide.ttf */,
@@ -777,6 +951,7 @@
 				F042 /* LocalIdentity.swift */,
 				F043 /* IdentityManager.swift */,
 				F04B /* LocationSharingManager.swift */,
+				MB02 /* ModelBInboundReplay.swift */,
 				F05C /* MigrationCrypto.swift */,
 				F05D /* MigrationExporter.swift */,
 				F05E /* MigrationImporter.swift */,
@@ -813,6 +988,7 @@
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
 				853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */,
 				6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */,
+				RFT001 /* RuntimeFlavorTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -869,6 +1045,8 @@
 				PROD /* ColumbaApp.app */,
 				EPROD /* ColumbaNetworkExtension.appex */,
 				TPROD /* ColumbaAppTests.xctest */,
+				E59ED1029D4A906764BC582F /* ColumbaModelBApp.app */,
+				D33D0252383165C6829D2767 /* ColumbaModelBAppTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -909,6 +1087,54 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		4CAC30008285BCF92BD97428 /* ColumbaModelBApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ED802EA6DB96B414E0C91AA9 /* Build configuration list for PBXNativeTarget "ColumbaModelBApp" */;
+			buildPhases = (
+				72A5174A252C574FFD0D17FD /* Sources */,
+				B94B76698EB730570790D133 /* Frameworks */,
+				0431DD0443BE7ACF0A521890 /* Resources */,
+				7435EA87224EF17F5BA3D04A /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				319B8A11E64848975741B387 /* PBXTargetDependency */,
+			);
+			name = ColumbaModelBApp;
+			packageProductDependencies = (
+				265C043240DBCD7A542021FC /* MapLibre */,
+				FE4D25F362FFD8A793C143FC /* LXSTSwift */,
+				F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */,
+				5D099DB326374C07812E3FBD /* SwiftBLEBridge */,
+				E0DE32143A4DF2A0284C1911 /* LXMFSwift */,
+				030380C51B178354F4D4E88F /* ReticulumSwift */,
+			);
+			productName = ColumbaModelBApp;
+			productReference = E59ED1029D4A906764BC582F /* ColumbaModelBApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A95531E5BB41AD06A7E635C1 /* ColumbaModelBAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4D4626E633E7025C9F5C0788 /* Build configuration list for PBXNativeTarget "ColumbaModelBAppTests" */;
+			buildPhases = (
+				BE984227C99798B516781FB3 /* Sources */,
+				BA76B3E0FEB3B2D17ECBA3A8 /* Frameworks */,
+				E39B3AF4DC41DD5CD7259D9C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5EC1A1137842C28B8B4B8244 /* PBXTargetDependency */,
+			);
+			name = ColumbaModelBAppTests;
+			packageProductDependencies = (
+				15F82FBE10E56E30D4706B40 /* ReticulumSwift */,
+			);
+			productName = ColumbaModelBAppTests;
+			productReference = D33D0252383165C6829D2767 /* ColumbaModelBAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		ETARG /* ColumbaNetworkExtension */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = EBCLST /* Build configuration list for PBXNativeTarget "ColumbaNetworkExtension" */;
@@ -938,12 +1164,10 @@
 				RESBP /* Resources */,
 				9796AB46906D510ACD8F0AB1 /* Embed Frameworks */,
 				CF4F87412D5E39178E82799E /* Install Python stdlib & process dylibs */,
-				039DD8D9BCB53A1A02C04D9C /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				B4BE17F06FA1F20BA8E46747 /* PBXTargetDependency */,
 			);
 			name = ColumbaApp;
 			packageProductDependencies = (
@@ -951,8 +1175,8 @@
 				A49337EFC55C10979AEB702B /* LXSTSwift */,
 				0FD6A68A52A54D21FDB70324 /* RNSAPI */,
 				5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */,
-				2F8EC8202FC732AB00235991 /* ReticulumSwift */,
 				2F8EC8222FC732AF00235991 /* LXMFSwift */,
+				A1380C075A9F67E1B173EA94 /* ReticulumSwift */,
 			);
 			productName = ColumbaApp;
 			productReference = PROD /* ColumbaApp.app */;
@@ -993,6 +1217,13 @@
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
+					4CAC30008285BCF92BD97428 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					A95531E5BB41AD06A7E635C1 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = 4CAC30008285BCF92BD97428;
+					};
 					ETARG = {
 						CreatedOnToolsVersion = 15.0;
 					};
@@ -1028,11 +1259,32 @@
 				TARG /* ColumbaApp */,
 				ETARG /* ColumbaNetworkExtension */,
 				TTARG /* ColumbaAppTests */,
+				4CAC30008285BCF92BD97428 /* ColumbaModelBApp */,
+				A95531E5BB41AD06A7E635C1 /* ColumbaModelBAppTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		0431DD0443BE7ACF0A521890 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D116F7C8ADEB284C5AF41963 /* Assets.xcassets in Resources */,
+				485B8EFF327C28C1A5F0727B /* materialdesignicons.ttf in Resources */,
+				AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */,
+				C17B4B4AD850DBC3CD27AEC0 /* JetBrainsMono-Bold.ttf in Resources */,
+				DF2A7839A4D81C4DAEEF6A2A /* lucide.ttf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E39B3AF4DC41DD5CD7259D9C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		RESBP /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -1067,12 +1319,166 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n\n# Swift-native backend build (COLUMBA_BACKEND_SWIFT): no embedded Python,\n# so skip the wheels copy + install_python entirely (leaner build, no\n# multi-hundred-MB app_packages copy). The Python.xcframework is still\n# linked (build phases are not config-scoped) — full unlink is Phase 4 (two\n# targets / gen-time).\ncase \" $SWIFT_ACTIVE_COMPILATION_CONDITIONS \" in\n  *\" COLUMBA_BACKEND_SWIFT \"*) echo \"note: Swift backend — skipping Python wheels/install\"; exit 0 ;;\nesac\n\n# Copy platform-appropriate wheels into <app>/app_packages/ before\n# install_python processes the .so extensions inside them.\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || {\n  echo \"error: $WHEELS_SRC missing — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages";
+			shellScript = "set -e\n\n# Copy platform-appropriate wheels into <app>/app_packages/ before\n# install_python processes the .so extensions inside them.\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || {\n  echo \"error: $WHEELS_SRC missing — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		72A5174A252C574FFD0D17FD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9C2C61E20925DB726EC2C934 /* ColumbaApp.swift in Sources */,
+				BBF80EA2BC42E6E7FF17A171 /* Theme.swift in Sources */,
+				89551A07A2FB8693E6C465FC /* ChatsViewModel.swift in Sources */,
+				35AAE3A0AE037F5B9305CFC1 /* ContactsViewModel.swift in Sources */,
+				3B33F02402537B1825B64EEC /* MessagingViewModel.swift in Sources */,
+				9673457897893BF9DE512A0F /* SettingsViewModel.swift in Sources */,
+				B71F90BE936BAF660BA0821B /* MainTabView.swift in Sources */,
+				AF0B30F4F05BB35FCC50D99F /* ChatsView.swift in Sources */,
+				DAF36A8899258710724C1FF9 /* ConversationRow.swift in Sources */,
+				795F109CB7D59D7EB2DD805C /* ContactsView.swift in Sources */,
+				140E03C294121F7FA2D478A9 /* ContactCard.swift in Sources */,
+				C6816EEC9864A2903840C8AC /* NetworkAnnouncesTab.swift in Sources */,
+				BED8754AAD30B1CB58755EF8 /* MessagingView.swift in Sources */,
+				C204F5778ABB560C1FD4DC60 /* MessageBubble.swift in Sources */,
+				D93546FFCB0106CF3F68B2C5 /* MessageDetailView.swift in Sources */,
+				D709D8EDF36F85DEB5AABEC4 /* MessageInputBar.swift in Sources */,
+				A48DAD459DFDFDC94AC92B5A /* SettingsView.swift in Sources */,
+				31F207DBD45E2CA682A3F830 /* MyIdentityView.swift in Sources */,
+				22C0D4CEA5878FC810F04D1A /* ExpandableSettingsCard.swift in Sources */,
+				80D6B89564EAC050DD8FC6EC /* Identicon.swift in Sources */,
+				F0B4F338DBAD9990B5E2617F /* IdenticonGenerator.swift in Sources */,
+				469A907E6FC79CED8F8B5F8D /* MapView.swift in Sources */,
+				D168BB4F9E33FF48BD5D53D1 /* MapLibreMapView.swift in Sources */,
+				369F5A4E725880AF2972AFD2 /* AppServices.swift in Sources */,
+				D591F21C232FBE2AF23D50F5 /* BackendFactory.swift in Sources */,
+				C60C9313A6AFB95FCFB8969A /* MessageRepository.swift in Sources */,
+				90BD158667A5C627CFB1DEBF /* SettingsRepository.swift in Sources */,
+				489A5C72A9C4C3FAB742F3E2 /* NotificationObserver.swift in Sources */,
+				87358446F5D54F616D07CCEE /* IncomingMessageHandler.swift in Sources */,
+				B5A7B590DEFA2B213D8D5754 /* InterfaceRepository.swift in Sources */,
+				147A84617097826BCE5DBD49 /* InterfaceManagementViewModel.swift in Sources */,
+				8EF58D2BD45FCDF79EDB49AB /* InterfaceManagementScreen.swift in Sources */,
+				B2EF01CCB8B50326073D8171 /* NodeDetailsView.swift in Sources */,
+				98FE1EAB00C655BFF7D46594 /* PropagationNodeManager.swift in Sources */,
+				655FFFEC5C528B994F08822E /* NetworkStatusViewModel.swift in Sources */,
+				74FD5AD4D082F479A53DDA93 /* NetworkStatusView.swift in Sources */,
+				11DE32B4ABEF3646B6B42728 /* MaterialDesignIcons.swift in Sources */,
+				5AFC71BEEE6F92017B41233F /* ProfileIcon.swift in Sources */,
+				8617F06252A9D8A0C052959B /* IconPickerView.swift in Sources */,
+				D82A196EF2609A4F79F0D6B7 /* NotificationService.swift in Sources */,
+				1F678E51F2B3D1E715E9FF6F /* AutoAnnounceManager.swift in Sources */,
+				35E623C9C072B898A0CB551D /* LocalIdentity.swift in Sources */,
+				E52A4F911C392F54D134116D /* IdentityManager.swift in Sources */,
+				F6BEF0E7AFA4ADE1168F08F1 /* IdentityManagerView.swift in Sources */,
+				97FCC1B1FF91DD6EF2706B04 /* LoRaPresets.swift in Sources */,
+				1BC630C0471DC5E53AFA3E74 /* BLEDevicePickerSheet.swift in Sources */,
+				32BFE0E43B1F4246502992E3 /* RNodeConfigSheet.swift in Sources */,
+				764C62709969DFDB3AC7D820 /* QRScannerView.swift in Sources */,
+				3E8EDA16402CE9043F338509 /* AddContactSheet.swift in Sources */,
+				A0883D932913C56C3C7FD394 /* LocationSharingManager.swift in Sources */,
+				861533706E74F637CD32C1CC /* OnboardingView.swift in Sources */,
+				C0904C776958B1A10E0A8128 /* WelcomePage.swift in Sources */,
+				B4C378BDA13BC155719B5440 /* IdentityPage.swift in Sources */,
+				422AB44ACCB2031F9DD721B2 /* ConnectivityPage.swift in Sources */,
+				B064E17BB904D8A0E1986686 /* PermissionsPage.swift in Sources */,
+				8F65ED2745669655D14B1C43 /* CompletePage.swift in Sources */,
+				D5401B855C79A3F5DA1689F6 /* OnboardingViewModel.swift in Sources */,
+				0295EC36525A8FF195D14B55 /* TcpCommunityServer.swift in Sources */,
+				86182491293F826E8940E753 /* RNodeWizardView.swift in Sources */,
+				2C21D06B5E27DB547378A9D9 /* DeviceDiscoveryStep.swift in Sources */,
+				06974CD0DFFF5479418AA66D /* RegionSelectionStep.swift in Sources */,
+				D4EB4102AAFA74BE78305EAA /* ModemPresetStep.swift in Sources */,
+				8EB34878FB401C9E5F9F5202 /* FrequencySlotStep.swift in Sources */,
+				F668FFF7B32D5423E62CCE4B /* ReviewConfigStep.swift in Sources */,
+				217501714D71B706FCBB3F35 /* RNodeProbeScanner.swift in Sources */,
+				9B31559BF8D3222DF028C72C /* RNodeWizardViewModel.swift in Sources */,
+				F167B1253433E15BEC090E63 /* MigrationData.swift in Sources */,
+				20FE359F318BADBFD1AB0E2B /* MigrationCrypto.swift in Sources */,
+				81B38F51CE308680ACB9ACB2 /* MigrationExporter.swift in Sources */,
+				5AB385A087D36D5CE40E54F1 /* MigrationImporter.swift in Sources */,
+				9B76650A549992655449B019 /* MigrationViewModel.swift in Sources */,
+				7A98E91E6F7A88EDD4012019 /* MigrationScreen.swift in Sources */,
+				D5A01F38C9E4B6B77C21B838 /* OfflineMapManager.swift in Sources */,
+				E19091DE159BF3655E5593A3 /* OfflineMapDownloadView.swift in Sources */,
+				BE3C19C7804FA366826A5A7A /* OfflineMapsScreen.swift in Sources */,
+				0A7FF8FA55B27781DF23C7E8 /* ThemeColors.swift in Sources */,
+				26D6E3545012268714C637D9 /* ThemeManager.swift in Sources */,
+				B1A5B614BBD418B4FEEEB06C /* AppearanceCard.swift in Sources */,
+				0185FB044DEA937616265D23 /* CustomThemeEditorView.swift in Sources */,
+				33CCBDB91636352EFC4A7790 /* BLEConnectionsView.swift in Sources */,
+				7E4FB7E6B06FAF5FFC9354B8 /* SharedDefaults.swift in Sources */,
+				113FFF9C5A228CC0C294A3D9 /* SharedFrameQueue.swift in Sources */,
+				2332846F7A8E0E2234D7EF8D /* ExtensionDiagLog.swift in Sources */,
+				CE8E3B8292DA54170D020367 /* AppGroupPaths.swift in Sources */,
+				7A9BCAF4AA8130159163BA6C /* OnboardingRestoreSheet.swift in Sources */,
+				58560228AFEDBA4201D9F9D4 /* PlatformCompat.swift in Sources */,
+				C126E88E13D9DB7CCE7AD8A0 /* MicronDocument.swift in Sources */,
+				6327E961A4DD4234D71E1D03 /* MicronParser.swift in Sources */,
+				FCCD8B0C2F027D65D2DD8759 /* NomadNetBrowserService.swift in Sources */,
+				A40504A5D79C49DA50996680 /* NomadNetBrowserViewModel.swift in Sources */,
+				973B4BBFD50C0935D1525F8E /* NomadNetBrowserView.swift in Sources */,
+				181FFC68FA29599C2E5C88A4 /* MicronDocumentView.swift in Sources */,
+				D3F8A25E2E3D415E8F9779D0 /* MicronRenderContainer.swift in Sources */,
+				2DEF38CCE53F632284B5A50D /* MonospaceLineView.swift in Sources */,
+				40EBFB15B9FD4D5081AF4EBC /* ZoomableScrollView.swift in Sources */,
+				AA9D3715FB399E675BD53B41 /* PythonConfigWriter.swift in Sources */,
+				0B768533EC90008D3E23C326 /* AudioManager.swift in Sources */,
+				FC1149733FD2E4E009612DDF /* CallKitManager.swift in Sources */,
+				7A8C0A9310AA29BD5DA75FB5 /* CallManager.swift in Sources */,
+				D970871E33F40AA65F2CE793 /* CallControlButton.swift in Sources */,
+				82010207856E1B25E8137512 /* CodecSelectionSheet.swift in Sources */,
+				2AFE85F0CA5EFEDF75A7C1E5 /* IncomingCallScreen.swift in Sources */,
+				E63DE54C6FD31D240E66BD5B /* PttButton.swift in Sources */,
+				E079C55745CBDD622CA51842 /* VoiceCallScreen.swift in Sources */,
+				0651ADD246B2BD2C0006305E /* CodecProfileInfo.swift in Sources */,
+				ADABD423CE22B9E00BC5D7F3 /* BackendPreference.swift in Sources */,
+				E21364EEE2883AB0D1012CE0 /* CeaseTelemetry.swift in Sources */,
+				E280C50039F108EE9AF83F86 /* DiscoveredDevice.swift in Sources */,
+				68093499A352C7C6358465BD /* AutoAnnouncePolicy.swift in Sources */,
+				2DAA350A34E3332DEC1545B0 /* PeerChildInterfaceRegistry.swift in Sources */,
+				697B28367B07702842284116 /* TCPClientWizardViewModel.swift in Sources */,
+				EB373633ECFEC7ED56EF72E4 /* TCPClientWizard.swift in Sources */,
+				F774614F8150F2E6F3F92796 /* Lucide.swift in Sources */,
+				C4F369EC98C2B903701CE74A /* SyncStatusBottomSheet.swift in Sources */,
+				BDEAB854FC0F5ABB7188A865 /* ProxyRnsBackend.swift in Sources */,
+				46C333262AE771054EDF0231 /* TunnelManager.swift in Sources */,
+				577EE1AF377E314E961710B3 /* ExtensionFrameReader.swift in Sources */,
+				DF6654D386454C56AF75302E /* ModelBBLEService.swift in Sources */,
+				2C8DBC92FB549628044532C4 /* BackgroundTransportView.swift in Sources */,
+				3C22AABC6B36F30028DF5A5A /* BackgroundVPNExplainer.swift in Sources */,
+				15D4C7BF2F5EBFB685022ED2 /* BackgroundDeliveryGateView.swift in Sources */,
+				3D759EC171FEA82AD5A804DB /* BackgroundDeliveryPage.swift in Sources */,
+				5C05E5EC2A287FEAD018BB36 /* AppGroupBridgeInterface.swift in Sources */,
+				6DFD1336E74B3E8F8131A97B /* AppGroupBLEDriver.swift in Sources */,
+				895BF78C85D1C5471DA53961 /* AppGroupBLESeamTransport.swift in Sources */,
+				384033BE99794CB11185E99C /* AppGroupBLEServer.swift in Sources */,
+				36AA591CD5DF055FA6124E7D /* BLEDriverSeam.swift in Sources */,
+				884E998DD3B41BE3CAE55B70 /* ProxyIPC.swift in Sources */,
+				E154CBBB80370FD16B8319CA /* OutboxQueue.swift in Sources */,
+				236B504FBA8BC82FA4808C19 /* ModelBRNodeService.swift in Sources */,
+				DCD98FD7695F22CC597C3FC4 /* AppGroupRNodeSeamTransport.swift in Sources */,
+				429607039454543AB6316748 /* AppGroupRNodeSeamWire.swift in Sources */,
+				5C7438876260CE1CD77FC20A /* AppGroupRNodeServer.swift in Sources */,
+				CC036F8B85839F5FC3C138E2 /* RNodeSeam.swift in Sources */,
+				47FC07D2AE8ECD5D88A868BA /* PropagationSeam.swift in Sources */,
+				33E0E91CAEFB07F13C04637D /* SwiftRNSBackend.swift in Sources */,
+				6965E7A95909A97BDBA20535 /* NomadNetFetch.swift in Sources */,
+				4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BE984227C99798B516781FB3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3AD864B112B2E1810E510599 /* BLESeamDriverTests.swift in Sources */,
+				5A782C77CC09D0601E7D945C /* RNodeSeamTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ESRCBP /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -1184,20 +1590,8 @@
 				071B /* BLEConnectionsView.swift in Sources */,
 				074B /* SharedDefaults.swift in Sources */,
 				076B /* SharedFrameQueue.swift in Sources */,
-				0BST /* AppGroupBLESeamTransport.swift in Sources */,
-				0BSV /* AppGroupBLEServer.swift in Sources */,
-				0BDS /* BLEDriverSeam.swift in Sources */,
-				0AGD /* AppGroupBLEDriver.swift in Sources */,
-				AGB1B /* AppGroupBridgeInterface.swift in Sources */,
 				EDL1B /* ExtensionDiagLog.swift in Sources */,
 				AGP1B /* AppGroupPaths.swift in Sources */,
-				PXI1B /* ProxyIPC.swift in Sources */,
-				NMF1B /* NomadNetFetch.swift in Sources */,
-				OBQ1B /* OutboxQueue.swift in Sources */,
-				077B /* TunnelManager.swift in Sources */,
-				BGTB /* BackgroundTransportView.swift in Sources */,
-				078B /* ExtensionFrameReader.swift in Sources */,
-				0MBS /* ModelBBLEService.swift in Sources */,
 				079B /* OnboardingRestoreSheet.swift in Sources */,
 				07AB /* PlatformCompat.swift in Sources */,
 				07CB /* MicronDocument.swift in Sources */,
@@ -1216,8 +1610,6 @@
 				4CC7FE5D6B0D6557B8868210 /* PythonBridge.swift in Sources */,
 				C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */,
 				668C0A33D82AB3D07CC52E83 /* PythonRNSBackend.swift in Sources */,
-				SRB001 /* SwiftRNSBackend.swift in Sources */,
-				PRB001 /* ProxyRnsBackend.swift in Sources */,
 				69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */,
 				71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */,
 				D33B15C781E3C98A5CBD06F3 /* CallKitManager.swift in Sources */,
@@ -1237,17 +1629,8 @@
 				AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */,
 				EDF2F6B945FAA23366617FD6 /* TCPClientWizardViewModel.swift in Sources */,
 				55F3BF7D600C32E07B7B8C26 /* TCPClientWizard.swift in Sources */,
-				6CFC16593387554678F3928F /* RNodeSeam.swift in Sources */,
-				A746EE4A4494C45D97908924 /* AppGroupRNodeSeamWire.swift in Sources */,
-				A6EA4093A9929FCEAB44C4B6 /* AppGroupRNodeSeamTransport.swift in Sources */,
-				A9DB03705BE9BA74A494310C /* AppGroupRNodeServer.swift in Sources */,
-				4120DE0B1AC043758779DD40 /* ModelBRNodeService.swift in Sources */,
 				F4E9991226B4D464017DA247 /* Lucide.swift in Sources */,
-				AAD9231170B11C89EF80F9B8 /* PropagationSeam.swift in Sources */,
 				1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */,
-				2B502D5AFE0E2C0D54CC144C /* BackgroundVPNExplainer.swift in Sources */,
-				F83A2212E43B329830919AFF /* BackgroundDeliveryGateView.swift in Sources */,
-				80D0868B2491DB301F772D63 /* BackgroundDeliveryPage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1257,151 +1640,69 @@
 			files = (
 				T003 /* MicronParserTests.swift in Sources */,
 				2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */,
-				TBDT /* BLESeamDriverTests.swift in Sources */,
 				A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */,
 				E49B977D311DA1C9ACE14CAB /* CallManagerCallKitTests.swift in Sources */,
 				9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */,
 				ACT02 /* AnnounceClassificationTests.swift in Sources */,
-				04D735AF318341AD65ABFE61 /* RNodeSeamTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
 				26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */,
+				RFT002 /* RuntimeFlavorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		B4BE17F06FA1F20BA8E46747 /* PBXTargetDependency */ = {
+		319B8A11E64848975741B387 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = ColumbaNetworkExtension;
 			target = ETARG /* ColumbaNetworkExtension */;
-			targetProxy = C6825ACD06BF2495019C47AB /* PBXContainerItemProxy */;
+			targetProxy = FBE88AA266B2C98EA164D350 /* PBXContainerItemProxy */;
+		};
+		5EC1A1137842C28B8B4B8244 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ColumbaModelBApp;
+			target = 4CAC30008285BCF92BD97428 /* ColumbaModelBApp */;
+			targetProxy = 7010CAD866AB1B15363DF273 /* PBXContainerItemProxy */;
 		};
 		TTDEP /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = TTARG /* ColumbaAppTests */;
+			target = TARG /* ColumbaApp */;
 			targetProxy = TTPROXY /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		19741F31C64D608B53A0BD61 /* Debug-Swift */ = {
+		8505672A280AE4778A516B74 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = dwarf;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				GCC_C_LANGUAGE_STANDARD = gnu17;
-				GCC_DYNAMIC_NO_PIC = NO;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_OPTIMIZATION_LEVEL = 0;
-				GCC_PREPROCESSOR_DEFINITIONS = (
-					"DEBUG=1",
-					"$(inherited)",
-				);
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
-				MTL_FAST_MATH = YES;
-				ONLY_ACTIVE_ARCH = YES;
-				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED COLUMBA_MIGRATION_ENABLED $(inherited)";
-				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-			};
-			name = "Debug-Swift";
-		};
-		1CE9BF08C76D04B9FB6ED9C9 /* Release-Swift */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = F07B /* Signing.xcconfig */;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
+				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 2;
-				DEVELOPMENT_TEAM = M2977H5PM5;
-				ENABLE_PREVIEWS = YES;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Columba;
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Columba uses the camera to scan QR codes for adding contacts.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Columba uses local network access to discover nearby Reticulum peers and connect to TCP servers on your network.";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Columba uses background location to share your position with peers on the mesh network.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Columba uses your location to show your position on the map and share it with peers.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Columba uses the microphone for voice calls over the mesh network.";
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 0.0.3;
-				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.ColumbaModelB.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION COLUMBA_ONBOARDING_ENABLED";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_ONBOARDING_ENABLED COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaModelBApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaModelBApp";
 			};
-			name = "Release-Swift";
+			name = Release;
 		};
-		22F92FA927670E44C5E34001 /* Debug-Swift */ = {
+		8EF6B3D866C818B668A4599F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = F07B /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaApp.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaModelBApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 2;
@@ -1432,15 +1733,14 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_BACKEND_SWIFT ENABLE_NETWORK_EXTENSION COLUMBA_ONBOARDING_ENABLED";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_ONBOARDING_ENABLED COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
-			name = "Debug-Swift";
+			name = Debug;
 		};
-		40664B29B91154746B7404C5 /* Release-Swift */ = {
+		A8529EE132E360AFF09B6CF8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -1449,148 +1749,18 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.ColumbaModelB.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_ONBOARDING_ENABLED COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaModelBApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaModelBApp";
 			};
-			name = "Release-Swift";
-		};
-		4DDB99DC9C9364354F194D97 /* Debug-Swift */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = F07B /* Signing.xcconfig */;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 0.0.3;
-				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = "Debug-Swift";
-		};
-		834F37C59F9C28697BFC834F /* Release-Swift */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				GCC_C_LANGUAGE_STANDARD = gnu17;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MTL_ENABLE_DEBUG_INFO = NO;
-				MTL_FAST_MATH = YES;
-				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "COLUMBA_NOMADNET_ENABLED COLUMBA_RNODE_ENABLED $(inherited)";
-				SWIFT_COMPILATION_MODE = wholemodule;
-				VALIDATE_PRODUCT = YES;
-			};
-			name = "Release-Swift";
-		};
-		937AA4F4090BA98BCC8888B0 /* Debug-Swift */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ColumbaApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ColumbaApp";
-			};
-			name = "Debug-Swift";
-		};
-		BB9D1E96F186BDF9EBE59FE3 /* Release-Swift */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = F07B /* Signing.xcconfig */;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 0.0.3;
-				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = "Release-Swift";
+			name = Debug;
 		};
 		DBG /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -1663,6 +1833,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = M2977H5PM5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -1689,6 +1860,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaNetworkExtension/ColumbaNetworkExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = M2977H5PM5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
@@ -1702,6 +1874,50 @@
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		FEB9841D78FA1415C33510A7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F07B /* Signing.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Sources/ColumbaApp/Resources/ColumbaModelBApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = M2977H5PM5;
+				ENABLE_PREVIEWS = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Columba;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Columba uses the camera to scan QR codes for adding contacts.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Columba uses local network access to discover nearby Reticulum peers and connect to TCP servers on your network.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Columba uses background location to share your position with peers on the mesh network.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Columba uses your location to show your position on the map and share it with peers.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Columba uses the microphone for voice calls over the mesh network.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.0.3;
+				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_ONBOARDING_ENABLED COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1804,6 +2020,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_PYTHON";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -1848,6 +2065,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_PYTHON";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/PythonBridge/ColumbaPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -1868,6 +2086,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_PYTHON";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
@@ -1889,6 +2108,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_PYTHON";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_VERSION = 5.0;
@@ -1900,13 +2120,20 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		4D4626E633E7025C9F5C0788 /* Build configuration list for PBXNativeTarget "ColumbaModelBAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A8529EE132E360AFF09B6CF8 /* Debug */,
+				8505672A280AE4778A516B74 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		BCLST /* Build configuration list for PBXNativeTarget "ColumbaApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				TDBG /* Debug */,
 				TREL /* Release */,
-				22F92FA927670E44C5E34001 /* Debug-Swift */,
-				1CE9BF08C76D04B9FB6ED9C9 /* Release-Swift */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -1916,8 +2143,15 @@
 			buildConfigurations = (
 				EDBG /* Debug */,
 				EREL /* Release */,
-				4DDB99DC9C9364354F194D97 /* Debug-Swift */,
-				BB9D1E96F186BDF9EBE59FE3 /* Release-Swift */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ED802EA6DB96B414E0C91AA9 /* Build configuration list for PBXNativeTarget "ColumbaModelBApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8EF6B3D866C818B668A4599F /* Debug */,
+				FEB9841D78FA1415C33510A7 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -1927,8 +2161,6 @@
 			buildConfigurations = (
 				DBG /* Debug */,
 				REL /* Release */,
-				19741F31C64D608B53A0BD61 /* Debug-Swift */,
-				834F37C59F9C28697BFC834F /* Release-Swift */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -1938,8 +2170,6 @@
 			buildConfigurations = (
 				TTDBG /* Debug */,
 				TTREL /* Release */,
-				937AA4F4090BA98BCC8888B0 /* Debug-Swift */,
-				40664B29B91154746B7404C5 /* Release-Swift */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -1994,14 +2224,24 @@
 			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
 			productName = ReticulumSwift;
 		};
+		030380C51B178354F4D4E88F /* ReticulumSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
+			productName = ReticulumSwift;
+		};
 		0FD6A68A52A54D21FDB70324 /* RNSAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RNSAPI;
 		};
-		2F8EC8202FC732AB00235991 /* ReticulumSwift */ = {
+		15F82FBE10E56E30D4706B40 /* ReticulumSwift */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
 			productName = ReticulumSwift;
+		};
+		265C043240DBCD7A542021FC /* MapLibre */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
+			productName = MapLibre;
 		};
 		2F8EC8222FC732AF00235991 /* LXMFSwift */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -2009,6 +2249,10 @@
 			productName = LXMFSwift;
 		};
 		5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwiftBLEBridge;
+		};
+		5D099DB326374C07812E3FBD /* SwiftBLEBridge */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftBLEBridge;
 		};
@@ -2021,6 +2265,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
 			productName = LXMFSwift;
+		};
+		A1380C075A9F67E1B173EA94 /* ReticulumSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
+			productName = ReticulumSwift;
 		};
 		A49337EFC55C10979AEB702B /* LXSTSwift */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -2049,6 +2298,20 @@
 		E049A7D4D6D58690C0B674CE /* RNSAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RNSAPI;
+		};
+		E0DE32143A4DF2A0284C1911 /* LXMFSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
+			productName = LXMFSwift;
+		};
+		F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RNSAPI;
+		};
+		FE4D25F362FFD8A793C143FC /* LXSTSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
+			productName = LXSTSwift;
 		};
 		P002 /* MapLibre */ = {
 			isa = XCSwiftPackageProductDependency;

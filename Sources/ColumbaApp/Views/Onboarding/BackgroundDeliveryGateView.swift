@@ -17,7 +17,7 @@
 //  starts the tunnel and, once it connects, resumes app initialization.
 //
 
-#if ENABLE_NETWORK_EXTENSION
+#if COLUMBA_RUNTIME_MODEL_B
 import SwiftUI
 
 struct BackgroundDeliveryGateView: View {

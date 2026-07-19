@@ -12,7 +12,7 @@ import RNSAPI
 import CoreLocation
 import UIKit
 #endif
-#if ENABLE_NETWORK_EXTENSION
+#if COLUMBA_RUNTIME_MODEL_B
 // For NEVPNStatus, used by the background-transport status helpers below.
 import NetworkExtension
 #endif
@@ -48,7 +48,7 @@ struct SettingsView: View {
     @State private var showNetworkStatus = false
     @State private var showBLEConnections = false
     @State private var showDataMigration = false
-    #if ENABLE_NETWORK_EXTENSION
+    #if COLUMBA_RUNTIME_MODEL_B
     /// Presents the background-transport explainer / enable sheet.
     @State private var showBackgroundTransport = false
     #endif
@@ -67,17 +67,11 @@ struct SettingsView: View {
                         // Network
                         networkCard(vm)
 
-                        // Background Transport — the Network Extension VPN
-                        // tunnel that keeps RNS alive when the app is
-                        // backgrounded. Hidden under the Python RNS stack
-                        // because the previous implementation routed
-                        // reticulum-swift's TCP socket through
-                        // PacketTunnelProvider; Python's RNS owns its
-                        // sockets and needs a different architecture
-                        // (likely a Network Extension that pumps the
-                        // Python event loop, or a background-task wake
-                        // approach). Phase 2 work.
-                        #if ENABLE_NETWORK_EXTENSION
+                        // Background Transport — the Model B Network Extension VPN
+                        // tunnel that keeps the experimental native node alive when
+                        // the app is backgrounded. It is compiled entirely out of the
+                        // shipping Python product.
+                        #if COLUMBA_RUNTIME_MODEL_B
                         backgroundTransportCard()
                         #endif
 
@@ -123,16 +117,6 @@ struct SettingsView: View {
 
                         // Transport Mode (advanced)
                         transportModeCard(vm)
-
-                        // Network Backend (advanced) — pick the RNS engine.
-                        // Only meaningful when both engines are present. A
-                        // COLUMBA_BACKEND_SWIFT build strips the embedded Python
-                        // wheels (see the "Install Python stdlib" build phase),
-                        // so "Embedded Python" would be a guaranteed dead-end —
-                        // hide the control entirely on Swift-only builds.
-                        #if !COLUMBA_BACKEND_SWIFT
-                        networkBackendCard(vm)
-                        #endif
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -410,67 +394,11 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Network Backend Card
-
-    /// Advanced control selecting the RNS engine: embedded Python (default —
-    /// the reference RNS/LXMF stack via CPython) vs the native Swift
-    /// reticulum-swift/LXMF-swift port (experimental). Both are built into the
-    /// binary; `BackendFactory` reads the choice once at startup, so a switch
-    /// applies on the next app launch (the backend can't be hot-swapped live).
-    private func networkBackendCard(_ vm: SettingsViewModel) -> some View {
-        ExpandableSettingsCard(
-            icon: "cpu",
-            title: "Network Backend",
-            isExpanded: Binding(get: { vm.isBackendExpanded }, set: { vm.isBackendExpanded = $0 })
-        ) {
-            Text("Choose the Reticulum engine. Embedded Python runs the reference RNS/LXMF stack (default, battle-tested). Swift-native uses the pure-Swift reticulum-swift/LXMF-swift port (experimental).")
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Picker("", selection: Binding(
-                get: { vm.useSwiftBackend },
-                set: { newValue in
-                    vm.useSwiftBackend = newValue
-                    vm.applyBackendSelection()
-                }
-            )) {
-                Text("Embedded Python").tag(false)
-                Text("Swift-native").tag(true)
-            }
-            .pickerStyle(.segmented)
-
-
-            if vm.backendChangePending {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                    Text("Relaunch Columba to apply the new backend.")
-                        .font(.caption2)
-                }
-                .foregroundStyle(Theme.warning)
-            } else {
-                Text("Switching takes effect after you relaunch Columba.")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
-            }
-        }
-    }
-
-    #if ENABLE_NETWORK_EXTENSION
+    #if COLUMBA_RUNTIME_MODEL_B
     // MARK: - Background Transport Card
     //
-    // Currently compile-guarded off. The previous wiring tied each
-    // toggle into reticulum-swift's `TCPInterface.beginTunnelMode` /
-    // `endTunnelMode`, which routed outbound bytes through the
-    // PacketTunnelProvider extension. The Python RNS migration deletes
-    // that entire path (the Compat-layer TCPInterface has no tunnel
-    // mode) and replaces it with rns_bridge.py's own socket. Bringing
-    // background transport back means re-architecting the NE side to
-    // either (a) drive Python's event loop from within the extension
-    // (heavy — needs CPython embedded twice) or (b) re-wake the app
-    // via BGProcessingTask + silent push when a peer announces and
-    // immediately polls drain_events. Phase 2/3.
+    // Model B owns the Network Extension and its tunnel lifecycle. The entire
+    // card and its NetworkExtension types are absent from the shipping Python app.
 
     @ViewBuilder
     private func backgroundTransportCard() -> some View {

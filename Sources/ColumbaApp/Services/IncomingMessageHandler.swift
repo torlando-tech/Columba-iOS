@@ -11,6 +11,94 @@ import RNSAPI
 import UserNotifications
 import os.log
 
+/// Serializes every app-process read/modify/write of `reactions_json` across
+/// incoming handlers and local UI writes. The database update remains the
+/// durable commit point; the gate prevents stale concurrent snapshots from
+/// overwriting another reaction or its replay ledger entry.
+actor ReactionMutationGate {
+    static let shared = ReactionMutationGate()
+
+    private var held = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func withLock<T>(_ operation: () async throws -> T) async rethrows -> T {
+        await acquire()
+        do {
+            let result = try await operation()
+            release()
+            return result
+        } catch {
+            release()
+            throw error
+        }
+    }
+
+    private func acquire() async {
+        if !held {
+            held = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            held = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
+/// Encodes a durable idempotency ledger inside the target message's single
+/// `reactions_json` column. Updating the visible reaction and recording the
+/// control-message hash therefore happen in one database UPDATE. If the app is
+/// terminated before the separate control-row deletion, replay sees the hash
+/// and cannot toggle the reaction a second time.
+enum ReactionLedger {
+    static let processedKey = "__columba_internal_processed_reaction_hashes_v1"
+
+    struct ApplyResult {
+        let state: [String: [String]]
+        let didApply: Bool
+    }
+
+    static func applying(
+        emoji: String,
+        sender: String,
+        reactionMessageHash: String,
+        to current: [String: [String]]
+    ) -> ApplyResult {
+        var state = current
+        var processed = state[processedKey] ?? []
+        guard !processed.contains(reactionMessageHash) else {
+            return ApplyResult(state: state, didApply: false)
+        }
+
+        var senders = state[emoji] ?? []
+        if senders.contains(sender) {
+            senders.removeAll { $0 == sender }
+        } else {
+            senders.append(sender)
+        }
+        if senders.isEmpty {
+            state.removeValue(forKey: emoji)
+        } else {
+            state[emoji] = senders
+        }
+
+        processed.append(reactionMessageHash)
+        state[processedKey] = processed
+        return ApplyResult(state: state, didApply: true)
+    }
+
+    static func visibleReactions(_ state: [String: [String]]) -> [String: [String]] {
+        state.filter { $0.key != processedKey }
+    }
+}
+
 /// Handler for incoming LXMF messages.
 ///
 /// Conforms to `LXMRouterDelegate` to receive callbacks when messages arrive.
@@ -41,6 +129,13 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     #if os(iOS)
     /// Location sharing manager for incoming telemetry extraction.
     public var locationSharingManager: LocationSharingManager?
+
+    /// When true, `handleInbound` skips posting user-facing notifications. Set in
+    /// Model B, where the Network Extension already posts the inbound notification
+    /// on receipt — the app then only *replays* persisted messages for field
+    /// side-channel processing (reactions / telemetry / …), so a second app-side
+    /// notification would double-banner.
+    public var suppressUserNotifications = false
     #endif
 
     /// Timestamp when this handler was created.
@@ -82,14 +177,38 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     ///   - router: The router that received the message
     ///   - message: The validated incoming message
     public func router(_ router: LXMRouter, didReceiveMessage message: LXMessage) {
+        // Live (non-Model-B) inbound: the in-process LXMRouter delegate fires once
+        // per message. Model B has NO live delegate (the NE owns delivery), so
+        // `ModelBInboundReplay` calls `handleInbound(_:)` directly over messages the
+        // NE persisted to the shared store — identical side-channel processing.
+        handleInbound(message)
+    }
+
+    /// Run inbound side-channel processing for one ALREADY-PERSISTED message:
+    /// reactions (0x40 / legacy 0x10), replies (0x30), peer icon (0x04), cease
+    /// (0xFD), telemetry → map pin (0x02), plus the user notification. Does NOT
+    /// persist the base message — the LXMRouter (Model A) or the NE (Model B)
+    /// already did. In Model B the replay driver sets `suppressUserNotifications`
+    /// so this doesn't double-notify (the NE posted the notification on receipt).
+    /// - Returns: the `Task` running the side-channel work, so callers that need
+    ///   to know when processing has actually COMPLETED (e.g. the Model B replay,
+    ///   which must not checkpoint a message as processed until its fields are
+    ///   handled) can `await` its `.value`. The live delegate ignores it.
+    @discardableResult
+    public func handleInbound(_ message: LXMessage) -> Task<Bool, Never> {
         let sourceHashHex = message.sourceHash.prefix(4).map { String(format: "%02x", $0) }.joined()
         let messageHashHex = message.hash.prefix(4).map { String(format: "%02x", $0) }.joined()
         logger.info("Received message from \(sourceHashHex) hash=\(messageHashHex)")
 
         let sourceHash = message.sourceHash
 
-        // Save to database asynchronously, then notify
-        Task {
+        // Save to database asynchronously, then notify. Returns whether every
+        // REQUIRED field-processing DB write succeeded — the Model B replay
+        // checkpoints a message only on `true`, retrying on `false` (a transient
+        // write failure) so a reaction / reply / icon update is never silently
+        // lost. The live Model A delegate ignores the result.
+        return Task {
+            var requiredOK = true
             // Reaction — canonical FIELD_REACTION (0x40) = {0x00: targetHashBytes,
             // 0x01: emojiUTF8}; the reacting user is the inbound source hash (not
             // on the wire). Merges into the target message; the empty reaction
@@ -101,7 +220,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 let reactionTo = toData.map { String(format: "%02x", $0) }.joined()
                 let senderHex = sourceHash.map { String(format: "%02x", $0) }.joined()
                 self.logger.info("Reaction \(emoji) (0x40) from \(senderHex.prefix(8)) to \(reactionTo.prefix(8))")
-                await self.handleIncomingReaction(
+                let ok = await self.handleIncomingReaction(
                     targetMessageHex: reactionTo, emoji: emoji,
                     senderHex: senderHex, reactionMessageHash: message.hash
                 )
@@ -109,7 +228,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     name: IncomingMessageHandler.messageReceivedNotification,
                     object: nil, userInfo: ["sourceHash": sourceHash]
                 )
-                return
+                return ok
             }
 
             // Legacy reaction / reply on FIELD_APP_DATA (0x10) — un-upgraded peers.
@@ -118,7 +237,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                    let emoji = appData["emoji"] as? String,
                    let sender = appData["sender"] as? String {
                     self.logger.info("Reaction \(emoji) (0x10 legacy) from \(sender.prefix(8)) to \(reactionTo.prefix(8))")
-                    await self.handleIncomingReaction(
+                    let ok = await self.handleIncomingReaction(
                         targetMessageHex: reactionTo, emoji: emoji,
                         senderHex: sender, reactionMessageHash: message.hash
                     )
@@ -126,11 +245,16 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                         name: IncomingMessageHandler.messageReceivedNotification,
                         object: nil, userInfo: ["sourceHash": sourceHash]
                     )
-                    return
+                    return ok
                 }
                 if let replyTo = appData["reply_to"] as? String {
                     self.logger.info("Reply (0x10 legacy) to \(replyTo.prefix(8))")
-                    try? await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
+                    do {
+                        try await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
+                    } catch {
+                        self.logger.error("Failed to update reply_to_id (0x10): \(error.localizedDescription)")
+                        requiredOK = false
+                    }
                 }
             }
 
@@ -142,6 +266,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     try await self.messageRepository.updateReplyToId(message.hash, replyToId: replyTo)
                 } catch {
                     self.logger.error("Failed to update reply_to_id (0x30): \(error.localizedDescription)")
+                    requiredOK = false
                 }
             }
 
@@ -161,7 +286,11 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
                 if !isKnownContact {
                     self.logger.info("[LXMF_INBOUND] Blocking message from unknown sender \(sourceHashHex) (block_unknown_senders enabled)")
-                    return
+                    // Stop processing the rest (icon/telemetry/notification), but
+                    // return the ACCUMULATED result — a reaction/reply write earlier
+                    // in this message may have failed (requiredOK == false), and that
+                    // must still be retried rather than masked by the block.
+                    return requiredOK
                 }
             }
 
@@ -177,6 +306,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             } catch {
                 self.logger.error("[LXMF_INBOUND] Failed to update peer icon for \(messageHashHex): \(error.localizedDescription)")
+                requiredOK = false
             }
 
             // Look up sender display name from path table (announce data) and update conversation
@@ -248,7 +378,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
             let isTelemetryOnly = message.content.isEmpty
                 && message.fields?[LXMessage.FIELD_TELEMETRY] != nil
             let isOldMessage = message.timestamp < self.createdAt.timeIntervalSince1970
-            if !isTelemetryOnly && !isCeaseMessage && !isOldMessage {
+            if !isTelemetryOnly && !isCeaseMessage && !isOldMessage && !self.suppressUserNotifications {
                 // Skip notification if user is already viewing this conversation
                 let sourceThreadId = sourceHash.map { String(format: "%02x", $0) }.joined()
                 let activeThread = await MainActor.run { NotificationService.activeConversationThreadId }
@@ -275,13 +405,25 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             }
 
-            // Post notification so views reload with saved data
-            NotificationCenter.default.post(
-                name: IncomingMessageHandler.messageReceivedNotification,
-                object: nil,
-                userInfo: ["sourceHash": sourceHash]
-            )
-            NotificationObserver.postNewMessage()
+            // Refresh the message-list UIs (chat + conversation) so a newly-saved
+            // VISIBLE message shows. Skip telemetry-only and cease messages: they
+            // never appear in the list (they're filtered), so a reload is pointless
+            // AND harmful — under Model B the replay runs this per inbound including
+            // ~60s location beats, and `MessagingViewModel` reloads (resetting to
+            // page 1) on each, wiping the older messages a scrolled-up user is
+            // viewing. The map pin updates via the @Observable `peerLocations`, not
+            // this notification, so telemetry/cease need no refresh. (This also
+            // avoids the app re-posting the Darwin ping the Model B replay observes,
+            // which would re-trigger a redundant drain.)
+            if !isTelemetryOnly && !isCeaseMessage {
+                NotificationCenter.default.post(
+                    name: IncomingMessageHandler.messageReceivedNotification,
+                    object: nil,
+                    userInfo: ["sourceHash": sourceHash]
+                )
+                NotificationObserver.postNewMessage()
+            }
+            return requiredOK
         }
     }
 
@@ -341,59 +483,70 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
 
     // MARK: - Reaction Handling
 
-    /// Merge an incoming reaction into the target message's reactions_json and delete the reaction message.
+    /// Merge an incoming reaction into the target message's reactions_json and
+    /// delete the reaction message. The target update also records the reaction
+    /// control hash, making replay idempotent across a crash before deletion.
+    /// - Returns: `true` if the reaction was applied/already applied and its
+    ///   control message was consumed, or if it was invalid; `false` for a
+    ///   transient target-update or control-deletion failure.
+    @discardableResult
     private func handleIncomingReaction(
         targetMessageHex: String,
         emoji: String,
         senderHex: String,
         reactionMessageHash: Data
-    ) async {
+    ) async -> Bool {
         // Convert target message hex to Data
         let targetHash = Self.hexToData(targetMessageHex)
         guard let targetHash, targetHash.count == 32 else {
             logger.warning("Invalid reaction target hash: \(targetMessageHex.prefix(16))")
-            return
+            return true  // malformed — nothing to retry
         }
 
-        // Read-modify-write reactions on the target message
+        // The shared gate covers every reactions_json writer in the app process.
+        // Holding it across both repository awaits makes this read/modify/write
+        // serial with local UI reactions and concurrent inbound tasks.
         do {
-            var reactionsDict: [String: [String]] = [:]
-            if let json = try await messageRepository.getReactionsJson(targetHash),
-               let data = json.data(using: .utf8),
-               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
-                reactionsDict = dict
-            }
+            try await ReactionMutationGate.shared.withLock {
+                var reactionsDict: [String: [String]] = [:]
+                if let json = try await messageRepository.getReactionsJson(targetHash),
+                   let data = json.data(using: .utf8),
+                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
+                    reactionsDict = dict
+                }
 
-            // Toggle: if sender already reacted with this emoji, remove; otherwise add
-            var senders = reactionsDict[emoji] ?? []
-            if senders.contains(senderHex) {
-                senders.removeAll { $0 == senderHex }
-            } else {
-                senders.append(senderHex)
-            }
+                let reactionHashHex = reactionMessageHash.map {
+                    String(format: "%02x", $0)
+                }.joined()
+                let result = ReactionLedger.applying(
+                    emoji: emoji,
+                    sender: senderHex,
+                    reactionMessageHash: reactionHashHex,
+                    to: reactionsDict
+                )
 
-            if senders.isEmpty {
-                reactionsDict.removeValue(forKey: emoji)
-            } else {
-                reactionsDict[emoji] = senders
-            }
-
-            // Serialize and save
-            if reactionsDict.isEmpty {
-                try await messageRepository.updateReactions(targetHash, reactionsJson: "")
-            } else if let jsonData = try? JSONSerialization.data(withJSONObject: reactionsDict),
-                      let jsonStr = String(data: jsonData, encoding: .utf8) {
-                try await messageRepository.updateReactions(targetHash, reactionsJson: jsonStr)
+                if result.didApply {
+                    let jsonData = try JSONSerialization.data(withJSONObject: result.state)
+                    let jsonStr = String(decoding: jsonData, as: UTF8.self)
+                    try await messageRepository.updateReactions(targetHash, reactionsJson: jsonStr)
+                }
             }
         } catch {
             logger.error("Failed to merge reaction: \(error.localizedDescription)")
+            // Keep the control message durable so ModelBInboundReplay can retry
+            // the merge by hash. Deleting after a failed merge would lose it.
+            return false
         }
 
-        // Delete the reaction message from DB (it's a control message, not a visible message)
+        // Delete the reaction control message only after the target contains the
+        // durable idempotency marker. A transient delete failure is retryable:
+        // the next pass sees the marker, skips the toggle, and retries deletion.
         do {
             try await messageRepository.deleteMessage(reactionMessageHash)
+            return true
         } catch {
-            logger.error("Failed to delete reaction message: \(error.localizedDescription)")
+            logger.error("Failed to delete reaction control message: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
