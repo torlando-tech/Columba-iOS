@@ -111,6 +111,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     private var serverTxChar: CBMutableCharacteristic?
     private var serverIdentityChar: CBMutableCharacteristic?
     private var gattServiceAdded: Bool = false
+    private var gattServiceAdding: Bool = false
 
     // MARK: - Service UUIDs (set in start; injected by Python driver)
 
@@ -344,6 +345,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             serverTxChar = nil
             serverIdentityChar = nil
             gattServiceAdded = false
+            gattServiceAdding = false
             lastDiscoveryReport.removeAll()
             pendingScanRequested = false
             pendingAdvertiseRequested = false
@@ -378,7 +380,8 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     fileprivate func setUpGattServiceIfNeeded() {
         guard let pm = peripheralManager,
               pm.state == .poweredOn,
-              !gattServiceAdded else { return }
+              !gattServiceAdded,
+              !gattServiceAdding else { return }
 
         let rx = CBMutableCharacteristic(
             type: rxCharCBUUID,
@@ -406,13 +409,13 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
         let service = CBMutableService(type: serviceCBUUID, primary: true)
         service.characteristics = [rx, tx, identity]
+        gattServiceAdding = true
         pm.add(service)
 
         serverRxChar = rx
         serverTxChar = tx
         serverIdentityChar = identity
-        gattServiceAdded = true
-        emitInfo("gatt-service-added serviceUuid=\(serviceCBUUID.uuidString)")
+        emitInfo("gatt-service-add-requested serviceUuid=\(serviceCBUUID.uuidString)")
     }
 
     // MARK: - Scan + advertise
@@ -642,6 +645,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
     fileprivate func tryStartAdvertiseLocked() {
         guard pendingAdvertiseRequested,
+              gattServiceAdded,
               let pm = peripheralManager,
               pm.state == .poweredOn else { return }
         if pm.isAdvertising { pm.stopAdvertising() }
@@ -791,8 +795,15 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
             ?? peripheral.name
             ?? ""
-        let serviceUUIDs = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?
+        var serviceUUIDs = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?
             .map { $0.uuidString.lowercased() } ?? []
+        // The native scan is already filtered by serviceCBUUID. CoreBluetooth
+        // may omit the advertisement UUID list during restoration/background
+        // discovery; preserve the proven match for BLEInterface's own filter.
+        let configuredService = serviceCBUUID.uuidString.lowercased()
+        if !serviceUUIDs.contains(configuredService) {
+            serviceUUIDs.append(configuredService)
+        }
 
         callbackInvoker?.invoke(
             slot: .onDeviceDiscovered,
@@ -932,17 +943,14 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
                 emitError("warning", "identity char wrong size: \(value.count)")
                 return
             }
-            client.peerIdentity = value
             let identityHex = value.map { String(format: "%02x", $0) }.joined()
-            callbackInvoker?.invoke(slot: .onIdentityReceived, args: [address, identityHex])
 
-            // Synchronous duplicate-identity check. If Python says it's a
-            // duplicate (same identity already alive at a different addr),
-            // tear down this connection and bail.
+            // Synchronous duplicate-identity check must happen before publishing
+            // the identity; the Python handler updates identity/address maps.
             if let invoker = callbackInvoker {
                 let isDup = invoker.invokeBool(
                     slot: .onDuplicateIdentityDetected,
-                    args: [address, value]
+                    args: [address, identityHex]
                 )
                 if isDup {
                     emitInfo("duplicate identity at \(address); dropping")
@@ -950,6 +958,9 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
                     return
                 }
             }
+
+            client.peerIdentity = value
+            callbackInvoker?.invoke(slot: .onIdentityReceived, args: [address, identityHex])
 
             // Connection complete from upstream's perspective — fire connected
             // (with identity) so BLEInterface spawns the peer interface.
@@ -981,9 +992,10 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
         case txCharCBUUID:
             // Inbound fragment from peer. Pass raw bytes up; upstream
             // BLEInterface handles reassembly via BLEFragmentation.
-            // Filter 1-byte 0x00 keepalive — upstream does this too but
-            // we avoid the Python-side callback overhead for a no-op.
-            if value.count == 1 && value[0] == 0x00 { return }
+            // BLEFragmentation frames always include the five-byte header.
+            // Do not feed ATT-level keepalive/control values into Python
+            // reassembly as malformed Reticulum fragments.
+            if value.count < BleConstants.fragmentHeaderSize { return }
             callbackInvoker?.invoke(slot: .onDataReceived, args: [address, value])
 
         default:
@@ -1089,6 +1101,7 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
             // trigger Service Changed). Flag as added so setUpGattServiceIfNeeded
             // becomes a no-op when poweredOn lands right after this.
             gattServiceAdded = true
+            gattServiceAdding = false
             emitInfo("restored published service uuid=\(service.uuid.uuidString)")
         }
 
@@ -1107,7 +1120,7 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
         case .poweredOn:
             emitInfo("peripheralManager poweredOn")
             setUpGattServiceIfNeeded()
-            tryStartAdvertiseLocked()
+            if gattServiceAdded { tryStartAdvertiseLocked() }
         case .poweredOff:
             emitError("warning", "peripheralManager poweredOff")
         case .unauthorized:
@@ -1139,11 +1152,15 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
         didAdd service: CBService,
         error: Error?
     ) {
+        gattServiceAdding = false
         if let error {
             emitError("critical", "service add failed: \(error)")
             gattServiceAdded = false
+            if peripheral.isAdvertising { peripheral.stopAdvertising() }
         } else {
+            gattServiceAdded = true
             emitInfo("service added uuid=\(service.uuid.uuidString)")
+            tryStartAdvertiseLocked()
         }
     }
 
@@ -1185,14 +1202,12 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
             if peer.state == .awaitingIdentity {
                 // First write per central is the 16-byte identity handshake.
                 if value.count == BleConstants.identitySize {
-                    peer.identity = value
                     let identityHex = hex(value)
-                    callbackInvoker?.invoke(slot: .onIdentityReceived, args: [address, identityHex])
 
                     if let invoker = callbackInvoker {
                         let isDup = invoker.invokeBool(
                             slot: .onDuplicateIdentityDetected,
-                            args: [address, value]
+                            args: [address, identityHex]
                         )
                         if isDup {
                             emitInfo("duplicate identity at peripheral peer \(address); dropping")
@@ -1204,6 +1219,9 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
                             continue
                         }
                     }
+
+                    peer.identity = value
+                    callbackInvoker?.invoke(slot: .onIdentityReceived, args: [address, identityHex])
 
                     if peer.mtu > 0 {
                         callbackInvoker?.invoke(slot: .onMtuNegotiated, args: [address, peer.mtu])
@@ -1218,8 +1236,9 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
                     emitError("warning", "first write wasn't 16-byte handshake; len=\(value.count)")
                 }
             } else {
-                // Established — data fragment from peer. Drop 0x00 keepalive.
-                if !(value.count == 1 && value[0] == 0x00) {
+                // Established — only complete BLEFragmentation frames belong
+                // on the Reticulum data path.
+                if value.count >= BleConstants.fragmentHeaderSize {
                     callbackInvoker?.invoke(slot: .onDataReceived, args: [address, value])
                 }
             }

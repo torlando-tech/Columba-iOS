@@ -1198,6 +1198,19 @@ public final class AppServices {
         let identityBytes = try? identity.exportPrivateKeys()
         DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
 
+        #if COLUMBA_RUNTIME_PYTHON
+        // IOSBLEInterface starts synchronously inside backend.start(). Install
+        // the native callback sink first so discoveries and handshakes that
+        // arrive during Python startup are not lost before the later UI
+        // interface pass runs.
+        if let pythonBackend {
+            SwiftBLEBridge.shared.setCallbackInvoker(
+                PythonBLECallbackBridge(pythonBridge: pythonBackend.pythonBridge)
+            )
+            SwiftBLEBridge.shared.setIdentity(identity.hash)
+        }
+        #endif
+
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B: `backend` is the thin-client proxy; `backend.start()` round-trips to
         // the NE node over the VPN tunnel session, so the tunnel MUST be connected first.
