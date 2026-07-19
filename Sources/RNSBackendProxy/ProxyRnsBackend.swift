@@ -612,7 +612,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     // Each throws so a missed UI capability gate fails loud rather than silently
     // dropping audio. (Model B: runs NE-side / not proxied yet.)
 
-    public func openLink(destHashHex: String, aspect: String) async throws -> (ok: Bool, linkId: Int, reason: String) {
+    public func openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String?) async throws -> (ok: Bool, linkId: Int, reason: String) {
         throw BackendError.unsupportedInProxy(feature: "openLink")
     }
 

@@ -74,6 +74,10 @@ public struct ContactsView: View {
     /// Contact being edited for nickname.
     @State private var editingContact: Contact?
 
+    /// Telephony node selected for an outgoing call. Selection presents the
+    /// same codec picker used by chat-originated calls.
+    @State private var callContact: Contact?
+
     /// Text field value for nickname editing.
     @State private var nicknameText: String = ""
 
@@ -130,9 +134,12 @@ public struct ContactsView: View {
                         NodeDetailsView(
                             contact: contact,
                             appServices: appServices,
-                            onStartChat: contact.badgeType == .node ? nil : { contact in
+                            onStartChat: contact.badgeType == .peer || contact.badgeType == .relay ? { contact in
                                 startChat(with: contact)
-                            },
+                            } : nil,
+                            onStartCall: contact.badgeType == .audio ? { contact in
+                                callContact = contact
+                            } : nil,
                             onBrowseSite: contact.badgeType == .node ? { contact in
                                 browseSite(for: contact)
                             } : nil,
@@ -197,6 +204,20 @@ public struct ContactsView: View {
             }
         }
         .tint(Theme.accentColor)
+        .sheet(item: $callContact) { contact in
+            CodecSelectionSheet { profile in
+                callContact = nil
+                #if os(iOS)
+                appServices.callManager?.initiateCall(
+                    destinationHash: contact.identityHash,
+                    profile: profile,
+                    peerDisplayName: contact.resolvedDisplayName
+                )
+                #endif
+            }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
         .task {
             if viewModel == nil {
                 viewModel = ContactsViewModel(

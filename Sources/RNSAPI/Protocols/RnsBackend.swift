@@ -257,7 +257,7 @@ public extension RnsCore {
 /// RNS.Link operations backing LXST voice (the Swift state machine drives these;
 /// the backend is the Link pipe).
 public protocol RnsTelephony: AnyObject, Sendable {
-    func openLink(destHashHex: String, aspect: String) async throws -> (ok: Bool, linkId: Int, reason: String)
+    func openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String?) async throws -> (ok: Bool, linkId: Int, reason: String)
     @discardableResult func linkSend(linkId: Int, data: Data) async throws -> Bool
     @discardableResult func linkIdentify(linkId: Int) async throws -> Bool
     @discardableResult func linkTeardown(linkId: Int) async throws -> Bool
@@ -290,6 +290,6 @@ public extension RnsBackend {
 
 public extension RnsTelephony {
     func openLink(destHashHex: String) async throws -> (ok: Bool, linkId: Int, reason: String) {
-        try await openLink(destHashHex: destHashHex, aspect: "lxst.telephony")
+        try await openLink(destHashHex: destHashHex, aspect: "lxst.telephony", identityPublicKeyHex: nil)
     }
 }

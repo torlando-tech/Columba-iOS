@@ -2,7 +2,7 @@
 //  NodeDetailsView.swift
 //  Columba-iOS
 //
-//  Node details screen showing contact info cards and a Start Chat button.
+//  Node details screen showing contact info cards and a destination-type action.
 //  Navigated to by tapping a contact card in ContactsView.
 //
 
@@ -32,6 +32,9 @@ struct NodeDetailsView: View {
     /// Called when "Start Chat" is tapped; receives the contact.
     /// Only rendered for non-NomadNet contacts when this callback is non-nil.
     var onStartChat: ((Contact) -> Void)?
+
+    /// Called when "Call" is tapped for an lxst.telephony destination.
+    var onStartCall: ((Contact) -> Void)?
 
     /// Called when "Browse Site" is tapped on a NomadNet site contact.
     /// Only rendered for `.node` badge contacts when this callback is non-nil.
@@ -242,20 +245,27 @@ struct NodeDetailsView: View {
 
     // MARK: - Primary Action Button
 
-    /// Renders "Browse Site" for NomadNet sites or "Start Chat" otherwise.
-    /// Returns an `EmptyView` when no callback is provided for the contact's
-    /// badge type — the parent owns whether the action should appear.
+    /// Renders "Call" for telephony, "Browse Site" for NomadNet, or
+    /// "Start Chat" for messaging destinations. Returns an `EmptyView` when
+    /// the matching callback is absent.
     @ViewBuilder
     private var primaryActionButton: some View {
         let c = displayedContact
-        if c.badgeType == .node, let onBrowseSite {
+        if c.badgeType == .audio, let onStartCall {
+            actionButton(
+                icon: "phone.fill",
+                title: "Call"
+            ) {
+                onStartCall(c)
+            }
+        } else if c.badgeType == .node, let onBrowseSite {
             actionButton(
                 icon: "globe.americas",
                 title: "Browse Site"
             ) {
                 onBrowseSite(c)
             }
-        } else if c.badgeType != .node, let onStartChat {
+        } else if c.badgeType != .node && c.badgeType != .audio, let onStartChat {
             actionButton(
                 icon: "bubble.left.fill",
                 title: "Start Chat"

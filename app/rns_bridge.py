@@ -663,7 +663,11 @@ def _wire_link_callbacks(link: Any, link_id: int) -> None:
             pass
 
 
-def open_link(dest_hash_hex: str, aspect: str = "lxst.telephony") -> dict[str, Any]:
+def open_link(
+    dest_hash_hex: str,
+    aspect: str = "lxst.telephony",
+    identity_public_key_hex: str = "",
+) -> dict[str, Any]:
     """Initiate an outbound RNS.Link to a destination with the given
     aspect (default `lxst.telephony` for voice). Returns a link_id
     Swift can use to send/teardown/identify on the link.
@@ -688,19 +692,58 @@ def open_link(dest_hash_hex: str, aspect: str = "lxst.telephony") -> dict[str, A
     except ValueError:
         return {"ok": False, "link_id": 0, "reason": "bad-hash"}
 
+    # Split the dotted aspect before resolving identity so a supplied public key
+    # can be verified against the exact destination the caller requested.
+    parts = aspect.split(".") if aspect else ["lxst", "telephony"]
+    app_name = parts[0]
+    aspects = parts[1:] if len(parts) > 1 else []
+
     peer_identity = RNS.Identity.recall(dest_hash)
-    if peer_identity is None:
+    if peer_identity is None and identity_public_key_hex:
+        try:
+            supplied_public_key = bytes.fromhex(identity_public_key_hex)
+            candidate = RNS.Identity(create_keys=False)
+            candidate.load_public_key(supplied_public_key)
+            candidate_dest = RNS.Destination(
+                candidate,
+                RNS.Destination.OUT,
+                RNS.Destination.SINGLE,
+                app_name,
+                *aspects,
+            )
+            if candidate_dest.hash != dest_hash:
+                return {"ok": False, "link_id": 0, "reason": "identity-mismatch"}
+            peer_identity = candidate
+        except Exception:
+            return {"ok": False, "link_id": 0, "reason": "bad-identity"}
+    # Identity and routing are separate concerns: a supplied public key is enough
+    # to construct and verify the destination, but it does not prove that a
+    # current path exists. Always perform a bounded path request before reporting
+    # the telephone unreachable.
+    try:
+        has_path = bool(RNS.Transport.has_path(dest_hash))
+    except Exception:
+        has_path = False
+    if not has_path:
         try:
             RNS.Transport.request_path(dest_hash)
         except Exception:
             pass
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            try:
+                if RNS.Transport.has_path(dest_hash):
+                    has_path = True
+                    break
+            except Exception:
+                pass
+            time.sleep(0.1)
+    if not has_path:
         return {"ok": False, "link_id": 0, "reason": "no-path"}
-
-    # Split the dotted aspect into app_name + remaining aspect tokens
-    # (RNS.Destination's variadic aspects parameter).
-    parts = aspect.split(".") if aspect else ["lxst", "telephony"]
-    app_name = parts[0]
-    aspects = parts[1:] if len(parts) > 1 else []
+    if peer_identity is None:
+        peer_identity = RNS.Identity.recall(dest_hash)
+    if peer_identity is None:
+        return {"ok": False, "link_id": 0, "reason": "no-identity"}
 
     peer_dest = RNS.Destination(
         peer_identity, RNS.Destination.OUT, RNS.Destination.SINGLE,
