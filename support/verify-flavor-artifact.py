@@ -31,6 +31,17 @@ MODEL_B_SYMBOLS = (
     b"NEReticulumNode",
     b"TunnelManager",
 )
+SHIPPING_RNODE_C_ABI_SYMBOLS = (
+    b"_columba_rnode_connect",
+    b"_columba_rnode_disconnect",
+    b"_columba_rnode_state",
+    b"_columba_rnode_read",
+    b"_columba_rnode_write",
+)
+SHIPPING_RNODE_PYTHON_PAYLOADS = (
+    "app/rnode/IOSRNodeInterface.py",
+    "app/rnode/IOSRNodeDriver.py",
+)
 NETWORK_EXTENSION_ENTITLEMENT = (
     "com.apple.developer.networking.networkextension"
 )
@@ -364,6 +375,16 @@ def _verify_shipping(
                 marker.decode("ascii")
             )
         )
+    missing_rnode_symbol = next(
+        (name for name in SHIPPING_RNODE_C_ABI_SYMBOLS if name not in symbols),
+        None,
+    )
+    if missing_rnode_symbol is not None:
+        raise VerificationError(
+            "shipping executable is missing Python RNode C ABI symbol {}".format(
+                missing_rnode_symbol.decode("ascii")
+            )
+        )
     if PYTHON_LOAD not in libraries:
         raise VerificationError(
             "shipping application code does not link Python.framework"
@@ -388,6 +409,13 @@ def _verify_shipping(
     packages = app / "app_packages"
     if not _contains_regular_file(packages, app_root, "shipping app_packages"):
         raise VerificationError("shipping app_packages wheel payload is missing or empty")
+    for relative in SHIPPING_RNODE_PYTHON_PAYLOADS:
+        payload = app / relative
+        _resolve_contained(payload, app_root, "shipping Python RNode payload")
+        if not payload.is_file() or payload.stat().st_size == 0:
+            raise VerificationError(
+                "shipping Python RNode payload is missing or empty: {}".format(relative)
+            )
     _verify_entitlements_if_signed(
         app,
         "shipping",
