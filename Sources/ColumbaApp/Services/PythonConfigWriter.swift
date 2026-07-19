@@ -87,15 +87,16 @@ enum PythonConfigWriter {
 
     private static func appendInterface(_ iface: InterfaceEntity, to lines: inout [String]) {
         lines.append("  [[\(sectionName(for: iface))]]")
-        // RNode and Multipeer are inert placeholders on the Python backend (their
-        // real transport runs through the Swift / Model-B seam), so they must be
-        // written disabled. Emit `enabled` exactly ONCE here: appending a second
+        // Multipeer is still an inert placeholder on the Python backend, so it
+        // must be written disabled. RNode is real: IOSRNodeInterface owns the
+        // Python RNS/KISS side and bridges NUS bytes to native Swift BLE.
+        // Emit `enabled` exactly ONCE here: appending a second
         // `enabled` inside the per-type block produces a duplicate keyword, which
         // RNS's configobj rejects with a DuplicateError — the whole config fails
         // to parse and the Python backend crashes on launch.
         let isInertPlaceholder: Bool
         switch iface.config {
-        case .rnode, .multipeer: isInertPlaceholder = true
+        case .multipeer: isInertPlaceholder = true
         default: isInertPlaceholder = false
         }
         lines.append("    enabled = \(isInertPlaceholder ? "no" : "yes")")
@@ -131,16 +132,20 @@ enum PythonConfigWriter {
             // OS auto-manages duty cycle). Surfaced for parity with
             // Android's BleConnections settings.
             lines.append("    ble_power_preset = balanced")
-        case .rnode:
-            // RNode runs through the Model B seam on the Swift backend (radio in
-            // the app, RNS + KISS framing in the Network Extension) — the legacy
-            // Python IOSRNodeInterface path was removed. The Python backend has no
-            // RNode implementation, so emit a disabled placeholder: an RNode entry
-            // in a Python-backend config stays valid but inert.
-            lines.append("    type = TCPClientInterface  # RNode moved to Model B (Swift NE); Python path retired")
-            lines.append("    target_host = 127.0.0.1")
-            lines.append("    target_port = 65535")
-            // `enabled = no` already emitted once in the section header above.
+        case .rnode(let cfg):
+            // Loaded from <configDir>/interfaces/IOSRNodeInterface.py. Python
+            // owns KISS/RNode framing; IOSRNodeDriver calls the shipping app's
+            // PythonRNodeBLEBridge C ABI, which owns ReticulumSwift.BLETransport.
+            lines.append("    type = IOSRNodeInterface")
+            lines.append("    connection_mode = ble")
+            appendValue("target_device_name", cfg.deviceName, to: &lines)
+            lines.append("    frequency = \(cfg.frequency)")
+            lines.append("    bandwidth = \(cfg.bandwidth)")
+            lines.append("    txpower = \(cfg.txPower)")
+            lines.append("    spreadingfactor = \(cfg.spreadingFactor)")
+            lines.append("    codingrate = \(cfg.codingRate)")
+            if let value = cfg.stAlock { lines.append("    st_alock = \(value)") }
+            if let value = cfg.ltAlock { lines.append("    lt_alock = \(value)") }
         case .multipeer:
             // MultipeerConnectivity bridge not yet wired (separate effort, its
             // own branch — see rnode_interface_port_plan.md). Emit a disabled

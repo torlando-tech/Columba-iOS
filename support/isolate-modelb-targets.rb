@@ -101,9 +101,13 @@ PYTHON_ONLY_SOURCE_METADATA = {
   'Sources/PythonBridge/PythonRuntime.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
   'Sources/RNSBackendPy/PythonRNSBackend.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
   'Sources/ColumbaApp/Services/PythonNetworkTransport.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
-  'Sources/PythonBridge/PythonBLECallbackBridge.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA
+  'Sources/PythonBridge/PythonBLECallbackBridge.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA,
+  'Sources/PythonBridge/PythonRNodeBLEBridge.swift' => EMPTY_SOURCE_BUILD_FILE_METADATA
 }.freeze
 PYTHON_ONLY_SOURCE_PATHS = PYTHON_ONLY_SOURCE_METADATA.keys.freeze
+PYTHON_SOURCE_REFERENCES_TO_CREATE = %w[
+  Sources/PythonBridge/PythonRNodeBLEBridge.swift
+].freeze
 # PythonConfigWriter.swift intentionally remains shared. It is a pure config-text
 # formatter with no CPython/Python.h dependency; shipping AppServices writes the
 # embedded runtime's config while Model B's SwiftRNSBackend reuses its stable
@@ -125,7 +129,9 @@ PYTHON_SOURCE_PREDECESSORS = {
   'Sources/ColumbaApp/Services/PythonNetworkTransport.swift' =>
     'Sources/ColumbaApp/Services/CallManager.swift',
   'Sources/PythonBridge/PythonBLECallbackBridge.swift' =>
-    'Sources/ColumbaApp/Models/CodecProfileInfo.swift'
+    'Sources/ColumbaApp/Models/CodecProfileInfo.swift',
+  'Sources/PythonBridge/PythonRNodeBLEBridge.swift' =>
+    'Sources/PythonBridge/PythonBLECallbackBridge.swift'
 }.freeze
 PYTHON_FRAMEWORK_PATH = 'Frameworks/Python.xcframework'
 PYTHON_RESOURCE_PATH = 'app'
@@ -599,6 +605,19 @@ module ModelBTargetIsolation
   def project_file_reference(project, path)
     project.files.find { |reference| source_path(project, reference) == path } or
       raise "Missing project file reference: #{path}"
+  end
+
+  def ensure_python_source_references(project)
+    existing = project.files.to_h { |reference| [source_path(project, reference), reference] }
+    missing = PYTHON_SOURCE_REFERENCES_TO_CREATE.reject { |path| existing.key?(path) }
+    return if missing.empty?
+
+    group = project.groups.find do |candidate|
+      candidate.path.to_s == 'Sources/PythonBridge' || candidate.display_name == 'PythonBridge'
+    end
+    raise 'Missing PythonBridge project group' unless group
+
+    missing.each { |path| group.new_file(File.basename(path)) }
   end
 
   def local_build_file_for_reference(project, phase, reference)
@@ -1843,6 +1862,7 @@ unless reticulum_package
   abort "Missing root #{RETICULUM_PRODUCT_NAME} package reference (#{RETICULUM_REPOSITORY_URL})"
 end
 model_b_sources = ModelBTargetIsolation.model_b_source_references(project)
+ModelBTargetIsolation.ensure_python_source_references(project)
 ModelBTargetIsolation.strip_shipping_model_b_membership(project, shipping)
 ModelBTargetIsolation.strip_shipping_extension_graph(project, shipping, extension)
 ModelBTargetIsolation.reconcile_shipping_python_sources(project, shipping)

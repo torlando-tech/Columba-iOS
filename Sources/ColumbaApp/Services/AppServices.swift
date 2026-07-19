@@ -1172,7 +1172,7 @@ public final class AppServices {
         let identityFile = pyDir.appendingPathComponent("identity.bin").path
         DiagLog.log("[RNS] configDir=\(configDir)")
 
-        // Deploy iOS BLE custom interface files BEFORE Python boots so RNS's
+        // Deploy iOS native-transport custom interface files BEFORE Python boots so RNS's
         // external-interface loader can `exec()` them when reading config.
         // Always copied (regardless of whether BLE is enabled in the
         // current config) so a later restart with BLE-enabled config finds
@@ -1674,9 +1674,14 @@ public final class AppServices {
                 DiagLog.log("[TEST-INBOUND] bad hex")
                 return
             }
+            let testHashInput = (fromHex + content + String(Date().timeIntervalSince1970))
+                .data(using: .utf8) ?? Data()
+            let testMessageHash = Data(SHA256.hash(data: testHashInput))
+                .map { String(format: "%02x", $0) }.joined()
             Task { @MainActor in
                 await self.persistInboundFromPython(
                     sourceHash: from,
+                    messageHashHex: testMessageHash,
                     content: content,
                     title: "",
                     fields: nil,
@@ -2258,7 +2263,7 @@ public final class AppServices {
     /// run side-channel handling (reactions/replies/telemetry/icon/cease) through
     /// IncomingMessageHandler. Returns nil if blocked or persistence failed.
     @discardableResult
-    private func persistInboundFromPython(sourceHash: Data, content: String, title: String, fields: [UInt8: Any]?, timestamp: Date) async -> LXMessage? {
+    private func persistInboundFromPython(sourceHash: Data, messageHashHex: String, content: String, title: String, fields: [UInt8: Any]?, timestamp: Date) async -> LXMessage? {
         // Route Python-path inbound persistence through the GRDB canonical
         // store (the same one the UI reads and the Swift/NE path writes), via
         // the shared MessageRepository's RNSAPI-typed methods — NOT the
@@ -2296,12 +2301,29 @@ public final class AppServices {
         do {
             try await repo.ensureConversation(sourceHash, displayName: displayName)
 
-            // Build a synthetic LXMessage so saveMessage can persist it.
-            // Hash is the SHA-256 of (sourceHashHex || content || timestamp)
-            // truncated to 32 bytes — enough to dedupe; the Python side
-            // doesn't expose the canonical message hash through the event.
-            let hashInput = (sourceHashHex + content + "\(timestamp.timeIntervalSince1970)").data(using: .utf8) ?? Data()
-            let messageHash = Data(SHA256.hash(data: hashInput))
+            // Reactions and replies target the exact 32-byte LXMF wire hash.
+            // Preserve an abnormal delivered message that lacks that hash under a
+            // 33-byte, namespaced local persistence ID instead of dropping it.
+            // UI adapters expose only 32-byte IDs as network-addressable hashes,
+            // so the local ID can never leak into a reaction or reply frame.
+            let parsedHash = Data(hexString: messageHashHex)
+            let messageHash: Data
+            if let parsedHash, parsedHash.count == 32 {
+                messageHash = parsedHash
+            } else {
+                var seed = Data("columba-local-inbound-v1".utf8)
+                seed.append(sourceHash)
+                var timestampBits = timestamp.timeIntervalSince1970.bitPattern.bigEndian
+                withUnsafeBytes(of: &timestampBits) { seed.append(contentsOf: $0) }
+                seed.append(Data(title.utf8))
+                seed.append(0)
+                seed.append(Data(content.utf8))
+                if let fields {
+                    seed.append(LxmfFieldCodec.pack(fields))
+                }
+                messageHash = Data([0x00]) + Data(SHA256.hash(data: seed))
+                DiagLog.log("[RNS] persistInbound using local non-wire message id")
+            }
 
             let message = LXMessage(
                 destinationHash: sourceHash,
@@ -2416,7 +2438,7 @@ public final class AppServices {
                     DiagLog.log("[RNS] stamped display name onto convo \(data.map { String(format: "%02x", $0) }.joined().prefix(8))")
                 }
             }
-        case .inbound(let sourceHash, let content, let title, let fieldsPacked, let t):
+        case .inbound(let sourceHash, let messageHash, let content, let title, let fieldsPacked, let t):
             DiagLog.log("[RNS] inbound source=\(sourceHash) content=\"\(content)\" fields=\(fieldsPacked.count)B")
             guard let data = Data(hexString: sourceHash) else { return }
             let fields = fieldsPacked.isEmpty ? nil : LxmfFieldCodec.unpack(fieldsPacked)
@@ -2425,7 +2447,7 @@ public final class AppServices {
             // IncomingMessageHandler — the router.delegate, wired in ColumbaApp.
             // Same path for both backends (Python sends empty fields until its
             // bridge plumbing lands; the Swift backend populates them now).
-            if let saved = await persistInboundFromPython(sourceHash: data, content: content, title: title, fields: fields, timestamp: t),
+            if let saved = await persistInboundFromPython(sourceHash: data, messageHashHex: messageHash, content: content, title: title, fields: fields, timestamp: t),
                fields != nil, let router = self.router {
                 router.delegate?.router(router, didReceiveMessage: saved)
             }
@@ -3050,7 +3072,7 @@ public final class AppServices {
         logger.info("[BLE_DIAG] BLEInterface started successfully")
     }
 
-    /// Copy `IOSBLEInterface.py` and `IOSBLEDriver.py` from `<bundle>/app/ble/`
+    /// Copy the iOS BLE mesh and RNode custom interfaces from the app bundle
     /// to `<configDir>/interfaces/` so RNS's external-interface loader can find
     /// them when reading config. Idempotent — overwrites on each call so
     /// build-time updates ship without manual cleanup.
@@ -3065,12 +3087,6 @@ public final class AppServices {
             DiagLog.log("[BLE_DIAG] app/ bundle resource missing — skipping deploy")
             return
         }
-        let srcDir = bundleAppDir.appendingPathComponent("ble", isDirectory: true)
-        guard fm.fileExists(atPath: srcDir.path) else {
-            DiagLog.log("[BLE_DIAG] app/ble/ missing in bundle at \(srcDir.path) — skipping deploy")
-            return
-        }
-
         let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
         do {
             try fm.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
@@ -3079,17 +3095,30 @@ public final class AppServices {
             return
         }
 
-        for name in ["IOSBLEInterface.py", "IOSBLEDriver.py"] {
-            let src = srcDir.appendingPathComponent(name)
+        let files = [
+            (subdirectory: "ble", name: "IOSBLEInterface.py"),
+            (subdirectory: "ble", name: "IOSBLEDriver.py"),
+            (subdirectory: "rnode", name: "IOSRNodeInterface.py"),
+            (subdirectory: "rnode", name: "IOSRNodeDriver.py")
+        ]
+        for file in files {
+            let src = bundleAppDir
+                .appendingPathComponent(file.subdirectory, isDirectory: true)
+                .appendingPathComponent(file.name)
+            guard fm.fileExists(atPath: src.path) else {
+                DiagLog.log("[RNS_NATIVE] bundled Python interface missing: \(src.path)")
+                continue
+            }
+            let name = file.name
             let dst = interfacesDir.appendingPathComponent(name)
             if fm.fileExists(atPath: dst.path) {
                 try? fm.removeItem(at: dst)
             }
             do {
                 try fm.copyItem(at: src, to: dst)
-                DiagLog.log("[BLE_DIAG] Deployed \(name) to \(dst.path)")
+                DiagLog.log("[RNS_NATIVE] Deployed \(name) to \(dst.path)")
             } catch {
-                DiagLog.log("[BLE_DIAG] Failed to copy \(name): \(error)")
+                DiagLog.log("[RNS_NATIVE] Failed to copy \(name): \(error)")
             }
         }
     }
@@ -3217,14 +3246,32 @@ public final class AppServices {
 
         logger.info("RNodeInterface (Model B) started: \(name)")
         #elseif COLUMBA_RUNTIME_PYTHON
-        // The Python host does not ship the Model B App-Group seam. Keep the shared
-        // API/UI object available without claiming that an RNode tunnel was started.
+        // Python owns the RNS interface + KISS/RNode protocol. The custom
+        // IOSRNodeInterface loaded during backend startup drives the native
+        // PythonRNodeBLEBridge, which owns only the CoreBluetooth NUS stream.
         let uiInterface = RNodeInterface(config: rnodeConfig, name: name)
-        uiInterface.state = .connectionFailed(underlying: "RNode is unavailable in the Python runtime")
+        uiInterface.state = .connecting
         self.rnodeInterface = uiInterface
+        PythonRNodeBLEBridge.shared.setStateHandler { [weak self] state, reason in
+            DispatchQueue.main.async {
+                guard let self, self.rnodeInterface === uiInterface else { return }
+                switch state {
+                case .disconnected:
+                    self.rnodeInterface?.state = .disconnected
+                case .connecting:
+                    self.rnodeInterface?.state = .connecting
+                case .connected:
+                    self.rnodeInterface?.state = .connected
+                case .failed:
+                    self.rnodeInterface?.state = .connectionFailed(
+                        underlying: reason ?? "RNode BLE link failed"
+                    )
+                }
+                NotificationObserver.postNetworkStateChanged()
+            }
+        }
         NotificationObserver.postNetworkStateChanged()
-        logger.warning("RNode start requested, but RNode is unavailable in the Python runtime")
-        throw AppServicesError.rnodeUnavailableInPythonRuntime
+        logger.info("RNodeInterface (Python + native BLE bridge) started: \(name)")
         #endif
     }
 
@@ -3240,9 +3287,11 @@ public final class AppServices {
         rnodeInterface = nil
         logger.info("RNodeInterface (Model B) stopped")
         #elseif COLUMBA_RUNTIME_PYTHON
+        PythonRNodeBLEBridge.shared.setStateHandler(nil)
+        PythonRNodeBLEBridge.shared.disconnect()
         rnodeInterface = nil
         NotificationObserver.postNetworkStateChanged()
-        logger.info("Cleared unavailable Python-runtime RNode interface")
+        logger.info("RNodeInterface (Python + native BLE bridge) stopped")
         #endif
     }
 
@@ -4285,8 +4334,6 @@ public enum AppServicesError: Error, Equatable {
     /// Transport not connected
     case transportNotConnected
 
-    /// RNode belongs to Model B and is not available in the shipping Python runtime.
-    case rnodeUnavailableInPythonRuntime
 }
 
 // MARK: - CustomStringConvertible
@@ -4302,8 +4349,6 @@ extension AppServicesError: CustomStringConvertible {
             return "Router not initialized"
         case .transportNotConnected:
             return "Transport not connected"
-        case .rnodeUnavailableInPythonRuntime:
-            return "RNode is unavailable in the Python runtime"
         }
     }
 }

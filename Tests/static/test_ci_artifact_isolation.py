@@ -54,6 +54,14 @@ class ArtifactFixture:
             ("nm", str(self.app / executable)): b"_$s7Columba13ShippingGraphV\n",
         }
         if flavor == "shipping":
+            self.outputs[("nm", str(self.app / executable))] += (
+                b"_columba_rnode_connect\n"
+                b"_columba_rnode_disconnect\n"
+                b"_columba_rnode_state\n"
+                b"_columba_rnode_read\n"
+                b"_columba_rnode_write\n"
+                b"_columba_rnode_set_online\n"
+            )
             framework = self.app / "Frameworks/Python.framework"
             framework.mkdir(parents=True)
             self.write_plist(
@@ -71,6 +79,10 @@ class ArtifactFixture:
             packages = self.app / "app_packages"
             packages.mkdir()
             (packages / "rns.py").write_text("pass\n", encoding="utf-8")
+            rnode = self.app / "app/rnode"
+            rnode.mkdir(parents=True)
+            (rnode / "IOSRNodeInterface.py").write_text("interface_class = object\n")
+            (rnode / "IOSRNodeDriver.py").write_text("class IOSRNodeDriver: pass\n")
             self.outputs[("otool", str(self.app / executable))] += (
                 b"\t@rpath/Python.framework/Python\n"
             )
@@ -141,6 +153,21 @@ class ArtifactCheckerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "shipping", "NotColumbaApp")
             self.verify(fixture, "shipping")
+
+    def test_shipping_rejects_missing_python_rnode_bridge_symbol_or_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "shipping")
+            key = ("nm", str(fixture.app / fixture.executable))
+            fixture.outputs[key] = fixture.outputs[key].replace(
+                b"_columba_rnode_write\n", b""
+            )
+            self.assert_rejected(fixture, "shipping", "missing Python RNode C ABI symbol")
+
+        for name in ("IOSRNodeInterface.py", "IOSRNodeDriver.py"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                fixture = ArtifactFixture(Path(directory), "shipping")
+                (fixture.app / "app/rnode" / name).unlink()
+                self.assert_rejected(fixture, "shipping", "Python RNode payload")
 
     def test_modelb_passes_with_exact_extension_and_discovered_executables(self):
         with tempfile.TemporaryDirectory() as directory:

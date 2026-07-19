@@ -307,10 +307,10 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         switch e {
         case let .announce(d, a, asp, pk, ifn, h, t):
             return .announce(destHash: d, appDataHex: a, aspect: asp, publicKeysHex: pk, interfaceName: ifn, hops: h, t: t)
-        case let .inbound(s, c, ti, fh, t):
+        case let .inbound(s, mh, c, ti, fh, t):
             // fieldsHex = MessagePack-packed LXMF field map (hex), extracted by
             // rns_bridge.py's delivery callback; decode to the neutral fieldsPacked.
-            return .inbound(sourceHash: s, content: c, title: ti, fieldsPacked: (try? fh.hexToData()) ?? Data(), t: t)
+            return .inbound(sourceHash: s, messageHash: mh, content: c, title: ti, fieldsPacked: (try? fh.hexToData()) ?? Data(), t: t)
         case let .state(s, t):
             return .state(s, t: t)
         case let .delivery(m, s, t):

@@ -304,6 +304,7 @@
 		E49B977D311DA1C9ACE14CAB /* CallManagerCallKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30A79B9ECDB4166F8A36A670 /* CallManagerCallKitTests.swift */; };
 		E52A4F911C392F54D134116D /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043 /* IdentityManager.swift */; };
 		E63DE54C6FD31D240E66BD5B /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
+		E8CD0AF97B2A2B9FAE29F088 /* PythonRNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E59C40C0DF095105ECF040B /* PythonRNodeBLEBridge.swift */; };
 		EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
 		EAGD /* AppGroupBLEDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAGD /* AppGroupBLEDriver.swift */; };
 		EB373633ECFEC7ED56EF72E4 /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EBCA636D502CF4367E32C7 /* TCPClientWizard.swift */; };
@@ -401,6 +402,7 @@
 		550749F04079B0D39E4DAD05 /* AppGroupRNodeSeamTransport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppGroupRNodeSeamTransport.swift; sourceTree = "<group>"; };
 		55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PropagationSeam.swift; sourceTree = "<group>"; };
 		56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundDeliveryGateView.swift; sourceTree = "<group>"; };
+		5E59C40C0DF095105ECF040B /* PythonRNodeBLEBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNodeBLEBridge.swift; sourceTree = "<group>"; };
 		67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncStatusBottomSheet.swift; sourceTree = "<group>"; };
 		6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonConfigWriterTests.swift; sourceTree = "<group>"; };
 		6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioManagerConfigChangeTests.swift; sourceTree = "<group>"; };
@@ -713,6 +715,7 @@
 				A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */,
 				11D4DB375C0C7BB62E8A8B23 /* ColumbaPython-Bridging-Header.h */,
 				CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */,
+				5E59C40C0DF095105ECF040B /* PythonRNodeBLEBridge.swift */,
 			);
 			name = PythonBridge;
 			path = Sources/PythonBridge;
@@ -1622,6 +1625,7 @@
 				3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */,
 				7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */,
 				0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */,
+				E8CD0AF97B2A2B9FAE29F088 /* PythonRNodeBLEBridge.swift in Sources */,
 				6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */,
 				238336F8024494A8B57F9419 /* CeaseTelemetry.swift in Sources */,
 				F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */,
