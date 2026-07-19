@@ -15,10 +15,23 @@ External-interface loader contract (Reticulum.py:919-937):
 """
 
 import collections
+import os
+import sys
 import threading
 import time
 import RNS
 from RNS.Interfaces.Interface import Interface
+
+# Reticulum exec()s external-interface files instead of importing them as
+# normal modules. Ensure the sibling IOSRNodeDriver.py is importable from the
+# deployed <configDir>/interfaces directory.
+_this_file = globals().get("__file__")
+if _this_file:
+    _interfaces_dir = os.path.dirname(os.path.abspath(_this_file))
+else:
+    _interfaces_dir = RNS.Reticulum.interfacepath
+if _interfaces_dir and _interfaces_dir not in sys.path:
+    sys.path.insert(0, _interfaces_dir)
 
 
 class KISS:

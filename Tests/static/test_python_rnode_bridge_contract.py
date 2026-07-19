@@ -32,6 +32,8 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
             "columba_rnode_set_online",
         ):
             self.assertIn(symbol, driver)
+        self.assertIn("sys.path.insert(0, _interfaces_dir)", interface)
+        self.assertIn("from IOSRNodeDriver import IOSRNodeDriver", interface)
 
     def test_config_enables_python_rnode_with_radio_parameters(self) -> None:
         source = CONFIG_WRITER.read_text()
