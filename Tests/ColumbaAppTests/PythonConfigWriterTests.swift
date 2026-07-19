@@ -87,6 +87,7 @@ private final class FakePythonRNodeTransport: PythonRNodeTransporting {
     var connectCount = 0
     var disconnectCount = 0
     var sent: [Data] = []
+    var sendHandler: ((Data, @escaping (Error?) -> Void) -> Void)?
 
     func connect() {
         connectCount += 1
@@ -100,7 +101,11 @@ private final class FakePythonRNodeTransport: PythonRNodeTransporting {
 
     func send(_ data: Data, completion: @escaping (Error?) -> Void) {
         sent.append(data)
-        completion(nil)
+        if let sendHandler {
+            sendHandler(data, completion)
+        } else {
+            completion(nil)
+        }
     }
 }
 
@@ -156,6 +161,7 @@ extension PythonConfigWriterTests {
         })
 
         XCTAssertTrue(bridge.connect(deviceName: "RNode A"))
+        XCTAssertFalse(bridge.connect(deviceName: "RNode A"))
         XCTAssertFalse(bridge.connect(deviceName: "RNode B"))
         XCTAssertEqual(transports.count, 1)
 
@@ -166,6 +172,26 @@ extension PythonConfigWriterTests {
         stale.onStateChange?(.failed, "stale failure")
         XCTAssertEqual(bridge.snapshot().0, .connected)
         XCTAssertNil(bridge.snapshot().1)
+    }
+
+    func testStaleWriteTimeoutDoesNotDisconnectReplacementTransport() {
+        var transports: [FakePythonRNodeTransport] = []
+        let bridge = PythonRNodeBLEBridge(makeTransport: { _ in
+            let transport = FakePythonRNodeTransport()
+            transports.append(transport)
+            return transport
+        })
+        XCTAssertTrue(bridge.connect(deviceName: "RNode A"))
+        let stale = transports[0]
+        stale.sendHandler = { _, _ in
+            bridge.disconnect()
+            XCTAssertTrue(bridge.connect(deviceName: "RNode B"))
+        }
+
+        XCTAssertEqual(bridge.writeSync(Data([0xC0]), timeout: 0.01), -2)
+        XCTAssertEqual(transports.count, 2)
+        XCTAssertEqual(transports[1].disconnectCount, 0)
+        XCTAssertEqual(bridge.snapshot().0, .connected)
     }
 
     func testPythonRNodeBridgeFailsInsteadOfDroppingOnBufferOverflow() {

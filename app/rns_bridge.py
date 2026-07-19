@@ -261,6 +261,27 @@ _TRACKED_ASPECTS = (
 )
 
 
+def _canonical_inbound_hash(message: Any) -> bytes | None:
+    """Return the wire LXMF hash, recovering it from the packed LXM if needed."""
+    canonical = getattr(message, "hash", None) or getattr(message, "message_id", None)
+    if canonical:
+        return bytes(canonical)
+
+    # LXMF sets both hash fields in unpack_from_bytes() before routing a valid
+    # inbound message. Keep this fallback for alternate router versions that
+    # retain the original packed LXM but do not expose one of those aliases.
+    packed = getattr(message, "packed", None)
+    if packed:
+        try:
+            recovered = LXMF.LXMessage.unpack_from_bytes(bytes(packed))
+            recovered_hash = getattr(recovered, "hash", None)
+            if recovered_hash:
+                return bytes(recovered_hash)
+        except Exception:
+            pass
+    return None
+
+
 def _delivery_callback(message: "LXMF.LXMessage") -> None:
     """Fires for every inbound LXMF message routed to our delivery destination."""
     try:
@@ -286,7 +307,13 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
     # Preserve the canonical LXMF hash. Reactions identify their target by this
     # exact hash; synthesising a different app-local id makes peers receive the
     # reaction frame but fail to find the target message.
-    message_hash = message.hash.hex() if getattr(message, "hash", None) else ""
+    canonical_hash = _canonical_inbound_hash(message)
+    if canonical_hash is None:
+        # A valid delivered LXMessage always has a wire hash. Do not invent an
+        # app-local replacement: it would make reaction targets invalid.
+        RNS.log("Ignoring inbound LXMF message without recoverable wire hash", RNS.LOG_ERROR)
+        return
+    message_hash = canonical_hash.hex()
     _put(
         "inbound",
         source_hash=src,

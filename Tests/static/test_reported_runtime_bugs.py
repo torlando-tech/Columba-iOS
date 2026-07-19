@@ -26,7 +26,18 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         assert callback is not None
         callback_source = callback.group(0)
         self.assertIn("message_hash", callback_source)
-        self.assertRegex(callback_source, r"message\.hash\.hex\(\)")
+        self.assertIn("_canonical_inbound_hash(message)", callback_source)
+        self.assertIn("message_hash = canonical_hash.hex()", callback_source)
+
+        canonical_helper = re.search(
+            r"def _canonical_inbound_hash\(.*?\n(?=\ndef )", bridge, re.DOTALL
+        )
+        self.assertIsNotNone(canonical_helper)
+        assert canonical_helper is not None
+        helper_source = canonical_helper.group(0)
+        self.assertIn('getattr(message, "hash", None)', helper_source)
+        self.assertIn('getattr(message, "message_id", None)', helper_source)
+        self.assertIn("LXMF.LXMessage.unpack_from_bytes", helper_source)
 
         py_bridge = PYTHON_BRIDGE.read_text()
         self.assertRegex(

@@ -115,15 +115,11 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
         guard !requestedName.isEmpty else { return false }
 
         lock.lock()
-        if deviceName == requestedName, transport != nil,
+        if transport != nil,
            linkState == .connecting || linkState == .connected {
+            let activeName = deviceName ?? "unknown"
             lock.unlock()
-            return true
-        }
-        if transport != nil, deviceName != requestedName,
-           linkState == .connecting || linkState == .connected {
-            lock.unlock()
-            DiagLog.log("[RNODE_PY] rejected competing RNode '\(requestedName)'")
+            DiagLog.log("[RNODE_PY] rejected duplicate RNode interface '\(requestedName)' while '\(activeName)' owns the byte stream")
             return false
         }
         let old = transport
@@ -197,19 +193,45 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
         }
         guard semaphore.wait(timeout: .now() + timeout) == .success else {
             DiagLog.log("[RNODE_PY] native BLE write timed out (\(data.count)B)")
-            disconnect()
+            disconnectIfCurrent(radio, generation: writeGeneration)
             return -2
         }
         resultLock.lock(); let error = writeError; resultLock.unlock()
         if let error {
             DiagLog.log("[RNODE_PY] native BLE write failed: \(error.localizedDescription)")
-            disconnect()
+            disconnectIfCurrent(radio, generation: writeGeneration)
             return -3
         }
         lock.lock()
         let stillCurrent = generation == writeGeneration && linkState == .connected
         lock.unlock()
         return stillCurrent ? data.count : -4
+    }
+
+    /// Tear down a failed write only if it still belongs to the transport that
+    /// issued it. A reconnect may install a replacement while the old async
+    /// completion is outstanding; that stale completion must not kill the new
+    /// session.
+    private func disconnectIfCurrent(
+        _ expectedTransport: PythonRNodeTransporting,
+        generation expectedGeneration: UInt64
+    ) {
+        lock.lock()
+        guard generation == expectedGeneration, transport === expectedTransport else {
+            lock.unlock()
+            return
+        }
+        generation &+= 1
+        transport = nil
+        deviceName = nil
+        inbound.removeAll(keepingCapacity: false)
+        linkState = .disconnected
+        failureReason = nil
+        interfaceOnline = false
+        let handler = stateHandler
+        lock.unlock()
+        expectedTransport.disconnect()
+        handler?(.disconnected, nil)
     }
 
     private func receive(_ data: Data, generation callbackGeneration: UInt64) {
