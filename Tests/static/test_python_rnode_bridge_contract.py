@@ -29,6 +29,7 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
             "columba_rnode_state",
             "columba_rnode_read",
             "columba_rnode_write",
+            "columba_rnode_set_online",
         ):
             self.assertIn(symbol, driver)
 
@@ -64,6 +65,7 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
             '@_cdecl("columba_rnode_state")',
             '@_cdecl("columba_rnode_read")',
             '@_cdecl("columba_rnode_write")',
+            '@_cdecl("columba_rnode_set_online")',
         ):
             self.assertIn(declaration, native)
         self.assertIn("BLETransport(deviceName:", native)

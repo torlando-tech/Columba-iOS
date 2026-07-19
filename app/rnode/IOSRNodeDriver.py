@@ -40,12 +40,7 @@ _read = _required(
 _write = _required(
     "columba_rnode_write", [ctypes.POINTER(ctypes.c_uint8), ctypes.c_int32], ctypes.c_int32
 )
-try:
-    _set_online = getattr(_lib, "columba_rnode_set_online")
-    _set_online.argtypes = [ctypes.c_int32]
-    _set_online.restype = ctypes.c_int32
-except AttributeError:
-    _set_online = None
+_set_online = _required("columba_rnode_set_online", [ctypes.c_int32], ctypes.c_int32)
 
 
 class IOSRNodeDriver:
@@ -134,5 +129,4 @@ class IOSRNodeDriver:
             callback(connected, self._device_name)
 
     def notifyOnlineStatusChanged(self, online, _interface_name=None):
-        if _set_online is not None:
-            _set_online(1 if online else 0)
+        _set_online(1 if online else 0)

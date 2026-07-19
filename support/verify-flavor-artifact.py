@@ -37,6 +37,7 @@ SHIPPING_RNODE_C_ABI_SYMBOLS = (
     b"_columba_rnode_state",
     b"_columba_rnode_read",
     b"_columba_rnode_write",
+    b"_columba_rnode_set_online",
 )
 SHIPPING_RNODE_PYTHON_PAYLOADS = (
     "app/rnode/IOSRNodeInterface.py",

@@ -60,6 +60,7 @@ class ArtifactFixture:
                 b"_columba_rnode_state\n"
                 b"_columba_rnode_read\n"
                 b"_columba_rnode_write\n"
+                b"_columba_rnode_set_online\n"
             )
             framework = self.app / "Frameworks/Python.framework"
             framework.mkdir(parents=True)
