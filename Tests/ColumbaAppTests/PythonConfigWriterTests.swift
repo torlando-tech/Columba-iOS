@@ -109,7 +109,7 @@ extension PythonConfigWriterTests {
         let fake = FakePythonRNodeTransport()
         let bridge = PythonRNodeBLEBridge(makeTransport: { _ in fake })
         var published: [PythonRNodeLinkState] = []
-        bridge.setStateHandler { published.append($0) }
+        bridge.setStateHandler { state, _ in published.append(state) }
 
         XCTAssertTrue(bridge.connect(deviceName: "RNode 1234"))
         XCTAssertEqual(fake.connectCount, 1)
