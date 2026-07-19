@@ -348,6 +348,10 @@ public struct Message: Identifiable, Equatable {
     /// Create from LXMessage.
     public init(from lxMessage: LXMessage, localHash: Data) {
         self.id = lxMessage.hash.map { String(format: "%02x", $0) }.joined()
+        // Only canonical 32-byte LXMF hashes may be used as reaction/reply
+        // targets. A 33-byte ID is the local persistence namespace used when an
+        // abnormal delivered message arrives without a recoverable wire hash.
+        self.messageHash = lxMessage.hash.count == 32 ? lxMessage.hash : nil
         self.content = String(data: lxMessage.content, encoding: .utf8) ?? ""
         self.timestamp = Date(timeIntervalSince1970: lxMessage.timestamp)
         self.isFromMe = lxMessage.sourceHash == localHash
@@ -413,7 +417,7 @@ public struct Message: Identifiable, Equatable {
         // message rendered as received. (localHash is still used below for
         // reaction `includesMe`.)
         self.isFromMe = record.direction == .outbound
-        self.messageHash = record.messageId
+        self.messageHash = record.messageId.count == 32 ? record.messageId : nil
 
         // Map raw state value to DeliveryStatus
         switch record.state {

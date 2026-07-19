@@ -93,6 +93,7 @@ struct MessagingView: View {
 
                             ForEach(vm.messages) { message in
                                 SwipeToReplyContainer(onReply: {
+                                    guard message.messageHash != nil else { return }
                                     withAnimation(.easeInOut(duration: 0.25)) {
                                         vm.replyToMessage = message
                                     }
@@ -268,6 +269,7 @@ struct MessagingView: View {
                         }
                     },
                     onReply: {
+                        guard msg.messageHash != nil else { return }
                         withAnimation(.easeInOut(duration: 0.25)) {
                             viewModel?.replyToMessage = msg
                         }
@@ -578,7 +580,8 @@ struct MessagingView: View {
         let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let image = attachedImage
         let files = attachedFiles
-        let replyToId = viewModel?.replyToMessage?.id
+        let replyTarget = viewModel?.replyToMessage
+        let replyToId = replyTarget?.messageHash != nil ? replyTarget?.id : nil
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 

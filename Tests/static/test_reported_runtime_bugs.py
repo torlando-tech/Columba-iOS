@@ -14,6 +14,8 @@ PY_BACKEND = ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift"
 SWIFT_BACKEND = ROOT / "Sources/RNSBackendSwift/SwiftRNSBackend.swift"
 APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
+MESSAGE_BUBBLE = ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
+MESSAGING_VIEW = ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift"
 
 
 class ReportedRuntimeBugContracts(unittest.TestCase):
@@ -27,7 +29,11 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         callback_source = callback.group(0)
         self.assertIn("message_hash", callback_source)
         self.assertIn("_canonical_inbound_hash(message)", callback_source)
-        self.assertIn("message_hash = canonical_hash.hex()", callback_source)
+        self.assertIn(
+            'message_hash = canonical_hash.hex() if canonical_hash is not None else ""',
+            callback_source,
+        )
+        self.assertNotIn("Ignoring inbound LXMF message", callback_source)
 
         canonical_helper = re.search(
             r"def _canonical_inbound_hash\(.*?\n(?=\ndef )", bridge, re.DOTALL
@@ -82,13 +88,34 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         persist_source = persist.group(0)
         self.assertIn("messageHashHex: String", persist_source)
         self.assertIn("Data(hexString: messageHashHex)", persist_source)
-        self.assertNotIn("SHA256.hash", persist_source)
+        self.assertIn("parsedHash.count == 32", persist_source)
+        self.assertIn("Data([0x00]) + Data(SHA256.hash(data: seed))", persist_source)
+        self.assertIn("persistInbound using local non-wire message id", persist_source)
         self.assertIsNotNone(re.search(
             r"case \.inbound\(let sourceHash, let messageHash, let content,"
             r".*?persistInboundFromPython\(sourceHash: data, messageHashHex: messageHash,",
             app_services,
             re.DOTALL,
         ))
+
+    def test_non_wire_persistence_ids_cannot_target_reactions_or_replies(self) -> None:
+        bubble = MESSAGE_BUBBLE.read_text()
+        self.assertIn(
+            "self.messageHash = lxMessage.hash.count == 32 ? lxMessage.hash : nil",
+            bubble,
+        )
+        self.assertIn(
+            "self.messageHash = record.messageId.count == 32 ? record.messageId : nil",
+            bubble,
+        )
+
+        messaging = MESSAGING_VIEW.read_text()
+        self.assertIn("guard message.messageHash != nil else { return }", messaging)
+        self.assertIn("guard msg.messageHash != nil else { return }", messaging)
+        self.assertIn(
+            "let replyToId = replyTarget?.messageHash != nil ? replyTarget?.id : nil",
+            messaging,
+        )
 
     def test_rnode_cover_dismissal_clears_editing_state(self) -> None:
         settings = SETTINGS_VIEW.read_text()

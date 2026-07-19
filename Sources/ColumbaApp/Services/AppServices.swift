@@ -2301,12 +2301,28 @@ public final class AppServices {
         do {
             try await repo.ensureConversation(sourceHash, displayName: displayName)
 
-            // Reactions target the exact LXMF message hash used by the sender.
-            // Never replace it with a locally synthesised persistence id: a peer
-            // would receive our reaction but be unable to match its target.
-            guard let messageHash = Data(hexString: messageHashHex), !messageHash.isEmpty else {
-                DiagLog.log("[RNS] persistInbound rejected missing/invalid canonical message hash")
-                return nil
+            // Reactions and replies target the exact 32-byte LXMF wire hash.
+            // Preserve an abnormal delivered message that lacks that hash under a
+            // 33-byte, namespaced local persistence ID instead of dropping it.
+            // UI adapters expose only 32-byte IDs as network-addressable hashes,
+            // so the local ID can never leak into a reaction or reply frame.
+            let parsedHash = Data(hexString: messageHashHex)
+            let messageHash: Data
+            if let parsedHash, parsedHash.count == 32 {
+                messageHash = parsedHash
+            } else {
+                var seed = Data("columba-local-inbound-v1".utf8)
+                seed.append(sourceHash)
+                var timestampBits = timestamp.timeIntervalSince1970.bitPattern.bigEndian
+                withUnsafeBytes(of: &timestampBits) { seed.append(contentsOf: $0) }
+                seed.append(Data(title.utf8))
+                seed.append(0)
+                seed.append(Data(content.utf8))
+                if let fields {
+                    seed.append(LxmfFieldCodec.pack(fields))
+                }
+                messageHash = Data([0x00]) + Data(SHA256.hash(data: seed))
+                DiagLog.log("[RNS] persistInbound using local non-wire message id")
             }
 
             let message = LXMessage(

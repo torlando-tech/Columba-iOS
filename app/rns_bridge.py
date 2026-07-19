@@ -309,11 +309,12 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
     # reaction frame but fail to find the target message.
     canonical_hash = _canonical_inbound_hash(message)
     if canonical_hash is None:
-        # A valid delivered LXMessage always has a wire hash. Do not invent an
-        # app-local replacement: it would make reaction targets invalid.
-        RNS.log("Ignoring inbound LXMF message without recoverable wire hash", RNS.LOG_ERROR)
-        return
-    message_hash = canonical_hash.hex()
+        # Preserve the delivered content and fields even when an alternate or
+        # malformed LXMF producer omitted the canonical wire hash. Swift assigns
+        # a namespaced local persistence ID and keeps it out of reaction/reply
+        # targeting; dropping the callback here would lose the whole message.
+        RNS.log("Inbound LXMF message has no recoverable wire hash", RNS.LOG_ERROR)
+    message_hash = canonical_hash.hex() if canonical_hash is not None else ""
     _put(
         "inbound",
         source_hash=src,
