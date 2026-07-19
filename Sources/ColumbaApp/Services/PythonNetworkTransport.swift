@@ -12,11 +12,11 @@ import os.log
 /// encryption, packetization, identify, and path resolution — so the library
 /// stays transport-agnostic. Mirrors LXST-kt's `PythonNetworkTransport`.
 ///
-/// The seam speaks in the app's universal contact key: the peer's
-/// **lxmf.delivery destination hash**. `openOutboundCall` takes it and resolves
-/// the identity → telephony destination; `remoteIdentified` reports it
-/// (computed from the verified caller identity). No RNS types cross into
-/// `Telephone`.
+/// Outbound calls are always addressed to an **lxst.telephony destination
+/// hash**. CallManager resolves either a direct telephony announce or a chat's
+/// delivery announce into `TelephonyCallTarget`, then stages the public identity
+/// here before invoking LXSTSwift. `remoteIdentified` still reports the caller's
+/// delivery hash because that is the app's conversation/contact key.
 public actor PythonNetworkTransport: NetworkTransport {
 
     // LXST telephony destination aspect: <identity>.lxst.telephony
@@ -33,6 +33,11 @@ public actor PythonNetworkTransport: NetworkTransport {
 
     /// The active call link (outbound or accepted inbound), if any.
     private var activeLink: Link?
+
+    /// Public-key hints keyed by the exact telephony destination that
+    /// LXSTSwift will pass back to `openOutboundCall`. The hint lets us build a
+    /// verified Destination before the active path request completes.
+    private var outboundIdentityHints: [Data: Data] = [:]
 
     // Seam handlers (installed by Telephone).
     private var incomingCallHandler: (@Sendable () async -> Void)?
@@ -82,20 +87,23 @@ public actor PythonNetworkTransport: NetworkTransport {
 
     // MARK: - NetworkTransport (outbound)
 
-    public func openOutboundCall(to deliveryHash: Data) async -> Bool {
-        guard let pathTable else {
-            logger.error("[PNT] openOutboundCall: no path table")
-            return false
-        }
-        // Resolve the peer's delivery hash → identity (public key from announce).
-        guard let entry = await pathTable.lookup(destinationHash: deliveryHash),
-              entry.publicKeys.count == 64,
-              let remoteIdentity = try? Identity(publicKeyBytes: entry.publicKeys) else {
-            logger.error("[PNT] openOutboundCall: peer not resolvable from path table")
+    /// Stage the canonical target before `Telephone.call` invokes the neutral
+    /// NetworkTransport seam. Verify it again when opening the Link.
+    func prepareOutboundCall(_ target: TelephonyCallTarget) {
+        outboundIdentityHints[target.destinationHash] = target.publicKeys
+    }
+
+    public func openOutboundCall(to telephonyHash: Data) async -> Bool {
+        let hintedKeys = outboundIdentityHints.removeValue(forKey: telephonyHash)
+        let cachedKeys = await pathTable?.lookup(destinationHash: telephonyHash)?.publicKeys
+        guard let publicKeys = [hintedKeys, cachedKeys].compactMap({ $0 }).first(where: { $0.count == 64 }),
+              let remoteIdentity = try? Identity(publicKeyBytes: publicKeys) else {
+            logger.error("[PNT] openOutboundCall: telephony identity unavailable")
             return false
         }
 
-        // Build the peer's telephony destination and ensure a path to it.
+        // Rebuild and verify the exact telephony destination before requesting
+        // a path or opening a Link.
         let callDest = Destination(
             identity: remoteIdentity,
             appName: Self.appName,
@@ -103,6 +111,14 @@ public actor PythonNetworkTransport: NetworkTransport {
             type: .single,
             direction: .out
         )
+        guard callDest.hash == telephonyHash else {
+            logger.error("[PNT] openOutboundCall: telephony identity mismatch")
+            return false
+        }
+
+        // The shipping backend performs the definitive active path request and
+        // bounded await inside openLink, so stale/missing cache state is probed
+        // before the call is reported unreachable.
         let pathFound = await transport.awaitPath(for: callDest.hash, timeout: 10.0)
         logger.error("[PNT] path to telephony dest found=\(pathFound, privacy: .public)")
         guard pathFound else {
@@ -251,6 +267,13 @@ public actor PythonNetworkTransport: NetworkTransport {
         )
         await remoteIdentifiedHandler?(deliveryHash)
     }
+}
+
+/// Canonical input for every outgoing call, whether selected from a chat or
+/// directly from an lxst.telephony node.
+struct TelephonyCallTarget: Sendable, Equatable {
+    let destinationHash: Data
+    let publicKeys: Data
 }
 
 /// Bridges the Compat `IdentifyCallbacks` protocol to the transport actor.

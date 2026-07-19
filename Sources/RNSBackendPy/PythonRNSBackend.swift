@@ -198,8 +198,8 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
     // Python is just the underlying Link pipe — frames marshalled over via
     // openLink + linkSend + linkPacket events.
 
-    public func openLink(destHashHex: String, aspect: String = "lxst.telephony") async throws -> (ok: Bool, linkId: Int, reason: String) {
-        try await bridge.openLink(destHashHex: destHashHex, aspect: aspect)
+    public func openLink(destHashHex: String, aspect: String = "lxst.telephony", identityPublicKeyHex: String? = nil) async throws -> (ok: Bool, linkId: Int, reason: String) {
+        try await bridge.openLink(destHashHex: destHashHex, aspect: aspect, identityPublicKeyHex: identityPublicKeyHex)
     }
 
     @discardableResult

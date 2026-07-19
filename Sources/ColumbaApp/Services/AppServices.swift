@@ -1655,7 +1655,7 @@ public final class AppServices {
                     return
                 }
                 do {
-                    let res = try await backend.openLink(destHashHex: to, aspect: aspect)
+                    let res = try await backend.openLink(destHashHex: to, aspect: aspect, identityPublicKeyHex: nil)
                     DiagLog.log("[TEST-LINK] open ok=\(res.ok) linkId=\(res.linkId) reason=\(res.reason)")
                 } catch {
                     DiagLog.log("[TEST-LINK] open error=\(error)")
@@ -3306,32 +3306,6 @@ public final class AppServices {
     }
     #endif
 
-    /// Resolve a peer's LXST **telephony** destination hash from their LXMF
-    /// delivery hash, so the conversation/contact UI can place a voice call.
-    ///
-    /// A peer's telephony destination is a different hash than their LXMF
-    /// delivery destination, but both derive from the same identity. Recall the
-    /// identity from the path table (it carries the public keys learned from
-    /// the peer's announce) and derive `<identity>.lxst.telephony` — the same
-    /// construction CallManager uses for our own telephony destination. Returns
-    /// nil when we have no path/identity for the peer yet (they haven't been
-    /// heard, so they can't be called).
-    public func telephonyHash(forPeerLxmfHash lxmfHash: Data) async -> Data? {
-        guard let pathTable,
-              let entry = await pathTable.lookup(destinationHash: lxmfHash),
-              !entry.publicKeys.isEmpty,
-              let identity = try? Identity(publicKeyBytes: entry.publicKeys) else {
-            return nil
-        }
-        let telephony = Destination(
-            identity: identity,
-            appName: "lxst",
-            aspects: ["telephony"],
-            type: .single,
-            direction: .out
-        )
-        return telephony.hash
-    }
 
     /// Initialize the base stack (identity, transport, router) without a TCP interface.
     ///
@@ -4124,7 +4098,11 @@ public final class AppServices {
         }
         let destHex = destination.hash.toHex()
         let aspect = ([destination.appName] + destination.aspects).joined(separator: ".")
-        let result = try await backend.openLink(destHashHex: destHex, aspect: aspect)
+        let result = try await backend.openLink(
+            destHashHex: destHex,
+            aspect: aspect,
+            identityPublicKeyHex: destination.identity?.publicKeyHex
+        )
         guard result.ok else {
             throw AppServicesError.transportNotConnected
         }
