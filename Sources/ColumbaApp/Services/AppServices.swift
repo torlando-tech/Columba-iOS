@@ -1674,9 +1674,14 @@ public final class AppServices {
                 DiagLog.log("[TEST-INBOUND] bad hex")
                 return
             }
+            let testHashInput = (fromHex + content + String(Date().timeIntervalSince1970))
+                .data(using: .utf8) ?? Data()
+            let testMessageHash = Data(SHA256.hash(data: testHashInput))
+                .map { String(format: "%02x", $0) }.joined()
             Task { @MainActor in
                 await self.persistInboundFromPython(
                     sourceHash: from,
+                    messageHashHex: testMessageHash,
                     content: content,
                     title: "",
                     fields: nil,
