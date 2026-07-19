@@ -175,7 +175,12 @@ struct SettingsView: View {
         .fullScreenCover(isPresented: Binding(
             get: { interfaceViewModel?.showRNodeWizard ?? false },
             set: { interfaceViewModel?.showRNodeWizard = $0 }
-        )) {
+        ), onDismiss: {
+            // SwiftUI only clears the presentation binding on a swipe/cancel.
+            // Clear the edit target and form too, otherwise the next Add RNode
+            // flow reopens the deleted interface in edit mode until relaunch.
+            interfaceViewModel?.dismissConfigSheet()
+        }) {
             if let vm = interfaceViewModel {
                 RNodeWizardView(viewModel: vm)
             }

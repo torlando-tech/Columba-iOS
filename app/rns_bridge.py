@@ -283,7 +283,18 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
     except Exception:
         fields_hex = ""
     src = message.source_hash.hex() if message.source_hash else ""
-    _put("inbound", source_hash=src, content=content, title=title, fields_hex=fields_hex)
+    # Preserve the canonical LXMF hash. Reactions identify their target by this
+    # exact hash; synthesising a different app-local id makes peers receive the
+    # reaction frame but fail to find the target message.
+    message_hash = message.hash.hex() if getattr(message, "hash", None) else ""
+    _put(
+        "inbound",
+        source_hash=src,
+        message_hash=message_hash,
+        content=content,
+        title=title,
+        fields_hex=fields_hex,
+    )
 
 
 def start(

@@ -2258,7 +2258,7 @@ public final class AppServices {
     /// run side-channel handling (reactions/replies/telemetry/icon/cease) through
     /// IncomingMessageHandler. Returns nil if blocked or persistence failed.
     @discardableResult
-    private func persistInboundFromPython(sourceHash: Data, content: String, title: String, fields: [UInt8: Any]?, timestamp: Date) async -> LXMessage? {
+    private func persistInboundFromPython(sourceHash: Data, messageHashHex: String, content: String, title: String, fields: [UInt8: Any]?, timestamp: Date) async -> LXMessage? {
         // Route Python-path inbound persistence through the GRDB canonical
         // store (the same one the UI reads and the Swift/NE path writes), via
         // the shared MessageRepository's RNSAPI-typed methods — NOT the
@@ -2296,12 +2296,13 @@ public final class AppServices {
         do {
             try await repo.ensureConversation(sourceHash, displayName: displayName)
 
-            // Build a synthetic LXMessage so saveMessage can persist it.
-            // Hash is the SHA-256 of (sourceHashHex || content || timestamp)
-            // truncated to 32 bytes — enough to dedupe; the Python side
-            // doesn't expose the canonical message hash through the event.
-            let hashInput = (sourceHashHex + content + "\(timestamp.timeIntervalSince1970)").data(using: .utf8) ?? Data()
-            let messageHash = Data(SHA256.hash(data: hashInput))
+            // Reactions target the exact LXMF message hash used by the sender.
+            // Never replace it with a locally synthesised persistence id: a peer
+            // would receive our reaction but be unable to match its target.
+            guard let messageHash = Data(hexString: messageHashHex), !messageHash.isEmpty else {
+                DiagLog.log("[RNS] persistInbound rejected missing/invalid canonical message hash")
+                return nil
+            }
 
             let message = LXMessage(
                 destinationHash: sourceHash,
@@ -2416,7 +2417,7 @@ public final class AppServices {
                     DiagLog.log("[RNS] stamped display name onto convo \(data.map { String(format: "%02x", $0) }.joined().prefix(8))")
                 }
             }
-        case .inbound(let sourceHash, let content, let title, let fieldsPacked, let t):
+        case .inbound(let sourceHash, let messageHash, let content, let title, let fieldsPacked, let t):
             DiagLog.log("[RNS] inbound source=\(sourceHash) content=\"\(content)\" fields=\(fieldsPacked.count)B")
             guard let data = Data(hexString: sourceHash) else { return }
             let fields = fieldsPacked.isEmpty ? nil : LxmfFieldCodec.unpack(fieldsPacked)
@@ -2425,7 +2426,7 @@ public final class AppServices {
             // IncomingMessageHandler — the router.delegate, wired in ColumbaApp.
             // Same path for both backends (Python sends empty fields until its
             // bridge plumbing lands; the Swift backend populates them now).
-            if let saved = await persistInboundFromPython(sourceHash: data, content: content, title: title, fields: fields, timestamp: t),
+            if let saved = await persistInboundFromPython(sourceHash: data, messageHashHex: messageHash, content: content, title: title, fields: fields, timestamp: t),
                fields != nil, let router = self.router {
                 router.delegate?.router(router, didReceiveMessage: saved)
             }
