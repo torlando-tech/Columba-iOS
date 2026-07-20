@@ -88,6 +88,9 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // periodically and the result lands on the client.
     private var rssiPollTask: Task<Void, Never>?
     private let rssiPollInterval: TimeInterval = 3.0
+    private var connectionTimeoutTasks: [String: Task<Void, Never>] = [:]
+    private var connectionAttemptTokens: [String: UUID] = [:]
+    private let connectionTimeout: TimeInterval = 30.0
 
     // Discovered peripherals from scan, retained by `identifier.uuidString`.
     // `connect(address:)` looks them up here.
@@ -96,6 +99,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // Per-subscriber state for peripheral-mode (centrals connected TO us).
     // Keyed by `CBCentral.identifier.uuidString`.
     private var gattServerPeers: [String: BleGattServerPeer] = [:]
+
 
     // Cap on a peer's backpressure notify queue so a stuck or vanished
     // subscriber can't grow pendingNotifies without bound.
@@ -111,6 +115,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     private var serverTxChar: CBMutableCharacteristic?
     private var serverIdentityChar: CBMutableCharacteristic?
     private var gattServiceAdded: Bool = false
+    private var gattServiceAdding: Bool = false
 
     // MARK: - Service UUIDs (set in start; injected by Python driver)
 
@@ -153,6 +158,45 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
     public func configurePower(_ settings: BlePowerSettings) {
         queue.sync { powerSettings = settings }
+    }
+
+    /// Replay native links that survived a Python backend restart or a
+    /// CoreBluetooth state-restoration wake. Android does this when Python
+    /// registers `onConnected`; iOS uses an explicit call because all callback
+    /// slots share one invoker rather than individual native setters.
+    public func syncExistingConnections() {
+        queue.async { [weak self] in
+            guard let self, let invoker = self.callbackInvoker else { return }
+            for (address, client) in self.gattClients where client.state == .established {
+                guard let identity = client.peerIdentity else { continue }
+                invoker.invoke(slot: .onIdentityReceived, args: [address, self.hex(identity)])
+                invoker.invoke(slot: .onMtuNegotiated, args: [address, client.mtu])
+                invoker.invoke(slot: .onDeviceConnected, args: [address, identity])
+            }
+            for (address, peer) in self.gattServerPeers where peer.state == .established {
+                guard let identity = peer.identity else { continue }
+                invoker.invoke(slot: .onIdentityReceived, args: [address, self.hex(identity)])
+                invoker.invoke(slot: .onMtuNegotiated, args: [address, peer.mtu])
+                invoker.invoke(slot: .onDeviceConnected, args: [address, identity])
+            }
+        }
+    }
+
+    /// Re-publish the native identity for a surviving link when Python has
+    /// lost its address mapping. Returns false when no identified peer exists.
+    public func requestIdentityResync(address: String) -> Bool {
+        queue.sync {
+            guard let invoker = callbackInvoker else { return false }
+            if let identity = gattClients[address]?.peerIdentity {
+                invoker.invoke(slot: .onIdentityReceived, args: [address, hex(identity)])
+                return true
+            }
+            if let identity = gattServerPeers[address]?.identity {
+                invoker.invoke(slot: .onIdentityReceived, args: [address, hex(identity)])
+                return true
+            }
+            return false
+        }
     }
 
     /// Bring up the CB managers. Safe to call multiple times — subsequent
@@ -338,12 +382,16 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                 centralManager?.cancelPeripheralConnection(client.peripheral)
             }
             gattClients.removeAll()
+            for task in connectionTimeoutTasks.values { task.cancel() }
+            connectionTimeoutTasks.removeAll()
+            connectionAttemptTokens.removeAll()
             discoveredPeripherals.removeAll()
             gattServerPeers.removeAll()
             serverRxChar = nil
             serverTxChar = nil
             serverIdentityChar = nil
             gattServiceAdded = false
+            gattServiceAdding = false
             lastDiscoveryReport.removeAll()
             pendingScanRequested = false
             pendingAdvertiseRequested = false
@@ -378,7 +426,8 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     fileprivate func setUpGattServiceIfNeeded() {
         guard let pm = peripheralManager,
               pm.state == .poweredOn,
-              !gattServiceAdded else { return }
+              !gattServiceAdded,
+              !gattServiceAdding else { return }
 
         let rx = CBMutableCharacteristic(
             type: rxCharCBUUID,
@@ -406,13 +455,13 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
         let service = CBMutableService(type: serviceCBUUID, primary: true)
         service.characteristics = [rx, tx, identity]
+        gattServiceAdding = true
         pm.add(service)
 
         serverRxChar = rx
         serverTxChar = tx
         serverIdentityChar = identity
-        gattServiceAdded = true
-        emitInfo("gatt-service-added serviceUuid=\(serviceCBUUID.uuidString)")
+        emitInfo("gatt-service-add-requested serviceUuid=\(serviceCBUUID.uuidString)")
     }
 
     // MARK: - Scan + advertise
@@ -456,10 +505,46 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
     // MARK: - Connection management
 
+    private func armConnectionTimeoutLocked(address: String, client: BleGattClient) {
+        cancelConnectionTimeoutLocked(address: address)
+        let attemptToken = UUID()
+        connectionAttemptTokens[address] = attemptToken
+        connectionTimeoutTasks[address] = Task { [weak self, weak client] in
+            try? await Task.sleep(nanoseconds: UInt64((self?.connectionTimeout ?? 30.0) * 1_000_000_000))
+            guard !Task.isCancelled, let self, let armedClient = client else { return }
+            self.queue.async {
+                guard self.connectionAttemptTokens[address] == attemptToken,
+                      let currentClient = self.gattClients[address],
+                      currentClient === armedClient,
+                      currentClient.state != .established else {
+                    if self.connectionAttemptTokens[address] == attemptToken {
+                        self.connectionTimeoutTasks.removeValue(forKey: address)
+                        self.connectionAttemptTokens.removeValue(forKey: address)
+                    }
+                    return
+                }
+                currentClient.state = .failed
+                self.connectionTimeoutTasks.removeValue(forKey: address)
+                self.connectionAttemptTokens.removeValue(forKey: address)
+                self.emitError("warning", "Connection timeout to \(address)")
+                self.centralManager?.cancelPeripheralConnection(armedClient.peripheral)
+            }
+        }
+    }
+
+    private func cancelConnectionTimeoutLocked(address: String) {
+        connectionTimeoutTasks.removeValue(forKey: address)?.cancel()
+        connectionAttemptTokens.removeValue(forKey: address)
+    }
+
     public func connect(address: String) {
         queue.async { [weak self] in
             guard let self else { return }
             guard let cm = self.centralManager else { return }
+            guard self.gattClients[address] == nil else {
+                self.emitInfo("connect ignored; native client already retained addr=\(address)")
+                return
+            }
             // Resolve the CBPeripheral by address. Prefer the cached
             // discovered one (active scan), fall back to retrieve-known
             // (post-restart). If still nil we can't connect.
@@ -478,10 +563,11 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             }
             peripheral.delegate = self
             // Hold strong ref — iOS deallocates CBPeripheral without one.
-            let client = self.gattClients[address] ?? BleGattClient(peripheral: peripheral)
+            let client = BleGattClient(peripheral: peripheral)
             client.state = .connecting
             self.gattClients[address] = client
             cm.connect(peripheral, options: nil)
+            self.armConnectionTimeoutLocked(address: address, client: client)
             self.emitInfo("connect-issued addr=\(address)")
         }
     }
@@ -491,44 +577,56 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             guard let self else { return }
             guard let cm = self.centralManager,
                   let client = self.gattClients[address] else { return }
+            client.state = .failed
+            self.cancelConnectionTimeoutLocked(address: address)
             cm.cancelPeripheralConnection(client.peripheral)
         }
     }
 
-    public func send(address: String, data: Data) {
-        queue.async { [weak self] in
-            guard let self else { return }
+    public func send(address: String, data: Data) -> Bool {
+        queue.sync {
             // Central role: queue + drain under transmit-queue backpressure.
             // writeValue(.withoutResponse) silently drops once CoreBluetooth's
             // per-peripheral queue is full (iOS 11+), so gate on
             // canSendWriteWithoutResponse and resume in peripheralIsReady.
-            if let client = self.gattClients[address], client.rxChar != nil {
-                if client.pendingWrites.count < self.maxPendingClientWrites {
-                    client.pendingWrites.append(data)
-                } else {
-                    self.emitError("warning", "client pendingWrites full (\(self.maxPendingClientWrites)) for \(address); dropping frame")
+            if let client = gattClients[address], client.rxChar != nil {
+                guard client.pendingWrites.count < maxPendingClientWrites else {
+                    emitError("warning", "client pendingWrites full (\(maxPendingClientWrites)) for \(address); rejecting frame")
+                    return false
                 }
-                self.drainClientWritesLocked(client)
-                return
+                client.pendingWrites.append(data)
+                // RX discovery precedes the mandatory identity
+                // write-with-response. Accept application frames into the
+                // bounded queue, but never let them overtake that handshake.
+                if client.state == .established {
+                    drainClientWritesLocked(client)
+                }
+                return true
             }
             // Peripheral role: notify on TX char to the specific subscriber.
-            if let peer = self.gattServerPeers[address],
-               self.serverTxChar != nil,
-               self.peripheralManager != nil {
+            if let peer = gattServerPeers[address],
+               serverTxChar != nil,
+               peripheralManager != nil {
                 // Always enqueue then drain in FIFO order. Sending a new frame
                 // directly while pendingNotifies is non-empty would jump it
                 // ahead of frames already queued behind backpressure — the peer
                 // would receive fragments out of order. Bounded so a stuck or
                 // vanished subscriber can't grow the queue without limit.
-                if peer.pendingNotifies.count < maxPendingNotifies {
-                    peer.pendingNotifies.append(data)
-                } else {
-                    emitError("warning", "pendingNotifies full (\(maxPendingNotifies)) for \(address); dropping frame")
+                guard peer.pendingNotifies.count < maxPendingNotifies else {
+                    emitError("warning", "pendingNotifies full (\(maxPendingNotifies)) for \(address); rejecting frame")
+                    return false
                 }
-                self.drainPeerNotifiesLocked(peer)
-                return
+                peer.pendingNotifies.append(data)
+                // Subscription can arrive before the remote central's first
+                // 16-byte identity write. Preserve ordering by holding
+                // application notifications until that write is accepted.
+                if peer.state == .established {
+                    drainPeerNotifiesLocked(peer)
+                }
+                return true
             }
-            self.emitError("warning", "send: no client / no server peer for \(address)")
+            emitError("warning", "send: no client / no server peer for \(address)")
+            return false
         }
     }
 
@@ -571,6 +669,61 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
     private func hex(_ d: Data) -> String { d.map { String(format: "%02x", $0) }.joined() }
 
+    /// Resolve simultaneous central+peripheral links by usable characteristic
+    /// capacity first. Equal-capacity links use the identity ordering shared
+    /// with Android: the lower identity keeps central role. Returning an old
+    /// address means the candidate is the deterministic survivor and Python
+    /// must migrate its address mapping before publication.
+    private func resolveDuplicateLocked(
+        candidateAddress: String,
+        candidateIdentity: Data,
+        candidateRole: BleConnectionRole
+    ) -> String? {
+        guard localIdentity.count == BleConstants.identitySize,
+              candidateIdentity != localIdentity else { return nil }
+
+        let wantedRole: BleConnectionRole =
+            localIdentity.lexicographicallyPrecedes(candidateIdentity) ? .central : .peripheral
+
+        switch candidateRole {
+        case .central:
+            guard let candidate = gattClients[candidateAddress],
+                  let old = gattServerPeers.first(where: {
+                      $0.key != candidateAddress && $0.value.identity == candidateIdentity
+                  }) else { return nil }
+            let candidateMTU = candidate.mtu
+            let existingMTU = old.value.mtu
+            let candidateWins = candidateMTU > existingMTU ||
+                (candidateMTU == existingMTU && candidateRole == wantedRole)
+            guard candidateWins else { return nil }
+            gattServerPeers.removeValue(forKey: old.key)
+            emitInfo(
+                "dual-link convergence keep=central old=\(old.key) new=\(candidateAddress) " +
+                "centralMtu=\(candidateMTU) peripheralMtu=\(existingMTU)"
+            )
+            return old.key
+
+        case .peripheral:
+            guard let candidate = gattServerPeers[candidateAddress],
+                  let old = gattClients.first(where: {
+                      $0.key != candidateAddress && $0.value.peerIdentity == candidateIdentity
+                  }) else { return nil }
+            let candidateMTU = candidate.mtu
+            let existingMTU = old.value.mtu
+            let candidateWins = candidateMTU > existingMTU ||
+                (candidateMTU == existingMTU && candidateRole == wantedRole)
+            guard candidateWins else { return nil }
+            old.value.state = .failed
+            cancelConnectionTimeoutLocked(address: old.key)
+            centralManager?.cancelPeripheralConnection(old.value.peripheral)
+            emitInfo(
+                "dual-link convergence keep=peripheral old=\(old.key) new=\(candidateAddress) " +
+                "peripheralMtu=\(candidateMTU) centralMtu=\(existingMTU)"
+            )
+            return old.key
+        }
+    }
+
     public func getPeerIdentity(address: String) -> String? {
         queue.sync {
             if let c = gattClients[address], let id = c.peerIdentity { return hex(id) }
@@ -591,6 +744,20 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     }
     public func getPeerRssi(address: String) -> Int? {
         queue.sync { lastDiscoveryReport[address]?.rssi }
+    }
+    public func getPeerRole(address: String) -> BleConnectionRole? {
+        queue.sync {
+            if gattClients[address]?.state == .established { return .central }
+            if gattServerPeers[address]?.state == .established { return .peripheral }
+            return nil
+        }
+    }
+    public func getPeerMtu(address: String) -> Int? {
+        queue.sync {
+            if let client = gattClients[address], client.state == .established { return client.mtu }
+            if let peer = gattServerPeers[address], peer.state == .established { return peer.mtu }
+            return nil
+        }
     }
     public func getConnectionDetails() -> [BleConnectionDetails] {
         queue.sync {
@@ -642,6 +809,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
     fileprivate func tryStartAdvertiseLocked() {
         guard pendingAdvertiseRequested,
+              gattServiceAdded,
               let pm = peripheralManager,
               pm.state == .poweredOn else { return }
         if pm.isAdvertising { pm.stopAdvertising() }
@@ -791,8 +959,15 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
             ?? peripheral.name
             ?? ""
-        let serviceUUIDs = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?
+        var serviceUUIDs = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?
             .map { $0.uuidString.lowercased() } ?? []
+        // The native scan is already filtered by serviceCBUUID. CoreBluetooth
+        // may omit the advertisement UUID list during restoration/background
+        // discovery; preserve the proven match for BLEInterface's own filter.
+        let configuredService = serviceCBUUID.uuidString.lowercased()
+        if !serviceUUIDs.contains(configuredService) {
+            serviceUUIDs.append(configuredService)
+        }
 
         callbackInvoker?.invoke(
             slot: .onDeviceDiscovered,
@@ -805,10 +980,12 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         didConnect peripheral: CBPeripheral
     ) {
         let address = peripheral.identifier.uuidString
-        guard let client = gattClients[address] else {
-            emitError("warning", "didConnect for unknown client \(address)")
+        guard let currentClient = gattClients[address],
+              currentClient.peripheral === peripheral else {
+            emitError("warning", "didConnect for stale or unknown client \(address)")
             return
         }
+        let client = currentClient
         // iOS auto-negotiates MTU at connect time. Fire on_mtu_negotiated
         // immediately with the maximum the link supports. Use the
         // withoutResponse query — that's what we actually send with.
@@ -829,7 +1006,13 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         error: Error?
     ) {
         let address = peripheral.identifier.uuidString
+        guard let currentClient = gattClients[address],
+              currentClient.peripheral === peripheral else {
+            emitInfo("ignored stale didFailToConnect addr=\(address)")
+            return
+        }
         emitError("warning", "didFailToConnect addr=\(address) error=\(String(describing: error))")
+        cancelConnectionTimeoutLocked(address: address)
         gattClients.removeValue(forKey: address)
     }
 
@@ -839,6 +1022,12 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         error: Error?
     ) {
         let address = peripheral.identifier.uuidString
+        guard let currentClient = gattClients[address],
+              currentClient.peripheral === peripheral else {
+            emitInfo("ignored stale didDisconnect addr=\(address)")
+            return
+        }
+        cancelConnectionTimeoutLocked(address: address)
         gattClients.removeValue(forKey: address)
         callbackInvoker?.invoke(slot: .onDeviceDisconnected, args: [address])
     }
@@ -896,9 +1085,11 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
             return
         }
         client.state = .readingIdentity
-        // Subscribe to notifications on TX so peer-sent fragments arrive
-        // via `didUpdateValueFor`. Independently, kick off the Identity read.
-        peripheral.setNotifyValue(true, for: txChar)
+        // Android serialises this handshake: identity read → MTU → confirmed
+        // notification subscription → identity write-with-response → connected.
+        // Do not overlap the read and CCCD operation: CoreBluetooth usually
+        // serialises them, but relying on that creates a race where Python can
+        // see a connected peer before RX is usable.
         peripheral.readValue(for: identityChar)
     }
 
@@ -907,9 +1098,26 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
         didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        let address = peripheral.identifier.uuidString
         if let error {
-            emitError("warning", "didUpdateNotificationState error: \(error)")
+            emitError("warning", "notification subscription failed addr=\(address): \(error)")
+            gattClients[address]?.state = .failed
+            centralManager?.cancelPeripheralConnection(peripheral)
+            return
         }
+        guard characteristic.uuid == txCharCBUUID,
+              characteristic.isNotifying,
+              let client = gattClients[address],
+              client.state == .subscribing,
+              let rxChar = client.rxChar,
+              localIdentity.count == BleConstants.identitySize else { return }
+
+        client.notificationsReady = true
+        client.state = .writingIdentity
+        emitInfo("notifications-ready addr=\(address); writing identity")
+        // Protocol v2.2 requires an ATT Write Request. Android waits for this
+        // acknowledgement before publishing the connection to Python.
+        peripheral.writeValue(localIdentity, for: rxChar, type: .withResponse)
     }
 
     public func peripheral(
@@ -932,58 +1140,58 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
                 emitError("warning", "identity char wrong size: \(value.count)")
                 return
             }
-            client.peerIdentity = value
             let identityHex = value.map { String(format: "%02x", $0) }.joined()
-            callbackInvoker?.invoke(slot: .onIdentityReceived, args: [address, identityHex])
 
-            // Synchronous duplicate-identity check. If Python says it's a
-            // duplicate (same identity already alive at a different addr),
-            // tear down this connection and bail.
+            // Synchronous duplicate-identity check must happen before publishing
+            // the identity; the Python handler updates identity/address maps.
             if let invoker = callbackInvoker {
                 let isDup = invoker.invokeBool(
                     slot: .onDuplicateIdentityDetected,
-                    args: [address, value]
+                    args: [address, identityHex]
                 )
                 if isDup {
-                    emitInfo("duplicate identity at \(address); dropping")
-                    centralManager?.cancelPeripheralConnection(peripheral)
-                    return
+                    if let oldAddress = resolveDuplicateLocked(
+                        candidateAddress: address,
+                        candidateIdentity: value,
+                        candidateRole: .central
+                    ) {
+                        callbackInvoker?.invoke(
+                            slot: .onAddressChanged,
+                            args: [oldAddress, address, identityHex]
+                        )
+                        // Address migration may carry the old child
+                        // interface's capacity. Re-publish the winning
+                        // central link's role-specific CoreBluetooth value.
+                        callbackInvoker?.invoke(
+                            slot: .onMtuNegotiated,
+                            args: [address, client.mtu]
+                        )
+                    } else {
+                        emitInfo("duplicate identity at \(address); dropping non-deterministic central link")
+                        centralManager?.cancelPeripheralConnection(peripheral)
+                        return
+                    }
                 }
             }
 
-            // Connection complete from upstream's perspective — fire connected
-            // (with identity) so BLEInterface spawns the peer interface.
-            if !client.connectedFired {
-                client.connectedFired = true
-                callbackInvoker?.invoke(slot: .onDeviceConnected, args: [address, value])
+            client.peerIdentity = value
+            callbackInvoker?.invoke(slot: .onIdentityReceived, args: [address, identityHex])
+            guard localIdentity.count == BleConstants.identitySize else {
+                client.state = .failed
+                emitError("warning", "local identity unavailable; handshake incomplete addr=\(address)")
+                centralManager?.cancelPeripheralConnection(peripheral)
+                return
             }
-
-            // Write our identity to the peer's RX char to complete the
-            // handshake on their side. Use .withoutResponse for parity with
-            // Android (no ACK needed; upstream interface handles retransmit).
-            if let rxChar = client.rxChar, !localIdentity.isEmpty {
-                client.state = .writingIdentity
-                peripheral.writeValue(localIdentity, for: rxChar, type: .withoutResponse)
-                // Move to established right after — there's no didWriteValueFor
-                // callback for .withoutResponse. Re-stamp connectedAt so the
-                // UI's "Connected Xs" starts from a meaningful point (the
-                // moment the link is actually usable, not when CB first
-                // returned didConnect).
-                client.state = .established
-                client.connectedAt = Date()
-                // Kick a one-shot RSSI read immediately so the UI doesn't
-                // wait the full poll interval for the first sample.
-                peripheral.readRSSI()
-            } else {
-                emitError("warning", "no localIdentity or rxChar; handshake incomplete")
-            }
+            client.state = .subscribing
+            peripheral.setNotifyValue(true, for: client.txChar!)
 
         case txCharCBUUID:
             // Inbound fragment from peer. Pass raw bytes up; upstream
             // BLEInterface handles reassembly via BLEFragmentation.
-            // Filter 1-byte 0x00 keepalive — upstream does this too but
-            // we avoid the Python-side callback overhead for a no-op.
-            if value.count == 1 && value[0] == 0x00 { return }
+            // BLEFragmentation frames always include the five-byte header.
+            // Do not feed ATT-level keepalive/control values into Python
+            // reassembly as malformed Reticulum fragments.
+            if value.count < BleConstants.fragmentHeaderSize { return }
             callbackInvoker?.invoke(slot: .onDataReceived, args: [address, value])
 
         default:
@@ -996,9 +1204,32 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
         didWriteValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        let address = peripheral.identifier.uuidString
         if let error {
-            emitError("warning", "didWriteValueFor error uuid=\(characteristic.uuid): \(error)")
+            emitError("warning", "didWriteValueFor error addr=\(address) uuid=\(characteristic.uuid): \(error)")
+            if characteristic.uuid == rxCharCBUUID,
+               gattClients[address]?.state == .writingIdentity {
+                gattClients[address]?.state = .failed
+                centralManager?.cancelPeripheralConnection(peripheral)
+            }
+            return
         }
+        guard characteristic.uuid == rxCharCBUUID,
+              let client = gattClients[address],
+              client.state == .writingIdentity,
+              client.notificationsReady,
+              let peerIdentity = client.peerIdentity else { return }
+
+        client.state = .established
+        cancelConnectionTimeoutLocked(address: address)
+        client.connectedAt = Date()
+        if !client.connectedFired {
+            client.connectedFired = true
+            callbackInvoker?.invoke(slot: .onDeviceConnected, args: [address, peerIdentity])
+        }
+        drainClientWritesLocked(client)
+        emitInfo("peer-established role=central addr=\(address) mtu=\(client.mtu)")
+        peripheral.readRSSI()
     }
 
     public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
@@ -1089,6 +1320,7 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
             // trigger Service Changed). Flag as added so setUpGattServiceIfNeeded
             // becomes a no-op when poweredOn lands right after this.
             gattServiceAdded = true
+            gattServiceAdding = false
             emitInfo("restored published service uuid=\(service.uuid.uuidString)")
         }
 
@@ -1107,7 +1339,7 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
         case .poweredOn:
             emitInfo("peripheralManager poweredOn")
             setUpGattServiceIfNeeded()
-            tryStartAdvertiseLocked()
+            if gattServiceAdded { tryStartAdvertiseLocked() }
         case .poweredOff:
             emitError("warning", "peripheralManager poweredOff")
         case .unauthorized:
@@ -1139,11 +1371,15 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
         didAdd service: CBService,
         error: Error?
     ) {
+        gattServiceAdding = false
         if let error {
             emitError("critical", "service add failed: \(error)")
             gattServiceAdded = false
+            if peripheral.isAdvertising { peripheral.stopAdvertising() }
         } else {
+            gattServiceAdded = true
             emitInfo("service added uuid=\(service.uuid.uuidString)")
+            tryStartAdvertiseLocked()
         }
     }
 
@@ -1185,31 +1421,44 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
             if peer.state == .awaitingIdentity {
                 // First write per central is the 16-byte identity handshake.
                 if value.count == BleConstants.identitySize {
-                    peer.identity = value
                     let identityHex = hex(value)
-                    callbackInvoker?.invoke(slot: .onIdentityReceived, args: [address, identityHex])
 
                     if let invoker = callbackInvoker {
                         let isDup = invoker.invokeBool(
                             slot: .onDuplicateIdentityDetected,
-                            args: [address, value]
+                            args: [address, identityHex]
                         )
                         if isDup {
-                            emitInfo("duplicate identity at peripheral peer \(address); dropping")
-                            // CBPeripheralManager doesn't expose a "kick this
-                            // subscriber" op — the best we can do is stop
-                            // notifying them. Upstream interface ignores
-                            // duplicates by identity hash anyway.
-                            gattServerPeers.removeValue(forKey: address)
-                            continue
+                            if let oldAddress = resolveDuplicateLocked(
+                                candidateAddress: address,
+                                candidateIdentity: value,
+                                candidateRole: .peripheral
+                            ) {
+                                callbackInvoker?.invoke(
+                                    slot: .onAddressChanged,
+                                    args: [oldAddress, address, identityHex]
+                                )
+                            } else {
+                                emitInfo("duplicate identity at peripheral peer \(address); dropping non-deterministic peripheral link")
+                                // CBPeripheralManager cannot kick a subscribed
+                                // central. Remove native state so it cannot be
+                                // selected for sends; the remote deterministic
+                                // resolver closes its matching central link.
+                                gattServerPeers.removeValue(forKey: address)
+                                continue
+                            }
                         }
                     }
+
+                    peer.identity = value
+                    callbackInvoker?.invoke(slot: .onIdentityReceived, args: [address, identityHex])
 
                     if peer.mtu > 0 {
                         callbackInvoker?.invoke(slot: .onMtuNegotiated, args: [address, peer.mtu])
                     }
                     callbackInvoker?.invoke(slot: .onDeviceConnected, args: [address, value])
                     peer.state = .established
+                    drainPeerNotifiesLocked(peer)
                     // Re-stamp connectedAt at the moment handshake completes
                     // (was init-time on subscribe, but subscribe happens
                     // before the identity write).
@@ -1218,8 +1467,9 @@ extension SwiftBLEBridge: CBPeripheralManagerDelegate {
                     emitError("warning", "first write wasn't 16-byte handshake; len=\(value.count)")
                 }
             } else {
-                // Established — data fragment from peer. Drop 0x00 keepalive.
-                if !(value.count == 1 && value[0] == 0x00) {
+                // Established — only complete BLEFragmentation frames belong
+                // on the Reticulum data path.
+                if value.count >= BleConstants.fragmentHeaderSize {
                     callbackInvoker?.invoke(slot: .onDataReceived, args: [address, value])
                 }
             }
@@ -1278,6 +1528,8 @@ public final class SwiftBLEBridge: @unchecked Sendable {
     public func setCallbackInvoker(_ invoker: BleCallbackInvoker?) {}
     public func setIdentity(_ identity: Data) {}
     public func configurePower(_ settings: BlePowerSettings) {}
+    public func syncExistingConnections() {}
+    public func requestIdentityResync(address: String) -> Bool { false }
     public func start(serviceUuid: String, rxCharUuid: String, txCharUuid: String, identityCharUuid: String) {}
     public func stop() {}
     public func startScanning() {}
@@ -1286,11 +1538,13 @@ public final class SwiftBLEBridge: @unchecked Sendable {
     public func stopAdvertising() {}
     public func connect(address: String) {}
     public func disconnect(address: String) {}
-    public func send(address: String, data: Data) {}
+    public func send(address: String, data: Data) -> Bool { false }
     public func getConnectedPeers() -> [String] { [] }
     public func getPeerIdentity(address: String) -> String? { nil }
     public func getPeerAddress(identityHashHex: String) -> String? { nil }
     public func getPeerRssi(address: String) -> Int? { nil }
+    public func getPeerRole(address: String) -> BleConnectionRole? { nil }
+    public func getPeerMtu(address: String) -> Int? { nil }
     public func getConnectionDetails() -> [BleConnectionDetails] { [] }
 }
 

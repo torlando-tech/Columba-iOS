@@ -70,6 +70,12 @@ _columba_ble_stop = _decl("columba_ble_stop", [], ctypes.c_int32)
 _columba_ble_set_identity = _decl(
     "columba_ble_set_identity", [ctypes.c_char_p, ctypes.c_int32], ctypes.c_int32
 )
+_columba_ble_sync_existing_connections = _decl(
+    "columba_ble_sync_existing_connections", [], ctypes.c_int32
+)
+_columba_ble_request_identity_resync = _decl(
+    "columba_ble_request_identity_resync", [ctypes.c_char_p], ctypes.c_int32
+)
 _columba_ble_start_scanning = _decl("columba_ble_start_scanning", [], ctypes.c_int32)
 _columba_ble_stop_scanning = _decl("columba_ble_stop_scanning", [], ctypes.c_int32)
 _columba_ble_start_advertising = _decl(
@@ -84,6 +90,12 @@ _columba_ble_send = _decl(
     "columba_ble_send",
     [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int32],
     ctypes.c_int32,
+)
+_columba_ble_get_peer_role = _decl(
+    "columba_ble_get_peer_role", [ctypes.c_char_p], ctypes.c_int32
+)
+_columba_ble_get_peer_mtu = _decl(
+    "columba_ble_get_peer_mtu", [ctypes.c_char_p], ctypes.c_int32
 )
 _columba_ble_configure_power = _decl(
     "columba_ble_configure_power", [ctypes.c_char_p], ctypes.c_int32
@@ -127,6 +139,10 @@ class IOSBLEDriver(BLEDriverInterface):
         # it. iOS auto-manages duty cycle so this is informational.
         self._power_preset: str = "balanced"
         self._register_callbacks()
+        # CoreBluetooth can restore links before embedded Python restarts.
+        # Replay them only after every Python callback slot is registered.
+        if _columba_ble_sync_existing_connections is not None:
+            _columba_ble_sync_existing_connections()
 
     # ------------------------------------------------------------------
     # Callback registration — raw-arg handlers lift Swift's primitive
@@ -222,9 +238,12 @@ class IOSBLEDriver(BLEDriverInterface):
         with self._lock:
             self._address_to_identity[address] = identity_hex
             self._identity_to_address[identity_hex] = address
-        # Mirror the connected callback with identity now known so the
-        # upstream interface can spawn the peer interface if it hasn't yet.
-        if self.on_device_connected is not None:
+        # Match Android's adapter contract: identity-before-connected only fills
+        # the cache. A late identity or explicit resync for an already-connected
+        # native peer must notify upstream so it can rebuild its mapping.
+        with self._lock:
+            already_connected = address in self._connected_peers
+        if already_connected and self.on_device_connected is not None:
             try:
                 self.on_device_connected(address, identity_bytes)
             except Exception as e:
@@ -311,6 +330,8 @@ class IOSBLEDriver(BLEDriverInterface):
         if _columba_ble_set_identity is None:
             raise RuntimeError("columba_ble_set_identity symbol not found")
         data = bytes(identity_bytes)
+        if len(data) != 16:
+            raise ValueError(f"BLE transport identity must be 16 bytes, got {len(data)}")
         rc = _columba_ble_set_identity(data, len(data))
         if rc != 0:
             raise RuntimeError(f"columba_ble_set_identity failed: rc={rc}")
@@ -388,7 +409,7 @@ class IOSBLEDriver(BLEDriverInterface):
         payload = bytes(data)
         rc = _columba_ble_send(address.encode("utf-8"), payload, len(payload))
         if rc != 0:
-            RNS.log(f"columba_ble_send rc={rc} for addr={address}", RNS.LOG_WARNING)
+            raise RuntimeError(f"columba_ble_send rejected frame: rc={rc}")
 
     # ------------------------------------------------------------------
     # BLEDriverInterface: GATT char ops
@@ -434,9 +455,25 @@ class IOSBLEDriver(BLEDriverInterface):
         return "00:00:00:00:00:00"
 
     def get_peer_role(self, address: str) -> Optional[str]:
-        # Resolved synchronously by the Swift bridge via the connection
-        # state map. Phase 6 wires the query when peripheral-mode lands.
+        if _columba_ble_get_peer_role is None:
+            return None
+        role = int(_columba_ble_get_peer_role(address.encode("utf-8")))
+        if role == 1:
+            return "central"
+        if role == 2:
+            return "peripheral"
         return None
+
+    def get_peer_mtu(self, address: str) -> Optional[int]:
+        if _columba_ble_get_peer_mtu is None:
+            return None
+        mtu = int(_columba_ble_get_peer_mtu(address.encode("utf-8")))
+        return mtu if mtu > 0 else None
+
+    def request_identity_resync(self, address: str) -> bool:
+        if _columba_ble_request_identity_resync is None:
+            return False
+        return _columba_ble_request_identity_resync(address.encode("utf-8")) == 0
 
     def set_service_discovery_delay(self, seconds: float) -> None:
         # No-op on iOS: CoreBluetooth doesn't need bluezero's D-Bus

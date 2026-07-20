@@ -55,6 +55,16 @@ class IOSBLEInterface(BLEInterface):
     def __init__(self, owner, config=None):
         super().__init__(owner, config)
 
+        # Upstream disables peripheral mode when its Linux/BlueZ
+        # BLEGATTServer import is unavailable. That capability probe does not
+        # apply on iOS: IOSBLEDriver delegates the GATT server to
+        # SwiftBLEBridge/CoreBluetooth. Restore the operator's configured
+        # setting before final_init() decides whether to start advertising.
+        enable_peripheral = True if config is None else config.get("enable_peripheral", True)
+        if isinstance(enable_peripheral, str):
+            enable_peripheral = enable_peripheral.lower() in ("yes", "true", "1")
+        self.enable_peripheral = bool(enable_peripheral)
+
         # Power preset — informational on iOS (the OS auto-manages duty
         # cycle). Forwarded to the Swift bridge so it can mirror Android's
         # `configurePower` parity output in DiagLog.

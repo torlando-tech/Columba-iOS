@@ -1198,6 +1198,20 @@ public final class AppServices {
         let identityBytes = try? identity.exportPrivateKeys()
         DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
 
+        #if COLUMBA_RUNTIME_PYTHON
+        // IOSBLEInterface starts synchronously inside backend.start(). Install
+        // the native callback sink first so discoveries and handshakes that
+        // arrive during Python startup are not lost before the later UI
+        // interface pass runs.
+        if let pythonBackend {
+            columbaBLEForceLinkNativeBindings()
+            SwiftBLEBridge.shared.setCallbackInvoker(
+                PythonBLECallbackBridge(pythonBridge: pythonBackend.pythonBridge)
+            )
+            SwiftBLEBridge.shared.setIdentity(identity.hash)
+        }
+        #endif
+
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B: `backend` is the thin-client proxy; `backend.start()` round-trips to
         // the NE node over the VPN tunnel session, so the tunnel MUST be connected first.
@@ -1687,6 +1701,35 @@ public final class AppServices {
                     fields: nil,
                     timestamp: Date()
                 )
+            }
+        }
+
+        // lxma://test-message-status?from=HEX&message=HEX — query the same
+        // canonical repository the UI reads. Metadata only; never logs content.
+        addPythonObserver("ColumbaTestMessageStatus") { [weak self] note in
+            guard let self else { return }
+            let fromHex = (note.userInfo?["from"] as? String) ?? ""
+            let messageHex = (note.userInfo?["message"] as? String) ?? ""
+            Task { @MainActor in
+                guard let repo = self.messageRepository,
+                      let from = Data(hexString: fromHex),
+                      let message = Data(hexString: messageHex) else {
+                    DiagLog.log("[TEST-MESSAGE-STATUS] invalid-input-or-repository")
+                    return
+                }
+                do {
+                    let row = try await repo.getMessageRecord(id: message)
+                    let conversation = try await repo.fetchConversation(from)
+                    let records = try await repo.fetchMessageRecords(for: from)
+                    let exactCount = records.filter { $0.messageId == message }.count
+                    DiagLog.log(
+                        "[TEST-MESSAGE-STATUS] row=\(row != nil) conversation=\(conversation != nil) "
+                        + "conversationRows=\(records.count) exactRows=\(exactCount) "
+                        + "previewEmpty=\(conversation?.lastMessagePreview.isEmpty ?? true)"
+                    )
+                } catch {
+                    DiagLog.log("[TEST-MESSAGE-STATUS] query-failed=\(error.localizedDescription)")
+                }
             }
         }
 
@@ -2299,8 +2342,6 @@ public final class AppServices {
         let displayName = "Peer \(sourceHashHex.prefix(8))"
 
         do {
-            try await repo.ensureConversation(sourceHash, displayName: displayName)
-
             // Reactions and replies target the exact 32-byte LXMF wire hash.
             // Preserve an abnormal delivered message that lacks that hash under a
             // 33-byte, namespaced local persistence ID instead of dropping it.
@@ -2340,6 +2381,12 @@ public final class AppServices {
             message.state = .received
 
             try await repo.saveMessage(message)
+            // `saveMessage` must create/update the conversation before this
+            // display-name enrichment. Pre-creating it stamps the conversation
+            // with a slightly newer timestamp than the inbound event, causing
+            // LXMFSwift to preserve an empty lastMessagePreview and the Chats UI
+            // to filter the otherwise-valid message out.
+            try await repo.ensureConversation(sourceHash, displayName: displayName)
             DiagLog.log("[RNS] persistInbound saved msg=\(messageHash.prefix(4).map { String(format: "%02x", $0) }.joined())")
 
             // Fire the same notification IncomingMessageHandler would post

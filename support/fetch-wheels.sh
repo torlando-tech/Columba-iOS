@@ -23,6 +23,16 @@ PYTHON_TAG="cp313"
 PLATFORM_SIM="ios_13_0_arm64_iphonesimulator"
 PLATFORM_DEV="ios_13_0_arm64_iphoneos"
 
+# Xcode's bundled Python can ship a pip too old for PEP 621 metadata. Use an
+# isolated, pinned packaging toolchain so ble-reticulum cannot silently become
+# an empty UNKNOWN-0.0.0 distribution.
+PIP_VENV="$(mktemp -d "${TMPDIR:-/tmp}/columba-wheel-pip.XXXXXX")"
+trap 'rm -rf "$PIP_VENV"' EXIT
+python3 -m venv "$PIP_VENV"
+PIP_PYTHON="$PIP_VENV/bin/python"
+"$PIP_PYTHON" -m pip install --quiet --upgrade \
+    "pip==25.1.1" "setuptools==80.9.0" "wheel==0.45.1"
+
 # Pure-Python pinned versions — empty means latest. Pin in production.
 # (msgpack intentionally NOT installed: RNS and LXMF use the vendored pure-Python
 #  umsgpack in RNS.vendor.umsgpack. Installing the binary msgpack wheel from PyPI
@@ -86,7 +96,7 @@ install_binary_wheel() {
     # $1 platform tag, $2 destination dir, $3+ pkg specs
     local platform=$1 dst=$2; shift 2
     echo "==> Fetching binary wheels for $platform: $@"
-    python3 -m pip install \
+    "$PIP_PYTHON" -m pip install \
         --index-url "$BEEWARE_INDEX" \
         --platform "$platform" \
         --python-version 3.13 \
@@ -102,7 +112,7 @@ install_pure_python() {
     # $1 destination dir, $2+ specs
     local dst=$1; shift
     echo "==> Fetching pure-Python wheels into $dst"
-    python3 -m pip install \
+    "$PIP_PYTHON" -m pip install \
         --no-deps \
         --target "$dst" \
         --upgrade \
@@ -121,6 +131,10 @@ install_binary_wheel "$PLATFORM_DEV" "$DEV_DIR" "${BINARY_WHEELS[@]}"
 
 for dst in "$SIM_DIR" "$DEV_DIR"; do
     install_pure_python "$dst" "$RNS_SPEC" "$LXMF_SPEC" "$PYSERIAL_SPEC" "$BLE_RETICULUM_SPEC"
+    [ -s "$dst/ble_reticulum/BLEInterface.py" ] || {
+        echo "error: ble-reticulum package payload missing from $dst" >&2
+        exit 1
+    }
 done
 
 echo
