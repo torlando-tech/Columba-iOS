@@ -97,6 +97,11 @@ final class OnboardingViewModel {
     /// it) so the user grants/denies it INSIDE onboarding instead of being surprised by
     /// it after, when `ModelBBLEService` starts the app-side CoreBluetooth host.
     func requestBluetoothPermission() {
+        #if COLUMBA_RUNTIME_MODEL_B
+        // The Model B host must not construct its CoreBluetooth driver unless the user
+        // explicitly opted in from this permission card.
+        ModelBBLEService.recordUserOptIn()
+        #endif
         bluetoothProbe = BluetoothPermissionProbe { [weak self] auth in
             Task { @MainActor in self?.bluetoothAuthorization = auth }
         }
@@ -232,8 +237,8 @@ final class OnboardingViewModel {
     /// from this store ONCE at start (`loadTCPRelayConfig`) and has no observer to pick
     /// up a later write, so seeding after the NE boots leaves it "AppGroupBridge only"
     /// with no TCP path. Idempotent (it also runs again from completeOnboarding).
-    func seedInterfaces() {
-        createInterfaces(in: InterfaceRepository())
+    func seedInterfaces(in repo: InterfaceRepository = InterfaceRepository()) {
+        createInterfaces(in: repo)
     }
 
     private func createInterfaces(in repo: InterfaceRepository) {
@@ -257,43 +262,65 @@ final class OnboardingViewModel {
             ))
         ))
         #else
-        // The shipping runtime owns these interfaces in the app process. Persist exactly
-        // the interfaces the user selected; RNode is configured by its dedicated wizard.
+        // The shipping runtime owns these interfaces in the app process. Build a
+        // canonical candidate for each selection and add it only if an equivalent
+        // interface is not already stored. This makes completion safe to retry.
         for interfaceType in selectedInterfaces {
+            let candidate: InterfaceEntity?
             switch interfaceType {
             case .auto:
-                repo.addInterface(InterfaceEntity(
+                candidate = InterfaceEntity(
                     name: "Auto Discovery",
                     type: .autoInterface,
                     config: .autoInterface(AutoInterfaceConfig())
-                ))
+                )
             case .nearby:
-                repo.addInterface(InterfaceEntity(
-                    name: "Nearby",
-                    type: .multipeer,
-                    config: .multipeer(MultipeerConfig())
-                ))
+                // Kept in the enum for stored-config compatibility, but shipping has no
+                // Python MultipeerConnectivity transport and must not persist a new one.
+                candidate = nil
             case .ble:
-                repo.addInterface(InterfaceEntity(
+                candidate = InterfaceEntity(
                     name: "Bluetooth LE",
                     type: .ble,
                     config: .ble(BLEConfig())
-                ))
+                )
             case .tcp:
                 let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
-                repo.addInterface(InterfaceEntity(
+                candidate = InterfaceEntity(
                     name: server.name,
                     type: .tcpClient,
                     config: .tcpClient(TCPClientConfig(
                         targetHost: server.host,
                         targetPort: server.port
                     ))
-                ))
+                )
             case .rnode:
-                break
+                candidate = nil
             }
+
+            guard let candidate else { continue }
+            guard !shippingInterfaceAlreadyExists(candidate, in: repo) else { continue }
+            repo.addInterface(candidate)
         }
         #endif
+    }
+
+    private func shippingInterfaceAlreadyExists(
+        _ candidate: InterfaceEntity,
+        in repo: InterfaceRepository
+    ) -> Bool {
+        repo.interfaces.contains { existing in
+            switch (existing.config, candidate.config) {
+            case (.autoInterface, .autoInterface),
+                 (.ble, .ble):
+                return true
+            case let (.tcpClient(existingConfig), .tcpClient(candidateConfig)):
+                return existingConfig.targetHost == candidateConfig.targetHost
+                    && existingConfig.targetPort == candidateConfig.targetPort
+            default:
+                return false
+            }
+        }
     }
 }
 

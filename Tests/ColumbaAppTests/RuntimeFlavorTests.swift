@@ -56,5 +56,30 @@ final class RuntimeFlavorTests: XCTestCase {
 
         XCTAssertEqual(BackendPreference.runtimeFlavor(defaults: defaults), .python)
     }
+
+    @MainActor
+    func testShippingOnboardingInterfaceSeedingIsIdempotent() throws {
+        let suiteName = "test.OnboardingInterfaces.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Could not create isolated UserDefaults suite")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // Prevent the repository's production migration shim from importing standard
+        // defaults into this isolated suite.
+        defaults.set(try JSONEncoder().encode([InterfaceEntity]()), forKey: "com.columba.interfaces")
+        let repository = InterfaceRepository(userDefaults: defaults)
+        let viewModel = OnboardingViewModel()
+        viewModel.selectedInterfaces = [.auto, .ble, .tcp]
+        viewModel.selectedTcpServer = .defaultServer
+
+        viewModel.seedInterfaces(in: repository)
+        viewModel.seedInterfaces(in: repository)
+
+        XCTAssertEqual(repository.interfaces.count, 3)
+        XCTAssertEqual(repository.interfaces.filter { $0.type == .autoInterface }.count, 1)
+        XCTAssertEqual(repository.interfaces.filter { $0.type == .ble }.count, 1)
+        XCTAssertEqual(repository.interfaces.filter { $0.type == .tcpClient }.count, 1)
+    }
     #endif
 }

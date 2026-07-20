@@ -25,6 +25,21 @@ import ReticulumSwift
 public final class ModelBBLEService: @unchecked Sendable {
 
     public static let shared = ModelBBLEService()
+
+    static let userOptInKey = "model_b_ble_user_opt_in"
+
+    static var isUserOptedIn: Bool {
+        isUserOptedIn(in: .standard)
+    }
+
+    static func isUserOptedIn(in defaults: UserDefaults) -> Bool {
+        defaults.bool(forKey: userOptInKey)
+    }
+
+    static func recordUserOptIn(in defaults: UserDefaults = .standard) {
+        defaults.set(true, forKey: userOptInKey)
+    }
+
     private init() {}
 
     private let lock = NSLock()

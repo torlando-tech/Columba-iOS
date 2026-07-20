@@ -87,7 +87,10 @@ struct ConnectivityPage: View {
                         .padding(.bottom, 24)
 
                     VStack(spacing: 12) {
-                        ForEach(OnboardingInterfaceType.allCases, id: \.self) { type in
+                        // MultipeerConnectivity has no shipping Python transport yet.
+                        // Keep the enum/config case for compatibility, but do not offer
+                        // a choice that cannot create a working interface.
+                        ForEach(OnboardingInterfaceType.allCases.filter { $0 != .nearby }, id: \.self) { type in
                             interfaceCard(type)
                         }
                     }
