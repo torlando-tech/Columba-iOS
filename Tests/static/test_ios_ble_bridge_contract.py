@@ -129,10 +129,25 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         self.assertIn("currentClient === armedClient", timeout)
         self.assertIn("connectionAttemptTokens[address] == attemptToken", timeout)
         self.assertIn("currentClient.state != .established", timeout)
-        self.assertIn("gattClients.removeValue(forKey: address)", timeout)
+        self.assertNotIn("gattClients.removeValue", timeout)
         self.assertIn('emitError("warning", "Connection timeout to', timeout)
         established = source[source.index("client.state = .established"):]
         self.assertIn("cancelConnectionTimeoutLocked(address: address)", established)
+
+        connect = source[source.index("public func connect(address: String)"):]
+        connect = connect.split("public func disconnect(address: String)", 1)[0]
+        self.assertIn("guard self.gattClients[address] == nil", connect)
+
+    def test_central_callbacks_only_cleanup_the_exact_client_generation(self) -> None:
+        source = BRIDGE.read_text()
+        callbacks = source[source.index("didConnect peripheral: CBPeripheral"):]
+        callbacks = callbacks.split("// MARK: - CBPeripheralDelegate", 1)[0]
+        self.assertGreaterEqual(callbacks.count("currentClient.peripheral === peripheral"), 3)
+        disconnect = callbacks[callbacks.index("didDisconnectPeripheral peripheral"):]
+        self.assertLess(
+            disconnect.index("gattClients.removeValue"),
+            disconnect.index("slot: .onDeviceDisconnected"),
+        )
 
     def test_restored_native_connections_replay_after_python_callbacks_register(self) -> None:
         source = BRIDGE.read_text()

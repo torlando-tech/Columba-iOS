@@ -524,7 +524,6 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                     return
                 }
                 currentClient.state = .failed
-                self.gattClients.removeValue(forKey: address)
                 self.connectionTimeoutTasks.removeValue(forKey: address)
                 self.connectionAttemptTokens.removeValue(forKey: address)
                 self.emitError("warning", "Connection timeout to \(address)")
@@ -542,6 +541,10 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             guard let cm = self.centralManager else { return }
+            guard self.gattClients[address] == nil else {
+                self.emitInfo("connect ignored; native client already retained addr=\(address)")
+                return
+            }
             // Resolve the CBPeripheral by address. Prefer the cached
             // discovered one (active scan), fall back to retrieve-known
             // (post-restart). If still nil we can't connect.
@@ -560,7 +563,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             }
             peripheral.delegate = self
             // Hold strong ref — iOS deallocates CBPeripheral without one.
-            let client = self.gattClients[address] ?? BleGattClient(peripheral: peripheral)
+            let client = BleGattClient(peripheral: peripheral)
             client.state = .connecting
             self.gattClients[address] = client
             cm.connect(peripheral, options: nil)
@@ -574,6 +577,8 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             guard let self else { return }
             guard let cm = self.centralManager,
                   let client = self.gattClients[address] else { return }
+            client.state = .failed
+            self.cancelConnectionTimeoutLocked(address: address)
             cm.cancelPeripheralConnection(client.peripheral)
         }
     }
@@ -708,6 +713,8 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             let candidateWins = candidateMTU > existingMTU ||
                 (candidateMTU == existingMTU && candidateRole == wantedRole)
             guard candidateWins else { return nil }
+            old.value.state = .failed
+            cancelConnectionTimeoutLocked(address: old.key)
             centralManager?.cancelPeripheralConnection(old.value.peripheral)
             emitInfo(
                 "dual-link convergence keep=peripheral old=\(old.key) new=\(candidateAddress) " +
@@ -973,10 +980,12 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         didConnect peripheral: CBPeripheral
     ) {
         let address = peripheral.identifier.uuidString
-        guard let client = gattClients[address] else {
-            emitError("warning", "didConnect for unknown client \(address)")
+        guard let currentClient = gattClients[address],
+              currentClient.peripheral === peripheral else {
+            emitError("warning", "didConnect for stale or unknown client \(address)")
             return
         }
+        let client = currentClient
         // iOS auto-negotiates MTU at connect time. Fire on_mtu_negotiated
         // immediately with the maximum the link supports. Use the
         // withoutResponse query — that's what we actually send with.
@@ -997,6 +1006,11 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         error: Error?
     ) {
         let address = peripheral.identifier.uuidString
+        guard let currentClient = gattClients[address],
+              currentClient.peripheral === peripheral else {
+            emitInfo("ignored stale didFailToConnect addr=\(address)")
+            return
+        }
         emitError("warning", "didFailToConnect addr=\(address) error=\(String(describing: error))")
         cancelConnectionTimeoutLocked(address: address)
         gattClients.removeValue(forKey: address)
@@ -1008,6 +1022,11 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         error: Error?
     ) {
         let address = peripheral.identifier.uuidString
+        guard let currentClient = gattClients[address],
+              currentClient.peripheral === peripheral else {
+            emitInfo("ignored stale didDisconnect addr=\(address)")
+            return
+        }
         cancelConnectionTimeoutLocked(address: address)
         gattClients.removeValue(forKey: address)
         callbackInvoker?.invoke(slot: .onDeviceDisconnected, args: [address])
