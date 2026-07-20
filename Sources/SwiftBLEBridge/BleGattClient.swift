@@ -19,8 +19,9 @@ internal final class BleGattClient {
         case connecting          // CBCentralManager.connect issued
         case discoveringServices // didConnect → discoverServices called
         case discoveringChars    // didDiscoverServices → discoverCharacteristics called
-        case readingIdentity     // setNotifyValue(true) on TX done; reading Identity char
-        case writingIdentity     // Identity received; writing our own to RX
+        case readingIdentity     // reading the peer's Identity characteristic
+        case subscribing         // enabling TX notifications; awaiting confirmation
+        case writingIdentity     // notifications ready; writing our identity with response
         case established         // handshake complete; data plane open
         case failed              // any step errored
     }
@@ -35,6 +36,11 @@ internal final class BleGattClient {
 
     /// Peer's identity (16 bytes) once we've read it from the Identity char.
     var peerIdentity: Data?
+
+    /// CoreBluetooth confirms subscription asynchronously. The data plane must
+    /// not be declared established until this is true and the identity write
+    /// has received its ATT response, matching Android's handshake ladder.
+    var notificationsReady: Bool = false
 
     /// Whether we've already fired `on_device_connected` for this peer.
     /// Prevents duplicate fires when MTU arrives before handshake completes.

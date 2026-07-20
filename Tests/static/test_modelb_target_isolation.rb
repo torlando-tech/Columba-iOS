@@ -86,6 +86,10 @@ PYTHON_INSTALL_SCRIPT = <<~'SH'.freeze
     echo "error: $WHEELS_SRC missing — run support/fetch-wheels.sh" >&2
     exit 1
   }
+  [ -s "$WHEELS_SRC/ble_reticulum/BLEInterface.py" ] || {
+    echo "error: ble_reticulum missing from $WHEELS_SRC — run support/fetch-wheels.sh" >&2
+    exit 1
+  }
   mkdir -p "$CODESIGNING_FOLDER_PATH/app_packages"
   rsync -au --delete "$WHEELS_SRC/" "$CODESIGNING_FOLDER_PATH/app_packages/"
 

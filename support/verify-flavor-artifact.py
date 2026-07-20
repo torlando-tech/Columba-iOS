@@ -410,6 +410,12 @@ def _verify_shipping(
     packages = app / "app_packages"
     if not _contains_regular_file(packages, app_root, "shipping app_packages"):
         raise VerificationError("shipping app_packages wheel payload is missing or empty")
+    ble_reticulum = packages / "ble_reticulum/BLEInterface.py"
+    _resolve_contained(ble_reticulum, app_root, "shipping ble_reticulum package")
+    if not ble_reticulum.is_file() or ble_reticulum.stat().st_size == 0:
+        raise VerificationError(
+            "shipping app_packages/ble_reticulum runtime is missing or empty"
+        )
     for relative in SHIPPING_RNODE_PYTHON_PAYLOADS:
         payload = app / relative
         _resolve_contained(payload, app_root, "shipping Python RNode payload")

@@ -4,6 +4,7 @@
 import importlib.util
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -79,6 +80,10 @@ class ArtifactFixture:
             packages = self.app / "app_packages"
             packages.mkdir()
             (packages / "rns.py").write_text("pass\n", encoding="utf-8")
+            ble_reticulum = packages / "ble_reticulum"
+            ble_reticulum.mkdir()
+            (ble_reticulum / "__init__.py").write_text("", encoding="utf-8")
+            (ble_reticulum / "BLEInterface.py").write_text("class BLEInterface: pass\n", encoding="utf-8")
             rnode = self.app / "app/rnode"
             rnode.mkdir(parents=True)
             (rnode / "IOSRNodeInterface.py").write_text("interface_class = object\n")
@@ -153,6 +158,12 @@ class ArtifactCheckerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "shipping", "NotColumbaApp")
             self.verify(fixture, "shipping")
+
+    def test_shipping_rejects_missing_ble_reticulum_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "shipping")
+            shutil.rmtree(fixture.app / "app_packages/ble_reticulum")
+            self.assert_rejected(fixture, "shipping", "ble_reticulum")
 
     def test_shipping_rejects_missing_python_rnode_bridge_symbol_or_payload(self):
         with tempfile.TemporaryDirectory() as directory:

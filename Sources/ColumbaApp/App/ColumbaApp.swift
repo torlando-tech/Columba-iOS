@@ -217,6 +217,30 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-message-status" {
+                    // lxma://test-message-status?from=HEX&message=HEX — DEBUG-only
+                    // read-after-write probe for physical-device inbound delivery.
+                    // Logs existence/count metadata only; never message content.
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let fromHex = components?.queryItems?.first(where: { $0.name == "from" })?.value ?? ""
+                    let messageHex = components?.queryItems?.first(where: { $0.name == "message" })?.value ?? ""
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestMessageStatus"),
+                        object: nil,
+                        userInfo: ["from": fromHex, "message": messageHex]
+                    )
+                    return
+                }
+                if url.host == "test-delete-conversation" {
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let fromHex = components?.queryItems?.first(where: { $0.name == "from" })?.value ?? ""
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestDeleteConversation"),
+                        object: nil,
+                        userInfo: ["from": fromHex]
+                    )
+                    return
+                }
                 if url.host == "test-identity-switch" {
                     // lxma://test-identity-switch — creates a fresh identity
                     // and switches to it via the full AppServices.switchIdentity
