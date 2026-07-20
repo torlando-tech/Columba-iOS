@@ -805,7 +805,7 @@ public final class PythonBridge: @unchecked Sendable {
     /// Returns the Python-side `link_id` on success. A subsequent
     /// `.linkState(linkId:, state: "established")` event fires once
     /// the link is up.
-    public func openLink(destHashHex: String, aspect: String = "lxst.telephony") async throws -> (ok: Bool, linkId: Int, reason: String) {
+    public func openLink(destHashHex: String, aspect: String = "lxst.telephony", identityPublicKeyHex: String? = nil) async throws -> (ok: Bool, linkId: Int, reason: String) {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 guard let module = self.module else {
@@ -815,14 +815,16 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }
-                guard let args = PyTuple_New(2) else { throw BridgeError.marshallingFailure("PyTuple_New") }
+                guard let args = PyTuple_New(3) else { throw BridgeError.marshallingFailure("PyTuple_New") }
                 defer { Py_DecRef(args) }
                 guard let olDest = PyUnicode_FromString(destHashHex),
-                      let olAspect = PyUnicode_FromString(aspect) else {
+                      let olAspect = PyUnicode_FromString(aspect),
+                      let olPublicKey = PyUnicode_FromString(identityPublicKeyHex ?? "") else {
                     throw BridgeError.marshallingFailure("PyUnicode_FromString")
                 }
                 PyTuple_SetItem(args, 0, olDest)
                 PyTuple_SetItem(args, 1, olAspect)
+                PyTuple_SetItem(args, 2, olPublicKey)
                 guard let result = PyObject_CallObject(fn, args) else {
                     throw BridgeError.pythonException(currentPythonException())
                 }

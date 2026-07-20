@@ -90,6 +90,9 @@ public final class CallManager {
     // MARK: - Internal
 
     private var telephone: Telephone?
+    #if COLUMBA_RUNTIME_PYTHON
+    private var networkTransport: PythonNetworkTransport?
+    #endif
     private var transport: ReticulumTransport?
     private var pathTable: PathTable?
     private var database: LXMFDatabase?
@@ -121,6 +124,7 @@ public final class CallManager {
         await networkTransport.start()
         let phone = await Telephone.make(transport: networkTransport)
         self.telephone = phone
+        self.networkTransport = networkTransport
 
         // Cache the telephony destination for announcing (peers need this hash
         // to call us). The transport registers it internally; this mirror is
@@ -275,54 +279,102 @@ public final class CallManager {
 
     // MARK: - Call Actions
 
-    /// Initiate an outgoing call to a destination hash.
+    /// Initiate an outgoing call from either an lxmf.delivery conversation or
+    /// an independently announced lxst.telephony node.
     ///
-    /// On iOS, this registers the call with CallKit before initiating the
-    /// Telephone signaling, so the system shows the call in the native UI.
+    /// Resolution happens before CallKit starts: LXSTSwift and the backend see
+    /// only the canonical telephony destination hash.
     func initiateCall(destinationHash: Data, profile: TelephonyProfile = .qualityMedium, peerDisplayName: String?) {
-        guard let telephone else {
+        #if COLUMBA_RUNTIME_PYTHON
+        guard let telephone, let networkTransport else {
             logger.warning("Cannot call: Telephone not initialized")
             return
         }
 
-        self.isIncoming = false
-        self.peerName = peerDisplayName
-        self.peerHash = destinationHash.map { String(format: "%02x", $0) }.joined()
-        self.callState = .calling
-        self.activeProfile = profile
-
-        // Generate a UUID for CallKit tracking
-        let callUUID = UUID()
-        self.currentCallUUID = callUUID
-
-        // Register outgoing call with CallKit
-        #if os(iOS)
-        let handle = peerDisplayName ?? peerHash ?? "unknown"
-        callKitManager?.startCall(uuid: callUUID, handle: handle)
-        #endif
-
         Task {
+            guard let target = await resolveTelephonyTarget(from: destinationHash) else {
+                self.failOutgoingCall("Telephony identity unavailable")
+                return
+            }
+            await networkTransport.prepareOutboundCall(target)
+
+            self.isIncoming = false
+            self.peerName = peerDisplayName
+            self.peerHash = target.destinationHash.toHex()
+            self.callState = .calling
+            self.activeProfile = profile
+
+            let callUUID = UUID()
+            self.currentCallUUID = callUUID
+            #if os(iOS)
+            let handle = peerDisplayName ?? self.peerHash ?? "unknown"
+            self.callKitManager?.startCall(uuid: callUUID, handle: handle)
+            #endif
+
             do {
-                // The transport resolves the delivery hash → identity →
-                // telephony destination and establishes the link; if the peer
-                // isn't reachable, call() throws and we surface "Call Failed".
-                let destHex = destinationHash.map { String(format: "%02x", $0) }.joined()
-                self.logger.error("[CALL] calling Telephone.call() for dest \(destHex, privacy: .public)")
-                try await telephone.call(destinationHash: destinationHash, profile: profile)
+                // backend.openLink actively requests and awaits this exact
+                // telephony path before reporting it unreachable.
+                let destHex = target.destinationHash.toHex()
+                self.logger.error("[CALL] calling Telephone.call() for telephony dest \(destHex, privacy: .public)")
+                try await telephone.call(destinationHash: target.destinationHash, profile: profile)
             } catch {
-                await MainActor.run {
-                    self.callState = .ended("Call Failed")
-                    self.logger.error("[CALL] Call initiation failed: \(error.localizedDescription, privacy: .public)")
-                    self.endedDismissTask?.cancel()
-                    self.endedDismissTask = Task { @MainActor [weak self] in
-                        try? await Task.sleep(for: .seconds(1.5))
-                        guard !Task.isCancelled else { return }
-                        self?.resetState()
-                    }
-                }
+                self.logger.error("[CALL] Call initiation failed: \(error.localizedDescription, privacy: .public)")
+                self.failOutgoingCall("Call Failed")
             }
         }
+        #else
+        logger.warning("Cannot call: telephony is unavailable in Model B app runtime")
+        #endif
     }
+
+    #if COLUMBA_RUNTIME_PYTHON
+    /// Resolve a direct telephony announce or derive the telephony destination
+    /// from any sibling announce carrying the same 64-byte public identity.
+    /// A cached sibling telephony row is preferred but never required.
+    private func resolveTelephonyTarget(from sourceHash: Data) async -> TelephonyCallTarget? {
+        guard let pathTable,
+              let source = await pathTable.lookup(destinationHash: sourceHash),
+              source.publicKeys.count == 64,
+              let remoteIdentity = try? Identity(publicKeyBytes: source.publicKeys) else {
+            return nil
+        }
+
+        let derivedHash = Destination.hash(
+            identity: remoteIdentity,
+            appName: "lxst",
+            aspects: ["telephony"]
+        )
+
+        if source.detectedAspect == "lxst.telephony" || source.isLXSTTelephony {
+            guard sourceHash == derivedHash else { return nil }
+            return TelephonyCallTarget(destinationHash: sourceHash, publicKeys: source.publicKeys)
+        }
+
+        // Android-style cross-link: one row per destination, joined by the
+        // shared public identity. Only accept a sibling whose hash verifies.
+        if let sibling = await pathTable.allEntries().first(where: {
+            ($0.detectedAspect == "lxst.telephony" || $0.isLXSTTelephony)
+                && $0.publicKeys == source.publicKeys
+                && $0.destinationHash == derivedHash
+        }) {
+            return TelephonyCallTarget(destinationHash: sibling.destinationHash, publicKeys: sibling.publicKeys)
+        }
+
+        // Missing local telephony cache is not a reachability verdict. Stage the
+        // verified identity and let backend.openLink request the derived path.
+        return TelephonyCallTarget(destinationHash: derivedHash, publicKeys: source.publicKeys)
+    }
+
+    private func failOutgoingCall(_ reason: String) {
+        callState = .ended(reason)
+        endedDismissTask?.cancel()
+        endedDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            self?.resetState()
+        }
+    }
+    #endif
 
     /// Answer an incoming call.
     ///

@@ -427,7 +427,7 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
     // Link and bridges its inbound packets + state changes onto the neutral event
     // stream. Ported from main's CallManager identity-resolve + initiateLink path.
 
-    public func openLink(destHashHex: String, aspect: String) async throws -> (ok: Bool, linkId: Int, reason: String) {
+    public func openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String?) async throws -> (ok: Bool, linkId: Int, reason: String) {
         guard let transport, let localId = identity, let pathTable else {
             return (false, 0, "not started")
         }

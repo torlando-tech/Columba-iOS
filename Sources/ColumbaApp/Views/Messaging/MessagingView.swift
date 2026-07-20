@@ -93,6 +93,7 @@ struct MessagingView: View {
 
                             ForEach(vm.messages) { message in
                                 SwipeToReplyContainer(onReply: {
+                                    guard message.messageHash != nil else { return }
                                     withAnimation(.easeInOut(duration: 0.25)) {
                                         vm.replyToMessage = message
                                     }
@@ -268,6 +269,7 @@ struct MessagingView: View {
                         }
                     },
                     onReply: {
+                        guard msg.messageHash != nil else { return }
                         withAnimation(.easeInOut(duration: 0.25)) {
                             viewModel?.replyToMessage = msg
                         }
@@ -357,12 +359,11 @@ struct MessagingView: View {
                 let name = conversation.peerName
                 Task { @MainActor in
                     guard let cm = appServices.callManager else { return }
-                    guard let telHash = await appServices.telephonyHash(forPeerLxmfHash: dest) else {
-                        DiagLog.log("[CALL] no telephony path for \(dest.prefix(4).map { String(format: "%02x", $0) }.joined()) — peer not heard yet")
-                        callUnavailableMessage = "\(name ?? "This contact") hasn't been seen on the network recently, so a voice call can't be placed yet. Try again once they're online."
-                        return
-                    }
-                    cm.initiateCall(destinationHash: telHash, profile: profile, peerDisplayName: name)
+                    // CallManager resolves this delivery announce to the cached
+                    // sibling telephony announce when available, otherwise it
+                    // derives <identity>.lxst.telephony. The backend receives
+                    // only that telephony hash and actively requests its path.
+                    cm.initiateCall(destinationHash: dest, profile: profile, peerDisplayName: name)
                 }
                 #endif
             }
@@ -578,7 +579,8 @@ struct MessagingView: View {
         let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let image = attachedImage
         let files = attachedFiles
-        let replyToId = viewModel?.replyToMessage?.id
+        let replyTarget = viewModel?.replyToMessage
+        let replyToId = replyTarget?.messageHash != nil ? replyTarget?.id : nil
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 
