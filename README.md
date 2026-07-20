@@ -93,4 +93,4 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for target ownership and dependency bound
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[MPL 2.0](LICENSE.md)
