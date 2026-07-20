@@ -47,7 +47,8 @@ CANONICAL_FLAGS = %w[
   ENABLE_NETWORK_EXTENSION
   COLUMBA_BACKEND_SWIFT
 ].freeze
-SHIPPING_FORBIDDEN_FLAGS = (CANONICAL_FLAGS + ['COLUMBA_ONBOARDING_ENABLED']).freeze
+ONBOARDING_FLAG = 'COLUMBA_ONBOARDING_ENABLED'
+SHIPPING_FORBIDDEN_FLAGS = CANONICAL_FLAGS
 MODEL_B_FLAGS = %w[
   COLUMBA_RUNTIME_MODEL_B
   ENABLE_NETWORK_EXTENSION
@@ -1129,7 +1130,7 @@ module ModelBTargetIsolation
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = MODEL_B_ENTITLEMENTS
       configuration.build_settings.delete('SWIFT_OBJC_BRIDGING_HEADER')
       required = destination_tokens
-      required << 'COLUMBA_ONBOARDING_ENABLED'
+      required << ONBOARDING_FLAG
       required.concat(MODEL_B_FLAGS)
       set_compilation_tokens(configuration, required, removed: SHIPPING_FORBIDDEN_FLAGS)
       configuration
@@ -1148,8 +1149,8 @@ module ModelBTargetIsolation
       configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = PYTHON_BRIDGING_HEADER
       set_compilation_tokens(
         configuration,
-        ['COLUMBA_RUNTIME_PYTHON'],
-        removed: SHIPPING_FORBIDDEN_FLAGS
+        ['COLUMBA_RUNTIME_PYTHON', ONBOARDING_FLAG],
+        removed: SHIPPING_FORBIDDEN_FLAGS + [ONBOARDING_FLAG]
       )
     end
   end
@@ -1166,11 +1167,11 @@ module ModelBTargetIsolation
     end
     shipping_tests.build_configurations.each do |test_configuration|
       shipping_configuration = shipping_by_name.fetch(test_configuration.name)
-      shipping_flags = compilation_tokens(shipping_configuration) & CANONICAL_FLAGS
+      shipping_flags = compilation_tokens(shipping_configuration) & (CANONICAL_FLAGS + [ONBOARDING_FLAG])
       set_compilation_tokens(
         test_configuration,
         shipping_flags,
-        removed: SHIPPING_FORBIDDEN_FLAGS
+        removed: SHIPPING_FORBIDDEN_FLAGS + [ONBOARDING_FLAG]
       )
     end
   end
@@ -1598,12 +1599,12 @@ module ModelBTargetIsolation
       raise "shipping TEST_HOST changed in #{test_configuration.name}" unless test_host.include?('ColumbaApp.app')
     end
     (shipping.build_configurations + shipping_tests.build_configurations).each do |configuration|
-      next unless compilation_tokens(configuration).include?('COLUMBA_ONBOARDING_ENABLED')
+      next if compilation_tokens(configuration).include?(ONBOARDING_FLAG)
 
-      raise "shipping configuration retained Model B onboarding in #{configuration.name}"
+      raise "shipping configuration lost shared onboarding in #{configuration.name}"
     end
     model_b.build_configurations.each do |configuration|
-      has_onboarding = compilation_tokens(configuration).include?('COLUMBA_ONBOARDING_ENABLED')
+      has_onboarding = compilation_tokens(configuration).include?(ONBOARDING_FLAG)
       next if has_onboarding
 
       raise "Model B onboarding mapping is incorrect in #{configuration.name}"

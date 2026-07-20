@@ -21,7 +21,7 @@ final class OnboardingViewModel {
 
     var currentPage: Int = 0
     var displayName: String = ""
-    var selectedInterfaces: Set<OnboardingInterfaceType> = []
+    var selectedInterfaces: Set<OnboardingInterfaceType> = [.tcp]
     var selectedTcpServer: TcpCommunityServer? = nil
     var notificationsGranted: Bool = false
     /// Current CoreBluetooth authorization. Under Model B the APP runs the CoreBluetooth
@@ -97,6 +97,11 @@ final class OnboardingViewModel {
     /// it) so the user grants/denies it INSIDE onboarding instead of being surprised by
     /// it after, when `ModelBBLEService` starts the app-side CoreBluetooth host.
     func requestBluetoothPermission() {
+        #if COLUMBA_RUNTIME_MODEL_B
+        // The Model B host must not construct its CoreBluetooth driver unless the user
+        // explicitly opted in from this permission card.
+        ModelBBLEService.recordUserOptIn()
+        #endif
         bluetoothProbe = BluetoothPermissionProbe { [weak self] auth in
             Task { @MainActor in self?.bluetoothAuthorization = auth }
         }
@@ -232,19 +237,15 @@ final class OnboardingViewModel {
     /// from this store ONCE at start (`loadTCPRelayConfig`) and has no observer to pick
     /// up a later write, so seeding after the NE boots leaves it "AppGroupBridge only"
     /// with no TCP path. Idempotent (it also runs again from completeOnboarding).
-    func seedInterfaces() {
-        createInterfaces(in: InterfaceRepository())
+    func seedInterfaces(in repo: InterfaceRepository = InterfaceRepository()) {
+        createInterfaces(in: repo)
     }
 
     private func createInterfaces(in repo: InterfaceRepository) {
-        // Model B: the NE node delivers over the first enabled `tcpClient` relay and
-        // IGNORES auto/multipeer/ble entities (those interfaces, where they exist, are
-        // owned by the NE process itself, not configured here). So onboarding seeds
-        // exactly one enabled TCP relay — the user's pick, or the default community
-        // server — guaranteeing a reachable path even if nothing was explicitly chosen.
+        #if COLUMBA_RUNTIME_MODEL_B
+        // Model B's Network Extension owns its local transports and reads one TCP relay
+        // from the shared store. Seed only that relay and keep the operation idempotent.
         let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
-        // Idempotent: seedInterfaces() (pre-NE) and completeOnboarding both call this;
-        // don't add a duplicate relay if it's already present.
         let alreadySeeded = repo.getEnabledInterfaces().contains { entity in
             if case .tcpClient(let cfg) = entity.config {
                 return cfg.targetHost == server.host && cfg.targetPort == server.port
@@ -260,6 +261,66 @@ final class OnboardingViewModel {
                 targetPort: server.port
             ))
         ))
+        #else
+        // The shipping runtime owns these interfaces in the app process. Build a
+        // canonical candidate for each selection and add it only if an equivalent
+        // interface is not already stored. This makes completion safe to retry.
+        for interfaceType in selectedInterfaces {
+            let candidate: InterfaceEntity?
+            switch interfaceType {
+            case .auto:
+                candidate = InterfaceEntity(
+                    name: "Auto Discovery",
+                    type: .autoInterface,
+                    config: .autoInterface(AutoInterfaceConfig())
+                )
+            case .nearby:
+                // Kept in the enum for stored-config compatibility, but shipping has no
+                // Python MultipeerConnectivity transport and must not persist a new one.
+                candidate = nil
+            case .ble:
+                candidate = InterfaceEntity(
+                    name: "Bluetooth LE",
+                    type: .ble,
+                    config: .ble(BLEConfig())
+                )
+            case .tcp:
+                let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
+                candidate = InterfaceEntity(
+                    name: server.name,
+                    type: .tcpClient,
+                    config: .tcpClient(TCPClientConfig(
+                        targetHost: server.host,
+                        targetPort: server.port
+                    ))
+                )
+            case .rnode:
+                candidate = nil
+            }
+
+            guard let candidate else { continue }
+            guard !shippingInterfaceAlreadyExists(candidate, in: repo) else { continue }
+            repo.addInterface(candidate)
+        }
+        #endif
+    }
+
+    private func shippingInterfaceAlreadyExists(
+        _ candidate: InterfaceEntity,
+        in repo: InterfaceRepository
+    ) -> Bool {
+        repo.interfaces.contains { existing in
+            switch (existing.config, candidate.config) {
+            case (.autoInterface, .autoInterface),
+                 (.ble, .ble):
+                return true
+            case let (.tcpClient(existingConfig), .tcpClient(candidateConfig)):
+                return existingConfig.targetHost == candidateConfig.targetHost
+                    && existingConfig.targetPort == candidateConfig.targetPort
+            default:
+                return false
+            }
+        }
     }
 }
 

@@ -88,9 +88,9 @@ struct PermissionsPage: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 12)
 
+            #if COLUMBA_RUNTIME_MODEL_B
             // Bluetooth permission card — Model B runs the CoreBluetooth host in the
-            // app, so granting here avoids a surprise prompt after onboarding. Optional:
-            // the app still works over the relay without it (BLE adds offline/nearby mesh).
+            // app. Permission remains optional and is requested only when Enable is tapped.
             HStack(spacing: 14) {
                 Image(systemName: "wave.3.right")
                     .font(.system(size: 24))
@@ -132,6 +132,7 @@ struct PermissionsPage: View {
             )
             .padding(.horizontal, 24)
             .padding(.bottom, 12)
+            #endif
 
             Text("You can change these anytime in iOS Settings")
                 .font(.footnote)

@@ -30,6 +30,18 @@ final class BLESeamDriverTests: XCTestCase {
         }
     }
 
+    func testModelBBLEServiceRequiresExplicitUserOptIn() {
+        let suiteName = "test.ModelBBLEOptIn.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Could not create isolated UserDefaults suite")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertFalse(ModelBBLEService.isUserOptedIn(in: defaults))
+        ModelBBLEService.recordUserOptIn(in: defaults)
+        XCTAssertTrue(ModelBBLEService.isUserOptedIn(in: defaults))
+    }
+
     func testDiscoveredEventFeedsStream() async throws {
         let mock = MockSeamTransport()
         let driver = AppGroupBLEDriver(transport: mock)

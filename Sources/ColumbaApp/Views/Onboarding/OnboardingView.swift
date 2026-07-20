@@ -80,7 +80,9 @@ struct OnboardingView: View {
                         )
                     case 2:
                         ConnectivityPage(
+                            selectedInterfaces: $viewModel.selectedInterfaces,
                             selectedTcpServer: $viewModel.selectedTcpServer,
+                            onRequestBluetooth: { viewModel.requestBluetoothPermission() },
                             onBack: { viewModel.previousPage() },
                             onContinue: { viewModel.nextPage() }
                         )
@@ -93,17 +95,7 @@ struct OnboardingView: View {
                             bluetoothGranted: viewModel.bluetoothGranted,
                             onRequestBluetooth: { viewModel.requestBluetoothPermission() },
                             onBack: { viewModel.previousPage() },
-                            onContinue: {
-                                // Guarantee the BLE prompt happens IN-FLOW: the Model-B
-                                // app-side CoreBluetooth host (ModelBBLEService) prompts
-                                // unconditionally after onboarding, so if the user didn't
-                                // tap the card's Enable, fire it now as they leave the
-                                // permissions step rather than surprising them later.
-                                if viewModel.bluetoothAuthorization == .notDetermined {
-                                    viewModel.requestBluetoothPermission()
-                                }
-                                viewModel.nextPage()
-                            }
+                            onContinue: { viewModel.nextPage() }
                         )
                     #if COLUMBA_RUNTIME_MODEL_B
                     case 4:

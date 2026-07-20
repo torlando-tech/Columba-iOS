@@ -1154,15 +1154,14 @@ public final class AppServices {
         self.backend = backend
 
         #if COLUMBA_RUNTIME_MODEL_B
-        // Model B: bring up the app-side BLE host — reticulum-swift's
-        // `CoreBluetoothBLEDriver` (CoreBluetooth can't run in the NE) + the
-        // `AppGroupBLEServer` that bridges it to the NE's `BLEInterface` over the
-        // App-Group seam. The NE drives scan/advertise/connect through the seam.
-        // Idempotent; uses the SAME 16-byte identity the NE's BLEInterface uses.
-        // (ModelBBLEService lives in its own file because it `import ReticulumSwift`
-        // for the REAL driver — here `CoreBluetoothBLEDriver` would be the RNSAPI
-        // Compat stub.) `SwiftBLEBridge` is gated off under Model B at launch.
-        ModelBBLEService.shared.start(identityHash: identity.hash)
+        // Model B: CoreBluetooth lives in the app process, but it is optional. Do not
+        // construct the driver (and trigger iOS authorization) unless onboarding's
+        // Bluetooth Enable action recorded an explicit opt-in.
+        if ModelBBLEService.isUserOptedIn {
+            ModelBBLEService.shared.start(identityHash: identity.hash)
+        } else {
+            DiagLog.log("[BLE] Model B BLE service skipped — no explicit user opt-in")
+        }
         #endif
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
