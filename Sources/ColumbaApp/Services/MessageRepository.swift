@@ -38,6 +38,19 @@ import LXMFSwift
 /// types so the existing ViewModels compile unchanged. All operations are
 /// serialized through the underlying GRDB actor.
 public actor MessageRepository {
+    /// Posted after a conversation's unread count has been cleared in the
+    /// canonical store. The chats list uses this to clear its in-memory badge
+    /// while a conversation is open.
+    public static let conversationReadNotification =
+        Notification.Name("network.columba.conversationRead")
+
+    /// Posted after an outbound message updates conversation activity. Inbound
+    /// messages already use `IncomingMessageHandler.messageReceivedNotification`.
+    public static let conversationActivityNotification =
+        Notification.Name("network.columba.conversationActivity")
+
+    public static let conversationHashUserInfoKey = "conversationHash"
+
     // MARK: - Properties
 
     /// The GRDB-backed canonical store written by the Swift / NE backend.
@@ -73,6 +86,11 @@ public actor MessageRepository {
     /// Mark conversation as read (reset unread count).
     public func markConversationRead(_ conversationHash: Data) async throws {
         try await database.markConversationRead(hash: conversationHash)
+        NotificationCenter.default.post(
+            name: Self.conversationReadNotification,
+            object: nil,
+            userInfo: [Self.conversationHashUserInfoKey: conversationHash]
+        )
     }
 
     /// Set the unread count for a conversation (e.g. mark as unread with count=1).
@@ -176,6 +194,13 @@ public actor MessageRepository {
     /// map so the chat UI's `LxmfFieldCodec.unpack` can recover attachments.
     public func saveMessage(_ message: RNSAPI.LXMessage) async throws {
         try await database.saveMessage(Self.mapToGRDBMessage(message))
+        if !message.incoming {
+            NotificationCenter.default.post(
+                name: Self.conversationActivityNotification,
+                object: nil,
+                userInfo: [Self.conversationHashUserInfoKey: message.destinationHash]
+            )
+        }
     }
 
     /// Get message by ID (LXMessage form), rebuilt from the GRDB record.

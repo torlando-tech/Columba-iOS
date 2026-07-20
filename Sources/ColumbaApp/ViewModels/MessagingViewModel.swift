@@ -128,8 +128,11 @@ public final class MessagingViewModel {
         defer { isLoading = false }
 
         do {
-            // Ensure conversation exists
+            // Ensure conversation exists, then clear unread state as soon as the
+            // user opens it. Message decoding or reply-preview failures must not
+            // leave a stale badge behind after the conversation was viewed.
             try await repository.ensureConversation(conversationHash, displayName: displayName)
+            try await repository.markConversationRead(conversationHash)
 
             // Fetch most recent page
             let records = try await repository.fetchMessageRecords(
@@ -154,9 +157,6 @@ public final class MessagingViewModel {
 
             messages = resolvedMessages
             allMessagesLoaded = records.count < Self.pageSize
-
-            // Mark as read
-            try await repository.markConversationRead(conversationHash)
 
             errorMessage = nil
         } catch {

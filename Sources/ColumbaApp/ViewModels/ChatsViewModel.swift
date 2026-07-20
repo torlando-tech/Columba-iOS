@@ -149,6 +149,8 @@ public final class ChatsViewModel {
     private let notificationObserver: NotificationObserver
     private let pathTable: PathTable?
     private var inProcessObserver: NSObjectProtocol?
+    private var conversationReadObserver: NSObjectProtocol?
+    private var conversationActivityObserver: NSObjectProtocol?
 
     // MARK: - Initialization
 
@@ -174,10 +176,39 @@ public final class ChatsViewModel {
                 await self?.loadConversations()
             }
         }
+
+        conversationReadObserver = NotificationCenter.default.addObserver(
+            forName: MessageRepository.conversationReadNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let hash = notification.userInfo?[MessageRepository.conversationHashUserInfoKey] as? Data else {
+                return
+            }
+            Task { @MainActor in
+                self?.clearUnreadBadge(for: hash)
+            }
+        }
+
+        conversationActivityObserver = NotificationCenter.default.addObserver(
+            forName: MessageRepository.conversationActivityNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.loadConversations()
+            }
+        }
     }
 
     deinit {
         if let observer = inProcessObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = conversationReadObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = conversationActivityObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -192,9 +223,7 @@ public final class ChatsViewModel {
 
         do {
             let records = try await repository.fetchConversations()
-            var convos = records
-                .filter { !$0.lastMessagePreview.isEmpty }
-                .map { Conversation(from: $0) }
+            var convos = Self.prepareConversations(records)
 
             // Backfill display names from path table for conversations that have none
             if let pathTable {
@@ -223,9 +252,7 @@ public final class ChatsViewModel {
 
         do {
             let records = try await repository.fetchConversations()
-            var convos = records
-                .filter { !$0.lastMessagePreview.isEmpty }
-                .map { Conversation(from: $0) }
+            var convos = Self.prepareConversations(records)
 
             // Backfill display names from path table for conversations that have none
             if let pathTable {
@@ -268,6 +295,30 @@ public final class ChatsViewModel {
         Task {
             try? await repository.setUnreadCount(conversation.destinationHash, count: 1)
         }
+    }
+
+    /// Convert persisted records to the visible chat list and enforce newest
+    /// activity first at the UI boundary, independent of database ordering.
+    static func prepareConversations(_ records: [ConversationRecord]) -> [Conversation] {
+        records
+            .filter { !$0.lastMessagePreview.isEmpty }
+            .map { Conversation(from: $0) }
+            .sorted {
+                if $0.lastMessageTimestamp != $1.lastMessageTimestamp {
+                    return $0.lastMessageTimestamp > $1.lastMessageTimestamp
+                }
+                return $0.id < $1.id
+            }
+    }
+
+    /// Clear the list's cached badge after the repository confirms the read
+    /// state was persisted. This avoids showing stale unread counts on return.
+    @MainActor
+    private func clearUnreadBadge(for conversationHash: Data) {
+        guard let index = conversations.firstIndex(where: { $0.destinationHash == conversationHash }) else {
+            return
+        }
+        conversations[index].unreadCount = 0
     }
 
     /// Delete a conversation.
