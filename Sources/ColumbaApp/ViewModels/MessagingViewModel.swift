@@ -158,6 +158,10 @@ public final class MessagingViewModel {
             messages = resolvedMessages
             allMessagesLoaded = records.count < Self.pageSize
 
+            // Reconcile messages that arrived after the initial read reset but
+            // were included in the page we just displayed.
+            try await repository.markConversationRead(conversationHash)
+
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

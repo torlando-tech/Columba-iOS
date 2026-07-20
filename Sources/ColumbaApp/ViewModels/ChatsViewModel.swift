@@ -226,7 +226,11 @@ public final class ChatsViewModel {
     public func loadConversations() async {
         let generation = beginConversationLoad()
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if generation == conversationLoadGeneration {
+                isLoading = false
+            }
+        }
 
         do {
             let records = try await repository.fetchConversations()
@@ -257,7 +261,11 @@ public final class ChatsViewModel {
     public func refreshConversations() async {
         let generation = beginConversationLoad()
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer {
+            if generation == conversationLoadGeneration {
+                isRefreshing = false
+            }
+        }
 
         do {
             let records = try await repository.fetchConversations()
