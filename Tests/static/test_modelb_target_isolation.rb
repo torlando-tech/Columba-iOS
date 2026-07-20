@@ -1254,8 +1254,8 @@ class ModelBTargetIsolationTests < Minitest::Test
 
     @shipping.build_configurations.zip(@model_b.build_configurations).each do |shipping, model_b|
       assert_equal ['COLUMBA_RUNTIME_PYTHON'], canonical_tokens(shipping), shipping.name
-      refute_includes compilation_tokens(shipping), ONBOARDING_FLAG,
-                      "shipping app retained Model B onboarding in #{shipping.name}"
+      assert_includes compilation_tokens(shipping), ONBOARDING_FLAG,
+                      "shipping app lost shared onboarding in #{shipping.name}"
       assert_equal %w[COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT],
                    canonical_tokens(model_b), model_b.name
       assert_includes compilation_tokens(model_b), ONBOARDING_FLAG,
@@ -1289,8 +1289,8 @@ class ModelBTargetIsolationTests < Minitest::Test
                    "host/test runtime flavor differs in #{test_configuration.name}"
       assert_equal ['COLUMBA_RUNTIME_PYTHON'], canonical_tokens(test_configuration),
                    test_configuration.name
-      refute_includes compilation_tokens(test_configuration), ONBOARDING_FLAG,
-                      "shipping tests retained Model B onboarding in #{test_configuration.name}"
+      assert_includes compilation_tokens(test_configuration), ONBOARDING_FLAG,
+                      "shipping tests lost shared onboarding in #{test_configuration.name}"
       assert_match(/ColumbaApp\.app/, test_configuration.build_settings.fetch('TEST_HOST'),
                    "TEST_HOST changed in #{test_configuration.name}")
       assert_equal '$(TEST_HOST)', test_configuration.build_settings.fetch('BUNDLE_LOADER'),
@@ -2204,7 +2204,7 @@ class ModelBTargetIsolationTests < Minitest::Test
         configuration = target.build_configurations.find { |candidate| candidate.name == 'Debug' }
         tokens = compilation_tokens(configuration)
         configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
-          (tokens + [ONBOARDING_FLAG, 'GENUINE_SHIPPING_CONDITION']).uniq.join(' ')
+          (tokens - [ONBOARDING_FLAG] + ['GENUINE_SHIPPING_CONDITION']).uniq.join(' ')
       end
       fixture_model_b.add_dependency(fixture_shipping)
       duplicate_proxy = fixture.new(Xcodeproj::Project::Object::PBXContainerItemProxy)
@@ -2243,7 +2243,7 @@ class ModelBTargetIsolationTests < Minitest::Test
       reconciled_extension = after_project.targets.find { |target| target.name == 'ColumbaNetworkExtension' }
       [reconciled_shipping, reconciled_shipping_tests].each do |target|
         configuration = target.build_configurations.find { |candidate| candidate.name == 'Debug' }
-        refute_includes compilation_tokens(configuration), ONBOARDING_FLAG
+        assert_includes compilation_tokens(configuration), ONBOARDING_FLAG
         assert_includes compilation_tokens(configuration), 'GENUINE_SHIPPING_CONDITION'
       end
       assert_includes compilation_tokens(
