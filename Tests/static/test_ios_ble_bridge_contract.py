@@ -7,6 +7,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
+APP_ROOT = ROOT / "Sources/ColumbaApp/App/ColumbaApp.swift"
 BRIDGE = ROOT / "Sources/SwiftBLEBridge/SwiftBLEBridge.swift"
 CLIENT = ROOT / "Sources/SwiftBLEBridge/BleGattClient.swift"
 BINDINGS = ROOT / "Sources/SwiftBLEBridge/BleNativeBindings.swift"
@@ -100,6 +101,7 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         self.assertIn("localIdentity.lexicographicallyPrecedes(candidateIdentity)", resolver)
         self.assertIn("? .central : .peripheral", resolver)
         self.assertIn("dedupeDisconnectsToSuppress.insert", resolver)
+        self.assertNotIn("gattClients.removeValue(forKey: old.key)", resolver)
         self.assertGreaterEqual(source.count("slot: .onAddressChanged"), 2)
         self.assertIn("suppressed dedupe disconnect", source)
         central_migration = source[source.index("candidateRole: .central"):]
@@ -120,10 +122,12 @@ class IOSBLEBridgeContracts(unittest.TestCase):
     def test_stalled_central_handshake_times_out_and_releases_peer(self) -> None:
         source = BRIDGE.read_text()
         self.assertIn("private let connectionTimeout: TimeInterval = 30.0", source)
-        self.assertIn("armConnectionTimeoutLocked(address: address, peripheral: peripheral)", source)
+        self.assertIn("armConnectionTimeoutLocked(address: address, client: client)", source)
         timeout = source[source.index("private func armConnectionTimeoutLocked"):]
         timeout = timeout.split("private func cancelConnectionTimeoutLocked", 1)[0]
-        self.assertIn("client.state != .established", timeout)
+        self.assertIn("currentClient === armedClient", timeout)
+        self.assertIn("connectionAttemptTokens[address] == attemptToken", timeout)
+        self.assertIn("currentClient.state != .established", timeout)
         self.assertIn("gattClients.removeValue(forKey: address)", timeout)
         self.assertIn('emitError("warning", "Connection timeout to', timeout)
         established = source[source.index("client.state = .established"):]
@@ -171,6 +175,10 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         self.assertGreaterEqual(send.count("return false"), 3)
         self.assertIn("? 0 : -1", bindings)
         self.assertIn("raise RuntimeError(f\"columba_ble_send rejected frame", driver)
+
+    def test_debug_urls_cannot_delete_arbitrary_conversations(self) -> None:
+        self.assertNotIn("test-delete-conversation", APP_ROOT.read_text())
+        self.assertNotIn("ColumbaTestDeleteConversation", APP.read_text())
 
     def test_application_frames_wait_for_identity_handshake(self) -> None:
         bridge = BRIDGE.read_text()

@@ -89,6 +89,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     private var rssiPollTask: Task<Void, Never>?
     private let rssiPollInterval: TimeInterval = 3.0
     private var connectionTimeoutTasks: [String: Task<Void, Never>] = [:]
+    private var connectionAttemptTokens: [String: UUID] = [:]
     private let connectionTimeout: TimeInterval = 30.0
 
     // Discovered peripherals from scan, retained by `identifier.uuidString`.
@@ -388,6 +389,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             gattClients.removeAll()
             for task in connectionTimeoutTasks.values { task.cancel() }
             connectionTimeoutTasks.removeAll()
+            connectionAttemptTokens.removeAll()
             discoveredPeripherals.removeAll()
             gattServerPeers.removeAll()
             serverRxChar = nil
@@ -508,27 +510,37 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
     // MARK: - Connection management
 
-    private func armConnectionTimeoutLocked(address: String, peripheral: CBPeripheral) {
-        guard connectionTimeoutTasks[address] == nil else { return }
-        connectionTimeoutTasks[address] = Task { [weak self, weak peripheral] in
+    private func armConnectionTimeoutLocked(address: String, client: BleGattClient) {
+        cancelConnectionTimeoutLocked(address: address)
+        let attemptToken = UUID()
+        connectionAttemptTokens[address] = attemptToken
+        connectionTimeoutTasks[address] = Task { [weak self, weak client] in
             try? await Task.sleep(nanoseconds: UInt64((self?.connectionTimeout ?? 30.0) * 1_000_000_000))
-            guard !Task.isCancelled, let self, let peripheral else { return }
+            guard !Task.isCancelled, let self, let armedClient = client else { return }
             self.queue.async {
-                guard let client = self.gattClients[address], client.state != .established else {
-                    self.connectionTimeoutTasks.removeValue(forKey: address)
+                guard self.connectionAttemptTokens[address] == attemptToken,
+                      let currentClient = self.gattClients[address],
+                      currentClient === armedClient,
+                      currentClient.state != .established else {
+                    if self.connectionAttemptTokens[address] == attemptToken {
+                        self.connectionTimeoutTasks.removeValue(forKey: address)
+                        self.connectionAttemptTokens.removeValue(forKey: address)
+                    }
                     return
                 }
-                client.state = .failed
+                currentClient.state = .failed
                 self.gattClients.removeValue(forKey: address)
                 self.connectionTimeoutTasks.removeValue(forKey: address)
+                self.connectionAttemptTokens.removeValue(forKey: address)
                 self.emitError("warning", "Connection timeout to \(address)")
-                self.centralManager?.cancelPeripheralConnection(peripheral)
+                self.centralManager?.cancelPeripheralConnection(armedClient.peripheral)
             }
         }
     }
 
     private func cancelConnectionTimeoutLocked(address: String) {
         connectionTimeoutTasks.removeValue(forKey: address)?.cancel()
+        connectionAttemptTokens.removeValue(forKey: address)
     }
 
     public func connect(address: String) {
@@ -557,7 +569,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             client.state = .connecting
             self.gattClients[address] = client
             cm.connect(peripheral, options: nil)
-            self.armConnectionTimeoutLocked(address: address, peripheral: peripheral)
+            self.armConnectionTimeoutLocked(address: address, client: client)
             self.emitInfo("connect-issued addr=\(address)")
         }
     }
@@ -702,7 +714,6 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                 (candidateMTU == existingMTU && candidateRole == wantedRole)
             guard candidateWins else { return nil }
             dedupeDisconnectsToSuppress.insert(old.key)
-            gattClients.removeValue(forKey: old.key)
             centralManager?.cancelPeripheralConnection(old.value.peripheral)
             emitInfo(
                 "dual-link convergence keep=peripheral old=\(old.key) new=\(candidateAddress) " +

@@ -1733,25 +1733,6 @@ public final class AppServices {
             }
         }
 
-        // Cleanup companion for synthetic physical-device inbound probes.
-        addPythonObserver("ColumbaTestDeleteConversation") { [weak self] note in
-            guard let self else { return }
-            let fromHex = (note.userInfo?["from"] as? String) ?? ""
-            Task { @MainActor in
-                guard let repo = self.messageRepository,
-                      let from = Data(hexString: fromHex) else {
-                    DiagLog.log("[TEST-DELETE-CONVERSATION] invalid-input-or-repository")
-                    return
-                }
-                do {
-                    try await repo.deleteConversation(from)
-                    DiagLog.log("[TEST-DELETE-CONVERSATION] deleted=true")
-                } catch {
-                    DiagLog.log("[TEST-DELETE-CONVERSATION] delete-failed=\(error.localizedDescription)")
-                }
-            }
-        }
-
         // lxma://test-identity-switch — exercise the multi-identity swap
         // path: create a fresh identity in IdentityManager and call
         // AppServices.switchIdentity. Logs the destination hash before

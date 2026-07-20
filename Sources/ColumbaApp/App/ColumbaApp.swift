@@ -231,16 +231,6 @@ struct ColumbaApp: App {
                     )
                     return
                 }
-                if url.host == "test-delete-conversation" {
-                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-                    let fromHex = components?.queryItems?.first(where: { $0.name == "from" })?.value ?? ""
-                    NotificationCenter.default.post(
-                        name: Notification.Name("ColumbaTestDeleteConversation"),
-                        object: nil,
-                        userInfo: ["from": fromHex]
-                    )
-                    return
-                }
                 if url.host == "test-identity-switch" {
                     // lxma://test-identity-switch — creates a fresh identity
                     // and switches to it via the full AppServices.switchIdentity
