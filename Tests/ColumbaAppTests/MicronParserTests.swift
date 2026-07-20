@@ -673,9 +673,20 @@ final class MessageRepositoryAdapterTests: XCTestCase {
             unreadCount: 0
         )
 
-        let conversations = ChatsViewModel.prepareConversations([older, newer])
+        let sameTimestampLowerID = RNSAPI.ConversationRecord(
+            hash: Data([0x00]),
+            displayName: "Same timestamp",
+            lastMessageAt: Date(timeIntervalSince1970: 200),
+            lastMessage: "same timestamp message",
+            unreadCount: 0
+        )
 
-        XCTAssertEqual(conversations.map(\.destinationHash), [newer.hash, older.hash])
+        let conversations = ChatsViewModel.prepareConversations([older, newer, sameTimestampLowerID])
+
+        XCTAssertEqual(
+            conversations.map(\.destinationHash),
+            [sameTimestampLowerID.hash, newer.hash, older.hash]
+        )
     }
 
     @MainActor
@@ -743,20 +754,28 @@ final class MessageRepositoryAdapterTests: XCTestCase {
             notificationObserver: NotificationObserver()
         )
         let hash = Data([0xAA, 0xBB])
-        viewModel.conversations = [Conversation(
+        let staleConversation = Conversation(
             destinationHash: hash,
             displayName: "Peer",
             lastMessageTimestamp: Date(),
             lastMessagePreview: "message",
             unreadCount: 3
-        )]
+        )
+        viewModel.conversations = [staleConversation]
 
         try await repository.ensureConversation(hash, displayName: "Peer")
         try await repository.setUnreadCount(hash, count: 3)
+        let staleGeneration = viewModel.beginConversationLoad()
         try await repository.markConversationRead(hash)
 
-        await Task.yield()
-        await Task.yield()
+        for _ in 0..<100 where viewModel.conversations.first?.unreadCount != 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Simulate a slower load attempting to apply the snapshot it captured
+        // before markConversationRead completed. The read notification must have
+        // invalidated that generation so the stale unread count cannot return.
+        viewModel.applyLoadedConversations([staleConversation], generation: staleGeneration)
 
         let persistedConversation = try await repository.fetchConversation(hash)
         XCTAssertEqual(viewModel.conversations.first?.unreadCount, 0)

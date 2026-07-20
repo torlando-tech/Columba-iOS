@@ -151,6 +151,7 @@ public final class ChatsViewModel {
     private var inProcessObserver: NSObjectProtocol?
     private var conversationReadObserver: NSObjectProtocol?
     private var conversationActivityObserver: NSObjectProtocol?
+    private var conversationLoadGeneration: UInt64 = 0
 
     // MARK: - Initialization
 
@@ -218,6 +219,7 @@ public final class ChatsViewModel {
     /// Load conversations from storage.
     @MainActor
     public func loadConversations() async {
+        let generation = beginConversationLoad()
         isLoading = true
         defer { isLoading = false }
 
@@ -237,16 +239,18 @@ public final class ChatsViewModel {
                 }
             }
 
-            conversations = convos
-            errorMessage = nil
+            applyLoadedConversations(convos, generation: generation)
         } catch {
-            errorMessage = error.localizedDescription
+            if generation == conversationLoadGeneration {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
     /// Refresh conversations from storage.
     @MainActor
     public func refreshConversations() async {
+        let generation = beginConversationLoad()
         isRefreshing = true
         defer { isRefreshing = false }
 
@@ -265,10 +269,11 @@ public final class ChatsViewModel {
                 }
             }
 
-            conversations = convos
-            errorMessage = nil
+            applyLoadedConversations(convos, generation: generation)
         } catch {
-            errorMessage = error.localizedDescription
+            if generation == conversationLoadGeneration {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -311,10 +316,31 @@ public final class ChatsViewModel {
             }
     }
 
+    /// Start a list refresh. Only the latest generation may replace the
+    /// visible list, preventing slower notification-driven loads from winning.
+    @MainActor
+    func beginConversationLoad() -> UInt64 {
+        conversationLoadGeneration &+= 1
+        return conversationLoadGeneration
+    }
+
+    /// Apply a loaded snapshot only if no newer activity or read-state change
+    /// has invalidated it.
+    @MainActor
+    func applyLoadedConversations(_ loaded: [Conversation], generation: UInt64) {
+        guard generation == conversationLoadGeneration else { return }
+        conversations = loaded
+        errorMessage = nil
+    }
+
     /// Clear the list's cached badge after the repository confirms the read
     /// state was persisted. This avoids showing stale unread counts on return.
     @MainActor
     private func clearUnreadBadge(for conversationHash: Data) {
+        // A load may already hold a snapshot captured before the database read
+        // completed. Invalidate it before clearing the visible badge so that
+        // stale snapshot cannot restore the unread count afterward.
+        conversationLoadGeneration &+= 1
         guard let index = conversations.firstIndex(where: { $0.destinationHash == conversationHash }) else {
             return
         }
