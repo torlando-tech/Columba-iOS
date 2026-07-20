@@ -187,7 +187,12 @@ public final class ChatsViewModel {
                 return
             }
             Task { @MainActor in
-                self?.clearUnreadBadge(for: hash)
+                guard let self else { return }
+                self.clearUnreadBadge(for: hash)
+                // Replace any invalidated in-flight snapshot with a fresh one
+                // captured after the read transaction committed. This keeps the
+                // newest preview/timestamp/order while clearing the badge.
+                await self.loadConversations()
             }
         }
 

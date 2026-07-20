@@ -757,28 +757,45 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         let staleConversation = Conversation(
             destinationHash: hash,
             displayName: "Peer",
-            lastMessageTimestamp: Date(),
-            lastMessagePreview: "message",
+            lastMessageTimestamp: Date(timeIntervalSince1970: 100),
+            lastMessagePreview: "old message",
             unreadCount: 3
         )
         viewModel.conversations = [staleConversation]
 
-        try await repository.ensureConversation(hash, displayName: "Peer")
+        let incomingMessage = RNSAPI.LXMessage(
+            destinationHash: Data([0xDD]),
+            sourceIdentity: nil,
+            content: Data("new message".utf8)
+        )
+        incomingMessage.sourceHash = hash
+        incomingMessage.hash = Data([0xA3])
+        incomingMessage.timestamp = 200
+        incomingMessage.incoming = true
+        incomingMessage.state = .received
+        incomingMessage.method = .opportunistic
+        try await repository.saveMessage(incomingMessage)
         try await repository.setUnreadCount(hash, count: 3)
+
         let staleGeneration = viewModel.beginConversationLoad()
         try await repository.markConversationRead(hash)
 
-        for _ in 0..<100 where viewModel.conversations.first?.unreadCount != 0 {
+        for _ in 0..<100 where
+            viewModel.conversations.first?.unreadCount != 0 ||
+            viewModel.conversations.first?.lastMessagePreview != "new message" {
             try await Task.sleep(for: .milliseconds(10))
         }
 
         // Simulate a slower load attempting to apply the snapshot it captured
         // before markConversationRead completed. The read notification must have
-        // invalidated that generation so the stale unread count cannot return.
+        // invalidated that generation, while its replacement load must preserve
+        // the new preview/timestamp and cleared unread state.
         viewModel.applyLoadedConversations([staleConversation], generation: staleGeneration)
 
         let persistedConversation = try await repository.fetchConversation(hash)
         XCTAssertEqual(viewModel.conversations.first?.unreadCount, 0)
+        XCTAssertEqual(viewModel.conversations.first?.lastMessagePreview, "new message")
+        XCTAssertEqual(viewModel.conversations.first?.lastMessageTimestamp, Date(timeIntervalSince1970: 200))
         XCTAssertEqual(persistedConversation?.unreadCount, 0)
     }
 
