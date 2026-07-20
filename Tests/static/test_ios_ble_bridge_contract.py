@@ -100,10 +100,11 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         self.assertIn("candidateMTU == existingMTU", resolver)
         self.assertIn("localIdentity.lexicographicallyPrecedes(candidateIdentity)", resolver)
         self.assertIn("? .central : .peripheral", resolver)
-        self.assertIn("dedupeDisconnectsToSuppress.insert", resolver)
-        self.assertNotIn("gattClients.removeValue(forKey: old.key)", resolver)
+        self.assertNotIn("dedupeDisconnectsToSuppress", source)
         self.assertGreaterEqual(source.count("slot: .onAddressChanged"), 2)
-        self.assertIn("suppressed dedupe disconnect", source)
+        disconnect = source[source.index("didDisconnectPeripheral peripheral"):]
+        disconnect = disconnect.split("// MARK: - CBPeripheralDelegate", 1)[0]
+        self.assertIn("slot: .onDeviceDisconnected", disconnect)
         central_migration = source[source.index("candidateRole: .central"):]
         central_migration = central_migration.split("client.peerIdentity = value", 1)[0]
         self.assertIn("slot: .onMtuNegotiated", central_migration)

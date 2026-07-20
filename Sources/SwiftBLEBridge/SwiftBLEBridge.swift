@@ -100,11 +100,6 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // Keyed by `CBCentral.identifier.uuidString`.
     private var gattServerPeers: [String: BleGattServerPeer] = [:]
 
-    // A deterministic identity-based dual-link resolution can close an old
-    // central-role link while migrating Python's peer mapping to the surviving
-    // peripheral-role link. Suppress the old link's eventual CB disconnect
-    // callback so it does not tear down the newly migrated Python peer.
-    private var dedupeDisconnectsToSuppress: Set<String> = []
 
     // Cap on a peer's backpressure notify queue so a stuck or vanished
     // subscriber can't grow pendingNotifies without bound.
@@ -713,7 +708,6 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             let candidateWins = candidateMTU > existingMTU ||
                 (candidateMTU == existingMTU && candidateRole == wantedRole)
             guard candidateWins else { return nil }
-            dedupeDisconnectsToSuppress.insert(old.key)
             centralManager?.cancelPeripheralConnection(old.value.peripheral)
             emitInfo(
                 "dual-link convergence keep=peripheral old=\(old.key) new=\(candidateAddress) " +
@@ -1016,10 +1010,6 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
         let address = peripheral.identifier.uuidString
         cancelConnectionTimeoutLocked(address: address)
         gattClients.removeValue(forKey: address)
-        if dedupeDisconnectsToSuppress.remove(address) != nil {
-            emitInfo("suppressed dedupe disconnect addr=\(address)")
-            return
-        }
         callbackInvoker?.invoke(slot: .onDeviceDisconnected, args: [address])
     }
 }
