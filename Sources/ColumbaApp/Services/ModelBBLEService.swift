@@ -20,6 +20,7 @@
 //
 
 import Foundation
+import CoreBluetooth
 import ReticulumSwift
 
 public final class ModelBBLEService: @unchecked Sendable {
@@ -38,6 +39,27 @@ public final class ModelBBLEService: @unchecked Sendable {
 
     static func recordUserOptIn(in defaults: UserDefaults = .standard) {
         defaults.set(true, forKey: userOptInKey)
+    }
+
+    /// Decide whether the app-side Model B CoreBluetooth host may start without
+    /// constructing a manager. Existing users who already granted Bluetooth are
+    /// migrated to the explicit opt-in key so an upgrade does not silently disable BLE.
+    static var shouldStart: Bool {
+        shouldStart(isBluetoothAuthorized: CBCentralManager.authorization == .allowedAlways)
+    }
+
+    static func shouldStart(
+        isBluetoothAuthorized: Bool,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        if isUserOptedIn(in: defaults) {
+            return true
+        }
+        guard isBluetoothAuthorized else {
+            return false
+        }
+        recordUserOptIn(in: defaults)
+        return true
     }
 
     private init() {}

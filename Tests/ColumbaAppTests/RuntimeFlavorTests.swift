@@ -69,9 +69,19 @@ final class RuntimeFlavorTests: XCTestCase {
         // defaults into this isolated suite.
         defaults.set(try JSONEncoder().encode([InterfaceEntity]()), forKey: "com.columba.interfaces")
         let repository = InterfaceRepository(userDefaults: defaults)
+        let server = TcpCommunityServer.defaultServer
+        repository.addInterface(InterfaceEntity(
+            name: server.name,
+            type: .tcpClient,
+            enabled: false,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
+        ))
         let viewModel = OnboardingViewModel()
         viewModel.selectedInterfaces = [.auto, .ble, .tcp]
-        viewModel.selectedTcpServer = .defaultServer
+        viewModel.selectedTcpServer = server
 
         viewModel.seedInterfaces(in: repository)
         viewModel.seedInterfaces(in: repository)
@@ -79,7 +89,9 @@ final class RuntimeFlavorTests: XCTestCase {
         XCTAssertEqual(repository.interfaces.count, 3)
         XCTAssertEqual(repository.interfaces.filter { $0.type == .autoInterface }.count, 1)
         XCTAssertEqual(repository.interfaces.filter { $0.type == .ble }.count, 1)
-        XCTAssertEqual(repository.interfaces.filter { $0.type == .tcpClient }.count, 1)
+        let tcpInterfaces = repository.interfaces.filter { $0.type == .tcpClient }
+        XCTAssertEqual(tcpInterfaces.count, 1)
+        XCTAssertTrue(tcpInterfaces[0].enabled)
     }
     #endif
 }

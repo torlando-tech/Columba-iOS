@@ -93,19 +93,27 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
 
         self.assertIn('userOptInKey = "model_b_ble_user_opt_in"', service)
         self.assertIn("recordUserOptIn()", view_model)
+        self.assertIn("shouldStart(isBluetoothAuthorized:", service)
         start = "ModelBBLEService.shared.start(identityHash: identity.hash)"
         self.assertEqual(1, app_services.count(start))
         start_offset = app_services.index(start)
         guard_offset = app_services.rfind("if ", 0, start_offset)
         guard = app_services[guard_offset:start_offset]
-        self.assertIn("ModelBBLEService.isUserOptedIn", guard)
+        self.assertIn("ModelBBLEService.shouldStart", guard)
 
     def test_shipping_interface_creation_is_idempotent(self) -> None:
         view_model = source(VIEW_MODEL)
         method = view_model.split("private func createInterfaces(in repo: InterfaceRepository) {", 1)[1]
         shipping = method.split("#else", 1)[1].split("#endif", 1)[0]
-        self.assertIn("shippingInterfaceAlreadyExists", shipping)
-        self.assertIn("guard !shippingInterfaceAlreadyExists", shipping)
+        self.assertIn("ensureInterfaceEnabled(candidate, in: repo)", shipping)
+        self.assertIn("disabled.enabled = true", view_model)
+        self.assertIn("repo.updateInterface(disabled)", view_model)
+
+    def test_skip_and_restore_use_idempotent_interface_seeding(self) -> None:
+        view_model = source(VIEW_MODEL)
+        skip = view_model.split("func skipOnboarding(", 1)[1].split("// MARK: - Onboarding Check", 1)[0]
+        self.assertIn("seedInterfaces(in: InterfaceRepository())", skip)
+        self.assertNotIn("addInterface", skip)
 
 
 if __name__ == "__main__":

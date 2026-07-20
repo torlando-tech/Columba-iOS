@@ -38,8 +38,46 @@ final class BLESeamDriverTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         XCTAssertFalse(ModelBBLEService.isUserOptedIn(in: defaults))
-        ModelBBLEService.recordUserOptIn(in: defaults)
+        XCTAssertFalse(ModelBBLEService.shouldStart(isBluetoothAuthorized: false, defaults: defaults))
+
+        // Upgrade migration: an existing authorization is prior user consent. Preserve
+        // BLE and persist the new opt-in key without constructing a manager.
+        XCTAssertTrue(ModelBBLEService.shouldStart(isBluetoothAuthorized: true, defaults: defaults))
         XCTAssertTrue(ModelBBLEService.isUserOptedIn(in: defaults))
+
+        defaults.removeObject(forKey: ModelBBLEService.userOptInKey)
+        ModelBBLEService.recordUserOptIn(in: defaults)
+        XCTAssertTrue(ModelBBLEService.shouldStart(isBluetoothAuthorized: false, defaults: defaults))
+    }
+
+    @MainActor
+    func testModelBSeedingReenablesDisabledRelayWithoutDuplicate() throws {
+        let suiteName = "test.ModelBOnboardingInterfaces.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Could not create isolated UserDefaults suite")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(try JSONEncoder().encode([InterfaceEntity]()), forKey: "com.columba.interfaces")
+        let repository = InterfaceRepository(userDefaults: defaults)
+        let server = TcpCommunityServer.defaultServer
+        repository.addInterface(InterfaceEntity(
+            name: server.name,
+            type: .tcpClient,
+            enabled: false,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
+        ))
+        let viewModel = OnboardingViewModel()
+        viewModel.selectedTcpServer = server
+
+        viewModel.seedInterfaces(in: repository)
+        viewModel.seedInterfaces(in: repository)
+
+        XCTAssertEqual(repository.interfaces.count, 1)
+        XCTAssertTrue(repository.interfaces[0].enabled)
     }
 
     func testDiscoveredEventFeedsStream() async throws {

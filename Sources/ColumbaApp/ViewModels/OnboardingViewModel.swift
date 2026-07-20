@@ -193,20 +193,10 @@ final class OnboardingViewModel {
 
         await settingsRepository.setDisplayName("Anonymous Peer")
 
-        // Model B: the NE node delivers over the first enabled tcpClient relay, so a
-        // skipped setup must still seed one — otherwise the node comes up with no
-        // reachable path and the user can't message anyone. (An AutoInterface-only
-        // seed is a no-op the NE ignores.)
-        let interfaceRepo = InterfaceRepository()
-        let server = TcpCommunityServer.defaultServer
-        interfaceRepo.addInterface(InterfaceEntity(
-            name: server.name,
-            type: .tcpClient,
-            config: .tcpClient(TCPClientConfig(
-                targetHost: server.host,
-                targetPort: server.port
-            ))
-        ))
+        // A skipped setup still needs the default relay, but must use the same
+        // idempotent path as normal completion. Restore can enter this method after
+        // importing interfaces, and repeated actions must not append duplicates.
+        seedInterfaces(in: InterfaceRepository())
 
         UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
         UserDefaults.standard.set(true, forKey: "settings_initialized")
@@ -246,21 +236,14 @@ final class OnboardingViewModel {
         // Model B's Network Extension owns its local transports and reads one TCP relay
         // from the shared store. Seed only that relay and keep the operation idempotent.
         let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
-        let alreadySeeded = repo.getEnabledInterfaces().contains { entity in
-            if case .tcpClient(let cfg) = entity.config {
-                return cfg.targetHost == server.host && cfg.targetPort == server.port
-            }
-            return false
-        }
-        guard !alreadySeeded else { return }
-        repo.addInterface(InterfaceEntity(
+        ensureInterfaceEnabled(InterfaceEntity(
             name: server.name,
             type: .tcpClient,
             config: .tcpClient(TCPClientConfig(
                 targetHost: server.host,
                 targetPort: server.port
             ))
-        ))
+        ), in: repo)
         #else
         // The shipping runtime owns these interfaces in the app process. Build a
         // canonical candidate for each selection and add it only if an equivalent
@@ -299,27 +282,42 @@ final class OnboardingViewModel {
             }
 
             guard let candidate else { continue }
-            guard !shippingInterfaceAlreadyExists(candidate, in: repo) else { continue }
-            repo.addInterface(candidate)
+            ensureInterfaceEnabled(candidate, in: repo)
         }
         #endif
     }
 
-    private func shippingInterfaceAlreadyExists(
+    /// Preserve one equivalent configuration and make sure it is enabled. Restore may
+    /// import a disabled matching record; skip/completion must reactivate that record
+    /// instead of appending a duplicate or leaving the app without a usable path.
+    private func ensureInterfaceEnabled(
         _ candidate: InterfaceEntity,
         in repo: InterfaceRepository
+    ) {
+        if repo.interfaces.contains(where: { $0.enabled && interfacesAreEquivalent($0, candidate) }) {
+            return
+        }
+        if var disabled = repo.interfaces.first(where: { !$0.enabled && interfacesAreEquivalent($0, candidate) }) {
+            disabled.enabled = true
+            repo.updateInterface(disabled)
+            return
+        }
+        repo.addInterface(candidate)
+    }
+
+    private func interfacesAreEquivalent(
+        _ existing: InterfaceEntity,
+        _ candidate: InterfaceEntity
     ) -> Bool {
-        repo.interfaces.contains { existing in
-            switch (existing.config, candidate.config) {
-            case (.autoInterface, .autoInterface),
-                 (.ble, .ble):
-                return true
-            case let (.tcpClient(existingConfig), .tcpClient(candidateConfig)):
-                return existingConfig.targetHost == candidateConfig.targetHost
-                    && existingConfig.targetPort == candidateConfig.targetPort
-            default:
-                return false
-            }
+        switch (existing.config, candidate.config) {
+        case (.autoInterface, .autoInterface),
+             (.ble, .ble):
+            return true
+        case let (.tcpClient(existingConfig), .tcpClient(candidateConfig)):
+            return existingConfig.targetHost == candidateConfig.targetHost
+                && existingConfig.targetPort == candidateConfig.targetPort
+        default:
+            return false
         }
     }
 }
