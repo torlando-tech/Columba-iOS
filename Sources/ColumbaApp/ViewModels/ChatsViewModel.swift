@@ -149,6 +149,11 @@ public final class ChatsViewModel {
     private let notificationObserver: NotificationObserver
     private let pathTable: PathTable?
     private var inProcessObserver: NSObjectProtocol?
+    private var conversationReadObserver: NSObjectProtocol?
+    private var conversationActivityObserver: NSObjectProtocol?
+    private var conversationLoadGeneration: UInt64 = 0
+    private var activeConversationLoadCount: Int = 0
+    private var activeConversationRefreshCount: Int = 0
 
     // MARK: - Initialization
 
@@ -174,10 +179,44 @@ public final class ChatsViewModel {
                 await self?.loadConversations()
             }
         }
+
+        conversationReadObserver = NotificationCenter.default.addObserver(
+            forName: MessageRepository.conversationReadNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let hash = notification.userInfo?[MessageRepository.conversationHashUserInfoKey] as? Data else {
+                return
+            }
+            Task { @MainActor in
+                guard let self else { return }
+                self.clearUnreadBadge(for: hash)
+                // Replace any invalidated in-flight snapshot with a fresh one
+                // captured after the read transaction committed. This keeps the
+                // newest preview/timestamp/order while clearing the badge.
+                await self.loadConversations()
+            }
+        }
+
+        conversationActivityObserver = NotificationCenter.default.addObserver(
+            forName: MessageRepository.conversationActivityNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.loadConversations()
+            }
+        }
     }
 
     deinit {
         if let observer = inProcessObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = conversationReadObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = conversationActivityObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -187,14 +226,12 @@ public final class ChatsViewModel {
     /// Load conversations from storage.
     @MainActor
     public func loadConversations() async {
-        isLoading = true
-        defer { isLoading = false }
+        let generation = beginLoadingConversations()
+        defer { endLoadingConversations() }
 
         do {
             let records = try await repository.fetchConversations()
-            var convos = records
-                .filter { !$0.lastMessagePreview.isEmpty }
-                .map { Conversation(from: $0) }
+            var convos = Self.prepareConversations(records)
 
             // Backfill display names from path table for conversations that have none
             if let pathTable {
@@ -208,24 +245,23 @@ public final class ChatsViewModel {
                 }
             }
 
-            conversations = convos
-            errorMessage = nil
+            applyLoadedConversations(convos, generation: generation)
         } catch {
-            errorMessage = error.localizedDescription
+            if generation == conversationLoadGeneration {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
     /// Refresh conversations from storage.
     @MainActor
     public func refreshConversations() async {
-        isRefreshing = true
-        defer { isRefreshing = false }
+        let generation = beginRefreshingConversations()
+        defer { endRefreshingConversations() }
 
         do {
             let records = try await repository.fetchConversations()
-            var convos = records
-                .filter { !$0.lastMessagePreview.isEmpty }
-                .map { Conversation(from: $0) }
+            var convos = Self.prepareConversations(records)
 
             // Backfill display names from path table for conversations that have none
             if let pathTable {
@@ -238,10 +274,11 @@ public final class ChatsViewModel {
                 }
             }
 
-            conversations = convos
-            errorMessage = nil
+            applyLoadedConversations(convos, generation: generation)
         } catch {
-            errorMessage = error.localizedDescription
+            if generation == conversationLoadGeneration {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -268,6 +305,80 @@ public final class ChatsViewModel {
         Task {
             try? await repository.setUnreadCount(conversation.destinationHash, count: 1)
         }
+    }
+
+    /// Convert persisted records to the visible chat list and enforce newest
+    /// activity first at the UI boundary, independent of database ordering.
+    static func prepareConversations(_ records: [ConversationRecord]) -> [Conversation] {
+        records
+            .filter { !$0.lastMessagePreview.isEmpty }
+            .map { Conversation(from: $0) }
+            .sorted {
+                if $0.lastMessageTimestamp != $1.lastMessageTimestamp {
+                    return $0.lastMessageTimestamp > $1.lastMessageTimestamp
+                }
+                return $0.id < $1.id
+            }
+    }
+
+    /// Start a list refresh. Only the latest generation may replace the
+    /// visible list, preventing slower notification-driven loads from winning.
+    @MainActor
+    func beginConversationLoad() -> UInt64 {
+        conversationLoadGeneration &+= 1
+        return conversationLoadGeneration
+    }
+
+    /// Track overlapping ordinary loads independently from refresh operations.
+    @MainActor
+    func beginLoadingConversations() -> UInt64 {
+        activeConversationLoadCount += 1
+        isLoading = true
+        return beginConversationLoad()
+    }
+
+    @MainActor
+    func endLoadingConversations() {
+        activeConversationLoadCount = max(0, activeConversationLoadCount - 1)
+        isLoading = activeConversationLoadCount > 0
+    }
+
+    /// Track pull-to-refresh/tool-bar refreshes separately so a newer ordinary
+    /// load cannot strand or prematurely clear the refresh indicator.
+    @MainActor
+    func beginRefreshingConversations() -> UInt64 {
+        activeConversationRefreshCount += 1
+        isRefreshing = true
+        return beginConversationLoad()
+    }
+
+    @MainActor
+    func endRefreshingConversations() {
+        activeConversationRefreshCount = max(0, activeConversationRefreshCount - 1)
+        isRefreshing = activeConversationRefreshCount > 0
+    }
+
+    /// Apply a loaded snapshot only if no newer activity or read-state change
+    /// has invalidated it.
+    @MainActor
+    func applyLoadedConversations(_ loaded: [Conversation], generation: UInt64) {
+        guard generation == conversationLoadGeneration else { return }
+        conversations = loaded
+        errorMessage = nil
+    }
+
+    /// Clear the list's cached badge after the repository confirms the read
+    /// state was persisted. This avoids showing stale unread counts on return.
+    @MainActor
+    private func clearUnreadBadge(for conversationHash: Data) {
+        // A load may already hold a snapshot captured before the database read
+        // completed. Invalidate it before clearing the visible badge so that
+        // stale snapshot cannot restore the unread count afterward.
+        conversationLoadGeneration &+= 1
+        guard let index = conversations.firstIndex(where: { $0.destinationHash == conversationHash }) else {
+            return
+        }
+        conversations[index].unreadCount = 0
     }
 
     /// Delete a conversation.

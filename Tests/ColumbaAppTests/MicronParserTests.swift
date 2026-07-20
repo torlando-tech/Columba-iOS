@@ -655,6 +655,184 @@ final class MicronParserTests: XCTestCase {
 /// A0: Date<-Double, RNSAPI-enum<-LXMFSwift-UInt8, String<-String?.
 final class MessageRepositoryAdapterTests: XCTestCase {
 
+    // MARK: Conversation list behavior
+
+    func testConversationListSortsMostRecentActivityFirst() {
+        let older = RNSAPI.ConversationRecord(
+            hash: Data([0x01]),
+            displayName: "Older",
+            lastMessageAt: Date(timeIntervalSince1970: 100),
+            lastMessage: "older message",
+            unreadCount: 0
+        )
+        let newer = RNSAPI.ConversationRecord(
+            hash: Data([0x02]),
+            displayName: "Newer",
+            lastMessageAt: Date(timeIntervalSince1970: 200),
+            lastMessage: "newer message",
+            unreadCount: 0
+        )
+
+        let sameTimestampLowerID = RNSAPI.ConversationRecord(
+            hash: Data([0x00]),
+            displayName: "Same timestamp",
+            lastMessageAt: Date(timeIntervalSince1970: 200),
+            lastMessage: "same timestamp message",
+            unreadCount: 0
+        )
+
+        let conversations = ChatsViewModel.prepareConversations([older, newer, sameTimestampLowerID])
+
+        XCTAssertEqual(
+            conversations.map(\.destinationHash),
+            [sameTimestampLowerID.hash, newer.hash, older.hash]
+        )
+    }
+
+    @MainActor
+    func testOverlappingLoadsKeepOperationSpecificIndicatorsAccurate() throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-chat-loading-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+        }
+
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let viewModel = ChatsViewModel(
+            repository: repository,
+            notificationObserver: NotificationObserver()
+        )
+
+        _ = viewModel.beginLoadingConversations()
+        _ = viewModel.beginLoadingConversations()
+        _ = viewModel.beginRefreshingConversations()
+        XCTAssertTrue(viewModel.isLoading)
+        XCTAssertTrue(viewModel.isRefreshing)
+
+        viewModel.endLoadingConversations()
+        XCTAssertTrue(viewModel.isLoading, "one ordinary load is still active")
+        XCTAssertTrue(viewModel.isRefreshing, "ordinary load completion must not clear refresh state")
+
+        viewModel.endRefreshingConversations()
+        XCTAssertFalse(viewModel.isRefreshing)
+        XCTAssertTrue(viewModel.isLoading, "refresh completion must not clear ordinary loading state")
+
+        viewModel.endLoadingConversations()
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    @MainActor
+    func testOutboundActivityRefreshesAndReordersChatList() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-chat-order-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+        }
+
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let viewModel = ChatsViewModel(
+            repository: repository,
+            notificationObserver: NotificationObserver()
+        )
+        let olderHash = Data([0x01])
+        let newerHash = Data([0x02])
+
+        let olderMessage = RNSAPI.LXMessage(
+            destinationHash: olderHash,
+            sourceIdentity: nil,
+            content: Data("older".utf8)
+        )
+        olderMessage.hash = Data([0xA1])
+        olderMessage.timestamp = 100
+        olderMessage.state = .sent
+        olderMessage.method = .opportunistic
+        try await repository.saveMessage(olderMessage)
+        await viewModel.loadConversations()
+        XCTAssertEqual(viewModel.conversations.first?.destinationHash, olderHash)
+
+        let newerMessage = RNSAPI.LXMessage(
+            destinationHash: newerHash,
+            sourceIdentity: nil,
+            content: Data("newer".utf8)
+        )
+        newerMessage.hash = Data([0xA2])
+        newerMessage.timestamp = 200
+        newerMessage.state = .sent
+        newerMessage.method = .opportunistic
+        try await repository.saveMessage(newerMessage)
+
+        for _ in 0..<100 where viewModel.conversations.first?.destinationHash != newerHash {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(viewModel.conversations.map(\.destinationHash), [newerHash, olderHash])
+    }
+
+    @MainActor
+    func testConversationReadNotificationClearsVisibleUnreadBadge() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-chat-read-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+        }
+
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let viewModel = ChatsViewModel(
+            repository: repository,
+            notificationObserver: NotificationObserver()
+        )
+        let hash = Data([0xAA, 0xBB])
+        let staleConversation = Conversation(
+            destinationHash: hash,
+            displayName: "Peer",
+            lastMessageTimestamp: Date(timeIntervalSince1970: 100),
+            lastMessagePreview: "old message",
+            unreadCount: 3
+        )
+        viewModel.conversations = [staleConversation]
+
+        let incomingMessage = RNSAPI.LXMessage(
+            destinationHash: Data([0xDD]),
+            sourceIdentity: nil,
+            content: Data("new message".utf8)
+        )
+        incomingMessage.sourceHash = hash
+        incomingMessage.hash = Data([0xA3])
+        incomingMessage.timestamp = 200
+        incomingMessage.incoming = true
+        incomingMessage.state = .received
+        incomingMessage.method = .opportunistic
+        try await repository.saveMessage(incomingMessage)
+        try await repository.setUnreadCount(hash, count: 3)
+
+        let staleGeneration = viewModel.beginConversationLoad()
+        try await repository.markConversationRead(hash)
+
+        for _ in 0..<100 where
+            viewModel.conversations.first?.unreadCount != 0 ||
+            viewModel.conversations.first?.lastMessagePreview != "new message" {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Simulate a slower load attempting to apply the snapshot it captured
+        // before markConversationRead completed. The read notification must have
+        // invalidated that generation, while its replacement load must preserve
+        // the new preview/timestamp and cleared unread state.
+        viewModel.applyLoadedConversations([staleConversation], generation: staleGeneration)
+
+        let persistedConversation = try await repository.fetchConversation(hash)
+        XCTAssertEqual(viewModel.conversations.first?.unreadCount, 0)
+        XCTAssertEqual(viewModel.conversations.first?.lastMessagePreview, "new message")
+        XCTAssertEqual(viewModel.conversations.first?.lastMessageTimestamp, Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(persistedConversation?.unreadCount, 0)
+    }
+
     // MARK: Conversation mapping (Date<-Double, String<-String?)
 
     func testMapConversationFullFields() {
