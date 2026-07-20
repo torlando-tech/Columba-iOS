@@ -152,6 +152,8 @@ public final class ChatsViewModel {
     private var conversationReadObserver: NSObjectProtocol?
     private var conversationActivityObserver: NSObjectProtocol?
     private var conversationLoadGeneration: UInt64 = 0
+    private var activeConversationLoadCount: Int = 0
+    private var activeConversationRefreshCount: Int = 0
 
     // MARK: - Initialization
 
@@ -224,13 +226,8 @@ public final class ChatsViewModel {
     /// Load conversations from storage.
     @MainActor
     public func loadConversations() async {
-        let generation = beginConversationLoad()
-        isLoading = true
-        defer {
-            if generation == conversationLoadGeneration {
-                isLoading = false
-            }
-        }
+        let generation = beginLoadingConversations()
+        defer { endLoadingConversations() }
 
         do {
             let records = try await repository.fetchConversations()
@@ -259,13 +256,8 @@ public final class ChatsViewModel {
     /// Refresh conversations from storage.
     @MainActor
     public func refreshConversations() async {
-        let generation = beginConversationLoad()
-        isRefreshing = true
-        defer {
-            if generation == conversationLoadGeneration {
-                isRefreshing = false
-            }
-        }
+        let generation = beginRefreshingConversations()
+        defer { endRefreshingConversations() }
 
         do {
             let records = try await repository.fetchConversations()
@@ -335,6 +327,35 @@ public final class ChatsViewModel {
     func beginConversationLoad() -> UInt64 {
         conversationLoadGeneration &+= 1
         return conversationLoadGeneration
+    }
+
+    /// Track overlapping ordinary loads independently from refresh operations.
+    @MainActor
+    func beginLoadingConversations() -> UInt64 {
+        activeConversationLoadCount += 1
+        isLoading = true
+        return beginConversationLoad()
+    }
+
+    @MainActor
+    func endLoadingConversations() {
+        activeConversationLoadCount = max(0, activeConversationLoadCount - 1)
+        isLoading = activeConversationLoadCount > 0
+    }
+
+    /// Track pull-to-refresh/tool-bar refreshes separately so a newer ordinary
+    /// load cannot strand or prematurely clear the refresh indicator.
+    @MainActor
+    func beginRefreshingConversations() -> UInt64 {
+        activeConversationRefreshCount += 1
+        isRefreshing = true
+        return beginConversationLoad()
+    }
+
+    @MainActor
+    func endRefreshingConversations() {
+        activeConversationRefreshCount = max(0, activeConversationRefreshCount - 1)
+        isRefreshing = activeConversationRefreshCount > 0
     }
 
     /// Apply a loaded snapshot only if no newer activity or read-state change

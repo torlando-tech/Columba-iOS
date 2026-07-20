@@ -690,6 +690,40 @@ final class MessageRepositoryAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testOverlappingLoadsKeepOperationSpecificIndicatorsAccurate() throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-chat-loading-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+        }
+
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let viewModel = ChatsViewModel(
+            repository: repository,
+            notificationObserver: NotificationObserver()
+        )
+
+        _ = viewModel.beginLoadingConversations()
+        _ = viewModel.beginLoadingConversations()
+        _ = viewModel.beginRefreshingConversations()
+        XCTAssertTrue(viewModel.isLoading)
+        XCTAssertTrue(viewModel.isRefreshing)
+
+        viewModel.endLoadingConversations()
+        XCTAssertTrue(viewModel.isLoading, "one ordinary load is still active")
+        XCTAssertTrue(viewModel.isRefreshing, "ordinary load completion must not clear refresh state")
+
+        viewModel.endRefreshingConversations()
+        XCTAssertFalse(viewModel.isRefreshing)
+        XCTAssertTrue(viewModel.isLoading, "refresh completion must not clear ordinary loading state")
+
+        viewModel.endLoadingConversations()
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    @MainActor
     func testOutboundActivityRefreshesAndReordersChatList() async throws {
         let databaseURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("columba-chat-order-\(UUID().uuidString).sqlite")
