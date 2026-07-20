@@ -21,7 +21,7 @@ final class OnboardingViewModel {
 
     var currentPage: Int = 0
     var displayName: String = ""
-    var selectedInterfaces: Set<OnboardingInterfaceType> = []
+    var selectedInterfaces: Set<OnboardingInterfaceType> = [.tcp]
     var selectedTcpServer: TcpCommunityServer? = nil
     var notificationsGranted: Bool = false
     /// Current CoreBluetooth authorization. Under Model B the APP runs the CoreBluetooth
@@ -237,14 +237,10 @@ final class OnboardingViewModel {
     }
 
     private func createInterfaces(in repo: InterfaceRepository) {
-        // Model B: the NE node delivers over the first enabled `tcpClient` relay and
-        // IGNORES auto/multipeer/ble entities (those interfaces, where they exist, are
-        // owned by the NE process itself, not configured here). So onboarding seeds
-        // exactly one enabled TCP relay — the user's pick, or the default community
-        // server — guaranteeing a reachable path even if nothing was explicitly chosen.
+        #if COLUMBA_RUNTIME_MODEL_B
+        // Model B's Network Extension owns its local transports and reads one TCP relay
+        // from the shared store. Seed only that relay and keep the operation idempotent.
         let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
-        // Idempotent: seedInterfaces() (pre-NE) and completeOnboarding both call this;
-        // don't add a duplicate relay if it's already present.
         let alreadySeeded = repo.getEnabledInterfaces().contains { entity in
             if case .tcpClient(let cfg) = entity.config {
                 return cfg.targetHost == server.host && cfg.targetPort == server.port
@@ -260,6 +256,44 @@ final class OnboardingViewModel {
                 targetPort: server.port
             ))
         ))
+        #else
+        // The shipping runtime owns these interfaces in the app process. Persist exactly
+        // the interfaces the user selected; RNode is configured by its dedicated wizard.
+        for interfaceType in selectedInterfaces {
+            switch interfaceType {
+            case .auto:
+                repo.addInterface(InterfaceEntity(
+                    name: "Auto Discovery",
+                    type: .autoInterface,
+                    config: .autoInterface(AutoInterfaceConfig())
+                ))
+            case .nearby:
+                repo.addInterface(InterfaceEntity(
+                    name: "Nearby",
+                    type: .multipeer,
+                    config: .multipeer(MultipeerConfig())
+                ))
+            case .ble:
+                repo.addInterface(InterfaceEntity(
+                    name: "Bluetooth LE",
+                    type: .ble,
+                    config: .ble(BLEConfig())
+                ))
+            case .tcp:
+                let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
+                repo.addInterface(InterfaceEntity(
+                    name: server.name,
+                    type: .tcpClient,
+                    config: .tcpClient(TCPClientConfig(
+                        targetHost: server.host,
+                        targetPort: server.port
+                    ))
+                ))
+            case .rnode:
+                break
+            }
+        }
+        #endif
     }
 }
 

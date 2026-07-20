@@ -53,21 +53,13 @@ struct ColumbaApp: App {
 
         #if os(iOS) && canImport(CoreBluetooth)
         // Track C8 — background BLE wake / CoreBluetooth state restoration.
-        // When iOS RELAUNCHES the app for a preserved BLE event, it sets
-        // UIApplication.LaunchOptionsKey.bluetoothCentrals / .bluetoothPeripherals
-        // and expects the app to RE-CREATE its CBCentralManager /
-        // CBPeripheralManager with the SAME restore identifiers EARLY in launch,
-        // so it can replay the preserved state via `willRestoreState`. This is a
-        // pure-SwiftUI app (`@main struct ColumbaApp: App`) with NO
-        // UIApplicationDelegate, so there is no
-        // `application(_:didFinishLaunchingWithOptions:)` from which to read
-        // `launchOptions` and branch on those keys. `App.init()` is the earliest
-        // app-owned hook and runs before the run loop settles, so we
-        // re-materialise the managers here UNCONDITIONALLY (every launch). That
-        // is cheap and satisfies CoreBluetooth's "re-create promptly with the
-        // same identifier" contract on the relaunch-for-BLE case; on a normal
-        // launch it just pre-creates the managers (the regular
-        // AppServices.startBLEInterface() path reuses them via start()).
+        // When iOS relaunches the app for a preserved BLE event, CoreBluetooth expects
+        // the app to recreate its managers with the same restore identifiers early so
+        // it can replay preserved state via `willRestoreState`. This pure-SwiftUI app
+        // has no UIApplicationDelegate launch-options hook, so App.init() is the
+        // earliest app-owned seam. We restore only when an enabled BLE interface is
+        // already persisted; a fresh install must not create CoreBluetooth managers or
+        // show a permission prompt before the user explicitly opts into BLE.
         //
         // GAP / FOLLOW-ON: this re-arms the wake and re-adopts CoreBluetooth
         // state, but inbound BLE bytes only become a *delivered + notified*
@@ -86,7 +78,12 @@ struct ColumbaApp: App {
         // (Model B background-restore via CoreBluetoothBLEDriver's own restore
         // identifier is a further follow-on: it needs the identity at launch.)
         #if COLUMBA_RUNTIME_PYTHON
-        SwiftBLEBridge.shared.restoreAtLaunch()
+        // Only re-arm CoreBluetooth restoration after the user has explicitly enabled
+        // the shipping BLE interface. Creating these managers on a fresh install causes
+        // iOS to prompt before onboarding can explain or offer Bluetooth.
+        if InterfaceRepository().getEnabledInterfaces().contains(where: { $0.type == .ble }) {
+            SwiftBLEBridge.shared.restoreAtLaunch()
+        }
         #elseif COLUMBA_RUNTIME_MODEL_B
         if ModelBRNodeService.rnodeBackgroundRestoreEnabled {
             // GATED (A9, RISK 5): re-materialize the RNode `BLETransport` central early so
