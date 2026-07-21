@@ -68,16 +68,16 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertIn('Text("Use Defaults")', skip_ui)
         self.assertIn('Button("Close", action: onCancel)', skip_ui)
 
-        restore_parent = text.split("OnboardingRestoreSheet(viewModel: vm)", 1)[1].split(
+        restore_parent = text.split("OnboardingRestoreSheet(viewModel: session.viewModel)", 1)[1].split(
             "#endif", 1
         )[0]
         self.assertNotIn("try?", restore_parent)
         self.assertLess(
             restore_parent.index("try await viewModel.completeRestoredOnboarding"),
-            restore_parent.index("showRestoreSheet = false"),
+            restore_parent.index("restoreSession = nil"),
         )
         self.assertLess(
-            restore_parent.index("showRestoreSheet = false"),
+            restore_parent.index("restoreSession = nil"),
             restore_parent.index("onComplete()"),
         )
 
@@ -107,6 +107,10 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertNotIn("try?", finish)
         self.assertIn("catch {", finish)
         self.assertIn("if viewModel.currentPage < 4", text)
+        self.assertIn("sheet(item: $restoreSession)", text)
+        self.assertIn("RestoreSession(viewModel: vm)", text)
+        self.assertNotIn("showRestoreSheet", text)
+        self.assertNotIn("migrationVM", text)
 
     def test_educational_copy_and_safe_settings_review(self) -> None:
         welcome = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/WelcomePage.swift")

@@ -21,8 +21,7 @@ struct OnboardingView: View {
     @State private var viewModel: OnboardingViewModel
     @State private var skipErrorMessage: String?
     #if COLUMBA_MIGRATION_ENABLED
-    @State private var showRestoreSheet = false
-    @State private var migrationVM: MigrationViewModel?
+    @State private var restoreSession: RestoreSession?
     #endif
 
     init(
@@ -96,8 +95,7 @@ struct OnboardingView: View {
                                     identityManager: identityManager,
                                     settingsRepository: settingsRepository
                                 )
-                                migrationVM = vm
-                                showRestoreSheet = true
+                                restoreSession = RestoreSession(viewModel: vm)
                                 Task { await vm.handleImportFile(data: data) }
                             }
                         )
@@ -197,21 +195,26 @@ struct OnboardingView: View {
             viewModel.checkBluetoothStatus()
         }
         #if COLUMBA_MIGRATION_ENABLED
-        .sheet(isPresented: $showRestoreSheet) {
-            if let vm = migrationVM {
-                OnboardingRestoreSheet(viewModel: vm) { result in
-                    try await viewModel.completeRestoredOnboarding(
-                        preferredIdentityHash: result.preferredIdentityHash,
-                        identityManager: identityManager,
-                        settingsRepository: settingsRepository
-                    )
-                    showRestoreSheet = false
-                    onComplete()
-                }
+        .sheet(item: $restoreSession) { session in
+            OnboardingRestoreSheet(viewModel: session.viewModel) { result in
+                try await viewModel.completeRestoredOnboarding(
+                    preferredIdentityHash: result.preferredIdentityHash,
+                    identityManager: identityManager,
+                    settingsRepository: settingsRepository
+                )
+                restoreSession = nil
+                onComplete()
             }
         }
         #endif
     }
+
+    #if COLUMBA_MIGRATION_ENABLED
+    private struct RestoreSession: Identifiable {
+        let id = UUID()
+        let viewModel: MigrationViewModel
+    }
+    #endif
 
     private var completePage: some View {
         CompletePage(
