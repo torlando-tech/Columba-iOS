@@ -12,6 +12,20 @@ import Observation
 import UserNotifications
 import CoreBluetooth
 
+private enum OnboardingFlowError: LocalizedError {
+    case operationInProgress
+    case noRestoredIdentity
+
+    var errorDescription: String? {
+        switch self {
+        case .operationInProgress:
+            return "Setup is already in progress. Please wait and try again."
+        case .noRestoredIdentity:
+            return "The backup did not contain an identity that can be activated."
+        }
+    }
+}
+
 /// Manages onboarding flow state and persists selections on completion.
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
@@ -29,7 +43,13 @@ final class OnboardingViewModel {
     /// onboarding when `ModelBBLEService` starts — surfacing it on the Permissions page
     /// keeps it inside the flow.
     var bluetoothAuthorization: CBManagerAuthorization = CBCentralManager.authorization
-    var bluetoothGranted: Bool { bluetoothAuthorization == .allowedAlways }
+    var bluetoothGranted: Bool {
+        #if COLUMBA_RUNTIME_MODEL_B
+        bluetoothAuthorization == .allowedAlways && ModelBBLEService.isUserOptedIn
+        #else
+        bluetoothAuthorization == .allowedAlways
+        #endif
+    }
     @ObservationIgnored private var bluetoothProbe: BluetoothPermissionProbe?
     var isSaving: Bool = false
 
@@ -115,11 +135,15 @@ final class OnboardingViewModel {
 
     /// Create the identity eagerly so the QR code is available on the complete page.
     func prepareIdentity(identityManager: IdentityManager) async {
-        guard createdIdentity == nil else { return }
+        guard qrCodeString.isEmpty else { return }
         do {
-            let local = try await identityManager.createIdentity(displayName: effectiveDisplayName)
+            try beginSaving()
+            defer { isSaving = false }
+            let local = try await createOrResumeIdentity(
+                displayName: effectiveDisplayName,
+                identityManager: identityManager
+            )
             let identity = try await identityManager.loadIdentityKeys(for: local.identityHash)
-            createdIdentity = local
 
             // Build QR string: lxma://<dest_hash>:<public_key_hex>
             let pubKeyHex = identity.publicKeys.map { String(format: "%02x", $0) }.joined()
@@ -138,16 +162,15 @@ final class OnboardingViewModel {
         identityManager: IdentityManager,
         settingsRepository: SettingsRepository
     ) async throws {
-        isSaving = true
+        try beginSaving()
         defer { isSaving = false }
 
-        // 1. Use existing identity or create one
-        let local: LocalIdentity
-        if let existing = createdIdentity {
-            local = existing
-        } else {
-            local = try await identityManager.createIdentity(displayName: effectiveDisplayName)
-        }
+        // 1. Resume the identity persisted by preparation/a prior failed activation,
+        // or create and retain one before any subsequent throwing operation.
+        let local = try await createOrResumeIdentity(
+            displayName: effectiveDisplayName,
+            identityManager: identityManager
+        )
         let _ = try await identityManager.switchToIdentity(local.identityHash)
 
         // 2. Save display name to settings
@@ -185,29 +208,47 @@ final class OnboardingViewModel {
         identityManager: IdentityManager,
         settingsRepository: SettingsRepository
     ) async throws {
-        isSaving = true
+        try beginSaving()
         defer { isSaving = false }
 
-        let local = try await identityManager.createIdentity(displayName: "Anonymous Peer")
+        let requestedName = createdIdentity?.displayName ?? "Anonymous Peer"
+        let local = try await createOrResumeIdentity(
+            displayName: requestedName,
+            identityManager: identityManager
+        )
         let _ = try await identityManager.switchToIdentity(local.identityHash)
 
-        await settingsRepository.setDisplayName("Anonymous Peer")
+        await settingsRepository.setDisplayName(local.displayName)
 
-        // Model B: the NE node delivers over the first enabled tcpClient relay, so a
-        // skipped setup must still seed one — otherwise the node comes up with no
-        // reachable path and the user can't message anyone. (An AutoInterface-only
-        // seed is a no-op the NE ignores.)
-        let interfaceRepo = InterfaceRepository()
-        let server = TcpCommunityServer.defaultServer
-        interfaceRepo.addInterface(InterfaceEntity(
-            name: server.name,
-            type: .tcpClient,
-            config: .tcpClient(TCPClientConfig(
-                targetHost: server.host,
-                targetPort: server.port
-            ))
-        ))
+        // A skipped setup always needs the canonical default relay, regardless of
+        // Connectivity-page selections. Use the shared idempotent path so repeated
+        // Skip/restore actions do not append duplicates.
+        seedDefaultTcpInterface(in: InterfaceRepository())
 
+        UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
+        UserDefaults.standard.set(true, forKey: "settings_initialized")
+    }
+
+    /// Finish a restore by activating a cryptographically validated identity from the backup.
+    /// Never creates a replacement identity: a missing restored identity remains a retryable error.
+    func completeRestoredOnboarding(
+        preferredIdentityHash: String?,
+        identityManager: IdentityManager,
+        settingsRepository: SettingsRepository
+    ) async throws {
+        try beginSaving()
+        defer { isSaving = false }
+
+        guard let preferredIdentityHash,
+              let local = await identityManager.getAllIdentities().first(where: {
+                  $0.identityHash == preferredIdentityHash
+              }) else {
+            throw OnboardingFlowError.noRestoredIdentity
+        }
+        createdIdentity = local
+        let _ = try await identityManager.switchToIdentity(local.identityHash)
+        await settingsRepository.setDisplayName(local.displayName)
+        seedDefaultTcpInterface(in: InterfaceRepository())
         UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
         UserDefaults.standard.set(true, forKey: "settings_initialized")
     }
@@ -232,6 +273,25 @@ final class OnboardingViewModel {
 
     // MARK: - Private
 
+    /// MainActor isolation makes this check-and-set atomic before either operation's
+    /// first suspension point, preventing duplicate identities from concurrent taps.
+    private func beginSaving() throws {
+        guard !isSaving else { throw OnboardingFlowError.operationInProgress }
+        isSaving = true
+    }
+
+    /// Identity creation persists immediately. Retain that record before key loading or
+    /// activation can throw so retries resume it rather than creating orphan duplicates.
+    private func createOrResumeIdentity(
+        displayName: String,
+        identityManager: IdentityManager
+    ) async throws -> LocalIdentity {
+        if let createdIdentity { return createdIdentity }
+        let local = try await identityManager.createIdentity(displayName: displayName)
+        createdIdentity = local
+        return local
+    }
+
     /// Seed the chosen TCP relay into the SHARED interface store. MUST run before the
     /// NE is started (on the Background-Delivery step) — the in-NE node reads its relay
     /// from this store ONCE at start (`loadTCPRelayConfig`) and has no observer to pick
@@ -241,26 +301,33 @@ final class OnboardingViewModel {
         createInterfaces(in: repo)
     }
 
-    private func createInterfaces(in repo: InterfaceRepository) {
-        #if COLUMBA_RUNTIME_MODEL_B
-        // Model B's Network Extension owns its local transports and reads one TCP relay
-        // from the shared store. Seed only that relay and keep the operation idempotent.
-        let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
-        let alreadySeeded = repo.getEnabledInterfaces().contains { entity in
-            if case .tcpClient(let cfg) = entity.config {
-                return cfg.targetHost == server.host && cfg.targetPort == server.port
-            }
-            return false
-        }
-        guard !alreadySeeded else { return }
-        repo.addInterface(InterfaceEntity(
+    /// Skip is deliberately independent of mutable Connectivity-page state: it always
+    /// provides the canonical public relay and remains safe to invoke repeatedly.
+    func seedDefaultTcpInterface(in repo: InterfaceRepository = InterfaceRepository()) {
+        let server = TcpCommunityServer.defaultServer
+        ensureInterfaceEnabled(InterfaceEntity(
             name: server.name,
             type: .tcpClient,
             config: .tcpClient(TCPClientConfig(
                 targetHost: server.host,
                 targetPort: server.port
             ))
-        ))
+        ), in: repo)
+    }
+
+    private func createInterfaces(in repo: InterfaceRepository) {
+        #if COLUMBA_RUNTIME_MODEL_B
+        // Model B's Network Extension owns its local transports and reads one TCP relay
+        // from the shared store. Seed only that relay and keep the operation idempotent.
+        let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
+        ensureInterfaceEnabled(InterfaceEntity(
+            name: server.name,
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
+        ), in: repo)
         #else
         // The shipping runtime owns these interfaces in the app process. Build a
         // canonical candidate for each selection and add it only if an equivalent
@@ -299,28 +366,36 @@ final class OnboardingViewModel {
             }
 
             guard let candidate else { continue }
-            guard !shippingInterfaceAlreadyExists(candidate, in: repo) else { continue }
-            repo.addInterface(candidate)
+            ensureInterfaceEnabled(candidate, in: repo)
         }
         #endif
     }
 
-    private func shippingInterfaceAlreadyExists(
+    /// Preserve one equivalent configuration and make sure it is enabled. Restore may
+    /// import a disabled matching record; skip/completion must reactivate that record
+    /// instead of appending a duplicate or leaving the app without a usable path.
+    private func ensureInterfaceEnabled(
         _ candidate: InterfaceEntity,
         in repo: InterfaceRepository
-    ) -> Bool {
-        repo.interfaces.contains { existing in
-            switch (existing.config, candidate.config) {
-            case (.autoInterface, .autoInterface),
-                 (.ble, .ble):
-                return true
-            case let (.tcpClient(existingConfig), .tcpClient(candidateConfig)):
-                return existingConfig.targetHost == candidateConfig.targetHost
-                    && existingConfig.targetPort == candidateConfig.targetPort
-            default:
-                return false
-            }
+    ) {
+        if repo.interfaces.contains(where: { $0.enabled && interfacesAreEquivalent($0, candidate) }) {
+            return
         }
+        if var disabled = repo.interfaces.first(where: { !$0.enabled && interfacesAreEquivalent($0, candidate) }) {
+            disabled.enabled = true
+            repo.updateInterface(disabled)
+            return
+        }
+        repo.addInterface(candidate)
+    }
+
+    private func interfacesAreEquivalent(
+        _ existing: InterfaceEntity,
+        _ candidate: InterfaceEntity
+    ) -> Bool {
+        existing.type == candidate.type
+            && existing.mode == candidate.mode
+            && existing.config == candidate.config
     }
 }
 
@@ -389,7 +464,7 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
 /// (iOS prompts on first creation when authorization is `.notDetermined`) and reports
 /// the resulting authorization. Used by onboarding's Permissions page so the Model-B
 /// app-side CoreBluetooth host doesn't surprise-prompt after setup.
-private final class BluetoothPermissionProbe: NSObject, CBCentralManagerDelegate {
+final class BluetoothPermissionProbe: NSObject, CBCentralManagerDelegate {
     private var manager: CBCentralManager?
     private let onAuthorizationChange: (CBManagerAuthorization) -> Void
 

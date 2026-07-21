@@ -51,6 +51,9 @@ struct SettingsView: View {
     #if COLUMBA_RUNTIME_MODEL_B
     /// Presents the background-transport explainer / enable sheet.
     @State private var showBackgroundTransport = false
+    /// Model B BLE is transport-specific consent, separate from app-wide permission.
+    @State private var modelBBLEOptedIn = ModelBBLEService.isUserOptedIn
+    @State private var modelBBLEPermissionProbe: BluetoothPermissionProbe?
     #endif
     @State private var interfaceRepository: InterfaceRepository?
     /// Persisted across body re-evaluations so showRNodeWizard=true is not lost
@@ -311,8 +314,49 @@ struct SettingsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                 }
 
+                #if COLUMBA_RUNTIME_MODEL_B
+                Divider()
+                    .padding(.vertical, 4)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Bluetooth Mesh")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(modelBBLEOptedIn
+                         ? "Enabled for Model B. Changes take effect on the next app launch."
+                         : "Off. Enable only if you want Model B to scan and advertise over Bluetooth.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+
+                    Button {
+                        if modelBBLEOptedIn {
+                            ModelBBLEService.clearUserOptIn()
+                            ModelBBLEService.shared.stop()
+                            modelBBLEOptedIn = false
+                        } else {
+                            ModelBBLEService.recordUserOptIn()
+                            modelBBLEOptedIn = true
+                            // Construct a permission-only probe after the explicit action;
+                            // the transport itself starts on the next app launch.
+                            modelBBLEPermissionProbe = BluetoothPermissionProbe { _ in }
+                        }
+                    } label: {
+                        Text(modelBBLEOptedIn ? "Disable Bluetooth Mesh" : "Enable Bluetooth Mesh")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(modelBBLEOptedIn ? Theme.error : Theme.accentColor)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                    }
+                }
+                #endif
+
                 // BLE Connections Button
                 Button(action: {
+                    #if COLUMBA_RUNTIME_MODEL_B
+                    guard modelBBLEOptedIn else { return }
+                    #endif
                     showBLEConnections = true
                 }) {
                     HStack(spacing: 8) {

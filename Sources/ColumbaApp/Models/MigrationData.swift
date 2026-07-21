@@ -179,6 +179,9 @@ struct InterfaceExport: Codable {
     /// Interface type raw value (e.g., "TCPClient").
     let type: String
 
+    /// Interface mode raw value. Backups created before this field existed default to full.
+    let mode: String?
+
     /// Whether the interface is enabled.
     let enabled: Bool
 
@@ -187,6 +190,22 @@ struct InterfaceExport: Codable {
 
     /// Display order in the list.
     let displayOrder: Int
+
+    init(
+        name: String,
+        type: String,
+        mode: String? = nil,
+        enabled: Bool,
+        configJson: String,
+        displayOrder: Int
+    ) {
+        self.name = name
+        self.type = type
+        self.mode = mode
+        self.enabled = enabled
+        self.configJson = configJson
+        self.displayOrder = displayOrder
+    }
 }
 
 // MARK: - Settings Export
@@ -253,6 +272,7 @@ struct MigrationPreview {
 
 /// Counts of imported items after a successful import.
 struct ImportResult {
+    let preferredIdentityHash: String?
     let identitiesImported: Int
     let identitiesSkipped: Int
     let conversationsImported: Int

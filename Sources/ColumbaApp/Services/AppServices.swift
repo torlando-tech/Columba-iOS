@@ -1155,9 +1155,9 @@ public final class AppServices {
 
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B: CoreBluetooth lives in the app process, but it is optional. Do not
-        // construct the driver (and trigger iOS authorization) unless onboarding's
-        // Bluetooth Enable action recorded an explicit opt-in.
-        if ModelBBLEService.isUserOptedIn {
+        // construct the driver (and trigger iOS authorization) unless onboarding or
+        // Settings recorded an explicit transport opt-in.
+        if ModelBBLEService.shouldStart {
             ModelBBLEService.shared.start(identityHash: identity.hash)
         } else {
             DiagLog.log("[BLE] Model B BLE service skipped — no explicit user opt-in")
@@ -3599,6 +3599,13 @@ public final class AppServices {
 
         stateObserverTask?.cancel()
         stateObserverTask = nil
+
+        #if COLUMBA_RUNTIME_MODEL_B
+        // The BLE driver's identity hash is fixed at construction. Tear it down on every
+        // backend shutdown so identity switching cannot keep advertising the old identity;
+        // the subsequent initialize() starts a fresh driver with the new identity hash.
+        ModelBBLEService.shared.stop()
+        #endif
 
         #if os(iOS)
         // Stop call manager: ends any active CallKit call and tears down the

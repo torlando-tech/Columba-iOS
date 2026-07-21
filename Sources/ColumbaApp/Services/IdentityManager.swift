@@ -16,6 +16,7 @@ actor IdentityManager {
     // MARK: - Constants
 
     private static let storageKey = "localIdentities"
+    private static let metadataFilename = "local-identities.json"
     static let keychainService = "com.columba.identity"
 
     private let logger = Logger(subsystem: "network.columba.Columba", category: "IdentityManager")
@@ -73,11 +74,60 @@ actor IdentityManager {
             isActive: false
         )
 
+        let previous = identities
         identities.append(local)
-        saveIdentities()
+        do {
+            try saveIdentitiesVerified()
+        } catch {
+            identities = previous
+            do {
+                try persistIdentitiesVerified(previous)
+            } catch {
+                // Keep the key if durable rollback failed: persisted metadata may still
+                // reference this identity and must never point to missing key material.
+                throw error
+            }
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: Self.keychainService,
+                kSecAttrAccount as String: account
+            ]
+            let deleteStatus = SecItemDelete(query as CFDictionary)
+            guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else {
+                throw IdentityManagerError.keychainDeleteFailed(deleteStatus)
+            }
+            throw error
+        }
 
         logger.info("Created identity '\(displayName)': \(identityHash)")
         return local
+    }
+
+    /// Register restored identity metadata through the actor that owns the live cache.
+    /// Merge storage first to preserve records written by an older importer or another
+    /// actor instance, then persist the union without replacing restored identities.
+    func importIdentityRecord(_ local: LocalIdentity) throws {
+        let previous = identities
+        var merged = Self.loadIdentities()
+        for existing in identities where !merged.contains(where: { $0.identityHash == existing.identityHash }) {
+            merged.append(existing)
+        }
+        if !merged.contains(where: { $0.identityHash == local.identityHash }) {
+            merged.append(local)
+        }
+        identities = merged
+        do {
+            try saveIdentitiesVerified()
+        } catch {
+            identities = previous
+            do {
+                try persistIdentitiesVerified(previous)
+            } catch {
+                throw error
+            }
+            throw error
+        }
+        logger.info("Registered imported identity: \(local.identityHash)")
     }
 
     // MARK: - Load Keys
@@ -113,13 +163,24 @@ actor IdentityManager {
         let identity = try loadIdentityKeys(for: hash)
 
         // Deactivate all, activate target
+        let previous = identities
         for i in identities.indices {
             identities[i].isActive = false
         }
         identities[idx].isActive = true
         identities[idx].lastUsedAt = Date().timeIntervalSince1970
 
-        saveIdentities()
+        do {
+            try saveIdentitiesVerified()
+        } catch {
+            identities = previous
+            do {
+                try persistIdentitiesVerified(previous)
+            } catch {
+                throw error
+            }
+            throw error
+        }
 
         logger.info("Switched to identity: \(hash)")
         return (identities[idx], identity)
@@ -243,13 +304,38 @@ actor IdentityManager {
     // MARK: - Persistence
 
     private static func loadIdentities() -> [LocalIdentity] {
+        let url = identityMetadataURL
+        if let data = try? Data(contentsOf: url),
+           let decoded = try? JSONDecoder().decode([LocalIdentity].self, from: data) {
+            return decoded
+        }
         guard let data = UserDefaults.standard.data(forKey: storageKey) else { return [] }
         return (try? JSONDecoder().decode([LocalIdentity].self, from: data)) ?? []
     }
 
     private func saveIdentities() {
-        guard let data = try? JSONEncoder().encode(identities) else { return }
+        try? saveIdentitiesVerified()
+    }
+
+    private func saveIdentitiesVerified() throws {
+        try persistIdentitiesVerified(identities)
+    }
+
+    private func persistIdentitiesVerified(_ snapshot: [LocalIdentity]) throws {
+        let data = try JSONEncoder().encode(snapshot)
+        let url = Self.identityMetadataURL
+        try data.write(to: url, options: .atomic)
+        let persisted = try Data(contentsOf: url)
+        guard persisted == data else {
+            throw IdentityManagerError.metadataPersistenceFailed
+        }
+        // Compatibility mirror for older builds; the atomic file is authoritative.
         UserDefaults.standard.set(data, forKey: Self.storageKey)
+    }
+
+    private static var identityMetadataURL: URL {
+        URL(fileURLWithPath: columbaDirectory, isDirectory: true)
+            .appendingPathComponent(metadataFilename, isDirectory: false)
     }
 
     // MARK: - File Paths
@@ -272,6 +358,8 @@ enum IdentityManagerError: Error, LocalizedError {
     case identityNotFound(String)
     case keychainLoadFailed(String)
     case cannotDeleteActive
+    case metadataPersistenceFailed
+    case keychainDeleteFailed(OSStatus)
 
     var errorDescription: String? {
         switch self {
@@ -281,6 +369,10 @@ enum IdentityManagerError: Error, LocalizedError {
             return "Failed to load identity keys from Keychain: \(hash)"
         case .cannotDeleteActive:
             return "Cannot delete the active identity. Switch to another identity first."
+        case .metadataPersistenceFailed:
+            return "Failed to persist restored identity metadata."
+        case .keychainDeleteFailed(let status):
+            return "Failed to roll back identity key material (Keychain status \(status))."
         }
     }
 }

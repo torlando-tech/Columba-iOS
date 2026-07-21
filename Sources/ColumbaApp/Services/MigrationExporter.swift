@@ -179,6 +179,7 @@ actor MigrationExporter {
             bundle.interfaces.append(InterfaceExport(
                 name: iface.name,
                 type: iface.type.rawValue,
+                mode: iface.mode.rawValue,
                 enabled: iface.enabled,
                 configJson: configJson,
                 displayOrder: iface.displayOrder

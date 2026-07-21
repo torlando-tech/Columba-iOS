@@ -13,9 +13,11 @@ import RNSAPI
 @available(iOS 17.0, macOS 14.0, *)
 struct OnboardingRestoreSheet: View {
     @Bindable var viewModel: MigrationViewModel
-    let onComplete: () -> Void
+    let onComplete: (ImportResult) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var isFinishing = false
+    @State private var finishErrorMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -83,10 +85,29 @@ struct OnboardingRestoreSheet: View {
                         viewModel.reset()
                         dismiss()
                     }
+                    .disabled(isOperationLocked)
                 }
             }
         }
         .presentationDetents([.medium, .large])
+        .interactiveDismissDisabled(isOperationLocked)
+        .alert(
+            "Unable to Finish Setup",
+            isPresented: Binding(
+                get: { finishErrorMessage != nil },
+                set: { if !$0 { finishErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                finishErrorMessage = nil
+            }
+        } message: {
+            Text(finishErrorMessage ?? "Please try again.")
+        }
+    }
+
+    private var isOperationLocked: Bool {
+        isFinishing || viewModel.isImporting
     }
 
     // MARK: - Password Entry
@@ -229,16 +250,33 @@ struct OnboardingRestoreSheet: View {
             Spacer()
 
             Button {
-                onComplete()
+                guard !isFinishing else { return }
+                isFinishing = true
+                Task {
+                    defer { isFinishing = false }
+                    do {
+                        try await onComplete(result)
+                    } catch {
+                        finishErrorMessage = error.localizedDescription
+                    }
+                }
             } label: {
-                Text("Continue")
-                    .font(.headline)
+                Group {
+                    if isFinishing {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Text("Continue")
+                            .font(.headline)
+                    }
+                }
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
                     .background(Theme.accentGradient)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
+            .disabled(isOperationLocked)
         }
     }
 

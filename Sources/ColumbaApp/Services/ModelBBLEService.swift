@@ -40,6 +40,20 @@ public final class ModelBBLEService: @unchecked Sendable {
         defaults.set(true, forKey: userOptInKey)
     }
 
+    static func clearUserOptIn(in defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: userOptInKey)
+    }
+
+    /// App-wide Bluetooth authorization is not transport-specific consent. Only the
+    /// explicit onboarding or Settings action may enable the Model B BLE host.
+    static var shouldStart: Bool {
+        shouldStart(in: .standard)
+    }
+
+    static func shouldStart(in defaults: UserDefaults) -> Bool {
+        isUserOptedIn(in: defaults)
+    }
+
     private init() {}
 
     private let lock = NSLock()

@@ -38,8 +38,91 @@ final class BLESeamDriverTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         XCTAssertFalse(ModelBBLEService.isUserOptedIn(in: defaults))
+        XCTAssertFalse(ModelBBLEService.shouldStart(in: defaults))
+
         ModelBBLEService.recordUserOptIn(in: defaults)
         XCTAssertTrue(ModelBBLEService.isUserOptedIn(in: defaults))
+        XCTAssertTrue(ModelBBLEService.shouldStart(in: defaults))
+
+        ModelBBLEService.clearUserOptIn(in: defaults)
+        XCTAssertFalse(ModelBBLEService.isUserOptedIn(in: defaults))
+        XCTAssertFalse(ModelBBLEService.shouldStart(in: defaults))
+    }
+
+    @MainActor
+    func testModelBSeedingReenablesDisabledRelayWithoutDuplicate() throws {
+        let suiteName = "test.ModelBOnboardingInterfaces.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Could not create isolated UserDefaults suite")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(try JSONEncoder().encode([InterfaceEntity]()), forKey: "com.columba.interfaces")
+        let repository = InterfaceRepository(userDefaults: defaults)
+        let server = TcpCommunityServer.defaultServer
+        repository.addInterface(InterfaceEntity(
+            name: server.name,
+            type: .tcpClient,
+            enabled: false,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
+        ))
+        let viewModel = OnboardingViewModel()
+        viewModel.selectedTcpServer = server
+
+        viewModel.seedInterfaces(in: repository)
+        viewModel.seedInterfaces(in: repository)
+
+        XCTAssertEqual(repository.interfaces.count, 1)
+        XCTAssertTrue(repository.interfaces[0].enabled)
+    }
+
+    @MainActor
+    func testModelBSeedingKeepsDifferentIFACRelayDisabled() throws {
+        let suiteName = "test.ModelBOnboardingIFAC.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Could not create isolated UserDefaults suite")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(try JSONEncoder().encode([InterfaceEntity]()), forKey: "com.columba.interfaces")
+        let repository = InterfaceRepository(userDefaults: defaults)
+        let server = TcpCommunityServer.defaultServer
+        let privateRelay = InterfaceEntity(
+            name: "Private IFAC relay",
+            type: .tcpClient,
+            enabled: false,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port,
+                networkName: "private-network",
+                passphrase: "private-passphrase"
+            ))
+        )
+        repository.addInterface(privateRelay)
+        let gatewayRelay = InterfaceEntity(
+            name: "Gateway-mode public relay",
+            type: .tcpClient,
+            enabled: false,
+            mode: .gateway,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
+        )
+        repository.addInterface(gatewayRelay)
+        let viewModel = OnboardingViewModel()
+        viewModel.selectedTcpServer = server
+
+        viewModel.seedInterfaces(in: repository)
+        viewModel.seedInterfaces(in: repository)
+
+        XCTAssertEqual(repository.interfaces.count, 3)
+        XCTAssertEqual(repository.interfaces.filter(\.enabled).count, 1)
+        XCTAssertFalse(try XCTUnwrap(repository.interfaces.first { $0.id == privateRelay.id }).enabled)
+        XCTAssertFalse(try XCTUnwrap(repository.interfaces.first { $0.id == gatewayRelay.id }).enabled)
     }
 
     func testDiscoveredEventFeedsStream() async throws {
