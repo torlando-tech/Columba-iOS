@@ -129,6 +129,10 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertNotIn("Push Notifications", permissions)
         self.assertNotIn("Someone you know comes online", permissions)
         self.assertIn("encrypted backup from Settings", complete)
+        self.assertIn("ScrollView", complete)
+        self.assertIn(".fixedSize(horizontal: false, vertical: true)", complete)
+        self.assertIn(".presentationDetents([.large])", complete)
+        self.assertNotIn(".presentationDetents([.medium])", complete)
         self.assertIn("app settings may be updated", restore)
         self.assertNotIn("Your traffic isn't sent to any server", background)
 

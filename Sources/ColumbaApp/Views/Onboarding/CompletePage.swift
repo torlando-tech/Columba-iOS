@@ -157,39 +157,39 @@ struct CompletePage: View {
 
     private var qrCodeSheet: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                Spacer()
+            ScrollView {
+                VStack(spacing: 20) {
+                    Text("Share Your Identity")
+                        .font(.title2.bold())
+                        .foregroundStyle(.white)
 
-                Text("Share Your Identity")
-                    .font(.title2.bold())
-                    .foregroundStyle(.white)
+                    if qrCodeString.isEmpty {
+                        ProgressView()
+                            .tint(Theme.accentColor)
+                        Text("Generating identity...")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+                    } else {
+                        if let cgImage = Self.generateQRCode(from: qrCodeString) {
+                            Image(decorative: cgImage, scale: 1)
+                                .interpolation(.none)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 200, height: 200)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
 
-                if qrCodeString.isEmpty {
-                    ProgressView()
-                        .tint(Theme.accentColor)
-                    Text("Generating identity...")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
-                } else {
-                    if let cgImage = Self.generateQRCode(from: qrCodeString) {
-                        Image(decorative: cgImage, scale: 1)
-                            .interpolation(.none)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 200, height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        Text("Another Columba user can scan this public contact code to add you. It does not contain your private identity keys.")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-
-                    Text("Another Columba user can scan this public contact code to add you. It does not contain your private identity keys.")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 24)
             }
-            .frame(maxWidth: .infinity)
             .background(Theme.backgroundPrimary)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -198,7 +198,7 @@ struct CompletePage: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.large])
     }
 
     // MARK: - QR Code Generation
