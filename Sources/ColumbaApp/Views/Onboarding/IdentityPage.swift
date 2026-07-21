@@ -26,12 +26,12 @@ struct IdentityPage: View {
                 .foregroundStyle(Theme.accentColor)
                 .padding(.bottom, 24)
 
-            Text("Your Identity")
+            Text("Choose a Display Name")
                 .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.bottom, 8)
 
-            Text("Choose a display name others will see:")
+            Text("This is the changeable name other people will see.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.bottom, 32)
@@ -52,7 +52,7 @@ struct IdentityPage: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 12)
 
-            Text("You can change this anytime, or create multiple identities for different contexts.")
+            Text("Columba generates the private cryptographic identity. This name does not need to be unique, and you can change it anytime.")
                 .font(.footnote)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)

@@ -189,7 +189,7 @@ struct OnboardingRestoreSheet: View {
                 Image(systemName: "info.circle.fill")
                     .font(.caption)
                     .foregroundStyle(Theme.warning)
-                Text("Existing data will be preserved. Only new items will be added.")
+                Text("Existing identities and messages will not be duplicated. Conversation details and app settings may be updated from this backup.")
                     .font(.caption2)
                     .foregroundStyle(Theme.textSecondary)
             }

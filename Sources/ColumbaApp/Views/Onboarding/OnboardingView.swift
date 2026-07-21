@@ -16,23 +16,48 @@ struct OnboardingView: View {
     let settingsRepository: SettingsRepository
     let appServices: AppServices
     let onComplete: () -> Void
+    let onCancel: (() -> Void)?
 
-    @State private var viewModel = OnboardingViewModel()
+    @State private var viewModel: OnboardingViewModel
     @State private var skipErrorMessage: String?
     #if COLUMBA_MIGRATION_ENABLED
     @State private var showRestoreSheet = false
     @State private var migrationVM: MigrationViewModel?
     #endif
 
+    init(
+        identityManager: IdentityManager,
+        settingsRepository: SettingsRepository,
+        appServices: AppServices,
+        existingIdentity: LocalIdentity? = nil,
+        onCancel: (() -> Void)? = nil,
+        onComplete: @escaping () -> Void
+    ) {
+        self.identityManager = identityManager
+        self.settingsRepository = settingsRepository
+        self.appServices = appServices
+        self.onCancel = onCancel
+        self.onComplete = onComplete
+        _viewModel = State(initialValue: OnboardingViewModel(existingIdentity: existingIdentity))
+    }
+
     var body: some View {
         ZStack {
             Theme.backgroundPrimary.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Skip button (pages 0-3)
+                // First-run setup offers explicit safe defaults. Settings review mode
+                // instead offers a mutation-free Close action on every page.
                 HStack {
                     Spacer()
-                    if viewModel.currentPage < 4 {
+                    if let onCancel {
+                        Button("Close", action: onCancel)
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .disabled(viewModel.isSaving)
+                    } else if viewModel.currentPage < 4 {
                         Button {
                             guard !viewModel.isSaving else { return }
                             Task {
@@ -47,7 +72,7 @@ struct OnboardingView: View {
                                 }
                             }
                         } label: {
-                            Text("Skip")
+                            Text("Use Defaults")
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.textSecondary)
                                 .padding(.horizontal, 16)
@@ -145,6 +170,11 @@ struct OnboardingView: View {
                             .frame(width: 8, height: 8)
                     }
                 }
+                .accessibilityLabel("Step \(viewModel.currentPage + 1) of \(OnboardingViewModel.pageCount)")
+                Text("Step \(viewModel.currentPage + 1) of \(OnboardingViewModel.pageCount)")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textDisabled)
+                    .padding(.top, 6)
                 .padding(.bottom, 12)
             }
         }

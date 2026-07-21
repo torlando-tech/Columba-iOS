@@ -36,7 +36,7 @@ struct ConnectivityPage: View {
                         .foregroundStyle(.white)
                         .padding(.bottom, 8)
 
-                    Text("Columba reaches the wider network through a community relay server. We've picked a good default — you can change it anytime in Settings.")
+                    Text("A relay helps your device reach Reticulum peers over the internet. It transports encrypted Reticulum traffic — it does not create an account or hold your identity. We've selected a recommended default.")
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -48,7 +48,7 @@ struct ConnectivityPage: View {
                         .padding(.horizontal, 24)
                         .padding(.bottom, 12)
 
-                    Text("You can configure connectivity later in Settings")
+                    Text("You can choose another relay later in Settings.")
                         .font(.footnote)
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.bottom, 16)
@@ -81,7 +81,7 @@ struct ConnectivityPage: View {
                         .foregroundStyle(.white)
                         .padding(.bottom, 8)
 
-                    Text("Select the networks you'd like to use:")
+                    Text("Select one or more. You can change these later.")
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.bottom, 24)
@@ -103,7 +103,16 @@ struct ConnectivityPage: View {
                             .padding(.bottom, 12)
                     }
 
-                    Text("Bluetooth permission is requested only when you enable Bluetooth LE. RNode permission is requested later during radio setup.")
+                    if selectedInterfaces.isEmpty {
+                        Text("Select at least one connection method to continue.")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(Theme.warning)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                            .padding(.bottom, 8)
+                    }
+
+                    Text("Bluetooth access is requested only if you select Bluetooth LE. RNode access is requested later during radio setup.")
                         .font(.footnote)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -212,6 +221,8 @@ struct ConnectivityPage: View {
                 .background(Theme.accentGradient)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
             }
+            .disabled(selectedInterfaces.isEmpty)
+            .opacity(selectedInterfaces.isEmpty ? 0.5 : 1)
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 16)
@@ -254,12 +265,12 @@ struct ConnectivityPage: View {
     private var serverPickerSheet: some View {
         NavigationStack {
             List {
-                Section("Bootstrap Servers") {
+                Section("Recommended Relays") {
                     ForEach(TcpCommunityServer.servers.filter { $0.isBootstrap }) { server in
                         serverRow(server)
                     }
                 }
-                Section("Community Servers") {
+                Section("Other Public Relays") {
                     ForEach(TcpCommunityServer.servers.filter { !$0.isBootstrap }) { server in
                         serverRow(server)
                     }

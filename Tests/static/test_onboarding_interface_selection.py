@@ -56,7 +56,7 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
 
     def test_skip_completes_only_after_success_and_surfaces_failures(self) -> None:
         text = source(ONBOARDING_VIEW)
-        skip_ui = text.split("// Skip button", 1)[1].split("// Page content", 1)[0]
+        skip_ui = text.split("// First-run setup offers", 1)[1].split("// Page content", 1)[0]
         self.assertNotIn("try?", skip_ui)
         self.assertIn("do {", skip_ui)
         self.assertIn("catch {", skip_ui)
@@ -64,6 +64,8 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertIn(".disabled(viewModel.isSaving)", skip_ui)
         self.assertLess(skip_ui.index("try await viewModel.skipOnboarding"), skip_ui.index("onComplete()"))
         self.assertIn('"Unable to Skip Setup"', text)
+        self.assertIn('Text("Use Defaults")', skip_ui)
+        self.assertIn('Button("Close", action: onCancel)', skip_ui)
 
         restore_parent = text.split("OnboardingRestoreSheet(viewModel: vm)", 1)[1].split(
             "#endif", 1
@@ -104,6 +106,37 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertNotIn("try?", finish)
         self.assertIn("catch {", finish)
         self.assertIn("if viewModel.currentPage < 4", text)
+
+    def test_educational_copy_and_safe_settings_review(self) -> None:
+        welcome = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/WelcomePage.swift")
+        identity = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/IdentityPage.swift")
+        connectivity = source(CONNECTIVITY_PAGE)
+        permissions = source(PERMISSIONS_PAGE)
+        complete = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/CompletePage.swift")
+        restore = source(RESTORE_SHEET)
+        background = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift")
+        settings = source(SETTINGS_VIEW)
+        view_model = source(VIEW_MODEL)
+
+        self.assertIn("Private messaging without a central account", welcome)
+        self.assertIn("private cryptographic identity", welcome)
+        self.assertIn("Choose a Display Name", identity)
+        self.assertIn("Select one or more", connectivity)
+        self.assertIn("Select at least one connection method", connectivity)
+        self.assertIn("Recommended Relays", connectivity)
+        self.assertIn("iOS Notifications", permissions)
+        self.assertNotIn("Push Notifications", permissions)
+        self.assertNotIn("Someone you know comes online", permissions)
+        self.assertIn("encrypted backup from Settings", complete)
+        self.assertIn("app settings may be updated", restore)
+        self.assertNotIn("Your traffic isn't sent to any server", background)
+
+        self.assertIn("Review Setup Guide", settings)
+        self.assertIn("existingIdentity: existingIdentity", settings)
+        self.assertIn("onCancel: { showOnboardingReview = false }", settings)
+        self.assertIn("let isReviewingExistingSetup: Bool", view_model)
+        self.assertIn("createdIdentity = existingIdentity", view_model)
+        self.assertIn("identityManager.renameIdentity", view_model)
 
         migration_view_model = source(MIGRATION_VIEW_MODEL)
         self.assertIn("guard !isImporting else { return }", migration_view_model)

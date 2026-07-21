@@ -27,20 +27,20 @@ struct PermissionsPage: View {
                 .foregroundStyle(Theme.accentColor)
                 .padding(.bottom, 24)
 
-            Text("Stay Connected")
+            Text("Message Alerts")
                 .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.bottom, 8)
 
-            Text("Columba can notify you when:")
+            Text("Allow Columba to alert you after it receives:")
                 .font(.subheadline)
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.bottom, 24)
 
             // Notification features
             VStack(alignment: .leading, spacing: 14) {
-                notificationRow("New messages arrive")
-                notificationRow("Someone you know comes online")
+                notificationRow("New messages")
+                notificationRow("Optional network and Bluetooth events")
             }
             .padding(.horizontal, 40)
             .padding(.bottom, 32)
@@ -52,10 +52,10 @@ struct PermissionsPage: View {
                     .foregroundStyle(notificationsGranted ? Theme.success : Theme.accentColor)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Push Notifications")
+                    Text("iOS Notifications")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(Theme.textPrimary)
-                    Text(notificationsGranted ? "Enabled" : "Allow notifications to stay informed")
+                    Text(notificationsGranted ? "Enabled" : "Show alerts for received messages and events")
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -100,7 +100,7 @@ struct PermissionsPage: View {
                     Text("Bluetooth")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(Theme.textPrimary)
-                    Text(bluetoothGranted ? "Enabled" : "Optional — for nearby / offline mesh")
+                    Text(bluetoothGranted ? "Enabled" : "Optional — connect to nearby devices without internet")
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -134,7 +134,7 @@ struct PermissionsPage: View {
             .padding(.bottom, 12)
             #endif
 
-            Text("You can change these anytime in iOS Settings")
+            Text("Notification permission does not keep Columba connected in the background. You can change access anytime in iOS Settings.")
                 .font(.footnote)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)

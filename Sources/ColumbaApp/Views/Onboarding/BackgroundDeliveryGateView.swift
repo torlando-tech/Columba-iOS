@@ -48,7 +48,7 @@ struct BackgroundDeliveryGateView: View {
                         .foregroundStyle(Theme.textPrimary)
                         .multilineTextAlignment(.center)
 
-                    Text("Columba runs a small on-device VPN so it can keep delivering and receiving your messages in the background — even when the app is closed. Your traffic isn't sent to any server; the tunnel only powers Columba's own network node on your device.")
+                    Text("iOS uses its VPN system to let Columba's network component continue running when the app is not open. Only traffic from Columba and Reticulum uses this component; your other apps and web traffic are not routed through Columba.")
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -87,7 +87,7 @@ struct BackgroundDeliveryGateView: View {
                 .disabled(isWorking)
                 .padding(.horizontal, 24)
 
-                Text("iOS will ask you to allow the VPN configuration. Columba can't deliver messages in the background without it.")
+                Text("iOS will ask you to allow the configuration and will show a VPN indicator while Background Delivery is enabled. Delivery still depends on available Reticulum connections.")
                     .font(.caption2)
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)

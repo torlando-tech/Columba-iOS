@@ -92,6 +92,12 @@ struct CompletePage: View {
             }
             .padding(.bottom, 8)
 
+            Text("Share your QR code with another Columba user, then create an encrypted backup from Settings.")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+
             Spacer()
 
             // Finish buttons
@@ -174,7 +180,7 @@ struct CompletePage: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
 
-                    Text("Scan this code to add you as a contact")
+                    Text("Another Columba user can scan this public contact code to add you. It does not contain your private identity keys.")
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
