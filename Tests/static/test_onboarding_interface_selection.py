@@ -11,6 +11,7 @@ VIEW_MODEL = ROOT / "Sources/ColumbaApp/ViewModels/OnboardingViewModel.swift"
 APP_ENTRY = ROOT / "Sources/ColumbaApp/App/ColumbaApp.swift"
 APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 MODEL_B_BLE_SERVICE = ROOT / "Sources/ColumbaApp/Services/ModelBBLEService.swift"
+SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
 
 
 def source(path: Path) -> str:
@@ -90,22 +91,37 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         service = source(MODEL_B_BLE_SERVICE)
         view_model = source(VIEW_MODEL)
         app_services = source(APP_SERVICES)
+        settings = source(SETTINGS_VIEW)
 
         self.assertIn('userOptInKey = "model_b_ble_user_opt_in"', service)
         self.assertIn("recordUserOptIn()", view_model)
+        self.assertIn("ModelBBLEService.isUserOptedIn", view_model)
+        self.assertIn("shouldStart(in:", service)
+        self.assertNotIn("CBCentralManager.authorization", service)
+        self.assertIn("ModelBBLEService.recordUserOptIn()", settings)
+        self.assertIn("ModelBBLEService.clearUserOptIn()", settings)
+        self.assertIn('Text("Bluetooth Mesh")', settings)
         start = "ModelBBLEService.shared.start(identityHash: identity.hash)"
         self.assertEqual(1, app_services.count(start))
         start_offset = app_services.index(start)
         guard_offset = app_services.rfind("if ", 0, start_offset)
         guard = app_services[guard_offset:start_offset]
-        self.assertIn("ModelBBLEService.isUserOptedIn", guard)
+        self.assertIn("ModelBBLEService.shouldStart", guard)
 
     def test_shipping_interface_creation_is_idempotent(self) -> None:
         view_model = source(VIEW_MODEL)
         method = view_model.split("private func createInterfaces(in repo: InterfaceRepository) {", 1)[1]
         shipping = method.split("#else", 1)[1].split("#endif", 1)[0]
-        self.assertIn("shippingInterfaceAlreadyExists", shipping)
-        self.assertIn("guard !shippingInterfaceAlreadyExists", shipping)
+        self.assertIn("ensureInterfaceEnabled(candidate, in: repo)", shipping)
+        self.assertIn("disabled.enabled = true", view_model)
+        self.assertIn("repo.updateInterface(disabled)", view_model)
+        self.assertIn("existing.type == candidate.type && existing.config == candidate.config", view_model)
+
+    def test_skip_and_restore_use_idempotent_interface_seeding(self) -> None:
+        view_model = source(VIEW_MODEL)
+        skip = view_model.split("func skipOnboarding(", 1)[1].split("// MARK: - Onboarding Check", 1)[0]
+        self.assertIn("seedInterfaces(in: InterfaceRepository())", skip)
+        self.assertNotIn("addInterface", skip)
 
 
 if __name__ == "__main__":

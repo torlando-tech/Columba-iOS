@@ -1155,9 +1155,9 @@ public final class AppServices {
 
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B: CoreBluetooth lives in the app process, but it is optional. Do not
-        // construct the driver (and trigger iOS authorization) unless onboarding's
-        // Bluetooth Enable action recorded an explicit opt-in.
-        if ModelBBLEService.isUserOptedIn {
+        // construct the driver (and trigger iOS authorization) unless onboarding or
+        // Settings recorded an explicit transport opt-in.
+        if ModelBBLEService.shouldStart {
             ModelBBLEService.shared.start(identityHash: identity.hash)
         } else {
             DiagLog.log("[BLE] Model B BLE service skipped — no explicit user opt-in")
