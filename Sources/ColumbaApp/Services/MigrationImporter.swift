@@ -11,6 +11,50 @@ import Foundation
 import RNSAPI
 import os.log
 
+struct ValidatedIdentityImport {
+    let export: IdentityExport
+    let identity: Identity
+    let identityHash: String
+    let destinationHash: String
+}
+
+enum MigrationIdentityValidationError: Error, LocalizedError {
+    case invalidKeyData
+    case identityHashMismatch
+    case destinationHashMismatch
+    case duplicateIdentity(String)
+    case nonCanonicalIdentityOwner(String)
+    case unknownIdentityOwner(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidKeyData:
+            return "Backup identity contains invalid private key data."
+        case .identityHashMismatch:
+            return "Backup identity hash does not match its private keys."
+        case .destinationHashMismatch:
+            return "Backup destination hash does not match its private keys."
+        case .duplicateIdentity(let hash):
+            return "Backup contains duplicate identity \(hash)."
+        case .nonCanonicalIdentityOwner(let hash):
+            return "Backup history uses a non-canonical identity hash: \(hash)."
+        case .unknownIdentityOwner(let hash):
+            return "Backup history references an identity not contained in the backup: \(hash)."
+        }
+    }
+}
+
+enum MigrationInterfaceValidationError: Error, LocalizedError {
+    case unsupportedMode(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedMode(let mode):
+            return "Backup interface uses an unsupported mode: \(mode)."
+        }
+    }
+}
+
 /// Imports data from an encrypted .columba backup file.
 @available(macOS 14.0, iOS 17.0, *)
 actor MigrationImporter {
@@ -21,6 +65,68 @@ actor MigrationImporter {
     init(identityManager: IdentityManager, settingsRepository: SettingsRepository) {
         self.identityManager = identityManager
         self.settingsRepository = settingsRepository
+    }
+
+    /// Validate every restored identity before the importer performs any durable write.
+    /// Supplied metadata is never authoritative: hashes must be derived from key material.
+    static func validateIdentityExports(_ exports: [IdentityExport]) throws -> [ValidatedIdentityImport] {
+        var seenHashes = Set<String>()
+        return try exports.map { export in
+            guard let keyData = Data(base64Encoded: export.keyData), keyData.count == 64 else {
+                throw MigrationIdentityValidationError.invalidKeyData
+            }
+            let identity = try Identity(privateKeyBytes: keyData)
+            let identityHash = identity.hexHash.lowercased()
+            let destinationHash = Destination.hash(
+                identity: identity,
+                appName: "lxmf",
+                aspects: ["delivery"]
+            ).map { String(format: "%02x", $0) }.joined()
+
+            guard export.identityHash.lowercased() == identityHash else {
+                throw MigrationIdentityValidationError.identityHashMismatch
+            }
+            guard export.destinationHash.lowercased() == destinationHash else {
+                throw MigrationIdentityValidationError.destinationHashMismatch
+            }
+            guard seenHashes.insert(identityHash).inserted else {
+                throw MigrationIdentityValidationError.duplicateIdentity(identityHash)
+            }
+            return ValidatedIdentityImport(
+                export: export,
+                identity: identity,
+                identityHash: identityHash,
+                destinationHash: destinationHash
+            )
+        }
+    }
+
+    static func preferredIdentityHash(from identities: [ValidatedIdentityImport]) -> String? {
+        identities.first(where: { $0.export.isActive })?.identityHash
+            ?? identities.first?.identityHash
+    }
+
+    static func validateRecordOwnerHashes(
+        _ ownerHashes: [String],
+        canonicalIdentityHashes: Set<String>
+    ) throws {
+        for ownerHash in ownerHashes {
+            let canonical = ownerHash.lowercased()
+            guard ownerHash == canonical else {
+                throw MigrationIdentityValidationError.nonCanonicalIdentityOwner(ownerHash)
+            }
+            guard canonicalIdentityHashes.contains(canonical) else {
+                throw MigrationIdentityValidationError.unknownIdentityOwner(ownerHash)
+            }
+        }
+    }
+
+    static func validatedInterfaceMode(_ rawMode: String?) throws -> InterfaceMode {
+        guard let rawMode else { return .full }
+        guard let mode = InterfaceMode(rawValue: rawMode) else {
+            throw MigrationInterfaceValidationError.unsupportedMode(rawMode)
+        }
+        return mode
     }
 
     // MARK: - Format Detection
@@ -65,6 +171,13 @@ actor MigrationImporter {
     /// - Returns: Summary of imported items
     func importData(data: Data, password: String?, onProgress: @Sendable (Float) -> Void) async throws -> ImportResult {
         let bundle = try decryptAndParse(data: data, password: password)
+        let validatedIdentities = try Self.validateIdentityExports(bundle.identities)
+        let canonicalIdentityHashes = Set(validatedIdentities.map(\.identityHash))
+        try Self.validateRecordOwnerHashes(
+            bundle.conversations.map(\.identityHash) + bundle.messages.map(\.identityHash),
+            canonicalIdentityHashes: canonicalIdentityHashes
+        )
+        let validatedInterfaceModes = try bundle.interfaces.map { try Self.validatedInterfaceMode($0.mode) }
         onProgress(0.1)
 
         var identitiesImported = 0
@@ -77,50 +190,42 @@ actor MigrationImporter {
 
         // 1. Import identities
         let existingIdentities = await identityManager.getAllIdentities()
-        let existingHashes = Set(existingIdentities.map { $0.identityHash })
+        let existingHashes = Set(existingIdentities.map { $0.identityHash.lowercased() })
 
-        for export in bundle.identities {
-            if existingHashes.contains(export.identityHash) {
-                logger.info("Skipping existing identity: \(export.identityHash)")
+        for validated in validatedIdentities {
+            let export = validated.export
+            if existingHashes.contains(validated.identityHash) {
+                logger.info("Skipping existing identity: \(validated.identityHash)")
                 identitiesSkipped += 1
                 continue
             }
 
             do {
-                // Decode private key data
-                guard let keyData = Data(base64Encoded: export.keyData), keyData.count == 64 else {
-                    logger.warning("Invalid key data for identity \(export.identityHash)")
-                    continue
-                }
-
-                // Create Identity from private keys
-                let identity = try Identity(privateKeyBytes: keyData)
-
-                // Save to Keychain
-                let account = "identity-\(export.identityHash)"
-                try identity.saveToKeychain(
+                // Store and register only canonical hashes derived from private keys.
+                let account = "identity-\(validated.identityHash)"
+                try validated.identity.saveToKeychain(
                     service: IdentityManager.keychainService,
                     account: account
                 )
 
-                // Create LocalIdentity record
-                // We don't go through IdentityManager.createIdentity() because
-                // we already have the keys and don't want new ones generated
                 let local = LocalIdentity(
-                    identityHash: export.identityHash,
+                    identityHash: validated.identityHash,
                     displayName: export.displayName,
-                    destinationHash: export.destinationHash,
+                    destinationHash: validated.destinationHash,
                     createdAt: export.createdTimestamp,
                     lastUsedAt: export.lastUsedTimestamp,
                     isActive: false // Don't auto-activate imported identities
                 )
 
-                // Add to the identity manager's storage directly
-                await addIdentityRecord(local)
+                // Register through the actor-owned cache so a subsequent create/switch
+                // cannot overwrite freshly restored metadata from stale in-memory state.
+                try await identityManager.importIdentityRecord(local)
                 identitiesImported += 1
-                logger.info("Imported identity: \(export.identityHash) (\(export.displayName))")
+                logger.info("Imported identity: \(validated.identityHash) (\(export.displayName))")
             } catch {
-                logger.warning("Failed to import identity \(export.identityHash): \(error)")
+                logger.error("Failed to persist restored identity \(validated.identityHash): \(error)")
+                // History import must not continue without accessible key material and metadata.
+                throw error
             }
         }
         onProgress(0.3)
@@ -230,18 +335,14 @@ actor MigrationImporter {
         // 3. Import interfaces
         onProgress(0.7)
         let repo = InterfaceRepository()
-        let existingInterfaceNames = Set(repo.interfaces.map { "\($0.name)_\($0.type.rawValue)" })
+        var seenInterfaces = repo.interfaces
         let decoder = JSONDecoder()
 
-        for export in bundle.interfaces {
-            let key = "\(export.name)_\(export.type)"
-            if existingInterfaceNames.contains(key) {
-                continue
-            }
-
+        for (export, mode) in zip(bundle.interfaces, validatedInterfaceModes) {
             guard let ifaceType = InterfaceType(rawValue: export.type) else { continue }
 
-            // Decode config from JSON
+            // Mode was added after the initial backup format; validated legacy
+            // records default to full while explicit unsupported values fail preflight.
             guard let configData = export.configJson.data(using: .utf8),
                   let config = try? decoder.decode(InterfaceTypeConfig.self, from: configData) else {
                 continue
@@ -251,10 +352,17 @@ actor MigrationImporter {
                 name: export.name,
                 type: ifaceType,
                 enabled: export.enabled,
+                mode: mode,
                 config: config,
                 displayOrder: export.displayOrder
             )
+            if seenInterfaces.contains(where: {
+                $0.type == entity.type && $0.mode == entity.mode && $0.config == entity.config
+            }) {
+                continue
+            }
             repo.addInterface(entity)
+            seenInterfaces.append(entity)
             interfacesImported += 1
         }
         onProgress(0.8)
@@ -311,7 +419,9 @@ actor MigrationImporter {
         }
         onProgress(1.0)
 
+        let preferredIdentityHash = Self.preferredIdentityHash(from: validatedIdentities)
         let result = ImportResult(
+            preferredIdentityHash: preferredIdentityHash,
             identitiesImported: identitiesImported,
             identitiesSkipped: identitiesSkipped,
             conversationsImported: conversationsImported,
@@ -355,29 +465,6 @@ actor MigrationImporter {
         return bundle
     }
 
-    /// Add an identity record to IdentityManager's stored list.
-    ///
-    /// This bypasses the normal createIdentity flow since we already have keys.
-    private func addIdentityRecord(_ local: LocalIdentity) async {
-        // Load current identities from UserDefaults, append, and save
-        let storageKey = "localIdentities"
-        var identities: [LocalIdentity] = []
-
-        if let data = UserDefaults.standard.data(forKey: storageKey) {
-            identities = (try? JSONDecoder().decode([LocalIdentity].self, from: data)) ?? []
-        }
-
-        // Don't add duplicates
-        if identities.contains(where: { $0.identityHash == local.identityHash }) {
-            return
-        }
-
-        identities.append(local)
-
-        if let data = try? JSONEncoder().encode(identities) {
-            UserDefaults.standard.set(data, forKey: storageKey)
-        }
-    }
 }
 
 // Note: Data(hexString:) extension is defined in PropagationNodeManager.swift

@@ -83,6 +83,7 @@ final class MigrationRoundTripTests: XCTestCase {
         let interface = InterfaceExport(
             name: "TCP Hub",
             type: "tcp_client",
+            mode: InterfaceMode.full.rawValue,
             enabled: true,
             configJson: "{\"host\":\"example\"}",
             displayOrder: 0
@@ -102,6 +103,153 @@ final class MigrationRoundTripTests: XCTestCase {
             interfaces: [interface],
             settings: settings
         )
+    }
+
+    private func makeValidatedIdentityExport(
+        identity: Identity = Identity(),
+        identityHash: String? = nil,
+        destinationHash: String? = nil,
+        isActive: Bool = false
+    ) throws -> IdentityExport {
+        let canonicalDestination = Destination.hash(
+            identity: identity,
+            appName: "lxmf",
+            aspects: ["delivery"]
+        ).map { String(format: "%02x", $0) }.joined()
+        return IdentityExport(
+            identityHash: identityHash ?? identity.hexHash,
+            displayName: "Validated Identity",
+            destinationHash: destinationHash ?? canonicalDestination,
+            keyData: try identity.exportPrivateKeys().base64EncodedString(),
+            createdTimestamp: 1_699_000_000,
+            lastUsedTimestamp: 1_700_000_000,
+            isActive: isActive,
+            iconName: nil,
+            iconForegroundColor: nil,
+            iconBackgroundColor: nil
+        )
+    }
+
+    func testIdentityRestoreValidationBindsMetadataToPrivateKeys() throws {
+        let export = try makeValidatedIdentityExport()
+        let validated = try MigrationImporter.validateIdentityExports([export])
+        XCTAssertEqual(validated.count, 1)
+        XCTAssertEqual(validated[0].identityHash, export.identityHash.lowercased())
+        XCTAssertEqual(validated[0].destinationHash, export.destinationHash.lowercased())
+    }
+
+    func testIdentityRestoreValidationRejectsIdentityHashMismatch() throws {
+        let export = try makeValidatedIdentityExport(identityHash: "00")
+        XCTAssertThrowsError(try MigrationImporter.validateIdentityExports([export])) { error in
+            guard case MigrationIdentityValidationError.identityHashMismatch = error else {
+                return XCTFail("Expected identityHashMismatch, got \(error)")
+            }
+        }
+    }
+
+    func testIdentityRestoreValidationRejectsDestinationHashMismatch() throws {
+        let export = try makeValidatedIdentityExport(destinationHash: "00")
+        XCTAssertThrowsError(try MigrationImporter.validateIdentityExports([export])) { error in
+            guard case MigrationIdentityValidationError.destinationHashMismatch = error else {
+                return XCTFail("Expected destinationHashMismatch, got \(error)")
+            }
+        }
+    }
+
+    func testIdentityRestoreValidationRejectsDuplicateHashes() throws {
+        let export = try makeValidatedIdentityExport()
+        XCTAssertThrowsError(try MigrationImporter.validateIdentityExports([export, export])) { error in
+            guard case MigrationIdentityValidationError.duplicateIdentity = error else {
+                return XCTFail("Expected duplicateIdentity, got \(error)")
+            }
+        }
+    }
+
+    func testIdentityRestoreValidationRejectsDuplicateClaimWithDifferentKeys() throws {
+        let first = try makeValidatedIdentityExport()
+        let second = try makeValidatedIdentityExport(identityHash: first.identityHash)
+        XCTAssertThrowsError(try MigrationImporter.validateIdentityExports([first, second]))
+    }
+
+    func testImportedIdentityMetadataPersistsAcrossManagerInstances() async throws {
+        let hash = "test-restore-\(UUID().uuidString.lowercased())"
+        let local = LocalIdentity(
+            identityHash: hash,
+            displayName: "Restore Persistence Test",
+            destinationHash: "destination-\(hash)",
+            createdAt: Date().timeIntervalSince1970,
+            lastUsedAt: Date().timeIntervalSince1970,
+            isActive: false
+        )
+        let manager = IdentityManager()
+        try await manager.importIdentityRecord(local)
+
+        let reloaded = IdentityManager()
+        let persisted = await reloaded.getAllIdentities()
+        XCTAssertTrue(persisted.contains(where: { $0.identityHash == hash }))
+
+        try await manager.deleteIdentity(hash)
+    }
+
+    func testRestorePrefersBackupActiveIdentityAndFallsBackToFirst() throws {
+        let first = try makeValidatedIdentityExport()
+        let active = try makeValidatedIdentityExport(isActive: true)
+        let validated = try MigrationImporter.validateIdentityExports([first, active])
+        XCTAssertEqual(
+            MigrationImporter.preferredIdentityHash(from: validated),
+            validated[1].identityHash
+        )
+        XCTAssertEqual(
+            MigrationImporter.preferredIdentityHash(from: [validated[0]]),
+            validated[0].identityHash
+        )
+        XCTAssertNil(MigrationImporter.preferredIdentityHash(from: []))
+    }
+
+    func testHistoryOwnerValidationRejectsMissingOrForeignIdentity() {
+        XCTAssertThrowsError(try MigrationImporter.validateRecordOwnerHashes(
+            ["aabbccdd"],
+            canonicalIdentityHashes: []
+        )) { error in
+            guard case MigrationIdentityValidationError.unknownIdentityOwner = error else {
+                return XCTFail("Expected unknownIdentityOwner, got \(error)")
+            }
+        }
+        XCTAssertThrowsError(try MigrationImporter.validateRecordOwnerHashes(
+            ["aabbccdd"],
+            canonicalIdentityHashes: ["11223344"]
+        ))
+    }
+
+    func testHistoryOwnerValidationRejectsUppercaseReference() {
+        XCTAssertThrowsError(try MigrationImporter.validateRecordOwnerHashes(
+            ["AABBCCDD"],
+            canonicalIdentityHashes: ["aabbccdd"]
+        )) { error in
+            guard case MigrationIdentityValidationError.nonCanonicalIdentityOwner = error else {
+                return XCTFail("Expected nonCanonicalIdentityOwner, got \(error)")
+            }
+        }
+    }
+
+    func testHistoryOwnerValidationAcceptsCanonicalBackupIdentity() throws {
+        try MigrationImporter.validateRecordOwnerHashes(
+            ["aabbccdd", "aabbccdd"],
+            canonicalIdentityHashes: ["aabbccdd"]
+        )
+    }
+
+    func testInterfaceModeValidationDefaultsOnlyMissingLegacyMode() throws {
+        XCTAssertEqual(try MigrationImporter.validatedInterfaceMode(nil), .full)
+        XCTAssertEqual(
+            try MigrationImporter.validatedInterfaceMode(InterfaceMode.gateway.rawValue),
+            .gateway
+        )
+        XCTAssertThrowsError(try MigrationImporter.validatedInterfaceMode("future-unsupported-mode")) { error in
+            guard case MigrationInterfaceValidationError.unsupportedMode = error else {
+                return XCTFail("Expected unsupportedMode, got \(error)")
+            }
+        }
     }
 
     /// Encode → encrypt → decrypt → decode must preserve every field, with
@@ -126,6 +274,7 @@ final class MigrationRoundTripTests: XCTestCase {
         XCTAssertEqual(restored.conversations.count, 1)
         XCTAssertEqual(restored.messages.count, 2)
         XCTAssertEqual(restored.interfaces.count, 1)
+        XCTAssertEqual(restored.interfaces.first?.mode, InterfaceMode.full.rawValue)
 
         // Identity survives with key material intact.
         let id = try XCTUnwrap(restored.identities.first)

@@ -69,17 +69,77 @@ final class RuntimeFlavorTests: XCTestCase {
         // defaults into this isolated suite.
         defaults.set(try JSONEncoder().encode([InterfaceEntity]()), forKey: "com.columba.interfaces")
         let repository = InterfaceRepository(userDefaults: defaults)
+        let server = TcpCommunityServer.defaultServer
+        repository.addInterface(InterfaceEntity(
+            name: server.name,
+            type: .tcpClient,
+            enabled: false,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
+        ))
+        let privateAuto = InterfaceEntity(
+            name: "Private Auto",
+            type: .autoInterface,
+            enabled: false,
+            config: .autoInterface(AutoInterfaceConfig(groupId: "private-group"))
+        )
+        let scanOnlyBLE = InterfaceEntity(
+            name: "Scan-only BLE",
+            type: .ble,
+            enabled: false,
+            config: .ble(BLEConfig(advertise: false, scan: true))
+        )
+        repository.addInterface(privateAuto)
+        repository.addInterface(scanOnlyBLE)
         let viewModel = OnboardingViewModel()
         viewModel.selectedInterfaces = [.auto, .ble, .tcp]
-        viewModel.selectedTcpServer = .defaultServer
+        viewModel.selectedTcpServer = server
 
         viewModel.seedInterfaces(in: repository)
         viewModel.seedInterfaces(in: repository)
 
-        XCTAssertEqual(repository.interfaces.count, 3)
-        XCTAssertEqual(repository.interfaces.filter { $0.type == .autoInterface }.count, 1)
-        XCTAssertEqual(repository.interfaces.filter { $0.type == .ble }.count, 1)
-        XCTAssertEqual(repository.interfaces.filter { $0.type == .tcpClient }.count, 1)
+        XCTAssertEqual(repository.interfaces.count, 5)
+        XCTAssertEqual(repository.interfaces.filter { $0.type == .autoInterface }.count, 2)
+        XCTAssertEqual(repository.interfaces.filter { $0.type == .ble }.count, 2)
+        XCTAssertFalse(try XCTUnwrap(repository.interfaces.first { $0.id == privateAuto.id }).enabled)
+        XCTAssertFalse(try XCTUnwrap(repository.interfaces.first { $0.id == scanOnlyBLE.id }).enabled)
+        let tcpInterfaces = repository.interfaces.filter { $0.type == .tcpClient }
+        XCTAssertEqual(tcpInterfaces.count, 1)
+        XCTAssertTrue(tcpInterfaces[0].enabled)
+    }
+
+    @MainActor
+    func testShippingSkipAlwaysSeedsCanonicalDefaultRelay() throws {
+        let suiteName = "test.OnboardingSkipDefault.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Could not create isolated UserDefaults suite")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(try JSONEncoder().encode([InterfaceEntity]()), forKey: "com.columba.interfaces")
+        let repository = InterfaceRepository(userDefaults: defaults)
+        let viewModel = OnboardingViewModel()
+        viewModel.selectedInterfaces = []
+        viewModel.selectedTcpServer = TcpCommunityServer(
+            name: "Custom relay",
+            host: "custom.invalid",
+            port: 4242,
+            isBootstrap: false
+        )
+
+        viewModel.seedDefaultTcpInterface(in: repository)
+        viewModel.seedDefaultTcpInterface(in: repository)
+
+        let interfaces = repository.interfaces
+        XCTAssertEqual(interfaces.count, 1)
+        guard case let .tcpClient(config) = interfaces[0].config else {
+            return XCTFail("Skip must seed a TCP client")
+        }
+        XCTAssertTrue(interfaces[0].enabled)
+        XCTAssertEqual(config.targetHost, TcpCommunityServer.defaultServer.host)
+        XCTAssertEqual(config.targetPort, TcpCommunityServer.defaultServer.port)
     }
     #endif
 }

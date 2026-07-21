@@ -48,6 +48,9 @@ final class MigrationViewModel {
     }
 
     var state: MigrationState = .idle
+    private(set) var isImporting = false
+    private var activeImportGeneration: UUID?
+    private var activeExportGeneration: UUID?
 
     /// Export preview stats (loaded on appear).
     var exportPreview: ExportPreview?
@@ -103,7 +106,14 @@ final class MigrationViewModel {
 
     /// Start the export process.
     func startExport() async {
-        guard isExportPasswordValid else { return }
+        guard isExportPasswordValid, activeExportGeneration == nil else { return }
+        let generation = UUID()
+        activeExportGeneration = generation
+        defer {
+            if activeExportGeneration == generation {
+                activeExportGeneration = nil
+            }
+        }
         let password = exportPassword
         showExportPasswordSheet = false
         state = .exporting(progress: 0)
@@ -111,12 +121,15 @@ final class MigrationViewModel {
         do {
             let url = try await exporter.exportData(password: password) { [weak self] progress in
                 Task { @MainActor in
+                    guard self?.activeExportGeneration == generation else { return }
                     self?.state = .exporting(progress: progress)
                 }
             }
+            activeExportGeneration = nil
             state = .exportComplete(url: url)
             logger.info("Export complete: \(url.lastPathComponent)")
         } catch {
+            activeExportGeneration = nil
             state = .error(message: "Export failed: \(error.localizedDescription)")
             logger.error("Export failed: \(error)")
         }
@@ -176,18 +189,32 @@ final class MigrationViewModel {
     /// Confirm and execute the import.
     func confirmImport() async {
         guard let data = pendingImportData else { return }
+        guard !isImporting else { return }
+        isImporting = true
+        let generation = UUID()
+        activeImportGeneration = generation
+        defer {
+            if activeImportGeneration == generation {
+                activeImportGeneration = nil
+            }
+            isImporting = false
+        }
         let password = pendingImportPassword
         state = .importing(progress: 0)
 
         do {
             let result = try await importer.importData(data: data, password: password) { [weak self] progress in
                 Task { @MainActor in
+                    guard self?.activeImportGeneration == generation else { return }
                     self?.state = .importing(progress: progress)
                 }
             }
+            // Invalidate queued progress jobs before publishing terminal state.
+            activeImportGeneration = nil
             state = .importComplete(result: result)
             logger.info("Import complete")
         } catch {
+            activeImportGeneration = nil
             state = .error(message: "Import failed: \(error.localizedDescription)")
             logger.error("Import failed: \(error)")
         }
@@ -199,6 +226,8 @@ final class MigrationViewModel {
 
     /// Reset state back to idle.
     func reset() {
+        activeImportGeneration = nil
+        activeExportGeneration = nil
         state = .idle
         pendingImportData = nil
         pendingImportPassword = nil

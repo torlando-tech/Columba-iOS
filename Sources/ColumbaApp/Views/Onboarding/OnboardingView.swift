@@ -18,6 +18,7 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @State private var viewModel = OnboardingViewModel()
+    @State private var skipErrorMessage: String?
     #if COLUMBA_MIGRATION_ENABLED
     @State private var showRestoreSheet = false
     @State private var migrationVM: MigrationViewModel?
@@ -31,14 +32,19 @@ struct OnboardingView: View {
                 // Skip button (pages 0-3)
                 HStack {
                     Spacer()
-                    if viewModel.currentPage < OnboardingViewModel.pageCount - 1 {
+                    if viewModel.currentPage < 4 {
                         Button {
+                            guard !viewModel.isSaving else { return }
                             Task {
-                                try? await viewModel.skipOnboarding(
-                                    identityManager: identityManager,
-                                    settingsRepository: settingsRepository
-                                )
-                                onComplete()
+                                do {
+                                    try await viewModel.skipOnboarding(
+                                        identityManager: identityManager,
+                                        settingsRepository: settingsRepository
+                                    )
+                                    onComplete()
+                                } catch {
+                                    skipErrorMessage = error.localizedDescription
+                                }
                             }
                         } label: {
                             Text("Skip")
@@ -47,6 +53,7 @@ struct OnboardingView: View {
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
                         }
+                        .disabled(viewModel.isSaving)
                     }
                 }
                 .frame(height: 44)
@@ -142,6 +149,19 @@ struct OnboardingView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: viewModel.currentPage)
+        .alert(
+            "Unable to Skip Setup",
+            isPresented: Binding(
+                get: { skipErrorMessage != nil },
+                set: { if !$0 { skipErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                skipErrorMessage = nil
+            }
+        } message: {
+            Text(skipErrorMessage ?? "Please try again.")
+        }
         .task {
             await viewModel.checkNotificationStatus()
             viewModel.checkBluetoothStatus()
@@ -149,16 +169,14 @@ struct OnboardingView: View {
         #if COLUMBA_MIGRATION_ENABLED
         .sheet(isPresented: $showRestoreSheet) {
             if let vm = migrationVM {
-                OnboardingRestoreSheet(viewModel: vm) {
+                OnboardingRestoreSheet(viewModel: vm) { result in
+                    try await viewModel.completeRestoredOnboarding(
+                        preferredIdentityHash: result.preferredIdentityHash,
+                        identityManager: identityManager,
+                        settingsRepository: settingsRepository
+                    )
                     showRestoreSheet = false
-                    // Restore complete — skip onboarding and finish
-                    Task {
-                        try? await viewModel.skipOnboarding(
-                            identityManager: identityManager,
-                            settingsRepository: settingsRepository
-                        )
-                        onComplete()
-                    }
+                    onComplete()
                 }
             }
         }
@@ -179,11 +197,15 @@ struct OnboardingView: View {
             },
             onFinish: {
                 Task {
-                    try? await viewModel.completeOnboarding(
-                        identityManager: identityManager,
-                        settingsRepository: settingsRepository
-                    )
-                    onComplete()
+                    do {
+                        try await viewModel.completeOnboarding(
+                            identityManager: identityManager,
+                            settingsRepository: settingsRepository
+                        )
+                        onComplete()
+                    } catch {
+                        skipErrorMessage = error.localizedDescription
+                    }
                 }
             }
         )

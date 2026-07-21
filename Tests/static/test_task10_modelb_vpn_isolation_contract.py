@@ -597,7 +597,7 @@ class Task10ModelBVPNIsolationContractTests(unittest.TestCase):
         self.assertEqual(1, view.count("CompletePage("), "completion UI must remain shared")
         for required_flow in (
             "await viewModel.prepareIdentity(identityManager: identityManager)",
-            "try? await viewModel.completeOnboarding(",
+            "try await viewModel.completeOnboarding(",
             "onComplete()",
         ):
             self.assertIn(required_flow, view)

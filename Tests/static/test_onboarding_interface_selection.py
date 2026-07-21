@@ -5,12 +5,19 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 ONBOARDING_VIEW = ROOT / "Sources/ColumbaApp/Views/Onboarding/OnboardingView.swift"
+RESTORE_SHEET = ROOT / "Sources/ColumbaApp/Views/Onboarding/OnboardingRestoreSheet.swift"
 CONNECTIVITY_PAGE = ROOT / "Sources/ColumbaApp/Views/Onboarding/ConnectivityPage.swift"
 PERMISSIONS_PAGE = ROOT / "Sources/ColumbaApp/Views/Onboarding/PermissionsPage.swift"
 VIEW_MODEL = ROOT / "Sources/ColumbaApp/ViewModels/OnboardingViewModel.swift"
+MIGRATION_VIEW_MODEL = ROOT / "Sources/ColumbaApp/ViewModels/MigrationViewModel.swift"
+IDENTITY_MANAGER = ROOT / "Sources/ColumbaApp/Services/IdentityManager.swift"
+MIGRATION_IMPORTER = ROOT / "Sources/ColumbaApp/Services/MigrationImporter.swift"
+MIGRATION_EXPORTER = ROOT / "Sources/ColumbaApp/Services/MigrationExporter.swift"
+MIGRATION_DATA = ROOT / "Sources/ColumbaApp/Models/MigrationData.swift"
 APP_ENTRY = ROOT / "Sources/ColumbaApp/App/ColumbaApp.swift"
 APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 MODEL_B_BLE_SERVICE = ROOT / "Sources/ColumbaApp/Services/ModelBBLEService.swift"
+SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
 
 
 def source(path: Path) -> str:
@@ -46,6 +53,138 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         text = source(ONBOARDING_VIEW)
         self.assertIn("selectedInterfaces: $viewModel.selectedInterfaces", text)
         self.assertNotIn("if viewModel.bluetoothAuthorization == .notDetermined", text)
+
+    def test_skip_completes_only_after_success_and_surfaces_failures(self) -> None:
+        text = source(ONBOARDING_VIEW)
+        skip_ui = text.split("// Skip button", 1)[1].split("// Page content", 1)[0]
+        self.assertNotIn("try?", skip_ui)
+        self.assertIn("do {", skip_ui)
+        self.assertIn("catch {", skip_ui)
+        self.assertIn("skipErrorMessage = error.localizedDescription", skip_ui)
+        self.assertIn(".disabled(viewModel.isSaving)", skip_ui)
+        self.assertLess(skip_ui.index("try await viewModel.skipOnboarding"), skip_ui.index("onComplete()"))
+        self.assertIn('"Unable to Skip Setup"', text)
+
+        restore_parent = text.split("OnboardingRestoreSheet(viewModel: vm)", 1)[1].split(
+            "#endif", 1
+        )[0]
+        self.assertNotIn("try?", restore_parent)
+        self.assertLess(
+            restore_parent.index("try await viewModel.completeRestoredOnboarding"),
+            restore_parent.index("showRestoreSheet = false"),
+        )
+        self.assertLess(
+            restore_parent.index("showRestoreSheet = false"),
+            restore_parent.index("onComplete()"),
+        )
+
+        restore_sheet = source(RESTORE_SHEET)
+        self.assertIn("let onComplete: (ImportResult) async throws -> Void", restore_sheet)
+        self.assertIn("try await onComplete(result)", restore_sheet)
+        self.assertIn("finishErrorMessage = error.localizedDescription", restore_sheet)
+        self.assertIn(".disabled(isOperationLocked)", restore_sheet)
+        self.assertIn(".interactiveDismissDisabled(isOperationLocked)", restore_sheet)
+        self.assertIn("isFinishing || viewModel.isImporting", restore_sheet)
+
+        view_model = source(VIEW_MODEL)
+        self.assertIn("guard qrCodeString.isEmpty else { return }", view_model)
+        self.assertIn("guard !isSaving else { throw OnboardingFlowError.operationInProgress }", view_model)
+        self.assertGreaterEqual(view_model.count("try beginSaving()"), 3)
+        self.assertGreaterEqual(view_model.count("createOrResumeIdentity("), 4)
+        resume = view_model.split("private func createOrResumeIdentity(", 1)[1].split(
+            "/// Seed the chosen TCP relay", 1
+        )[0]
+        self.assertLess(
+            resume.index("identityManager.createIdentity"),
+            resume.index("createdIdentity = local"),
+        )
+        self.assertLess(resume.index("createdIdentity = local"), resume.index("return local"))
+
+        finish = text.split("onFinish: {", 1)[1].split("}\n        )", 1)[0]
+        self.assertNotIn("try?", finish)
+        self.assertIn("catch {", finish)
+        self.assertIn("if viewModel.currentPage < 4", text)
+
+        migration_view_model = source(MIGRATION_VIEW_MODEL)
+        self.assertIn("guard !isImporting else { return }", migration_view_model)
+        self.assertIn("isImporting = true", migration_view_model)
+        self.assertIn("defer {", migration_view_model)
+        self.assertIn("activeImportGeneration = generation", migration_view_model)
+        self.assertIn("guard self?.activeImportGeneration == generation else { return }", migration_view_model)
+        self.assertIn("activeExportGeneration = generation", migration_view_model)
+        self.assertIn("guard self?.activeExportGeneration == generation else { return }", migration_view_model)
+        self.assertLess(
+            migration_view_model.index("activeExportGeneration = nil\n            state = .exportComplete"),
+            migration_view_model.index("state = .exportComplete"),
+        )
+        self.assertLess(
+            migration_view_model.index("activeImportGeneration = nil\n            state = .importComplete"),
+            migration_view_model.index("state = .importComplete"),
+        )
+
+        identity_manager = source(IDENTITY_MANAGER)
+        migration_importer = source(MIGRATION_IMPORTER)
+        self.assertIn("func importIdentityRecord(_ local: LocalIdentity) throws", identity_manager)
+        self.assertIn("var merged = Self.loadIdentities()", identity_manager)
+        self.assertIn("try saveIdentitiesVerified()", identity_manager)
+        self.assertIn("try persistIdentitiesVerified(previous)", identity_manager)
+        create_body = identity_manager.split("func createIdentity(displayName: String) throws", 1)[1].split(
+            "/// Register restored identity metadata", 1
+        )[0]
+        self.assertLess(
+            create_body.index("try persistIdentitiesVerified(previous)"),
+            create_body.index("SecItemDelete(query as CFDictionary)"),
+        )
+        switch_body = identity_manager.split("func switchToIdentity(_ hash: String) throws", 1)[1].split(
+            "// MARK: - Rename", 1
+        )[0]
+        self.assertIn("let previous = identities", switch_body)
+        self.assertIn("try saveIdentitiesVerified()", switch_body)
+        self.assertIn("identities = previous", switch_body)
+        self.assertIn("try data.write(to: url, options: .atomic)", identity_manager)
+        self.assertIn("let persisted = try Data(contentsOf: url)", identity_manager)
+        self.assertIn("guard persisted == data", identity_manager)
+        self.assertIn("try await identityManager.importIdentityRecord(local)", migration_importer)
+        self.assertNotIn("addIdentityRecord", migration_importer)
+        self.assertIn("identity.hexHash.lowercased()", migration_importer)
+        self.assertIn('appName: "lxmf"', migration_importer)
+        self.assertIn('aspects: ["delivery"]', migration_importer)
+        self.assertIn("seenHashes.insert(identityHash).inserted", migration_importer)
+        self.assertLess(
+            migration_importer.index("validateIdentityExports(bundle.identities)"),
+            migration_importer.index("onProgress(0.1)"),
+        )
+        self.assertIn('let account = "identity-\\(validated.identityHash)"', migration_importer)
+        self.assertLess(
+            migration_importer.index("throw error"),
+            migration_importer.index("let conversationsByIdentity"),
+        )
+        self.assertIn("first(where: { $0.export.isActive })?.identityHash", migration_importer)
+        self.assertIn("preferredIdentityHash: preferredIdentityHash", migration_importer)
+        self.assertIn("completeRestoredOnboarding(", view_model)
+        restored_completion = view_model.split("func completeRestoredOnboarding(", 1)[1].split(
+            "// MARK: - Onboarding Check", 1
+        )[0]
+        self.assertNotIn("createOrResumeIdentity", restored_completion)
+        self.assertIn("identityManager.switchToIdentity(local.identityHash)", restored_completion)
+        self.assertIn("validateRecordOwnerHashes(", migration_importer)
+        self.assertIn("canonicalIdentityHashes: canonicalIdentityHashes", migration_importer)
+        self.assertIn("var seenInterfaces = repo.interfaces", migration_importer)
+        self.assertIn("seenInterfaces.append(entity)", migration_importer)
+        self.assertIn("$0.type == entity.type && $0.mode == entity.mode && $0.config == entity.config", migration_importer)
+        self.assertIn("validatedInterfaceMode(_ rawMode: String?)", migration_importer)
+        self.assertIn("guard let rawMode else { return .full }", migration_importer)
+        self.assertIn("throw MigrationInterfaceValidationError.unsupportedMode(rawMode)", migration_importer)
+        self.assertLess(
+            migration_importer.index("let validatedInterfaceModes"),
+            migration_importer.index("onProgress(0.1)"),
+        )
+
+        migration_exporter = source(MIGRATION_EXPORTER)
+        migration_data = source(MIGRATION_DATA)
+        self.assertIn("mode: iface.mode.rawValue", migration_exporter)
+        self.assertIn("let mode: String?", migration_data)
+        self.assertIn("mode: String? = nil", migration_data)
 
     def test_shipping_interfaces_are_persisted_but_model_b_only_seeds_relay(self) -> None:
         text = source(VIEW_MODEL)
@@ -90,22 +229,49 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         service = source(MODEL_B_BLE_SERVICE)
         view_model = source(VIEW_MODEL)
         app_services = source(APP_SERVICES)
+        settings = source(SETTINGS_VIEW)
 
         self.assertIn('userOptInKey = "model_b_ble_user_opt_in"', service)
         self.assertIn("recordUserOptIn()", view_model)
+        self.assertIn("ModelBBLEService.isUserOptedIn", view_model)
+        self.assertIn("shouldStart(in:", service)
+        self.assertNotIn("CBCentralManager.authorization", service)
+        self.assertIn("ModelBBLEService.recordUserOptIn()", settings)
+        self.assertIn("ModelBBLEService.clearUserOptIn()", settings)
+        self.assertIn('Text("Bluetooth Mesh")', settings)
         start = "ModelBBLEService.shared.start(identityHash: identity.hash)"
         self.assertEqual(1, app_services.count(start))
         start_offset = app_services.index(start)
         guard_offset = app_services.rfind("if ", 0, start_offset)
         guard = app_services[guard_offset:start_offset]
-        self.assertIn("ModelBBLEService.isUserOptedIn", guard)
+        self.assertIn("ModelBBLEService.shouldStart", guard)
+        shutdown = app_services.split("public func shutdown() async {", 1)[1].split(
+            "// MARK:", 1
+        )[0]
+        self.assertIn("ModelBBLEService.shared.stop()", shutdown)
 
     def test_shipping_interface_creation_is_idempotent(self) -> None:
         view_model = source(VIEW_MODEL)
         method = view_model.split("private func createInterfaces(in repo: InterfaceRepository) {", 1)[1]
         shipping = method.split("#else", 1)[1].split("#endif", 1)[0]
-        self.assertIn("shippingInterfaceAlreadyExists", shipping)
-        self.assertIn("guard !shippingInterfaceAlreadyExists", shipping)
+        self.assertIn("ensureInterfaceEnabled(candidate, in: repo)", shipping)
+        self.assertIn("disabled.enabled = true", view_model)
+        self.assertIn("repo.updateInterface(disabled)", view_model)
+        self.assertIn("existing.mode == candidate.mode", view_model)
+        self.assertIn("existing.config == candidate.config", view_model)
+
+    def test_skip_and_restore_use_idempotent_interface_seeding(self) -> None:
+        view_model = source(VIEW_MODEL)
+        skip = view_model.split("func skipOnboarding(", 1)[1].split("// MARK: - Onboarding Check", 1)[0]
+        self.assertIn("seedDefaultTcpInterface(in: InterfaceRepository())", skip)
+        self.assertNotIn("seedInterfaces(in: InterfaceRepository())", skip)
+        self.assertNotIn("addInterface", skip)
+        default_seed = view_model.split("func seedDefaultTcpInterface(", 1)[1].split(
+            "private func createInterfaces", 1
+        )[0]
+        self.assertIn("TcpCommunityServer.defaultServer", default_seed)
+        self.assertNotIn("selectedInterfaces", default_seed)
+        self.assertNotIn("selectedTcpServer", default_seed)
 
 
 if __name__ == "__main__":
