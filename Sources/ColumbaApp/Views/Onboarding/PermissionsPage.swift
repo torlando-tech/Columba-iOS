@@ -12,6 +12,7 @@ import RNSAPI
 @available(iOS 17.0, macOS 14.0, *)
 struct PermissionsPage: View {
     let notificationsGranted: Bool
+    let isReadOnly: Bool
     let onRequestNotifications: () -> Void
     let bluetoothGranted: Bool
     let onRequestBluetooth: () -> Void
@@ -67,14 +68,20 @@ struct PermissionsPage: View {
                         .font(.system(size: 24))
                         .foregroundStyle(Theme.success)
                 } else {
-                    Button(action: onRequestNotifications) {
-                        Text("Enable")
+                    if isReadOnly {
+                        Text("Not Allowed")
                             .font(.subheadline.bold())
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Theme.accentColor)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .foregroundStyle(Theme.textDisabled)
+                    } else {
+                        Button(action: onRequestNotifications) {
+                            Text("Enable")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(Theme.accentColor)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
                     }
                 }
             }
@@ -112,14 +119,20 @@ struct PermissionsPage: View {
                         .font(.system(size: 24))
                         .foregroundStyle(Theme.success)
                 } else {
-                    Button(action: onRequestBluetooth) {
-                        Text("Enable")
+                    if isReadOnly {
+                        Text("Not Allowed")
                             .font(.subheadline.bold())
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Theme.accentColor)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .foregroundStyle(Theme.textDisabled)
+                    } else {
+                        Button(action: onRequestBluetooth) {
+                            Text("Enable")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(Theme.accentColor)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
                     }
                 }
             }

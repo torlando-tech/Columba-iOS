@@ -88,23 +88,28 @@ struct OnboardingView: View {
                     switch viewModel.currentPage {
                     case 0:
                         #if COLUMBA_MIGRATION_ENABLED
-                        WelcomePage(
-                            onContinue: { viewModel.nextPage() },
-                            onRestoreFile: { data in
-                                let vm = MigrationViewModel(
-                                    identityManager: identityManager,
-                                    settingsRepository: settingsRepository
-                                )
-                                restoreSession = RestoreSession(viewModel: vm)
-                                Task { await vm.handleImportFile(data: data) }
-                            }
-                        )
+                        if viewModel.isReviewingExistingSetup {
+                            WelcomePage(onContinue: { viewModel.nextPage() })
+                        } else {
+                            WelcomePage(
+                                onContinue: { viewModel.nextPage() },
+                                onRestoreFile: { data in
+                                    let vm = MigrationViewModel(
+                                        identityManager: identityManager,
+                                        settingsRepository: settingsRepository
+                                    )
+                                    restoreSession = RestoreSession(viewModel: vm)
+                                    Task { await vm.handleImportFile(data: data) }
+                                }
+                            )
+                        }
                         #else
                         WelcomePage(onContinue: { viewModel.nextPage() })
                         #endif
                     case 1:
                         IdentityPage(
                             displayName: $viewModel.displayName,
+                            isReadOnly: viewModel.isReviewingExistingSetup,
                             onBack: { viewModel.previousPage() },
                             onContinue: { viewModel.nextPage() }
                         )
@@ -112,6 +117,7 @@ struct OnboardingView: View {
                         ConnectivityPage(
                             selectedInterfaces: $viewModel.selectedInterfaces,
                             selectedTcpServer: $viewModel.selectedTcpServer,
+                            isReadOnly: viewModel.isReviewingExistingSetup,
                             onRequestBluetooth: { viewModel.requestBluetoothPermission() },
                             onBack: { viewModel.previousPage() },
                             onContinue: { viewModel.nextPage() }
@@ -119,6 +125,7 @@ struct OnboardingView: View {
                     case 3:
                         PermissionsPage(
                             notificationsGranted: viewModel.notificationsGranted,
+                            isReadOnly: viewModel.isReviewingExistingSetup,
                             onRequestNotifications: {
                                 Task { await viewModel.requestNotificationPermission() }
                             },
@@ -130,7 +137,12 @@ struct OnboardingView: View {
                     #if COLUMBA_RUNTIME_MODEL_B
                     case 4:
                         BackgroundDeliveryPage(
+                            isReadOnly: viewModel.isReviewingExistingSetup,
                             onEnable: {
+                                if viewModel.isReviewingExistingSetup {
+                                    viewModel.nextPage()
+                                    return true
+                                }
                                 // Create the identity now (idempotent) so the NE can
                                 // load it from the shared keychain, activate it, then
                                 // bring the tunnel up. Only advance on success.
@@ -221,6 +233,7 @@ struct OnboardingView: View {
             displayName: viewModel.effectiveDisplayName,
             interfaceNames: viewModel.selectedInterfaceNames,
             notificationsGranted: viewModel.notificationsGranted,
+            isReviewOnly: viewModel.isReviewingExistingSetup,
             isSaving: viewModel.isSaving,
             selectedRNode: viewModel.selectedInterfaces.contains(.rnode),
             identityManager: identityManager,
@@ -229,6 +242,10 @@ struct OnboardingView: View {
                 await viewModel.prepareIdentity(identityManager: identityManager)
             },
             onFinish: {
+                if viewModel.isReviewingExistingSetup {
+                    onCancel?()
+                    return
+                }
                 Task {
                     do {
                         try await viewModel.completeOnboarding(

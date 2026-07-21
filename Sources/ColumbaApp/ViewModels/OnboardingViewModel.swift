@@ -199,6 +199,11 @@ final class OnboardingViewModel {
         try beginSaving()
         defer { isSaving = false }
 
+        // Settings exposes this flow as a non-destructive setup review. The pages
+        // are read-only in that mode, and finishing must not rewrite identity,
+        // notification, or interface preferences from presentation state.
+        guard !isReviewingExistingSetup else { return }
+
         // 1. Resume the identity persisted by preparation/a prior failed activation,
         // or create and retain one before any subsequent throwing operation.
         let local = try await createOrResumeIdentity(
@@ -206,10 +211,6 @@ final class OnboardingViewModel {
             identityManager: identityManager
         )
         let _ = try await identityManager.switchToIdentity(local.identityHash)
-
-        if isReviewingExistingSetup && local.displayName != effectiveDisplayName {
-            await identityManager.renameIdentity(local.identityHash, newName: effectiveDisplayName)
-        }
 
         // 2. Save display name to settings
         await settingsRepository.setDisplayName(effectiveDisplayName)

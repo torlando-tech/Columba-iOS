@@ -12,6 +12,7 @@ import RNSAPI
 @available(iOS 17.0, macOS 14.0, *)
 struct IdentityPage: View {
     @Binding var displayName: String
+    let isReadOnly: Bool
     let onBack: () -> Void
     let onContinue: () -> Void
 
@@ -26,7 +27,13 @@ struct IdentityPage: View {
                 .foregroundStyle(Theme.accentColor)
                 .padding(.bottom, 24)
 
-            Text("Choose a Display Name")
+            Group {
+                if isReadOnly {
+                    Text("Your Display Name")
+                } else {
+                    Text("Choose a Display Name")
+                }
+            }
                 .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.bottom, 8)
@@ -49,6 +56,7 @@ struct IdentityPage: View {
                         .stroke(isNameFocused ? Theme.accentColor : Theme.divider, lineWidth: 1)
                 )
                 .focused($isNameFocused)
+                .disabled(isReadOnly)
                 .padding(.horizontal, 24)
                 .padding(.bottom, 12)
 

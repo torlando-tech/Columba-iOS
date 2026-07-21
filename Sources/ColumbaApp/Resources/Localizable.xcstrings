@@ -920,6 +920,33 @@
           }
         }
       }
+    },
+    "Your Display Name": {
+      "comment": "Read-only heading shown while reviewing an existing setup."
+    },
+    "Current relay": {
+      "comment": "Read-only heading for the relay shown during setup review."
+    },
+    "This is the relay currently configured for Columba. You can change it later in Settings.": {
+      "comment": "Explains that setup review does not edit the relay."
+    },
+    "Current connections": {
+      "comment": "Read-only heading for connection methods shown during setup review."
+    },
+    "This setup review is read-only. Change connection methods in Settings.": {
+      "comment": "Explains where connection methods can be edited."
+    },
+    "Setup Guide Reviewed": {
+      "comment": "Heading after completing a read-only setup review."
+    },
+    "iOS Notification Permission": {
+      "comment": "Label for the operating-system notification authorization status."
+    },
+    "Allowed": {
+      "comment": "Status indicating an iOS permission is allowed."
+    },
+    "Not Allowed": {
+      "comment": "Status indicating an iOS permission is not allowed."
     }
   },
   "version": "1.0"

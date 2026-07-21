@@ -147,7 +147,26 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertNotIn("showOnboardingReview", settings)
         self.assertIn("let isReviewingExistingSetup: Bool", view_model)
         self.assertIn("createdIdentity = existingIdentity", view_model)
-        self.assertIn("identityManager.renameIdentity", view_model)
+        self.assertIn("guard !isReviewingExistingSetup else { return }", view_model)
+        self.assertNotIn("identityManager.renameIdentity", view_model)
+        onboarding_view = source(ONBOARDING_VIEW)
+        self.assertGreaterEqual(
+            onboarding_view.count("isReadOnly: viewModel.isReviewingExistingSetup"),
+            2,
+        )
+        self.assertIn(".disabled(isReadOnly)", identity)
+        self.assertGreaterEqual(connectivity.count(".disabled(isReadOnly)"), 2)
+        self.assertIn("if viewModel.isReviewingExistingSetup", onboarding_view)
+        self.assertIn("isReadOnly: viewModel.isReviewingExistingSetup", onboarding_view)
+        background = source(
+            ROOT / "Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift"
+        )
+        self.assertIn('Text("Continue")', background)
+        self.assertIn("WelcomePage(onContinue: { viewModel.nextPage() })", onboarding_view)
+        self.assertIn("onCancel?()", onboarding_view)
+        self.assertIn('Text("Done")', complete)
+        self.assertIn('Text("iOS Notification Permission")', complete)
+        self.assertIn('Text("Not Allowed")', permissions)
 
     def test_onboarding_copy_is_translation_ready(self) -> None:
         catalog_path = ROOT / "Sources/ColumbaApp/Resources/Localizable.xcstrings"

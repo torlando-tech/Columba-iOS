@@ -23,6 +23,8 @@ import SwiftUI
 
 @available(iOS 17.0, macOS 14.0, *)
 struct BackgroundDeliveryPage: View {
+    /// Setup review is educational only and must not install or restart the tunnel.
+    let isReadOnly: Bool
     /// Performs the enable (create+share identity, install+start tunnel, wait for
     /// connect). Returns success; advancing to the next page is the caller's job on
     /// `true`.
@@ -106,7 +108,15 @@ struct BackgroundDeliveryPage: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         }
-                        Text(isWorking ? "Connecting…" : (errorMessage == nil ? "Enable" : "Try Again"))
+                        if isReadOnly {
+                            Text("Continue")
+                        } else if isWorking {
+                            Text("Connecting…")
+                        } else if errorMessage == nil {
+                            Text("Enable")
+                        } else {
+                            Text("Try Again")
+                        }
                     }
                     .font(.headline)
                     .foregroundStyle(.white)
