@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 import unittest
+import json
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,7 +57,7 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
 
     def test_skip_completes_only_after_success_and_surfaces_failures(self) -> None:
         text = source(ONBOARDING_VIEW)
-        skip_ui = text.split("// Skip button", 1)[1].split("// Page content", 1)[0]
+        skip_ui = text.split("// First-run setup offers", 1)[1].split("// Page content", 1)[0]
         self.assertNotIn("try?", skip_ui)
         self.assertIn("do {", skip_ui)
         self.assertIn("catch {", skip_ui)
@@ -64,17 +65,19 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertIn(".disabled(viewModel.isSaving)", skip_ui)
         self.assertLess(skip_ui.index("try await viewModel.skipOnboarding"), skip_ui.index("onComplete()"))
         self.assertIn('"Unable to Skip Setup"', text)
+        self.assertIn('Text("Use Defaults")', skip_ui)
+        self.assertIn('Button("Close", action: onCancel)', skip_ui)
 
-        restore_parent = text.split("OnboardingRestoreSheet(viewModel: vm)", 1)[1].split(
+        restore_parent = text.split("OnboardingRestoreSheet(viewModel: session.viewModel)", 1)[1].split(
             "#endif", 1
         )[0]
         self.assertNotIn("try?", restore_parent)
         self.assertLess(
             restore_parent.index("try await viewModel.completeRestoredOnboarding"),
-            restore_parent.index("showRestoreSheet = false"),
+            restore_parent.index("restoreSession = nil"),
         )
         self.assertLess(
-            restore_parent.index("showRestoreSheet = false"),
+            restore_parent.index("restoreSession = nil"),
             restore_parent.index("onComplete()"),
         )
 
@@ -104,6 +107,98 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertNotIn("try?", finish)
         self.assertIn("catch {", finish)
         self.assertIn("if viewModel.currentPage < 4", text)
+        self.assertIn("sheet(item: $restoreSession)", text)
+        self.assertIn("RestoreSession(viewModel: vm)", text)
+        self.assertNotIn("showRestoreSheet", text)
+        self.assertNotIn("migrationVM", text)
+
+    def test_educational_copy_and_safe_settings_review(self) -> None:
+        welcome = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/WelcomePage.swift")
+        identity = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/IdentityPage.swift")
+        connectivity = source(CONNECTIVITY_PAGE)
+        permissions = source(PERMISSIONS_PAGE)
+        complete = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/CompletePage.swift")
+        restore = source(RESTORE_SHEET)
+        background = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift")
+        settings = source(SETTINGS_VIEW)
+        view_model = source(VIEW_MODEL)
+
+        self.assertIn("Private messaging without a central account", welcome)
+        self.assertIn("private cryptographic identity", welcome)
+        self.assertIn("Choose a Display Name", identity)
+        self.assertIn("Select one or more", connectivity)
+        self.assertIn("Select at least one connection method", connectivity)
+        self.assertIn("Recommended Relays", connectivity)
+        self.assertIn("iOS Notifications", permissions)
+        self.assertNotIn("Push Notifications", permissions)
+        self.assertNotIn("Someone you know comes online", permissions)
+        self.assertIn("encrypted backup from Settings", complete)
+        self.assertIn("ScrollView", complete)
+        self.assertIn(".fixedSize(horizontal: false, vertical: true)", complete)
+        self.assertIn(".presentationDetents([.large])", complete)
+        self.assertNotIn(".presentationDetents([.medium])", complete)
+        self.assertIn("app settings may be updated", restore)
+        self.assertNotIn("Your traffic isn't sent to any server", background)
+
+        self.assertIn("Review Setup Guide", settings)
+        self.assertIn("existingIdentity: existingIdentity", settings)
+        self.assertIn("fullScreenCover(item: $onboardingReviewIdentity)", settings)
+        self.assertIn("onCancel: { onboardingReviewIdentity = nil }", settings)
+        self.assertNotIn("showOnboardingReview", settings)
+        self.assertIn("let isReviewingExistingSetup: Bool", view_model)
+        self.assertIn("createdIdentity = existingIdentity", view_model)
+        self.assertIn("guard !isReviewingExistingSetup else { return }", view_model)
+        self.assertNotIn("identityManager.renameIdentity", view_model)
+        onboarding_view = source(ONBOARDING_VIEW)
+        self.assertGreaterEqual(
+            onboarding_view.count("isReadOnly: viewModel.isReviewingExistingSetup"),
+            2,
+        )
+        self.assertIn(".disabled(isReadOnly)", identity)
+        self.assertGreaterEqual(connectivity.count(".disabled(isReadOnly)"), 2)
+        self.assertIn("if viewModel.isReviewingExistingSetup", onboarding_view)
+        self.assertIn("isReadOnly: viewModel.isReviewingExistingSetup", onboarding_view)
+        background = source(
+            ROOT / "Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift"
+        )
+        self.assertIn('Text("Continue")', background)
+        self.assertIn("WelcomePage(onContinue: { viewModel.nextPage() })", onboarding_view)
+        self.assertIn("onCancel?()", onboarding_view)
+        self.assertIn('Text("Done")', complete)
+        self.assertIn('Text("iOS Notification Permission")', complete)
+        self.assertIn('Text("Not Allowed")', permissions)
+
+    def test_onboarding_copy_is_translation_ready(self) -> None:
+        catalog_path = ROOT / "Sources/ColumbaApp/Resources/Localizable.xcstrings"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        strings = catalog["strings"]
+
+        required = {
+            "Private messaging without a central account",
+            "Choose a Display Name",
+            "Select one or more. You can change these later.",
+            "Message Alerts",
+            "Existing identities and messages will not be duplicated. Conversation details and app settings may be updated from this backup.",
+            "Review Setup Guide",
+            "Reopen onboarding without deleting your identity or messages.",
+            "Internet Relay",
+            "RNode Radio",
+        }
+        self.assertTrue(required.issubset(strings))
+        self.assertEqual(catalog["sourceLanguage"], "en")
+
+        project = source(ROOT / "Columba.xcodeproj/project.pbxproj")
+        self.assertEqual(project.count("Localizable.xcstrings in Resources"), 4)
+        self.assertIn("Localizable.xcstrings */ = {isa = PBXFileReference", project)
+
+        welcome = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/WelcomePage.swift")
+        permissions = source(PERMISSIONS_PAGE)
+        explainer = source(ROOT / "Sources/ColumbaApp/Views/Components/BackgroundVPNExplainer.swift")
+        view_model = source(VIEW_MODEL)
+        self.assertIn("LocalizedStringKey, icon: String", welcome)
+        self.assertIn("notificationRow(_ text: LocalizedStringKey)", permissions)
+        self.assertIn("text: LocalizedStringKey", explainer)
+        self.assertIn('String(localized: "Internet Relay")', view_model)
 
         migration_view_model = source(MIGRATION_VIEW_MODEL)
         self.assertIn("guard !isImporting else { return }", migration_view_model)

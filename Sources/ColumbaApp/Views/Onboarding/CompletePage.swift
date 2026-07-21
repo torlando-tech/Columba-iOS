@@ -15,6 +15,7 @@ struct CompletePage: View {
     let displayName: String
     let interfaceNames: String
     let notificationsGranted: Bool
+    let isReviewOnly: Bool
     let isSaving: Bool
     let selectedRNode: Bool
     let identityManager: IdentityManager
@@ -33,7 +34,13 @@ struct CompletePage: View {
                 .foregroundStyle(Theme.success)
                 .padding(.bottom, 24)
 
-            Text("You're all set!")
+            Group {
+                if isReviewOnly {
+                    Text("Setup Guide Reviewed")
+                } else {
+                    Text("You're all set!")
+                }
+            }
                 .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.bottom, 24)
@@ -50,7 +57,13 @@ struct CompletePage: View {
                         .foregroundStyle(Theme.accentColor)
                         .frame(width: 24)
 
-                    Text("Notifications")
+                    Group {
+                        if isReviewOnly {
+                            Text("iOS Notification Permission")
+                        } else {
+                            Text("Notifications")
+                        }
+                    }
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
 
@@ -60,12 +73,22 @@ struct CompletePage: View {
                         HStack(spacing: 4) {
                             Image(systemName: "checkmark")
                                 .font(.caption2.bold())
-                            Text("Enabled")
+                            if isReviewOnly {
+                                Text("Allowed")
+                            } else {
+                                Text("Enabled")
+                            }
                         }
                         .font(.subheadline)
                         .foregroundStyle(Theme.success)
                     } else {
-                        Text("Disabled")
+                        Group {
+                            if isReviewOnly {
+                                Text("Not Allowed")
+                            } else {
+                                Text("Disabled")
+                            }
+                        }
                             .font(.subheadline)
                             .foregroundStyle(Theme.textDisabled)
                     }
@@ -92,6 +115,12 @@ struct CompletePage: View {
             }
             .padding(.bottom, 8)
 
+            Text("Share your QR code with another Columba user, then create an encrypted backup from Settings.")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+
             Spacer()
 
             // Finish buttons
@@ -102,7 +131,13 @@ struct CompletePage: View {
                             ProgressView()
                                 .tint(.white)
                         } else {
-                            Text(selectedRNode ? "Configure LoRa Radio" : "Start Messaging")
+                            if isReviewOnly {
+                                Text("Done")
+                            } else if selectedRNode {
+                                Text("Configure LoRa Radio")
+                            } else {
+                                Text("Start Messaging")
+                            }
                         }
                     }
                     .font(.headline)
@@ -151,39 +186,39 @@ struct CompletePage: View {
 
     private var qrCodeSheet: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                Spacer()
+            ScrollView {
+                VStack(spacing: 20) {
+                    Text("Share Your Identity")
+                        .font(.title2.bold())
+                        .foregroundStyle(.white)
 
-                Text("Share Your Identity")
-                    .font(.title2.bold())
-                    .foregroundStyle(.white)
+                    if qrCodeString.isEmpty {
+                        ProgressView()
+                            .tint(Theme.accentColor)
+                        Text("Generating identity...")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+                    } else {
+                        if let cgImage = Self.generateQRCode(from: qrCodeString) {
+                            Image(decorative: cgImage, scale: 1)
+                                .interpolation(.none)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 200, height: 200)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
 
-                if qrCodeString.isEmpty {
-                    ProgressView()
-                        .tint(Theme.accentColor)
-                    Text("Generating identity...")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
-                } else {
-                    if let cgImage = Self.generateQRCode(from: qrCodeString) {
-                        Image(decorative: cgImage, scale: 1)
-                            .interpolation(.none)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 200, height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        Text("Another Columba user can scan this public contact code to add you. It does not contain your private identity keys.")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-
-                    Text("Scan this code to add you as a contact")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 24)
             }
-            .frame(maxWidth: .infinity)
             .background(Theme.backgroundPrimary)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -192,7 +227,7 @@ struct CompletePage: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.large])
     }
 
     // MARK: - QR Code Generation

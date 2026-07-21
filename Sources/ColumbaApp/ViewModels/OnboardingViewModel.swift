@@ -52,11 +52,45 @@ final class OnboardingViewModel {
     }
     @ObservationIgnored private var bluetoothProbe: BluetoothPermissionProbe?
     var isSaving: Bool = false
+    /// True when Settings reopens onboarding around the already-active identity.
+    /// Review mode must never create a second identity merely to preview the flow.
+    let isReviewingExistingSetup: Bool
 
     /// Identity created during onboarding (set by prepareIdentity).
     var createdIdentity: LocalIdentity?
     /// QR code string for the created identity.
     var qrCodeString: String = ""
+
+    init(existingIdentity: LocalIdentity? = nil, interfaceRepository: InterfaceRepository? = nil) {
+        isReviewingExistingSetup = existingIdentity != nil
+        if let existingIdentity {
+            displayName = existingIdentity.displayName
+            createdIdentity = existingIdentity
+
+            let repo = interfaceRepository ?? InterfaceRepository()
+            let enabled = repo.getEnabledInterfaces()
+            selectedInterfaces = Set(enabled.compactMap { entity -> OnboardingInterfaceType? in
+                switch entity.type {
+                case .autoInterface: return .auto
+                case .ble: return .ble
+                case .tcpClient: return .tcp
+                case .rnode: return .rnode
+                default: return nil
+                }
+            })
+            if let tcp = enabled.first(where: { $0.type == .tcpClient }),
+               case .tcpClient(let config) = tcp.config {
+                selectedTcpServer = TcpCommunityServer.servers.first {
+                    $0.host == config.targetHost && $0.port == config.targetPort
+                } ?? TcpCommunityServer(
+                    name: tcp.name,
+                    host: config.targetHost,
+                    port: config.targetPort,
+                    isBootstrap: false
+                )
+            }
+        }
+    }
 
     /// Total number of onboarding pages.
     #if COLUMBA_RUNTIME_MODEL_B
@@ -164,6 +198,11 @@ final class OnboardingViewModel {
     ) async throws {
         try beginSaving()
         defer { isSaving = false }
+
+        // Settings exposes this flow as a non-destructive setup review. The pages
+        // are read-only in that mode, and finishing must not rewrite identity,
+        // notification, or interface preferences from presentation state.
+        guard !isReviewingExistingSetup else { return }
 
         // 1. Resume the identity persisted by preparation/a prior failed activation,
         // or create and retain one before any subsequent throwing operation.
@@ -411,21 +450,21 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
 
     var title: String {
         switch self {
-        case .auto: return "Local WiFi"
-        case .nearby: return "Nearby"
-        case .ble: return "Bluetooth LE"
-        case .tcp: return "Internet (TCP)"
-        case .rnode: return "LoRa Radio"
+        case .auto: return String(localized: "Local Wi-Fi")
+        case .nearby: return String(localized: "Nearby")
+        case .ble: return String(localized: "Bluetooth LE")
+        case .tcp: return String(localized: "Internet Relay")
+        case .rnode: return String(localized: "RNode Radio")
         }
     }
 
     var shortName: String {
         switch self {
-        case .auto: return "WiFi"
-        case .nearby: return "Nearby"
-        case .ble: return "BLE"
-        case .tcp: return "TCP"
-        case .rnode: return "LoRa"
+        case .auto: return String(localized: "Wi-Fi")
+        case .nearby: return String(localized: "Nearby")
+        case .ble: return String(localized: "BLE")
+        case .tcp: return String(localized: "Internet relay")
+        case .rnode: return String(localized: "RNode")
         }
     }
 
@@ -441,21 +480,21 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
 
     var description: String {
         switch self {
-        case .auto: return "Discover peers on your local network"
-        case .nearby: return "Connect directly with nearby Apple devices"
-        case .ble: return "Connect directly to nearby devices"
-        case .tcp: return "Connect to the global Reticulum network"
-        case .rnode: return "Long-range mesh via RNode hardware"
+        case .auto: return String(localized: "Reach Reticulum devices on the same network")
+        case .nearby: return String(localized: "Connect directly with nearby Apple devices")
+        case .ble: return String(localized: "Connect directly to nearby Columba devices")
+        case .tcp: return String(localized: "Reach Reticulum peers through a public relay")
+        case .rnode: return String(localized: "Long-range mesh via RNode hardware")
         }
     }
 
     var subtitle: String {
         switch self {
-        case .auto: return "No internet required"
-        case .nearby: return "Apple devices only, no WiFi needed"
-        case .ble: return "Requires Bluetooth permissions"
-        case .tcp: return "Requires internet connection"
-        case .rnode: return "Configure in Settings after setup"
+        case .auto: return String(localized: "No internet required; iOS may request Local Network access")
+        case .nearby: return String(localized: "Apple devices only, no Wi-Fi needed")
+        case .ble: return String(localized: "No Wi-Fi required; iOS will request Bluetooth access")
+        case .tcp: return String(localized: "Recommended for getting started; requires internet")
+        case .rnode: return String(localized: "Configure in Settings after setup")
         }
     }
 }

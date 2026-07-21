@@ -40,21 +40,21 @@ struct WelcomePage: View {
                 .foregroundStyle(.white)
                 .padding(.bottom, 8)
 
-            Text("A private messenger that requires:")
+            Text("Private messaging without a central account")
                 .font(.subheadline)
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.bottom, 24)
 
             // Privacy bullet points
             VStack(alignment: .leading, spacing: 16) {
-                privacyRow("No phone number")
-                privacyRow("No email address")
-                privacyRow("No sign-up or accounts")
+                privacyRow("No phone number or email", icon: "xmark.circle")
+                privacyRow("No central account or sign-up", icon: "xmark.circle")
+                privacyRow("Internet, local, Bluetooth, and radio connections", icon: "antenna.radiowaves.left.and.right")
             }
             .padding(.horizontal, 40)
             .padding(.bottom, 32)
 
-            Text("Your identity is generated and stored securely on your device. You control it completely.")
+            Text("Columba creates a private cryptographic identity on your device. You control it — and can protect it with an encrypted backup.")
                 .font(.footnote)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -109,9 +109,9 @@ struct WelcomePage: View {
         #endif
     }
 
-    private func privacyRow(_ text: String) -> some View {
+    private func privacyRow(_ text: LocalizedStringKey, icon: String) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "xmark.circle")
+            Image(systemName: icon)
                 .font(.system(size: 20))
                 .foregroundStyle(Theme.accentColor)
                 .frame(width: 24)

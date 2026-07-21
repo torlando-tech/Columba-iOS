@@ -24,18 +24,18 @@ struct VPNNotCommercialExplainer: View {
         VStack(alignment: .leading, spacing: 10) {
             VPNExplainerUI.sectionHeader(icon: "lock.shield.fill", title: "Not a commercial VPN")
 
-            Text("Columba uses Apple's VPN mechanism only as the way to run a background packet tunnel for the mesh. It is not a commercial VPN service.")
+            Text("Columba uses Apple's VPN system to keep its own network component available in the background. It is not a commercial VPN service.")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VPNExplainerUI.explainerRow(
                 icon: "checkmark.shield.fill",
-                text: "Your internet traffic is not proxied, routed through, or monetized by Columba."
+                text: "Your other apps and web traffic are not proxied or routed through Columba."
             )
             VPNExplainerUI.explainerRow(
                 icon: "iphone",
-                text: "The tunnel runs entirely on your device to carry Reticulum traffic. Nothing else is intercepted."
+                text: "The component carries Columba and Reticulum traffic, which may use the relay and interfaces you configured."
             )
         }
     }
@@ -50,7 +50,7 @@ struct VPNBadgeExplainer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VPNExplainerUI.sectionHeader(icon: "rectangle.topthird.inset.filled", title: "The VPN badge")
+            VPNExplainerUI.sectionHeader(icon: "rectangle.topthird.inset.filled", title: "The VPN indicator")
 
             HStack(spacing: 10) {
                 Text("VPN")
@@ -61,13 +61,13 @@ struct VPNBadgeExplainer: View {
                     .background(Theme.accentColor)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                Text("While this is on, iOS shows a VPN badge in your status bar.")
+                Text("While this is on, iOS shows a VPN indicator.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("The badge is iOS telling you a packet tunnel is active. It stays visible the whole time \(featureName) is enabled.")
+            Text("The indicator means iOS has an active network extension. It stays visible while \(featureName) is enabled.")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -81,7 +81,7 @@ struct VPNBadgeExplainer: View {
 @available(iOS 17.0, macOS 14.0, *)
 @MainActor
 enum VPNExplainerUI {
-    static func sectionHeader(icon: String, title: String) -> some View {
+    static func sectionHeader(icon: String, title: LocalizedStringKey) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .semibold))
@@ -93,7 +93,7 @@ enum VPNExplainerUI {
         }
     }
 
-    static func explainerRow(icon: String, text: String) -> some View {
+    static func explainerRow(icon: String, text: LocalizedStringKey) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 16))

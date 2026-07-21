@@ -13,6 +13,7 @@ import RNSAPI
 struct ConnectivityPage: View {
     @Binding var selectedInterfaces: Set<OnboardingInterfaceType>
     @Binding var selectedTcpServer: TcpCommunityServer?
+    let isReadOnly: Bool
     let onRequestBluetooth: () -> Void
     let onBack: () -> Void
     let onContinue: () -> Void
@@ -31,12 +32,24 @@ struct ConnectivityPage: View {
                         .foregroundStyle(Theme.accentColor)
                         .padding(.bottom, 24)
 
-                    Text("Choose a relay")
+                    Group {
+                        if isReadOnly {
+                            Text("Current relay")
+                        } else {
+                            Text("Choose a relay")
+                        }
+                    }
                         .font(.system(size: 28, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(.bottom, 8)
 
-                    Text("Columba reaches the wider network through a community relay server. We've picked a good default — you can change it anytime in Settings.")
+                    Group {
+                        if isReadOnly {
+                            Text("This is the relay currently configured for Columba. You can change it later in Settings.")
+                        } else {
+                            Text("A relay helps your device reach Reticulum peers over the internet. It transports encrypted Reticulum traffic — it does not create an account or hold your identity. We've selected a recommended default.")
+                        }
+                    }
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -48,7 +61,7 @@ struct ConnectivityPage: View {
                         .padding(.horizontal, 24)
                         .padding(.bottom, 12)
 
-                    Text("You can configure connectivity later in Settings")
+                    Text("You can choose another relay later in Settings.")
                         .font(.footnote)
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.bottom, 16)
@@ -61,7 +74,7 @@ struct ConnectivityPage: View {
             serverPickerSheet
         }
         .onAppear {
-            if selectedTcpServer == nil {
+            if !isReadOnly && selectedTcpServer == nil {
                 selectedTcpServer = TcpCommunityServer.defaultServer
             }
         }
@@ -76,12 +89,24 @@ struct ConnectivityPage: View {
                         .foregroundStyle(Theme.accentColor)
                         .padding(.bottom, 24)
 
-                    Text("How will you connect?")
+                    Group {
+                        if isReadOnly {
+                            Text("Current connections")
+                        } else {
+                            Text("How will you connect?")
+                        }
+                    }
                         .font(.system(size: 28, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(.bottom, 8)
 
-                    Text("Select the networks you'd like to use:")
+                    Group {
+                        if isReadOnly {
+                            Text("This setup review is read-only. Change connection methods in Settings.")
+                        } else {
+                            Text("Select one or more. You can change these later.")
+                        }
+                    }
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.bottom, 24)
@@ -103,7 +128,16 @@ struct ConnectivityPage: View {
                             .padding(.bottom, 12)
                     }
 
-                    Text("Bluetooth permission is requested only when you enable Bluetooth LE. RNode permission is requested later during radio setup.")
+                    if !isReadOnly && selectedInterfaces.isEmpty {
+                        Text("Select at least one connection method to continue.")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(Theme.warning)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                            .padding(.bottom, 8)
+                    }
+
+                    Text("Bluetooth access is requested only if you select Bluetooth LE. RNode access is requested later during radio setup.")
                         .font(.footnote)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -118,7 +152,7 @@ struct ConnectivityPage: View {
             serverPickerSheet
         }
         .onAppear {
-            if selectedInterfaces.contains(.tcp) && selectedTcpServer == nil {
+            if !isReadOnly && selectedInterfaces.contains(.tcp) && selectedTcpServer == nil {
                 selectedTcpServer = TcpCommunityServer.defaultServer
             }
         }
@@ -181,6 +215,7 @@ struct ConnectivityPage: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(isReadOnly)
     }
 
     // MARK: - Navigation
@@ -212,6 +247,8 @@ struct ConnectivityPage: View {
                 .background(Theme.accentGradient)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
             }
+            .disabled(!isReadOnly && selectedInterfaces.isEmpty)
+            .opacity(!isReadOnly && selectedInterfaces.isEmpty ? 0.5 : 1)
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 16)
@@ -249,17 +286,18 @@ struct ConnectivityPage: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(isReadOnly)
     }
 
     private var serverPickerSheet: some View {
         NavigationStack {
             List {
-                Section("Bootstrap Servers") {
+                Section("Recommended Relays") {
                     ForEach(TcpCommunityServer.servers.filter { $0.isBootstrap }) { server in
                         serverRow(server)
                     }
                 }
-                Section("Community Servers") {
+                Section("Other Public Relays") {
                     ForEach(TcpCommunityServer.servers.filter { !$0.isBootstrap }) { server in
                         serverRow(server)
                     }

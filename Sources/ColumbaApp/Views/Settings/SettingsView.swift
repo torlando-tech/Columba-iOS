@@ -48,6 +48,8 @@ struct SettingsView: View {
     @State private var showNetworkStatus = false
     @State private var showBLEConnections = false
     @State private var showDataMigration = false
+    @State private var onboardingReviewIdentity: LocalIdentity?
+    @State private var onboardingReviewError: String?
     #if COLUMBA_RUNTIME_MODEL_B
     /// Presents the background-transport explainer / enable sheet.
     @State private var showBackgroundTransport = false
@@ -111,6 +113,11 @@ struct SettingsView: View {
 
                         // Data Migration
                         dataMigrationCard(vm)
+
+                        // Safe, non-destructive entry point for reviewing onboarding.
+                        #if COLUMBA_ONBOARDING_ENABLED
+                        onboardingReviewCard
+                        #endif
 
                         // Advanced section anchor — separates Transport
                         // Mode (and future advanced settings) from the
@@ -191,6 +198,34 @@ struct SettingsView: View {
         #endif
         .onAppear {
             viewModel?.refreshSyncState()
+        }
+        .fullScreenCover(item: $onboardingReviewIdentity) { existingIdentity in
+            #if COLUMBA_ONBOARDING_ENABLED
+            OnboardingView(
+                identityManager: identityManager,
+                settingsRepository: settingsRepository,
+                appServices: appServices,
+                existingIdentity: existingIdentity,
+                onCancel: { onboardingReviewIdentity = nil },
+                onComplete: {
+                    onboardingReviewIdentity = nil
+                    Task { await appServices.restartPythonBackend() }
+                }
+            )
+            #else
+            EmptyView()
+            #endif
+        }
+        .alert(
+            "Unable to Open Setup",
+            isPresented: Binding(
+                get: { onboardingReviewError != nil },
+                set: { if !$0 { onboardingReviewError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { onboardingReviewError = nil }
+        } message: {
+            Text(onboardingReviewError ?? "Please try again.")
         }
         .task {
             if viewModel == nil {
@@ -1353,6 +1388,46 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Onboarding Review
+
+    private var onboardingReviewCard: some View {
+        Button {
+            Task {
+                guard let active = await identityManager.getActiveIdentity() else {
+                    onboardingReviewError = "No active identity is available."
+                    return
+                }
+                onboardingReviewIdentity = active
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "rectangle.stack.badge.play")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Theme.accentColor)
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Review Setup Guide")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Reopen onboarding without deleting your identity or messages.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(16)
+        .glassCard()
     }
 
     // MARK: - Data Migration Card

@@ -23,6 +23,8 @@ import SwiftUI
 
 @available(iOS 17.0, macOS 14.0, *)
 struct BackgroundDeliveryPage: View {
+    /// Setup review is educational only and must not install or restart the tunnel.
+    let isReadOnly: Bool
     /// Performs the enable (create+share identity, install+start tunnel, wait for
     /// connect). Returns success; advancing to the next page is the caller's job on
     /// `true`.
@@ -53,7 +55,7 @@ struct BackgroundDeliveryPage: View {
                         .foregroundStyle(.white)
                         .padding(.bottom, 8)
 
-                    Text("Columba runs a small on-device VPN so it can keep delivering and receiving your messages in the background — even when the app is closed. Your traffic isn't sent to any server; the tunnel only powers Columba's own network node on your device.")
+                    Text("iOS uses its VPN system to let Columba's network component continue running when the app is not open. Only traffic from Columba and Reticulum uses this component; your other apps and web traffic are not routed through Columba.")
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -73,7 +75,7 @@ struct BackgroundDeliveryPage: View {
                             .padding(.bottom, 8)
                     }
 
-                    Text("iOS will ask you to allow the VPN configuration. Columba can't deliver messages in the background without it.")
+                    Text("iOS will ask you to allow the configuration and will show a VPN indicator while Background Delivery is enabled. Delivery still depends on available Reticulum connections.")
                         .font(.caption2)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -106,7 +108,15 @@ struct BackgroundDeliveryPage: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         }
-                        Text(isWorking ? "Connecting…" : (errorMessage == nil ? "Enable" : "Try Again"))
+                        if isReadOnly {
+                            Text("Continue")
+                        } else if isWorking {
+                            Text("Connecting…")
+                        } else if errorMessage == nil {
+                            Text("Enable")
+                        } else {
+                            Text("Try Again")
+                        }
                     }
                     .font(.headline)
                     .foregroundStyle(.white)

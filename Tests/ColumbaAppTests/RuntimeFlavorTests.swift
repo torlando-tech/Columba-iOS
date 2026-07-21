@@ -141,5 +141,42 @@ final class RuntimeFlavorTests: XCTestCase {
         XCTAssertEqual(config.targetHost, TcpCommunityServer.defaultServer.host)
         XCTAssertEqual(config.targetPort, TcpCommunityServer.defaultServer.port)
     }
+
+    @MainActor
+    func testSettingsReviewReusesActiveIdentityAndCurrentCustomRelay() throws {
+        let suiteName = "test.OnboardingReview.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Could not create isolated UserDefaults suite")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(try JSONEncoder().encode([InterfaceEntity]()), forKey: "com.columba.interfaces")
+        let repository = InterfaceRepository(userDefaults: defaults)
+        repository.addInterface(InterfaceEntity(
+            name: "Private relay",
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(targetHost: "relay.example", targetPort: 4242))
+        ))
+        let existing = LocalIdentity(
+            identityHash: "identity-hash",
+            displayName: "Existing Peer",
+            destinationHash: "destination-hash",
+            createdAt: 1,
+            lastUsedAt: 2,
+            isActive: true
+        )
+
+        let viewModel = OnboardingViewModel(
+            existingIdentity: existing,
+            interfaceRepository: repository
+        )
+
+        XCTAssertTrue(viewModel.isReviewingExistingSetup)
+        XCTAssertEqual(viewModel.createdIdentity?.identityHash, existing.identityHash)
+        XCTAssertEqual(viewModel.displayName, existing.displayName)
+        XCTAssertEqual(viewModel.selectedInterfaces, [.tcp])
+        XCTAssertEqual(viewModel.selectedTcpServer?.host, "relay.example")
+        XCTAssertEqual(viewModel.selectedTcpServer?.name, "Private relay")
+    }
     #endif
 }

@@ -31,6 +31,8 @@
 		020 /* IdenticonGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F020 /* IdenticonGenerator.swift */; };
 		021 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* MapView.swift */; platformFilter = ios; };
 		022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F022 /* Assets.xcassets */; };
+		C01110CA1100000000000002 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C01110CA1100000000000001 /* Localizable.xcstrings */; };
+		C01110CA1100000000000003 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C01110CA1100000000000001 /* Localizable.xcstrings */; };
 		0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */; };
 		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
 		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
@@ -466,6 +468,7 @@
 		F020 /* IdenticonGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdenticonGenerator.swift; sourceTree = "<group>"; };
 		F021 /* MapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapView.swift; sourceTree = "<group>"; };
 		F022 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C01110CA1100000000000001 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		F023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F024 /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
 		F025 /* MessageRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRepository.swift; sourceTree = "<group>"; };
@@ -867,6 +870,7 @@
 			isa = PBXGroup;
 			children = (
 				F022 /* Assets.xcassets */,
+				C01110CA1100000000000001 /* Localizable.xcstrings */,
 				F023 /* Info.plist */,
 				F039 /* materialdesignicons.ttf */,
 				F075 /* ColumbaApp.entitlements */,
@@ -1274,6 +1278,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D116F7C8ADEB284C5AF41963 /* Assets.xcassets in Resources */,
+				C01110CA1100000000000003 /* Localizable.xcstrings in Resources */,
 				485B8EFF327C28C1A5F0727B /* materialdesignicons.ttf in Resources */,
 				AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */,
 				C17B4B4AD850DBC3CD27AEC0 /* JetBrainsMono-Bold.ttf in Resources */,
@@ -1293,6 +1298,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				022 /* Assets.xcassets in Resources */,
+				C01110CA1100000000000002 /* Localizable.xcstrings in Resources */,
 				039 /* materialdesignicons.ttf in Resources */,
 				67079BBC2E8309A43DF576E5 /* app in Resources */,
 				DE9220E1D4ABF9A4C2CBA761 /* JetBrainsMono-Regular.ttf in Resources */,
