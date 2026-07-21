@@ -81,7 +81,7 @@ struct VPNBadgeExplainer: View {
 @available(iOS 17.0, macOS 14.0, *)
 @MainActor
 enum VPNExplainerUI {
-    static func sectionHeader(icon: String, title: String) -> some View {
+    static func sectionHeader(icon: String, title: LocalizedStringKey) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .semibold))
@@ -93,7 +93,7 @@ enum VPNExplainerUI {
         }
     }
 
-    static func explainerRow(icon: String, text: String) -> some View {
+    static func explainerRow(icon: String, text: LocalizedStringKey) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 16))

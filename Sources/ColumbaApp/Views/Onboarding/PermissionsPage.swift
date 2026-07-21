@@ -175,7 +175,7 @@ struct PermissionsPage: View {
         }
     }
 
-    private func notificationRow(_ text: String) -> some View {
+    private func notificationRow(_ text: LocalizedStringKey) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "checkmark.circle")
                 .font(.system(size: 18))

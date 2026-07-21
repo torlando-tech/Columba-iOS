@@ -449,21 +449,21 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
 
     var title: String {
         switch self {
-        case .auto: return "Local WiFi"
-        case .nearby: return "Nearby"
-        case .ble: return "Bluetooth LE"
-        case .tcp: return "Internet (TCP)"
-        case .rnode: return "LoRa Radio"
+        case .auto: return String(localized: "Local Wi-Fi")
+        case .nearby: return String(localized: "Nearby")
+        case .ble: return String(localized: "Bluetooth LE")
+        case .tcp: return String(localized: "Internet Relay")
+        case .rnode: return String(localized: "RNode Radio")
         }
     }
 
     var shortName: String {
         switch self {
-        case .auto: return "WiFi"
-        case .nearby: return "Nearby"
-        case .ble: return "BLE"
-        case .tcp: return "TCP"
-        case .rnode: return "LoRa"
+        case .auto: return String(localized: "Wi-Fi")
+        case .nearby: return String(localized: "Nearby")
+        case .ble: return String(localized: "BLE")
+        case .tcp: return String(localized: "Internet relay")
+        case .rnode: return String(localized: "RNode")
         }
     }
 
@@ -479,21 +479,21 @@ enum OnboardingInterfaceType: String, CaseIterable, Hashable {
 
     var description: String {
         switch self {
-        case .auto: return "Reach Reticulum devices on the same network"
-        case .nearby: return "Connect directly with nearby Apple devices"
-        case .ble: return "Connect directly to nearby Columba devices"
-        case .tcp: return "Reach Reticulum peers through a public relay"
-        case .rnode: return "Long-range mesh via RNode hardware"
+        case .auto: return String(localized: "Reach Reticulum devices on the same network")
+        case .nearby: return String(localized: "Connect directly with nearby Apple devices")
+        case .ble: return String(localized: "Connect directly to nearby Columba devices")
+        case .tcp: return String(localized: "Reach Reticulum peers through a public relay")
+        case .rnode: return String(localized: "Long-range mesh via RNode hardware")
         }
     }
 
     var subtitle: String {
         switch self {
-        case .auto: return "No internet required; iOS may request Local Network access"
-        case .nearby: return "Apple devices only, no WiFi needed"
-        case .ble: return "No Wi-Fi required; iOS will request Bluetooth access"
-        case .tcp: return "Recommended for getting started; requires internet"
-        case .rnode: return "Configure in Settings after setup"
+        case .auto: return String(localized: "No internet required; iOS may request Local Network access")
+        case .nearby: return String(localized: "Apple devices only, no Wi-Fi needed")
+        case .ble: return String(localized: "No Wi-Fi required; iOS will request Bluetooth access")
+        case .tcp: return String(localized: "Recommended for getting started; requires internet")
+        case .rnode: return String(localized: "Configure in Settings after setup")
         }
     }
 }

@@ -1,0 +1,926 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "A relay helps your device reach Reticulum peers over the internet. It transports encrypted Reticulum traffic — it does not create an account or hold your identity. We've selected a recommended default.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A relay helps your device reach Reticulum peers over the internet. It transports encrypted Reticulum traffic — it does not create an account or hold your identity. We've selected a recommended default."
+          }
+        }
+      }
+    },
+    "Allow Columba to alert you after it receives:": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow Columba to alert you after it receives:"
+          }
+        }
+      }
+    },
+    "Allow notifications to stay informed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow notifications to stay informed"
+          }
+        }
+      }
+    },
+    "Another Columba user can scan this public contact code to add you. It does not contain your private identity keys.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another Columba user can scan this public contact code to add you. It does not contain your private identity keys."
+          }
+        }
+      }
+    },
+    "Apple devices only, no Wi-Fi needed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple devices only, no Wi-Fi needed"
+          }
+        }
+      }
+    },
+    "BLE": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "BLE"
+          }
+        }
+      }
+    },
+    "Back": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back"
+          }
+        }
+      }
+    },
+    "Background Delivery": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background Delivery"
+          }
+        }
+      }
+    },
+    "Backup Contents": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backup Contents"
+          }
+        }
+      }
+    },
+    "Bluetooth": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bluetooth"
+          }
+        }
+      }
+    },
+    "Bluetooth LE": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bluetooth LE"
+          }
+        }
+      }
+    },
+    "Bluetooth access is requested only if you select Bluetooth LE. RNode access is requested later during radio setup.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bluetooth access is requested only if you select Bluetooth LE. RNode access is requested later during radio setup."
+          }
+        }
+      }
+    },
+    "Cancel": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        }
+      }
+    },
+    "Choose a Display Name": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a Display Name"
+          }
+        }
+      }
+    },
+    "Choose a relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a relay"
+          }
+        }
+      }
+    },
+    "Close": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close"
+          }
+        }
+      }
+    },
+    "Columba creates a private cryptographic identity on your device. You control it — and can protect it with an encrypted backup.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Columba creates a private cryptographic identity on your device. You control it — and can protect it with an encrypted backup."
+          }
+        }
+      }
+    },
+    "Columba generates the private cryptographic identity. This name does not need to be unique, and you can change it anytime.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Columba generates the private cryptographic identity. This name does not need to be unique, and you can change it anytime."
+          }
+        }
+      }
+    },
+    "Columba uses Apple's VPN system to keep its own network component available in the background. It is not a commercial VPN service.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Columba uses Apple's VPN system to keep its own network component available in the background. It is not a commercial VPN service."
+          }
+        }
+      }
+    },
+    "Configure in Settings after setup": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configure in Settings after setup"
+          }
+        }
+      }
+    },
+    "Connect directly to nearby Columba devices": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect directly to nearby Columba devices"
+          }
+        }
+      }
+    },
+    "Connect directly with nearby Apple devices": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect directly with nearby Apple devices"
+          }
+        }
+      }
+    },
+    "Continue": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue"
+          }
+        }
+      }
+    },
+    "Decrypt": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Decrypt"
+          }
+        }
+      }
+    },
+    "Disabled": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disabled"
+          }
+        }
+      }
+    },
+    "Done": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Done"
+          }
+        }
+      }
+    },
+    "Enable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable"
+          }
+        }
+      }
+    },
+    "Enable Background Delivery": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable Background Delivery"
+          }
+        }
+      }
+    },
+    "Enabled": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enabled"
+          }
+        }
+      }
+    },
+    "Enter Backup Password": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter Backup Password"
+          }
+        }
+      }
+    },
+    "Existing identities and messages will not be duplicated. Conversation details and app settings may be updated from this backup.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Existing identities and messages will not be duplicated. Conversation details and app settings may be updated from this backup."
+          }
+        }
+      }
+    },
+    "Generating identity...": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generating identity..."
+          }
+        }
+      }
+    },
+    "Get Started": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Get Started"
+          }
+        }
+      }
+    },
+    "How will you connect?": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How will you connect?"
+          }
+        }
+      }
+    },
+    "Incorrect password. Please try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incorrect password. Please try again."
+          }
+        }
+      }
+    },
+    "Internet Relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Internet Relay"
+          }
+        }
+      }
+    },
+    "Internet relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Internet relay"
+          }
+        }
+      }
+    },
+    "Internet, local, Bluetooth, and radio connections": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Internet, local, Bluetooth, and radio connections"
+          }
+        }
+      }
+    },
+    "Local Wi-Fi": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local Wi-Fi"
+          }
+        }
+      }
+    },
+    "Long-range mesh via RNode hardware": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Long-range mesh via RNode hardware"
+          }
+        }
+      }
+    },
+    "Message Alerts": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message Alerts"
+          }
+        }
+      }
+    },
+    "Nearby": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nearby"
+          }
+        }
+      }
+    },
+    "New messages": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New messages"
+          }
+        }
+      }
+    },
+    "No Wi-Fi required; iOS will request Bluetooth access": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Wi-Fi required; iOS will request Bluetooth access"
+          }
+        }
+      }
+    },
+    "No active identity is available.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No active identity is available."
+          }
+        }
+      }
+    },
+    "No central account or sign-up": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No central account or sign-up"
+          }
+        }
+      }
+    },
+    "No internet required; iOS may request Local Network access": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No internet required; iOS may request Local Network access"
+          }
+        }
+      }
+    },
+    "No phone number or email": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No phone number or email"
+          }
+        }
+      }
+    },
+    "Notification permission does not keep Columba connected in the background. You can change access anytime in iOS Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification permission does not keep Columba connected in the background. You can change access anytime in iOS Settings."
+          }
+        }
+      }
+    },
+    "Notifications": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications"
+          }
+        }
+      }
+    },
+    "OK": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OK"
+          }
+        }
+      }
+    },
+    "Optional network and Bluetooth events": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Optional network and Bluetooth events"
+          }
+        }
+      }
+    },
+    "Other Public Relays": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other Public Relays"
+          }
+        }
+      }
+    },
+    "Please try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Please try again."
+          }
+        }
+      }
+    },
+    "Private messaging without a central account": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Private messaging without a central account"
+          }
+        }
+      }
+    },
+    "RNode": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "RNode"
+          }
+        }
+      }
+    },
+    "RNode Radio": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "RNode Radio"
+          }
+        }
+      }
+    },
+    "Reach Reticulum devices on the same network": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reach Reticulum devices on the same network"
+          }
+        }
+      }
+    },
+    "Reach Reticulum peers through a public relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reach Reticulum peers through a public relay"
+          }
+        }
+      }
+    },
+    "Reading backup...": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading backup..."
+          }
+        }
+      }
+    },
+    "Recommended Relays": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recommended Relays"
+          }
+        }
+      }
+    },
+    "Recommended for getting started; requires internet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recommended for getting started; requires internet"
+          }
+        }
+      }
+    },
+    "Relay server": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay server"
+          }
+        }
+      }
+    },
+    "Reopen onboarding without deleting your identity or messages.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reopen onboarding without deleting your identity or messages."
+          }
+        }
+      }
+    },
+    "Restore Backup": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore Backup"
+          }
+        }
+      }
+    },
+    "Restore Complete!": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore Complete!"
+          }
+        }
+      }
+    },
+    "Restore Data": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore Data"
+          }
+        }
+      }
+    },
+    "Restore from backup": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore from backup"
+          }
+        }
+      }
+    },
+    "Review Setup Guide": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review Setup Guide"
+          }
+        }
+      }
+    },
+    "Select Server": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select Server"
+          }
+        }
+      }
+    },
+    "Select at least one connection method to continue.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select at least one connection method to continue."
+          }
+        }
+      }
+    },
+    "Select one or more. You can change these later.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select one or more. You can change these later."
+          }
+        }
+      }
+    },
+    "Share Your Identity": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share Your Identity"
+          }
+        }
+      }
+    },
+    "Share your QR code with another Columba user, then create an encrypted backup from Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share your QR code with another Columba user, then create an encrypted backup from Settings."
+          }
+        }
+      }
+    },
+    "Show QR Code": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show QR Code"
+          }
+        }
+      }
+    },
+    "Show alerts for received messages and events": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show alerts for received messages and events"
+          }
+        }
+      }
+    },
+    "The indicator means iOS has an active network extension. It stays visible while Background Delivery is enabled.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The indicator means iOS has an active network extension. It stays visible while Background Delivery is enabled."
+          }
+        }
+      }
+    },
+    "The indicator means iOS has an active network extension. It stays visible while Background Transport is enabled.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The indicator means iOS has an active network extension. It stays visible while Background Transport is enabled."
+          }
+        }
+      }
+    },
+    "This backup is encrypted. Enter the password used when creating it.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This backup is encrypted. Enter the password used when creating it."
+          }
+        }
+      }
+    },
+    "This is the changeable name other people will see.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This is the changeable name other people will see."
+          }
+        }
+      }
+    },
+    "Try Again": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try Again"
+          }
+        }
+      }
+    },
+    "Unable to Open Setup": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to Open Setup"
+          }
+        }
+      }
+    },
+    "Use Defaults": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use Defaults"
+          }
+        }
+      }
+    },
+    "VPN": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VPN"
+          }
+        }
+      }
+    },
+    "Welcome to Columba": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Welcome to Columba"
+          }
+        }
+      }
+    },
+    "While this is on, iOS shows a VPN indicator.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "While this is on, iOS shows a VPN indicator."
+          }
+        }
+      }
+    },
+    "Wi-Fi": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wi-Fi"
+          }
+        }
+      }
+    },
+    "You can choose another relay later in Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You can choose another relay later in Settings."
+          }
+        }
+      }
+    },
+    "You're all set!": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You're all set!"
+          }
+        }
+      }
+    },
+    "iOS Notifications": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS Notifications"
+          }
+        }
+      }
+    },
+    "iOS uses its VPN system to let Columba's network component continue running when the app is not open. Only traffic from Columba and Reticulum uses this component; your other apps and web traffic are not routed through Columba.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS uses its VPN system to let Columba's network component continue running when the app is not open. Only traffic from Columba and Reticulum uses this component; your other apps and web traffic are not routed through Columba."
+          }
+        }
+      }
+    },
+    "iOS will ask you to allow the configuration and will show a VPN indicator while Background Delivery is enabled. Delivery still depends on available Reticulum connections.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS will ask you to allow the configuration and will show a VPN indicator while Background Delivery is enabled. Delivery still depends on available Reticulum connections."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

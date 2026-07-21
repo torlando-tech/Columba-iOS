@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 import unittest
+import json
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -137,6 +138,38 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertIn("let isReviewingExistingSetup: Bool", view_model)
         self.assertIn("createdIdentity = existingIdentity", view_model)
         self.assertIn("identityManager.renameIdentity", view_model)
+
+    def test_onboarding_copy_is_translation_ready(self) -> None:
+        catalog_path = ROOT / "Sources/ColumbaApp/Resources/Localizable.xcstrings"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        strings = catalog["strings"]
+
+        required = {
+            "Private messaging without a central account",
+            "Choose a Display Name",
+            "Select one or more. You can change these later.",
+            "Message Alerts",
+            "Existing identities and messages will not be duplicated. Conversation details and app settings may be updated from this backup.",
+            "Review Setup Guide",
+            "Reopen onboarding without deleting your identity or messages.",
+            "Internet Relay",
+            "RNode Radio",
+        }
+        self.assertTrue(required.issubset(strings))
+        self.assertEqual(catalog["sourceLanguage"], "en")
+
+        project = source(ROOT / "Columba.xcodeproj/project.pbxproj")
+        self.assertEqual(project.count("Localizable.xcstrings in Resources"), 4)
+        self.assertIn("Localizable.xcstrings */ = {isa = PBXFileReference", project)
+
+        welcome = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/WelcomePage.swift")
+        permissions = source(PERMISSIONS_PAGE)
+        explainer = source(ROOT / "Sources/ColumbaApp/Views/Components/BackgroundVPNExplainer.swift")
+        view_model = source(VIEW_MODEL)
+        self.assertIn("LocalizedStringKey, icon: String", welcome)
+        self.assertIn("notificationRow(_ text: LocalizedStringKey)", permissions)
+        self.assertIn("text: LocalizedStringKey", explainer)
+        self.assertIn('String(localized: "Internet Relay")', view_model)
 
         migration_view_model = source(MIGRATION_VIEW_MODEL)
         self.assertIn("guard !isImporting else { return }", migration_view_model)

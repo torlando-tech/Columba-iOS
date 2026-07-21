@@ -109,7 +109,7 @@ struct WelcomePage: View {
         #endif
     }
 
-    private func privacyRow(_ text: String, icon: String) -> some View {
+    private func privacyRow(_ text: LocalizedStringKey, icon: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 20))
