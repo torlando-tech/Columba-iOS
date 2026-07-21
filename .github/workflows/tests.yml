@@ -72,7 +72,8 @@ jobs:
           set -euo pipefail
           python3 -B -m unittest \
             Tests.static.test_host_entitlements_contract \
-            Tests.static.test_ci_artifact_isolation
+            Tests.static.test_ci_artifact_isolation \
+            Tests.static.test_fetch_python_resilience
 
       - name: Build shipping artifact (embedded Python)
         run: |

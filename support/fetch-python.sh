@@ -18,7 +18,15 @@ URL="https://github.com/beeware/Python-Apple-support/releases/download/${RELEASE
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FW_DIR="$ROOT/Frameworks"
+DOWNLOAD_PATH="$FW_DIR/${TARBALL}.part"
+STAGE_DIR="$FW_DIR/.python-stage.$$"
 mkdir -p "$FW_DIR"
+
+cleanup() {
+    rm -f "$DOWNLOAD_PATH"
+    rm -rf "$STAGE_DIR"
+}
+trap cleanup EXIT
 
 # Bail early if the right version is already installed.
 if [ -f "$FW_DIR/VERSIONS" ] && grep -q "Build: ${PY_BUILD}" "$FW_DIR/VERSIONS"; then
@@ -26,18 +34,42 @@ if [ -f "$FW_DIR/VERSIONS" ] && grep -q "Build: ${PY_BUILD}" "$FW_DIR/VERSIONS";
     exit 0
 fi
 
+# Xcode Cloud occasionally resets long GitHub release-asset connections. Retry
+# every curl-class failure, including exit 35 (TLS/connection reset), while
+# bounding both connection setup and the total retry window.
+rm -f "$DOWNLOAD_PATH"
 echo "==> Fetching $TARBALL"
-curl -fL --progress-bar -o "$FW_DIR/$TARBALL" "$URL"
+curl --fail --location --progress-bar \
+    --retry 5 \
+    --retry-all-errors \
+    --retry-delay 2 \
+    --retry-max-time 600 \
+    --connect-timeout 30 \
+    --output "$DOWNLOAD_PATH" \
+    "$URL"
 
-echo "==> Removing stale Python.xcframework (if any)"
-rm -rf "$FW_DIR/Python.xcframework" "$FW_DIR/testbed" "$FW_DIR/VERSIONS"
+# Validate and fully extract into staging before touching an existing runtime.
+# A truncated 2xx response must not destroy a previously valid framework.
+echo "==> Validating archive"
+tar -tzf "$DOWNLOAD_PATH" >/dev/null
 
+rm -rf "$STAGE_DIR"
+mkdir -p "$STAGE_DIR"
 echo "==> Extracting"
-tar -xzf "$FW_DIR/$TARBALL" -C "$FW_DIR"
-rm "$FW_DIR/$TARBALL"
-# The testbed/ directory is a BeeWare reference Xcode project — we don't need it
-# in this repo. Saves ~5 MB on a fresh checkout.
-rm -rf "$FW_DIR/testbed"
+tar -xzf "$DOWNLOAD_PATH" -C "$STAGE_DIR"
+
+if [ ! -d "$STAGE_DIR/Python.xcframework" ] || [ ! -f "$STAGE_DIR/VERSIONS" ]; then
+    echo "error: downloaded archive is missing Python.xcframework or VERSIONS" >&2
+    exit 1
+fi
+
+echo "==> Replacing stale Python.xcframework (if any)"
+rm -rf "$FW_DIR/Python.xcframework" "$FW_DIR/testbed" "$FW_DIR/VERSIONS"
+mv "$STAGE_DIR/Python.xcframework" "$FW_DIR/Python.xcframework"
+mv "$STAGE_DIR/VERSIONS" "$FW_DIR/VERSIONS"
+
+# The testbed/ directory is a BeeWare reference Xcode project — we don't need it.
+rm -rf "$STAGE_DIR/testbed"
 
 echo "==> Done. Python.xcframework installed:"
 cat "$FW_DIR/VERSIONS"
