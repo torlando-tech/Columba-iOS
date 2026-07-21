@@ -134,7 +134,9 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
 
         self.assertIn("Review Setup Guide", settings)
         self.assertIn("existingIdentity: existingIdentity", settings)
-        self.assertIn("onCancel: { showOnboardingReview = false }", settings)
+        self.assertIn("fullScreenCover(item: $onboardingReviewIdentity)", settings)
+        self.assertIn("onCancel: { onboardingReviewIdentity = nil }", settings)
+        self.assertNotIn("showOnboardingReview", settings)
         self.assertIn("let isReviewingExistingSetup: Bool", view_model)
         self.assertIn("createdIdentity = existingIdentity", view_model)
         self.assertIn("identityManager.renameIdentity", view_model)

@@ -48,7 +48,6 @@ struct SettingsView: View {
     @State private var showNetworkStatus = false
     @State private var showBLEConnections = false
     @State private var showDataMigration = false
-    @State private var showOnboardingReview = false
     @State private var onboardingReviewIdentity: LocalIdentity?
     @State private var onboardingReviewError: String?
     #if COLUMBA_RUNTIME_MODEL_B
@@ -200,23 +199,19 @@ struct SettingsView: View {
         .onAppear {
             viewModel?.refreshSyncState()
         }
-        .fullScreenCover(isPresented: $showOnboardingReview, onDismiss: {
-            onboardingReviewIdentity = nil
-        }) {
+        .fullScreenCover(item: $onboardingReviewIdentity) { existingIdentity in
             #if COLUMBA_ONBOARDING_ENABLED
-            if let existingIdentity = onboardingReviewIdentity {
-                OnboardingView(
-                    identityManager: identityManager,
-                    settingsRepository: settingsRepository,
-                    appServices: appServices,
-                    existingIdentity: existingIdentity,
-                    onCancel: { showOnboardingReview = false },
-                    onComplete: {
-                        showOnboardingReview = false
-                        Task { await appServices.restartPythonBackend() }
-                    }
-                )
-            }
+            OnboardingView(
+                identityManager: identityManager,
+                settingsRepository: settingsRepository,
+                appServices: appServices,
+                existingIdentity: existingIdentity,
+                onCancel: { onboardingReviewIdentity = nil },
+                onComplete: {
+                    onboardingReviewIdentity = nil
+                    Task { await appServices.restartPythonBackend() }
+                }
+            )
             #else
             EmptyView()
             #endif
@@ -1405,7 +1400,6 @@ struct SettingsView: View {
                     return
                 }
                 onboardingReviewIdentity = active
-                showOnboardingReview = true
             }
         } label: {
             HStack(spacing: 12) {
