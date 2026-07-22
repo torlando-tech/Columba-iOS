@@ -17,7 +17,8 @@ import CryptoKit
 #if canImport(UIKit)
 import UIKit
 #endif
-#if os(iOS)
+#if canImport(Darwin)
+import Darwin
 #endif
 import os.log
 
@@ -85,6 +86,184 @@ enum DiagLog {
     }
     #endif
     #endif
+}
+
+/// Low-overhead, privacy-safe runtime instrumentation for physical-device soak tests.
+///
+/// Samples cumulative process CPU every 15 seconds, observes thermal-state changes,
+/// and aggregates announce and path-table persistence activity. Diagnostic output
+/// contains counts and interface classes only: no endpoints, hashes, names, or content.
+final class RuntimeActivityMonitor: @unchecked Sendable {
+    static let shared = RuntimeActivityMonitor()
+
+    private enum AnnounceSource {
+        case tcp
+        case ble
+        case auto
+        case other
+    }
+
+    private struct Counters {
+        var announceTCP = 0
+        var announceBLE = 0
+        var announceAuto = 0
+        var announceOther = 0
+        var pathWrites = 0
+        var pathWriteMilliseconds = 0.0
+        var pathWriteMaxMilliseconds = 0.0
+
+        var announceTotal: Int {
+            announceTCP + announceBLE + announceAuto + announceOther
+        }
+    }
+
+    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "network.columba.runtime-activity", qos: .utility)
+    private var timer: DispatchSourceTimer?
+    private var thermalObserver: NSObjectProtocol?
+    private var counters = Counters()
+    private var lastSampleUptime = ProcessInfo.processInfo.systemUptime
+    private var lastCPUSeconds = 0.0
+
+    private init() {}
+
+    func start() {
+        lock.lock()
+        guard timer == nil else {
+            lock.unlock()
+            return
+        }
+        counters = Counters()
+        lastSampleUptime = ProcessInfo.processInfo.systemUptime
+        lastCPUSeconds = Self.processCPUSeconds()
+
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 15, repeating: 15)
+        timer.setEventHandler { [weak self] in
+            self?.emitSample(reason: "periodic")
+        }
+        self.timer = timer
+        thermalObserver = NotificationCenter.default.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.emitSample(reason: "thermal_change")
+        }
+        lock.unlock()
+
+        timer.activate()
+        emitSample(reason: "start")
+    }
+
+    func stop() {
+        lock.lock()
+        guard let timer else {
+            lock.unlock()
+            return
+        }
+        let observer = thermalObserver
+        self.timer = nil
+        thermalObserver = nil
+        lock.unlock()
+
+        emitSample(reason: "stop")
+        timer.cancel()
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    func recordAnnounce(interfaceName: String, configuredType: InterfaceType?) {
+        let source = Self.classify(
+            interfaceName: interfaceName,
+            configuredType: configuredType
+        )
+        lock.lock()
+        switch source {
+        case .tcp: counters.announceTCP += 1
+        case .ble: counters.announceBLE += 1
+        case .auto: counters.announceAuto += 1
+        case .other: counters.announceOther += 1
+        }
+        lock.unlock()
+    }
+
+    func recordPathTableWrite(durationMilliseconds: Double) {
+        lock.lock()
+        counters.pathWrites += 1
+        counters.pathWriteMilliseconds += durationMilliseconds
+        counters.pathWriteMaxMilliseconds = max(
+            counters.pathWriteMaxMilliseconds,
+            durationMilliseconds
+        )
+        lock.unlock()
+    }
+
+    private static func classify(
+        interfaceName: String,
+        configuredType: InterfaceType?
+    ) -> AnnounceSource {
+        if let configuredType {
+            switch configuredType {
+            case .tcpClient, .tcpServer: return .tcp
+            case .ble: return .ble
+            case .autoInterface, .multipeer: return .auto
+            case .rnode: return .other
+            }
+        }
+
+        // Dynamically spawned Auto/BLE peer interfaces do not have a matching
+        // InterfaceEntity, so retain a class-name fallback for those children.
+        let normalized = interfaceName.lowercased()
+        if normalized.contains("tcp") { return .tcp }
+        if normalized.contains("bluetooth") || normalized.contains("ble") { return .ble }
+        if normalized.contains("auto") || normalized.contains("multipeer") { return .auto }
+        return .other
+    }
+
+    private func emitSample(reason: String) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let cpuNow = Self.processCPUSeconds()
+
+        lock.lock()
+        let elapsed = max(0.001, now - lastSampleUptime)
+        let cpuPercent = max(0, cpuNow - lastCPUSeconds) / elapsed * 100
+        let snapshot = counters
+        counters = Counters()
+        lastSampleUptime = now
+        lastCPUSeconds = cpuNow
+        lock.unlock()
+
+        let announceRate = Double(snapshot.announceTotal) / elapsed * 60
+        let pathAverage = snapshot.pathWrites == 0
+            ? 0
+            : snapshot.pathWriteMilliseconds / Double(snapshot.pathWrites)
+        let line = "[PERF] reason=\(reason) thermal=\(Self.thermalStateName()) sample_seconds=\(String(format: "%.1f", elapsed)) cpu_pct=\(String(format: "%.1f", cpuPercent)) announce_total=\(snapshot.announceTotal) announce_per_min=\(String(format: "%.1f", announceRate)) announce_tcp=\(snapshot.announceTCP) announce_ble=\(snapshot.announceBLE) announce_auto=\(snapshot.announceAuto) announce_other=\(snapshot.announceOther) path_writes=\(snapshot.pathWrites) path_write_ms_avg=\(String(format: "%.3f", pathAverage)) path_write_ms_max=\(String(format: "%.3f", snapshot.pathWriteMaxMilliseconds))"
+        DiagLog.log(line)
+    }
+
+    private static func thermalStateName() -> String {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: return "nominal"
+        case .fair: return "fair"
+        case .serious: return "serious"
+        case .critical: return "critical"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private static func processCPUSeconds() -> Double {
+        #if canImport(Darwin)
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else { return 0 }
+        let user = Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1_000_000
+        let system = Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1_000_000
+        return user + system
+        #else
+        return 0
+        #endif
+    }
 }
 
 /// Central LXMF service layer for the SwiftUI application.
@@ -818,6 +997,7 @@ public final class AppServices {
     /// - Throws: InterfaceError, DatabaseError, or other initialization errors
     public func initialize(tcpServerAddress: String) async throws {
         DiagLog.clear()
+        RuntimeActivityMonitor.shared.start()
         DiagLog.log("[INIT] Starting with TCP server: \(tcpServerAddress)")
 
         // 1. Load identity from persistent storage (try Keychain first, then file)
@@ -2413,6 +2593,13 @@ public final class AppServices {
             // NodeDetailsView) can parse limits + stamp cost from it.
             let appData = Data(hexString: appDataHex) ?? Data()
             let displayName = AppDataParser.displayName(from: appData, aspect: aspect)
+            let configuredType = pythonInterfaceEntities.values.first {
+                expectedSectionName(for: $0) == interfaceName
+            }?.type
+            RuntimeActivityMonitor.shared.recordAnnounce(
+                interfaceName: interfaceName,
+                configuredType: configuredType
+            )
             DiagLog.log("[RNS] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\" hops=\(hops)")
 
             // Aspect is now the SOLE signal Contact.init uses to type an
@@ -2454,7 +2641,10 @@ public final class AppServices {
                     isLXSTTelephony: aspect == "lxst.telephony",
                     isKnownDestination: true
                 )
-                await pathTable.insert(entry)
+                let metrics = await pathTable.insert(entry)
+                RuntimeActivityMonitor.shared.recordPathTableWrite(
+                    durationMilliseconds: metrics.persistenceDurationMilliseconds
+                )
             }
 
             NotificationCenter.default.post(
@@ -2588,6 +2778,7 @@ public final class AppServices {
     ///   - tcpServerAddress: TCP server address (e.g., "10.0.0.1:4242")
     public func initialize(identity: Identity, identityHash: String, tcpServerAddress: String) async throws {
         DiagLog.clear()
+        RuntimeActivityMonitor.shared.start()
         DiagLog.log("[INIT2] Starting with identity: \(identityHash), tcp: \(tcpServerAddress)")
 
         self.identity = identity
@@ -3677,6 +3868,7 @@ public final class AppServices {
         await stopAutoInterface()
 
         isConnected = false
+        RuntimeActivityMonitor.shared.stop()
         logger.info("AppServices shutdown complete")
     }
 
