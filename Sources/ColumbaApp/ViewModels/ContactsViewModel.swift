@@ -148,7 +148,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
     ///
     /// Detects propagation nodes by parsing appData with PropagationNodeInfo.
     public init(from entry: PathEntry) {
-        let hex = entry.destinationHash.map { String(format: "%02x", $0) }.joined()
+        let hex = Self.hexString(for: entry.destinationHash)
         self.id = hex
         self.displayName = entry.displayName
         self.identityHash = entry.destinationHash
@@ -199,7 +199,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
 
     /// Create from ConversationRecord.
     public init(from record: ConversationRecord) {
-        let hex = record.destinationHash.map { String(format: "%02x", $0) }.joined()
+        let hex = Self.hexString(for: record.destinationHash)
         self.id = hex
         self.displayName = record.displayName
         self.identityHash = record.destinationHash
@@ -256,6 +256,20 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.interfaceId = interfaceId
         self.aspect = aspect
     }
+
+    private static let lowercaseHex = Array("0123456789abcdef".utf8)
+
+    /// Avoid `String(format:)` allocation for every byte while materializing
+    /// thousands of path-table rows on the main actor.
+    private static func hexString(for data: Data) -> String {
+        var output = [UInt8]()
+        output.reserveCapacity(data.count * 2)
+        for byte in data {
+            output.append(lowercaseHex[Int(byte >> 4)])
+            output.append(lowercaseHex[Int(byte & 0x0f)])
+        }
+        return String(decoding: output, as: UTF8.self)
+    }
 }
 
 // MARK: - Tab Selection
@@ -296,13 +310,24 @@ public final class ContactsViewModel {
     public var myContacts: [Contact] = []
 
     /// Network announces from the mesh (from path table).
-    public var networkAnnounces: [Contact] = []
+    public var networkAnnounces: [Contact] = [] {
+        didSet { rebuildFilteredNetworkAnnounces() }
+    }
+
+    /// Cached visible result. Rebuilt only when source data or filters change,
+    /// never merely because SwiftUI reevaluates the Network tab while scrolling.
+    public private(set) var filteredNetworkAnnounces: [Contact] = []
 
     /// Buffered new announces that haven't been merged into the visible
     /// list yet. The Network tab pushes incoming announces here instead
     /// of inserting them inline so the rendered order stays stable while
     /// the user is scrolling — a "show N new" pill at the top flushes.
-    public var pendingAnnounces: [Contact] = []
+    public var pendingAnnounces: [Contact] = [] {
+        didSet { rebuildFilteredPendingAnnounces() }
+    }
+
+    /// Cached banner result for the same reason as the visible Network list.
+    public private(set) var filteredPendingAnnounces: [Contact] = []
 
     /// Currently selected tab.
     public var selectedTab: ContactsTab = .myContacts
@@ -320,13 +345,28 @@ public final class ContactsViewModel {
     public var errorMessage: String?
 
     /// Search text.
-    public var searchText: String = ""
+    public var searchText: String = "" {
+        didSet {
+            rebuildFilteredNetworkAnnounces()
+            rebuildFilteredPendingAnnounces()
+        }
+    }
 
     /// Network announces aspect filter.
-    public var announceFilter: AnnounceFilter = .peers
+    public var announceFilter: AnnounceFilter = .peers {
+        didSet {
+            rebuildFilteredNetworkAnnounces()
+            rebuildFilteredPendingAnnounces()
+        }
+    }
 
     /// Network announces interface filter.
-    public var interfaceFilter: InterfaceFilter = .all
+    public var interfaceFilter: InterfaceFilter = .all {
+        didSet {
+            rebuildFilteredNetworkAnnounces()
+            rebuildFilteredPendingAnnounces()
+        }
+    }
 
     /// Currently selected relay node hash (lxmf.propagation aspect, from PropagationNodeManager).
     public var selectedRelayHash: Data?
@@ -346,6 +386,11 @@ public final class ContactsViewModel {
     /// Task for streaming path updates.
     private var updateTask: Task<Void, Never>?
 
+    /// Avoid rebuilding thousands of contacts whenever the SwiftUI task
+    /// reappears. Explicit pull-to-refresh passes `force: true`.
+    private var hasLoadedContacts = false
+    private var isContactsLoadInFlight = false
+
     // MARK: - Computed Properties
 
     /// Filtered my contacts based on search.
@@ -358,19 +403,14 @@ public final class ContactsViewModel {
         }
     }
 
-    /// Filtered network announces based on search, aspect filter, and interface filter.
-    public var filteredNetworkAnnounces: [Contact] {
-        applyAnnounceFilters(to: networkAnnounces)
+    /// Recompute the cached Network-tab result after a source/filter mutation.
+    private func rebuildFilteredNetworkAnnounces() {
+        filteredNetworkAnnounces = applyAnnounceFilters(to: networkAnnounces)
     }
 
-    /// `pendingAnnounces` filtered by the currently-active announce
-    /// filters. Used to drive the "Show N new" pill so the count
-    /// reflects how many will actually appear in the visible list
-    /// after a flush, not the raw buffer size — otherwise an active
-    /// filter (peers / audio / sites / relays / interface / search)
-    /// could overstate the pill and surprise the user.
-    public var filteredPendingAnnounces: [Contact] {
-        applyAnnounceFilters(to: pendingAnnounces)
+    /// Recompute the cached pending-banner result after source/filter changes.
+    private func rebuildFilteredPendingAnnounces() {
+        filteredPendingAnnounces = applyAnnounceFilters(to: pendingAnnounces)
     }
 
     /// Apply the active aspect / interface / search filters to a
@@ -576,76 +616,70 @@ public final class ContactsViewModel {
     @MainActor
     public func flushPendingAnnounces() {
         guard !pendingAnnounces.isEmpty else { return }
-        networkAnnounces.append(contentsOf: pendingAnnounces)
-        pendingAnnounces.removeAll()
-        networkAnnounces.sort { $0.timestamp > $1.timestamp }
+        let merged = (networkAnnounces + pendingAnnounces)
+            .sorted { $0.timestamp > $1.timestamp }
+        pendingAnnounces.removeAll(keepingCapacity: true)
+        networkAnnounces = merged
     }
 
     // MARK: - Public Methods
 
-    /// Load contacts from storage.
+    /// Load contacts from storage once per view-model lifetime. Pull-to-refresh
+    /// passes `force: true`; ordinary SwiftUI task reappearances reuse the live
+    /// snapshot maintained by the path-update stream.
     @MainActor
-    public func loadContacts() async {
+    public func loadContacts(force: Bool = false) async {
+        guard force || !hasLoadedContacts else { return }
+        guard !isContactsLoadInFlight else { return }
+
+        isContactsLoadInFlight = true
         isLoading = true
         errorMessage = nil
+        defer {
+            isContactsLoadInFlight = false
+            isLoading = false
+        }
 
         do {
-            // Load my contacts from favorited conversations only
+            // Load my contacts from favorited conversations only.
             let conversations = try await messageRepository.fetchConversations()
             myContacts = conversations
                 .filter { $0.isFavorite != 0 }
                 .map { Contact(from: $0) }
 
-            // Load network announces from path table (known destinations)
+            // Build and mark the network snapshot off to the side, then publish
+            // it once. This avoids repeatedly filtering thousands of contacts.
             if let pathTable = appServices.pathTable {
                 let entries = await pathTable.allEntries()
-                networkAnnounces = entries
+                let loaded = entries
                     .filter { $0.isKnownDestination }
                     .map { Contact(from: $0) }
                     .sorted { $0.timestamp > $1.timestamp }
+                networkAnnounces = markingSavedContacts(in: loaded)
             }
-            // Drop only the pending entries that the fresh path-table
-            // snapshot already covers. `handleNewPathEntry` is also
-            // @MainActor and can interleave with the await above, so a
-            // blanket `removeAll()` would silently delete announces
-            // that arrived *during* the suspension and aren't in the
-            // snapshot yet. Filtering by id keeps those late arrivals
-            // queued for the next flush.
+
+            // Drop only pending entries that the fresh snapshot covers. Keep
+            // announces that arrived while the path-table await was suspended.
             let visibleIds = Set(networkAnnounces.map(\.id))
             pendingAnnounces.removeAll { visibleIds.contains($0.id) }
 
-            // Mark network announces that are already saved contacts
-            markSavedContacts()
-
-            // Enrich myContacts badges from network announces (ConversationRecord
-            // always creates contacts with .peer badge — cross-reference with path
-            // table data so relays keep their .relay badge after restart)
             enrichMyContactBadges()
-
-            // Sync relay state from PropagationNodeManager
             syncRelayState()
 
-            // DEBUG: Log relay state for diagnosing badge bug
-            let relayHex = selectedRelayHash.map { $0.map { String(format: "%02x", $0) }.joined() } ?? "nil"
-            let relayContacts = networkAnnounces.filter { $0.isRelay }
-            let myRelayMatches = myContacts.filter { $0.identityHash == selectedRelayHash }
-            let netRelayMatches = networkAnnounces.filter { $0.identityHash == selectedRelayHash }
-            DiagLog.log("[CONTACTS] selectedRelayHash=\(relayHex)")
-            DiagLog.log("[CONTACTS] networkAnnounces=\(networkAnnounces.count), relays=\(relayContacts.count): \(relayContacts.map { "\($0.resolvedDisplayName)=\($0.identityHashHex.prefix(16))" })")
-            DiagLog.log("[CONTACTS] myContacts=\(myContacts.count): \(myContacts.map { "\($0.resolvedDisplayName)=\($0.identityHashHex.prefix(16))(\($0.badgeType.rawValue))" })")
-            DiagLog.log("[CONTACTS] relay match in network=\(netRelayMatches.count), in myContacts=\(myRelayMatches.count)")
-            if let relay = currentRelayContact {
-                DiagLog.log("[CONTACTS] currentRelayContact=\(relay.resolvedDisplayName) badge=\(relay.badgeType.rawValue)")
-            } else {
-                DiagLog.log("[CONTACTS] currentRelayContact=nil")
-            }
+            // Aggregate-only diagnostics: never stringify contact arrays,
+            // display names, or hashes on this hot path.
+            let relayCount = networkAnnounces.lazy.filter(\.isRelay).count
+            DiagLog.log(
+                "[CONTACTS] loaded network=\(networkAnnounces.count) "
+                + "relays=\(relayCount) saved=\(myContacts.count) "
+                + "selected_relay_present=\(currentRelayContact != nil)"
+            )
 
+            hasLoadedContacts = true
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
-
-        isLoading = false
     }
 
     /// Refresh announces from the network.
@@ -656,21 +690,19 @@ public final class ContactsViewModel {
 
         if let pathTable = appServices.pathTable {
             let entries = await pathTable.allEntries()
-            networkAnnounces = entries
+            let loaded = entries
                 .filter { $0.isKnownDestination }
                 .map { Contact(from: $0) }
                 .sorted { $0.timestamp > $1.timestamp }
+            networkAnnounces = markingSavedContacts(in: loaded)
         }
         // Drop only the pending entries the fresh path-table snapshot
         // already covers — see `loadContacts` for the same race
         // (handleNewPathEntry can interleave with the await above and
         // queue announces that aren't in the snapshot yet; a blanket
-        // removeAll() would silently lose them).
+        // `removeAll()` would silently lose them).
         let visibleIds = Set(networkAnnounces.map(\.id))
         pendingAnnounces.removeAll { visibleIds.contains($0.id) }
-
-        // Mark network announces that are already saved contacts
-        markSavedContacts()
 
         // Enrich myContacts badges from network announces
         enrichMyContactBadges()
@@ -947,11 +979,12 @@ public final class ContactsViewModel {
         }
     }
 
-    /// Mark network announces that already exist in my contacts.
+    /// Mark network announces that already exist in my contacts without
+    /// publishing an intermediate array (which would rebuild all filters).
     @MainActor
-    private func markSavedContacts() {
+    private func markingSavedContacts(in contacts: [Contact]) -> [Contact] {
         let savedById = Dictionary(myContacts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        networkAnnounces = networkAnnounces.map { contact in
+        return contacts.map { contact in
             if let saved = savedById[contact.id], !contact.isFavorite {
                 return contact.copy(isFavorite: true, isPinned: saved.isPinned)
             }

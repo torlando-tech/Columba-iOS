@@ -8,6 +8,7 @@
 //  Compatible with ReticulumSwift Identity.hash (16-byte Data).
 //
 
+import Foundation
 import SwiftUI
 import RNSAPI
 
@@ -44,6 +45,36 @@ public struct IdenticonGenerator {
 
         /// Grid size (number of rows/columns).
         public let gridSize: Int
+    }
+
+    private final class PatternBox: NSObject {
+        let pattern: Pattern
+        init(_ pattern: Pattern) { self.pattern = pattern }
+    }
+
+    /// `NSCache` is internally synchronized. The unsafe annotation only tells
+    /// strict concurrency checking that synchronization is owned by NSCache.
+    nonisolated(unsafe) private static let patternCache: NSCache<NSString, PatternBox> = {
+        let patternCache = NSCache<NSString, PatternBox>()
+        patternCache.countLimit = 4096
+        return patternCache
+    }()
+
+    /// Reuse deterministic pattern construction as rows enter and leave the
+    /// lazy Network list. The bound prevents a long-running node from retaining
+    /// an unbounded number of historical destination patterns.
+    public static func cachedPattern(from hash: Data, gridSize: Int = 5) -> Pattern {
+        let key = "\(gridSize):\(hash.base64EncodedString())" as NSString
+        if let cached = patternCache.object(forKey: key) {
+            return cached.pattern
+        }
+        let pattern = generate(from: hash, gridSize: gridSize)
+        patternCache.setObject(PatternBox(pattern), forKey: key)
+        return pattern
+    }
+
+    public static func cachedPattern(fromHex hexHash: String, gridSize: Int = 5) -> Pattern {
+        cachedPattern(from: hexToData(hexHash), gridSize: gridSize)
     }
 
     // MARK: - Color Palette
