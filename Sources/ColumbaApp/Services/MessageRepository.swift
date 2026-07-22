@@ -113,9 +113,18 @@ public actor MessageRepository {
         try await database.ensureConversation(hash: conversationHash, displayName: displayName)
     }
 
+    /// Posted after persisted favorite/contact membership changes.
+    public static let favoriteStatusChangedNotification =
+        Notification.Name("network.columba.favoriteStatusChanged")
+
     /// Set favorite status for a conversation.
     public func setFavorite(_ conversationHash: Data, isFavorite: Bool) async throws {
         try await database.setFavorite(hash: conversationHash, isFavorite: isFavorite)
+        NotificationCenter.default.post(
+            name: Self.favoriteStatusChangedNotification,
+            object: nil,
+            userInfo: [Self.conversationHashUserInfoKey: conversationHash]
+        )
     }
 
     /// Set pinned status for a conversation.

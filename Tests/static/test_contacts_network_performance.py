@@ -9,6 +9,7 @@ NETWORK_TAB = ROOT / "Sources/ColumbaApp/Views/Contacts/NetworkAnnouncesTab.swif
 IDENTICON = ROOT / "Sources/ColumbaApp/Views/Components/Identicon.swift"
 GENERATOR = ROOT / "Sources/ColumbaApp/Views/Components/IdenticonGenerator.swift"
 CONTACTS_VIEW = ROOT / "Sources/ColumbaApp/Views/Contacts/ContactsView.swift"
+MESSAGE_REPOSITORY = ROOT / "Sources/ColumbaApp/Services/MessageRepository.swift"
 
 
 class ContactsNetworkPerformanceContractTests(unittest.TestCase):
@@ -19,6 +20,7 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
         cls.identicon = IDENTICON.read_text()
         cls.generator = GENERATOR.read_text()
         cls.view = CONTACTS_VIEW.read_text()
+        cls.repository = MESSAGE_REPOSITORY.read_text()
 
     def test_contact_diagnostics_are_aggregate_only(self):
         self.assertNotIn("relayContacts.map", self.vm)
@@ -54,10 +56,32 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
         self.assertIn("patternCache.countLimit = 4096", self.generator)
         self.assertIn("public static func cachedPattern", self.generator)
 
-    def test_contacts_view_does_not_reload_unchanged_data_on_reappearance(self):
+    def test_reappearance_refreshes_saved_state_without_rebuilding_paths(self):
         self.assertIn("private var hasLoadedContacts = false", self.vm)
         self.assertIn("public func loadContacts(force: Bool = false)", self.vm)
-        self.assertIn("guard force || !hasLoadedContacts else { return }", self.vm)
+        self.assertIn("if hasLoadedContacts && !force", self.vm)
+        self.assertIn("try await refreshSavedContacts()", self.vm)
+        self.assertIn("private func refreshSavedContacts(", self.vm)
+        self.assertIn("MessageRepository.favoriteStatusChangedNotification", self.vm)
+        self.assertIn("favoriteObserver = NotificationCenter.default.addObserver", self.vm)
+        self.assertIn("scheduleSavedContactsRefresh()", self.vm)
+        start_listening = self.vm.index("public func startListening()")
+        stop_listening = self.vm.index("public func stopListening()", start_listening)
+        listener = self.vm[start_listening:stop_listening]
+        self.assertLess(
+            listener.index("favoriteObserver = NotificationCenter.default.addObserver"),
+            listener.index("scheduleSavedContactsRefresh()"),
+        )
+        self.assertIn("try Task.checkCancellation()", self.vm)
+        self.assertIn("private var savedContactsGeneration: UInt64 = 0", self.vm)
+        self.assertIn("guard generation == savedContactsGeneration", self.vm)
+        self.assertIn("return false", self.vm)
+        self.assertGreaterEqual(
+            self.vm.count("if let existingIndex = myContacts.firstIndex"), 2
+        )
+        self.assertIn("favoriteStatusChangedNotification", self.repository)
+        self.assertIn("pendingAnnounces = markingSavedContacts", self.vm)
+        self.assertIn("isFavorite: saved != nil", self.vm)
         self.assertIn("await vm.loadContacts(force: true)", self.view)
 
 

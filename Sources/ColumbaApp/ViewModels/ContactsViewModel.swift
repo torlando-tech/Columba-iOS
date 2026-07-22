@@ -386,10 +386,18 @@ public final class ContactsViewModel {
     /// Task for streaming path updates.
     private var updateTask: Task<Void, Never>?
 
+    /// One-shot task for lightweight saved-contact reconciliation.
+    private var favoriteRefreshTask: Task<Void, Never>?
+
+    /// Synchronously registered before reconciliation so a favorite mutation
+    /// cannot land in a refresh/subscribe gap.
+    private var favoriteObserver: NSObjectProtocol?
+
     /// Avoid rebuilding thousands of contacts whenever the SwiftUI task
     /// reappears. Explicit pull-to-refresh passes `force: true`.
     private var hasLoadedContacts = false
     private var isContactsLoadInFlight = false
+    private var savedContactsGeneration: UInt64 = 0
 
     // MARK: - Computed Properties
 
@@ -527,6 +535,10 @@ public final class ContactsViewModel {
 
     deinit {
         updateTask?.cancel()
+        favoriteRefreshTask?.cancel()
+        if let favoriteObserver {
+            NotificationCenter.default.removeObserver(favoriteObserver)
+        }
     }
 
     // MARK: - Real-Time Updates
@@ -543,12 +555,58 @@ public final class ContactsViewModel {
                 handleNewPathEntry(entry)
             }
         }
+
+        if let favoriteObserver {
+            NotificationCenter.default.removeObserver(favoriteObserver)
+        }
+        favoriteObserver = NotificationCenter.default.addObserver(
+            forName: MessageRepository.favoriteStatusChangedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleSavedContactsRefresh()
+            }
+        }
+
+        // Register first, then reconcile anything changed while Contacts was
+        // hidden. A mutation during this refresh posts to the already-live
+        // observer and replaces this task with a newer authoritative refresh.
+        if hasLoadedContacts {
+            scheduleSavedContactsRefresh()
+        }
     }
 
     /// Stop listening for updates.
     public func stopListening() {
         updateTask?.cancel()
         updateTask = nil
+        if let favoriteObserver {
+            NotificationCenter.default.removeObserver(favoriteObserver)
+            self.favoriteObserver = nil
+        }
+        favoriteRefreshTask?.cancel()
+        favoriteRefreshTask = nil
+    }
+
+    /// Cancel any in-flight snapshot before starting a newer authoritative one.
+    /// `refreshSavedContacts` checks cancellation after its repository await, so
+    /// an older fetch cannot overwrite a newer favorite mutation.
+    @MainActor
+    private func scheduleSavedContactsRefresh() {
+        favoriteRefreshTask?.cancel()
+        favoriteRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.refreshSavedContacts()
+                self.syncRelayState()
+                self.errorMessage = nil
+            } catch is CancellationError {
+                // Superseded by a newer favorite mutation or listener teardown.
+            } catch {
+                self.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     /// Handle a new path entry from the stream.
@@ -624,12 +682,11 @@ public final class ContactsViewModel {
 
     // MARK: - Public Methods
 
-    /// Load contacts from storage once per view-model lifetime. Pull-to-refresh
-    /// passes `force: true`; ordinary SwiftUI task reappearances reuse the live
-    /// snapshot maintained by the path-update stream.
+    /// Load contacts from storage. After the first full path snapshot, ordinary
+    /// SwiftUI task reappearances refresh only saved-contact state; path updates
+    /// remain live through the stream. Pull-to-refresh passes `force: true`.
     @MainActor
     public func loadContacts(force: Bool = false) async {
-        guard force || !hasLoadedContacts else { return }
         guard !isContactsLoadInFlight else { return }
 
         isContactsLoadInFlight = true
@@ -641,11 +698,15 @@ public final class ContactsViewModel {
         }
 
         do {
-            // Load my contacts from favorited conversations only.
-            let conversations = try await messageRepository.fetchConversations()
-            myContacts = conversations
-                .filter { $0.isFavorite != 0 }
-                .map { Contact(from: $0) }
+            if hasLoadedContacts && !force {
+                try await refreshSavedContacts()
+                syncRelayState()
+                return
+            }
+
+            // Load saved contacts without publishing a second Network snapshot;
+            // the full path snapshot below will reconcile favorite markers once.
+            try await refreshSavedContacts(reconcileNetwork: false)
 
             // Build and mark the network snapshot off to the side, then publish
             // it once. This avoids repeatedly filtering thousands of contacts.
@@ -677,6 +738,8 @@ public final class ContactsViewModel {
 
             hasLoadedContacts = true
             errorMessage = nil
+        } catch is CancellationError {
+            // View/task teardown is not a user-visible load failure.
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -854,7 +917,12 @@ public final class ContactsViewModel {
                 displayName: contact.displayName
             )
             try await messageRepository.setFavorite(contact.identityHash, isFavorite: true)
-            myContacts.append(contact.copy(isFavorite: true))
+            let savedContact = contact.copy(isFavorite: true)
+            if let existingIndex = myContacts.firstIndex(where: { $0.id == contact.id }) {
+                myContacts[existingIndex] = savedContact
+            } else {
+                myContacts.append(savedContact)
+            }
 
             // Mark this contact as saved in network announces
             if let index = networkAnnounces.firstIndex(where: { $0.id == contact.id }) {
@@ -930,7 +998,11 @@ public final class ContactsViewModel {
                 isFavorite: true,
                 isRelay: false
             )
-            myContacts.append(contact)
+            if let existingIndex = myContacts.firstIndex(where: { $0.id == hex }) {
+                myContacts[existingIndex] = contact
+            } else {
+                myContacts.append(contact)
+            }
         } catch {
             errorMessage = "Failed to add contact: \(error.localizedDescription)"
         }
@@ -949,6 +1021,30 @@ public final class ContactsViewModel {
             data.append(byte)
         }
         return data
+    }
+
+    /// Refresh favorites from the conversation store. Reappearance uses this
+    /// lightweight path so changes made in Messaging are reflected without
+    /// rebuilding every path-table contact.
+    @MainActor @discardableResult
+    private func refreshSavedContacts(reconcileNetwork: Bool = true) async throws -> Bool {
+        savedContactsGeneration &+= 1
+        let generation = savedContactsGeneration
+        let conversations = try await messageRepository.fetchConversations()
+        try Task.checkCancellation()
+        guard generation == savedContactsGeneration else {
+            return false
+        }
+        myContacts = conversations
+            .filter { $0.isFavorite != 0 }
+            .map { Contact(from: $0) }
+
+        if reconcileNetwork {
+            networkAnnounces = markingSavedContacts(in: networkAnnounces)
+            pendingAnnounces = markingSavedContacts(in: pendingAnnounces)
+            enrichMyContactBadges()
+        }
+        return true
     }
 
     /// Enrich myContacts from network announces.
@@ -985,10 +1081,16 @@ public final class ContactsViewModel {
     private func markingSavedContacts(in contacts: [Contact]) -> [Contact] {
         let savedById = Dictionary(myContacts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return contacts.map { contact in
-            if let saved = savedById[contact.id], !contact.isFavorite {
-                return contact.copy(isFavorite: true, isPinned: saved.isPinned)
+            let saved = savedById[contact.id]
+            let shouldBeFavorite = saved != nil
+            let shouldBePinned = saved?.isPinned ?? false
+            guard contact.isFavorite != shouldBeFavorite || contact.isPinned != shouldBePinned else {
+                return contact
             }
-            return contact
+            return contact.copy(
+                isFavorite: saved != nil,
+                isPinned: shouldBePinned
+            )
         }
     }
 }
