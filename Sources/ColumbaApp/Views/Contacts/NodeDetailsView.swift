@@ -13,11 +13,9 @@ import RNSAPI
 ///
 /// Layout:
 /// - Header: Large identicon, display name, online/expired status badge
-/// - Action: "Start Chat" or "Browse Site" button (accent gradient, full width).
-///   For NomadNet sites (`badgeType == .node`), shows "Browse Site" when
-///   `onBrowseSite` is provided; otherwise shows "Start Chat" when
-///   `onStartChat` is provided. If neither callback is provided for the
-///   relevant badge type, no primary action is rendered.
+/// - Action selected from the exact destination aspect: Chat for LXMF delivery,
+///   Call for LXST telephony, Browse Site for NomadNet, and relay controls only
+///   for enabled LXMF propagation announces.
 /// - Details cards: Destination hash, hop count, last heard/expires timestamps
 @available(iOS 17.0, macOS 14.0, *)
 struct NodeDetailsView: View {
@@ -91,7 +89,8 @@ struct NodeDetailsView: View {
                 if !displayedContact.isOnline {
                     expiredHint
                 }
-                if propagationInfo != nil {
+                if displayedContact.destinationAspect == .lxmfPropagation,
+                   propagationInfo?.enabled == true {
                     setAsRelayButton
                 } else {
                     primaryActionButton
@@ -251,21 +250,21 @@ struct NodeDetailsView: View {
     @ViewBuilder
     private var primaryActionButton: some View {
         let c = displayedContact
-        if c.badgeType == .audio, let onStartCall {
+        if c.destinationAspect == .lxstTelephony, let onStartCall {
             actionButton(
                 icon: "phone.fill",
                 title: "Call"
             ) {
                 onStartCall(c)
             }
-        } else if c.badgeType == .node, let onBrowseSite {
+        } else if c.destinationAspect == .nomadNetworkNode, let onBrowseSite {
             actionButton(
                 icon: "globe.americas",
                 title: "Browse Site"
             ) {
                 onBrowseSite(c)
             }
-        } else if c.badgeType != .node && c.badgeType != .audio, let onStartChat {
+        } else if c.destinationAspect == .lxmfDelivery, let onStartChat {
             actionButton(
                 icon: "bubble.left.fill",
                 title: "Start Chat"
@@ -559,7 +558,8 @@ struct NodeDetailsView: View {
             // "Unknown" instead of pinning to a stale value.
             interfaceName = nil
         }
-        if let appData = entry.appData {
+        if entry.destinationAspect == .lxmfPropagation,
+           let appData = entry.appData {
             propagationInfo = PropagationNodeInfo.parse(from: appData)
         } else {
             // Clear stale info when a re-announce drops the propagation

@@ -36,7 +36,7 @@ class LXSTVoiceCallRoutingContracts(unittest.TestCase):
         self.assertIsNotNone(resolver)
         assert resolver is not None
         body = resolver.group(0)
-        self.assertIn('source.detectedAspect == "lxst.telephony"', body)
+        self.assertIn("source.destinationAspect == .lxstTelephony", body)
         self.assertIn("guard sourceHash == derivedHash", body)
         self.assertIn(
             "TelephonyCallTarget(destinationHash: sourceHash, publicKeys: source.publicKeys)",
@@ -74,16 +74,16 @@ class LXSTVoiceCallRoutingContracts(unittest.TestCase):
         details = self._read(
             "Sources/ColumbaApp/Views/Contacts/NodeDetailsView.swift"
         )
-        self.assertIn("if c.badgeType == .audio, let onStartCall", details)
+        self.assertIn("if c.destinationAspect == .lxstTelephony, let onStartCall", details)
         self.assertIn('title: "Call"', details)
         self.assertIn("onStartCall(c)", details)
         self.assertIn(
-            "c.badgeType != .node && c.badgeType != .audio, let onStartChat",
+            "c.destinationAspect == .lxmfDelivery, let onStartChat",
             details,
         )
 
         contacts = self._read("Sources/ColumbaApp/Views/Contacts/ContactsView.swift")
-        self.assertIn("onStartCall: contact.badgeType == .audio", contacts)
+        self.assertIn("onStartCall: { contact in", contacts)
         self.assertIn("CodecSelectionSheet { profile in", contacts)
         self.assertIn("destinationHash: contact.identityHash", contacts)
 

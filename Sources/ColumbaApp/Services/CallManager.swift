@@ -345,7 +345,7 @@ public final class CallManager {
             aspects: ["telephony"]
         )
 
-        if source.detectedAspect == "lxst.telephony" || source.isLXSTTelephony {
+        if source.destinationAspect == .lxstTelephony {
             guard sourceHash == derivedHash else { return nil }
             return TelephonyCallTarget(destinationHash: sourceHash, publicKeys: source.publicKeys)
         }
@@ -353,7 +353,7 @@ public final class CallManager {
         // Android-style cross-link: one row per destination, joined by the
         // shared public identity. Only accept a sibling whose hash verifies.
         if let sibling = await pathTable.allEntries().first(where: {
-            ($0.detectedAspect == "lxst.telephony" || $0.isLXSTTelephony)
+            $0.destinationAspect == .lxstTelephony
                 && $0.publicKeys == source.publicKeys
                 && $0.destinationHash == derivedHash
         }) {
