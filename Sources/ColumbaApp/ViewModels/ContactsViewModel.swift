@@ -18,6 +18,7 @@ public enum ContactBadgeType: String, Sendable, Equatable, Hashable {
     case relay = "RELAY"
     case audio = "Audio"
     case node = "Node"
+    case unsupported = "Unsupported"
 }
 
 // MARK: - Contact Model
@@ -66,8 +67,10 @@ public struct Contact: Identifiable, Sendable, Hashable {
 
     /// Whether this is an LXST telephony (audio/voice call) announce.
     public var isAudio: Bool {
-        aspect == "lxst.telephony"
+        destinationAspect == .lxstTelephony
     }
+
+    public var destinationAspect: DestinationAspect { DestinationAspect(aspect) }
 
     /// Interface filter category for this contact.
     public var interfaceFilterType: InterfaceFilter {
@@ -83,7 +86,11 @@ public struct Contact: Identifiable, Sendable, Hashable {
 
     /// Display name with fallback to "Peer <hash prefix>" (matches Android Columba).
     public var resolvedDisplayName: String {
-        displayName ?? "Peer \(String(identityHashHex.prefix(8)).uppercased())"
+        if let displayName,
+           !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return displayName
+        }
+        return "Peer \(String(identityHashHex.prefix(8)).uppercased())"
     }
 
     /// Truncated hex hash for display (first 24 chars + ...).
@@ -126,7 +133,8 @@ public struct Contact: Identifiable, Sendable, Hashable {
         signalStrength: Int? = nil,
         isFavorite: Bool? = nil,
         isPinned: Bool? = nil,
-        isRelay: Bool? = nil
+        isRelay: Bool? = nil,
+        aspect: String?? = nil
     ) -> Contact {
         Contact(
             id: id,
@@ -140,7 +148,7 @@ public struct Contact: Identifiable, Sendable, Hashable {
             isPinned: isPinned ?? self.isPinned,
             isRelay: isRelay ?? self.isRelay,
             iconName: iconName, iconFgColor: iconFgColor, iconBgColor: iconBgColor,
-            interfaceId: interfaceId, aspect: aspect
+            interfaceId: interfaceId, aspect: aspect ?? self.aspect
         )
     }
 
@@ -166,33 +174,24 @@ public struct Contact: Identifiable, Sendable, Hashable {
         // reference clients exactly: Sideband types each announce by which RNS
         // aspect handler received it (aspect_filter "lxmf.propagation" vs
         // "lxmf.delivery"), and Android does the same via NodeType.fromAspect.
-        // `entry.isLXMFPropagationNode` is itself derived solely from
-        // aspect == "lxmf.propagation" (the Python bridge sets it via a
-        // cryptographic per-aspect handler match; the native backends compute
-        // detectedAspect cryptographically), so aspect is the SOLE relay
-        // signal. An unrecognized / empty aspect defaults to .peer, matching
-        // NodeType.fromAspect's default.
-        //
-        // The previous `PropagationNodeInfo.parse(app_data)` fallback was
-        // removed: it accepted any >=3-element msgpack app_data without
-        // verifying the destination was a propagation node, so a delivery /
-        // audio / site announce carrying such app_data was mis-flagged as a
-        // relay (leaking into the Peers filter). Both backends already
-        // guarantee a genuine propagation node arrives tagged
-        // "lxmf.propagation" or is dropped before reaching here, so the
-        // fallback only ever caught false positives.
-        if entry.isLXMFPropagationNode {
+        // Exact aspect is the sole type signal. Legacy boolean flags and
+        // app-data shape are retained for compatibility but never authorize a
+        // badge or action. Unknown aspects remain explicitly unsupported.
+        switch entry.destinationAspect {
+        case .lxmfPropagation:
             self.badgeType = .relay
             self.isRelay = true
-        } else if entry.isLXSTTelephony {
+        case .lxstTelephony:
             self.badgeType = .audio
             self.isRelay = false
-        } else if entry.detectedAspect == "nomadnetwork.node" {
+        case .nomadNetworkNode:
             self.badgeType = .node
             self.isRelay = false
-        } else {
-            // lxmf.delivery and any unrecognized/empty aspect → peer.
+        case .lxmfDelivery:
             self.badgeType = .peer
+            self.isRelay = false
+        case .unsupported:
+            self.badgeType = .unsupported
             self.isRelay = false
         }
     }
@@ -556,12 +555,14 @@ public final class ContactsViewModel {
             if existing.badgeType != contact.badgeType
                 || existing.hopCount != contact.hopCount
                 || existing.signalStrength != contact.signalStrength
-                || existing.isRelay != contact.isRelay {
+                || existing.isRelay != contact.isRelay
+                || existing.aspect != contact.aspect {
                 myContacts[myIndex] = existing.copy(
                     badgeType: contact.badgeType,
                     hopCount: contact.hopCount,
                     signalStrength: contact.signalStrength,
-                    isRelay: contact.isRelay
+                    isRelay: contact.isRelay,
+                    aspect: .some(contact.aspect)
                 )
             }
         }
@@ -921,7 +922,7 @@ public final class ContactsViewModel {
 
     /// Enrich myContacts from network announces.
     ///
-    /// ConversationRecord has no badge / relay / hops / signal fields, so
+    /// ConversationRecord has no badge / relay / hops / signal / aspect fields, so
     /// Contact(from: ConversationRecord) always produces `badgeType=.peer`,
     /// `hopCount=0`, `signalStrength=4`. Cross-reference with networkAnnounces
     /// (built from PathEntry which has all of these) to restore the correct
@@ -937,12 +938,14 @@ public final class ContactsViewModel {
             let badgeNeedsUpdate = announce.badgeType != contact.badgeType
             let hopsNeedUpdate = announce.hopCount != contact.hopCount
                 || announce.signalStrength != contact.signalStrength
-            guard badgeNeedsUpdate || hopsNeedUpdate else { return contact }
+            let aspectNeedsUpdate = announce.aspect != contact.aspect
+            guard badgeNeedsUpdate || hopsNeedUpdate || aspectNeedsUpdate else { return contact }
             return contact.copy(
                 badgeType: announce.badgeType,
                 hopCount: announce.hopCount,
                 signalStrength: announce.signalStrength,
-                isRelay: announce.isRelay
+                isRelay: announce.isRelay,
+                aspect: .some(announce.aspect)
             )
         }
     }

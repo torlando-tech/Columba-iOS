@@ -212,6 +212,15 @@ struct ContactCard: View {
                     .padding(.vertical, 2)
                     .background(Color.green)
                     .cornerRadius(4)
+            case .unsupported:
+                Text("Unsupported")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.7))
+                    .cornerRadius(4)
             case .peer:
                 Text("Peer")
                     .font(.caption2)

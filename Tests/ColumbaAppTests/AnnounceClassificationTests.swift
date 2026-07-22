@@ -11,7 +11,7 @@ import RNSAPI
 /// reference clients — Sideband types announces by which RNS aspect handler
 /// received them, and Android via NodeType.fromAspect. A propagation node is
 /// `aspect == "lxmf.propagation"` (surfaced as `entry.isLXMFPropagationNode`);
-/// every other aspect, including an unrecognized/empty one, is NOT a relay.
+/// every other aspect is NOT a relay, and unknown is not silently typed as peer.
 ///
 /// Regression target: the "Peers" filter (the default) also showed relays.
 /// The old `PropagationNodeInfo.parse(appData)` heuristic accepted ANY
@@ -101,22 +101,58 @@ final class AnnounceClassificationTests: XCTestCase {
         XCTAssertTrue(c.isRelay)
     }
 
+    func testPropagationAspectWinsWhenLegacyFlagIsFalse() {
+        let c = Contact(from: entry(
+            aspect: "lxmf.propagation",
+            appData: propagationAppData(name: "Hub"),
+            isPropagation: false
+        ))
+        XCTAssertEqual(c.badgeType, .relay)
+        XCTAssertTrue(c.isRelay)
+    }
+
+    func testDeliveryAspectWinsWhenLegacyPropagationFlagIsTrue() {
+        let c = Contact(from: entry(
+            aspect: "lxmf.delivery",
+            appData: propagationAppData(name: "Not a relay"),
+            isPropagation: true
+        ))
+        XCTAssertEqual(c.badgeType, .peer)
+        XCTAssertFalse(c.isRelay)
+    }
+
+    func testCopyCarriesExactAspectDuringSavedContactEnrichment() {
+        let saved = Contact(
+            id: "saved", displayName: "Saved", identityHash: Data(repeating: 1, count: 16),
+            identityHashHex: "01", badgeType: .peer, hopCount: 0, signalStrength: 4,
+            timestamp: Date(), isOnline: true, isFavorite: true, isPinned: false,
+            isRelay: false, aspect: nil
+        )
+
+        let enriched = saved.copy(
+            badgeType: .audio,
+            aspect: .some("lxst.telephony")
+        )
+
+        XCTAssertEqual(enriched.destinationAspect, .lxstTelephony)
+        XCTAssertEqual(enriched.badgeType, .audio)
+    }
+
     /// Aspect is the sole relay signal: an UNTAGGED announce (no aspect) whose
     /// app_data happens to be propagation-shaped is NOT promoted to a relay.
     /// (Both backends guarantee a genuine propagation node arrives tagged
     /// "lxmf.propagation" or is dropped before reaching here, so the removed
     /// app_data heuristic only ever caught false positives.)
-    func testUntaggedPropagationShapedAppDataIsPeerNotRelay() {
+    func testUntaggedPropagationShapedAppDataIsUnsupportedNotRelay() {
         let c = Contact(from: entry(aspect: nil, appData: propagationAppData(name: "Hub")))
-        XCTAssertEqual(c.badgeType, .peer)
+        XCTAssertEqual(c.badgeType, .unsupported)
         XCTAssertFalse(c.isRelay)
     }
 
-    /// An unrecognized/future aspect defaults to peer (matches Android
-    /// NodeType.fromAspect's default), never a relay.
-    func testUnknownAspectIsPeerNotRelay() {
+    /// Unknown is intentionally distinct from a proven LXMF delivery peer.
+    func testUnknownAspectIsUnsupportedNotRelay() {
         let c = Contact(from: entry(aspect: "some.future.aspect", appData: threeElementAppData()))
-        XCTAssertEqual(c.badgeType, .peer)
+        XCTAssertEqual(c.badgeType, .unsupported)
         XCTAssertFalse(c.isRelay)
     }
 
@@ -136,5 +172,25 @@ final class AnnounceClassificationTests: XCTestCase {
         let c = Contact(from: entry(aspect: "nomadnetwork.node", appData: threeElementAppData()))
         XCTAssertEqual(c.badgeType, .node)
         XCTAssertFalse(c.isRelay)
+    }
+
+    func testEmptyDisplayNameFallsBackToHashPrefix() {
+        let contact = Contact(
+            id: "unnamed-relay",
+            displayName: "   ",
+            identityHash: Data(repeating: 0xab, count: 16),
+            identityHashHex: String(repeating: "ab", count: 16),
+            badgeType: .relay,
+            hopCount: 1,
+            signalStrength: 4,
+            timestamp: Date(),
+            isOnline: true,
+            isFavorite: false,
+            isPinned: false,
+            isRelay: true,
+            aspect: "lxmf.propagation"
+        )
+
+        XCTAssertEqual(contact.resolvedDisplayName, "Peer ABABABAB")
     }
 }

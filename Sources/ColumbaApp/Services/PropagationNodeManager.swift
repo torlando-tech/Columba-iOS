@@ -193,6 +193,7 @@ public final class PropagationNodeManager {
 
     /// Process a path entry to check if it's a propagation node.
     private func processPathEntry(_ entry: PathEntry) async {
+        guard entry.destinationAspect == .lxmfPropagation else { return }
         guard let appData = entry.appData else { return }
         guard let info = PropagationNodeInfo.parse(from: appData) else { return }
         guard info.enabled else { return }
@@ -257,14 +258,21 @@ public final class PropagationNodeManager {
     ///
     /// Disables auto-select when called manually.
     public func selectNode(hash: Data) async {
+        guard let entry = await appServices?.pathTable?.lookup(destinationHash: hash),
+              entry.destinationAspect == .lxmfPropagation,
+              let appData = entry.appData,
+              let info = PropagationNodeInfo.parse(from: appData),
+              info.enabled else {
+            logger.warning("Rejected relay selection without exact enabled propagation aspect")
+            return
+        }
         selectedNodeHash = hash
         let node = knownNodes.first(where: { $0.hash == hash })
-        selectedNodeName = node?.resolvedDisplayName
+        selectedNodeName = node?.resolvedDisplayName ?? info.displayName ?? entry.displayName
 
         // Compute delivery hash for this identity so we can match against saved contacts.
         // Relay announces use lxmf.propagation aspect; contacts use lxmf.delivery aspect.
-        if let entry = await appServices?.pathTable?.lookup(destinationHash: hash),
-           entry.publicKeys.count >= 64 {
+        if entry.publicKeys.count >= 64 {
             let identityHash = Hashing.truncatedHash(entry.publicKeys)
             let nameHash = Hashing.destinationNameHash(appName: "lxmf", aspects: ["delivery"])
             var combined = nameHash
@@ -278,7 +286,7 @@ public final class PropagationNodeManager {
         // LXMRouter.setOutboundPropagationNode used to set a local var
         // only — Python's LXMF.LXMRouter.set_outbound_propagation_node
         // is what actually affects delivery.
-        let stampCost = node?.info.stampCost ?? 0
+        let stampCost = info.stampCost
         selectedNodeStampCost = stampCost
         #if COLUMBA_RUNTIME_PYTHON
         if let backend = appServices?.pythonBackend {

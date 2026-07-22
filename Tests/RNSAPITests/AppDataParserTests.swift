@@ -38,6 +38,17 @@ final class AppDataParserTests: XCTestCase {
         ]))
     }
 
+    // LXMF 0.4.0–0.8.0 propagation announce layout:
+    // [node_state, timebase, per_transfer_limit, wanted_inbound_peers]
+    private func legacyPropagationAppData(nodeState: Bool = true) -> Data {
+        packMsgPack(.array([
+            .bool(nodeState),
+            .uint(1_700_000_000),
+            .uint(25_000),
+            .nil,
+        ]))
+    }
+
     // MARK: - Delivery
 
     func testDeliveryName() {
@@ -93,6 +104,22 @@ final class AppDataParserTests: XCTestCase {
         XCTAssertNotNil(info)
         XCTAssertEqual(info?.enabled, false)
         XCTAssertNil(info?.displayName)
+    }
+
+    func testLegacyPropagationNodeInfoParse() {
+        let info = PropagationNodeInfo.parse(from: legacyPropagationAppData())
+        XCTAssertNotNil(info)
+        XCTAssertEqual(info?.enabled, true)
+        XCTAssertEqual(info?.perTransferLimit, 25_000)
+        XCTAssertEqual(info?.perSyncLimit, 0)
+        XCTAssertEqual(info?.stampCost, 0)
+        XCTAssertNil(info?.displayName)
+    }
+
+    func testLegacyPropagationNodeInfoStateFalse() {
+        let info = PropagationNodeInfo.parse(from: legacyPropagationAppData(nodeState: false))
+        XCTAssertNotNil(info)
+        XCTAssertEqual(info?.enabled, false)
     }
 
     func testPropagationNodeInfoRejectsGarbage() {

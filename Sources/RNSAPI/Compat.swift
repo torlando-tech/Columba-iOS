@@ -1888,6 +1888,20 @@ public final class PathTable: @unchecked Sendable {
     }
 }
 
+public enum DestinationAspect: String, Sendable, Equatable, Hashable, Codable {
+    case lxmfDelivery = "lxmf.delivery"
+    case lxmfPropagation = "lxmf.propagation"
+    case lxstTelephony = "lxst.telephony"
+    case nomadNetworkNode = "nomadnetwork.node"
+    case unsupported
+
+    public init(_ rawValue: String?) {
+        self = rawValue.flatMap(Self.init(rawValue:)) ?? .unsupported
+    }
+
+    public var isSupported: Bool { self != .unsupported }
+}
+
 public struct PathEntry: Identifiable, Equatable, Sendable, Codable {
     public let destinationHash: Data
     public var displayName: String
@@ -1905,6 +1919,7 @@ public struct PathEntry: Identifiable, Equatable, Sendable, Codable {
     public var isKnownDestination: Bool
 
     public var id: Data { destinationHash }
+    public var destinationAspect: DestinationAspect { DestinationAspect(detectedAspect) }
 
     public init(
         destinationHash: Data,
@@ -2307,21 +2322,37 @@ public struct PropagationNodeInfo: Identifiable, Equatable, Sendable, Codable {
 
     public static func parse(_ data: Data) -> PropagationNodeInfo? { parse(from: data) }
 
-    /// Parse an `lxmf.propagation` announce's app_data. Mirrors canonical
-    /// Python `LXMF.LXMRouter.get_propagation_node_app_data`:
+    /// Parse an `lxmf.propagation` announce's app_data. Supports both the
+    /// LXMF 0.4.0–0.8.0 layout:
+    ///   msgpack [node_state, timebase, per_transfer_limit, wanted_peers]
+    /// and the current LXMF 0.9.0+ layout:
     ///   msgpack [legacy_bool, timebase, node_state, per_transfer_limit,
     ///            per_sync_limit, stamp_cost, metadata_map]
-    /// `node_state` (index 2) is the enabled flag; the optional display name is
-    /// in the metadata map (index 6) at key PN_META_NAME. `destinationHash` /
-    /// `lastSeen` / `hopCount` aren't in app_data — the caller fills those from
-    /// the PathEntry. Returns nil if the data isn't a propagation announce.
+    /// In the current layout, `node_state` (index 2) is the enabled flag and
+    /// the optional display name is in the metadata map (index 6) at key
+    /// PN_META_NAME. `destinationHash` / `lastSeen` / `hopCount` aren't in
+    /// app_data — the caller fills those from the PathEntry. Returns nil if
+    /// the data isn't a propagation announce.
     public static func parse(from data: Data) -> PropagationNodeInfo? {
         guard !data.isEmpty,
               let value = try? unpackMsgPack(data),
               case .array(let arr) = value,
               arr.count >= 3 else { return nil }
 
-        let enabled = arr[2].boolValue ?? false
+        // LXMF 0.4.0–0.8.0 put node_state at index 0 and the numeric transfer
+        // limit at index 2. Distinguish it by exact length and value types so
+        // the transfer limit is never mistaken for a disabled current node.
+        if arr.count == 4,
+           let enabled = arr[0].boolValue,
+           arr[1].intValue != nil,
+           let perTransfer = arr[2].intValue {
+            return PropagationNodeInfo(
+                perTransferLimit: perTransfer,
+                enabled: enabled
+            )
+        }
+
+        guard let enabled = arr[2].boolValue else { return nil }
         let perTransfer = arr.count > 3 ? (arr[3].intValue ?? 0) : 0
         let perSync = arr.count > 4 ? (arr[4].intValue ?? 0) : 0
         // stamp_cost (index 5) is itself a list [cost, flexibility, peering] in

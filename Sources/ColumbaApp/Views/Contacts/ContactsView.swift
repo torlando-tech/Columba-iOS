@@ -134,15 +134,15 @@ public struct ContactsView: View {
                         NodeDetailsView(
                             contact: contact,
                             appServices: appServices,
-                            onStartChat: contact.badgeType == .peer || contact.badgeType == .relay ? { contact in
+                            onStartChat: { contact in
                                 startChat(with: contact)
-                            } : nil,
-                            onStartCall: contact.badgeType == .audio ? { contact in
+                            },
+                            onStartCall: { contact in
                                 callContact = contact
-                            } : nil,
-                            onBrowseSite: contact.badgeType == .node ? { contact in
+                            },
+                            onBrowseSite: { contact in
                                 browseSite(for: contact)
-                            } : nil,
+                            },
                             // Star = add-to-contacts / favorite, mirroring
                             // Android's add (from a network announce) and remove
                             // (already a contact) semantics. The Contact-typed
