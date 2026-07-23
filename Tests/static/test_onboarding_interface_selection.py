@@ -208,9 +208,10 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertIn("guard self?.activeImportGeneration == generation else { return }", migration_view_model)
         self.assertIn("activeExportGeneration = generation", migration_view_model)
         self.assertIn("guard self?.activeExportGeneration == generation else { return }", migration_view_model)
+        self.assertNotIn("case exportComplete", migration_view_model)
         self.assertLess(
-            migration_view_model.index("activeExportGeneration = nil\n            state = .exportComplete"),
-            migration_view_model.index("state = .exportComplete"),
+            migration_view_model.index("activeExportGeneration = nil\n            state = .exporting(progress: 1)"),
+            migration_view_model.index("return url"),
         )
         self.assertLess(
             migration_view_model.index("activeImportGeneration = nil\n            state = .importComplete"),

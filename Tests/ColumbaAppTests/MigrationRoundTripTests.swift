@@ -408,5 +408,40 @@ final class MigrationRoundTripTests: XCTestCase {
             XCTAssertTrue(error is MigrationCryptoError, "expected a MigrationCryptoError, got \(error)")
         }
     }
+
+    @MainActor
+    func testExportPickerCancellationReturnsToRetryableIdleState() {
+        let viewModel = MigrationViewModel(
+            identityManager: IdentityManager(),
+            settingsRepository: SettingsRepository()
+        )
+
+        viewModel.handleExportSaveResult(.failure(CocoaError(.userCancelled)))
+        viewModel.exportPassword = password
+        viewModel.exportPasswordConfirm = password
+
+        XCTAssertEqual(viewModel.state, .idle)
+        XCTAssertTrue(viewModel.canStartExport)
+    }
+
+    @MainActor
+    func testExportPickerFailureRemainsVisibleAndRetryable() {
+        let viewModel = MigrationViewModel(
+            identityManager: IdentityManager(),
+            settingsRepository: SettingsRepository()
+        )
+        let saveError = NSError(
+            domain: "MigrationExportFlowTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "write denied"]
+        )
+
+        viewModel.handleExportSaveResult(.failure(saveError))
+        viewModel.exportPassword = password
+        viewModel.exportPasswordConfirm = password
+
+        XCTAssertEqual(viewModel.state, .error(message: "Save failed: write denied"))
+        XCTAssertTrue(viewModel.canStartExport)
+    }
 }
 #endif

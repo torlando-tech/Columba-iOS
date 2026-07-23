@@ -64,9 +64,8 @@ struct MigrationScreen: View {
             contentType: columbaUTType,
             defaultFilename: exportFileName
         ) { result in
-            if case .failure(let error) = result {
-                viewModel.state = .error(message: "Save failed: \(error.localizedDescription)")
-            }
+            exportDocument = nil
+            viewModel.handleExportSaveResult(result)
         }
     }
 
@@ -115,7 +114,7 @@ struct MigrationScreen: View {
                 }
             }
 
-            // Export action / progress / result
+            // Export action / progress
             VStack(spacing: 12) {
                 switch viewModel.state {
                 case .exporting(let progress):
@@ -125,36 +124,6 @@ struct MigrationScreen: View {
                     Text("Exporting... \(Int(progress * 100))%")
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
-
-                case .exportComplete(let url):
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Theme.success)
-                        Text("Export complete!")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Theme.success)
-                    }
-
-                    Button {
-                        if let data = try? Data(contentsOf: url) {
-                            exportDocument = ColumbaBackupDocument(data: data)
-                            exportFileName = url.lastPathComponent
-                            showFileExporter = true
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder.badge.plus")
-                                .font(.system(size: 14, weight: .medium))
-                            Text("Save Backup File")
-                                .font(.system(size: 15, weight: .medium))
-                        }
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Theme.accentColor)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
-                    }
-                    .padding(.horizontal, 16)
 
                 default:
                     Button {
@@ -474,7 +443,7 @@ struct MigrationScreen: View {
                 }
 
                 Button {
-                    Task { await viewModel.startExport() }
+                    Task { await beginExport() }
                 } label: {
                     Text("Export")
                         .font(.system(size: 16, weight: .semibold))
@@ -581,6 +550,19 @@ struct MigrationScreen: View {
     }
 
     // MARK: - File Handling
+
+    private func beginExport() async {
+        guard let url = await viewModel.startExport() else { return }
+
+        do {
+            let data = try Data(contentsOf: url)
+            exportDocument = ColumbaBackupDocument(data: data)
+            exportFileName = url.lastPathComponent
+            showFileExporter = true
+        } catch {
+            viewModel.state = .error(message: "Failed to prepare backup: \(error.localizedDescription)")
+        }
+    }
 
     private func handleFileImport(_ result: Result<[URL], Error>) {
         switch result {
