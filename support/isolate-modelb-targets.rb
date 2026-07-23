@@ -1124,7 +1124,7 @@ module ModelBTargetIsolation
         Xcodeproj::Project::Object::XCBuildConfiguration
       )
       destination_tokens = compilation_tokens(configuration).reject do |token|
-        SHIPPING_FORBIDDEN_FLAGS.include?(token)
+        (SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS).include?(token)
       end
       configuration.name = source.name
       configuration.base_configuration_reference = source.base_configuration_reference
@@ -1134,7 +1134,11 @@ module ModelBTargetIsolation
       required = destination_tokens
       required.concat(SHARED_APP_FLAGS)
       required.concat(MODEL_B_FLAGS)
-      set_compilation_tokens(configuration, required, removed: SHIPPING_FORBIDDEN_FLAGS)
+      set_compilation_tokens(
+        configuration,
+        required,
+        removed: SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS
+      )
       configuration
     end
 
