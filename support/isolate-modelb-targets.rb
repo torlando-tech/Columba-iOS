@@ -48,6 +48,8 @@ CANONICAL_FLAGS = %w[
   COLUMBA_BACKEND_SWIFT
 ].freeze
 ONBOARDING_FLAG = 'COLUMBA_ONBOARDING_ENABLED'
+MIGRATION_FLAG = 'COLUMBA_MIGRATION_ENABLED'
+SHARED_APP_FLAGS = [ONBOARDING_FLAG, MIGRATION_FLAG].freeze
 SHIPPING_FORBIDDEN_FLAGS = CANONICAL_FLAGS
 MODEL_B_FLAGS = %w[
   COLUMBA_RUNTIME_MODEL_B
@@ -1130,7 +1132,7 @@ module ModelBTargetIsolation
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = MODEL_B_ENTITLEMENTS
       configuration.build_settings.delete('SWIFT_OBJC_BRIDGING_HEADER')
       required = destination_tokens
-      required << ONBOARDING_FLAG
+      required.concat(SHARED_APP_FLAGS)
       required.concat(MODEL_B_FLAGS)
       set_compilation_tokens(configuration, required, removed: SHIPPING_FORBIDDEN_FLAGS)
       configuration
@@ -1149,8 +1151,8 @@ module ModelBTargetIsolation
       configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = PYTHON_BRIDGING_HEADER
       set_compilation_tokens(
         configuration,
-        ['COLUMBA_RUNTIME_PYTHON', ONBOARDING_FLAG],
-        removed: SHIPPING_FORBIDDEN_FLAGS + [ONBOARDING_FLAG]
+        ['COLUMBA_RUNTIME_PYTHON'] + SHARED_APP_FLAGS,
+        removed: SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS
       )
     end
   end
@@ -1167,11 +1169,11 @@ module ModelBTargetIsolation
     end
     shipping_tests.build_configurations.each do |test_configuration|
       shipping_configuration = shipping_by_name.fetch(test_configuration.name)
-      shipping_flags = compilation_tokens(shipping_configuration) & (CANONICAL_FLAGS + [ONBOARDING_FLAG])
+      shipping_flags = compilation_tokens(shipping_configuration) & (CANONICAL_FLAGS + SHARED_APP_FLAGS)
       set_compilation_tokens(
         test_configuration,
         shipping_flags,
-        removed: SHIPPING_FORBIDDEN_FLAGS + [ONBOARDING_FLAG]
+        removed: SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS
       )
     end
   end
@@ -1599,15 +1601,16 @@ module ModelBTargetIsolation
       raise "shipping TEST_HOST changed in #{test_configuration.name}" unless test_host.include?('ColumbaApp.app')
     end
     (shipping.build_configurations + shipping_tests.build_configurations).each do |configuration|
-      next if compilation_tokens(configuration).include?(ONBOARDING_FLAG)
+      missing = SHARED_APP_FLAGS - compilation_tokens(configuration)
+      next if missing.empty?
 
-      raise "shipping configuration lost shared onboarding in #{configuration.name}"
+      raise "shipping configuration lost shared features #{missing.join(', ')} in #{configuration.name}"
     end
     model_b.build_configurations.each do |configuration|
-      has_onboarding = compilation_tokens(configuration).include?(ONBOARDING_FLAG)
-      next if has_onboarding
+      missing = SHARED_APP_FLAGS - compilation_tokens(configuration)
+      next if missing.empty?
 
-      raise "Model B onboarding mapping is incorrect in #{configuration.name}"
+      raise "Model B shared feature mapping lost #{missing.join(', ')} in #{configuration.name}"
     end
     ([project] + project.targets).each do |owner|
       names = owner.build_configuration_list.build_configurations.map(&:name)

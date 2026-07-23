@@ -19,6 +19,7 @@ CANONICAL_FLAGS = %w[
   COLUMBA_BACKEND_SWIFT
 ].freeze
 ONBOARDING_FLAG = 'COLUMBA_ONBOARDING_ENABLED'
+MIGRATION_FLAG = 'COLUMBA_MIGRATION_ENABLED'
 MODEL_B_ONLY_SOURCE_PATHS = %w[
   Sources/RNSBackendProxy/ProxyRnsBackend.swift
   Sources/ColumbaApp/Services/TunnelManager.swift
@@ -1256,10 +1257,14 @@ class ModelBTargetIsolationTests < Minitest::Test
       assert_equal ['COLUMBA_RUNTIME_PYTHON'], canonical_tokens(shipping), shipping.name
       assert_includes compilation_tokens(shipping), ONBOARDING_FLAG,
                       "shipping app lost shared onboarding in #{shipping.name}"
+      assert_includes compilation_tokens(shipping), MIGRATION_FLAG,
+                      "shipping app lost data migration in #{shipping.name}"
       assert_equal %w[COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT],
                    canonical_tokens(model_b), model_b.name
       assert_includes compilation_tokens(model_b), ONBOARDING_FLAG,
                       "explicit Model B target lost onboarding in #{model_b.name}"
+      assert_includes compilation_tokens(model_b), MIGRATION_FLAG,
+                      "explicit Model B target lost data migration in #{model_b.name}"
       assert_equal 'Sources/ColumbaApp/Resources/ColumbaApp.entitlements',
                    shipping.build_settings['CODE_SIGN_ENTITLEMENTS']
       assert_equal 'Sources/ColumbaApp/Resources/ColumbaModelBApp.entitlements',
@@ -1291,6 +1296,8 @@ class ModelBTargetIsolationTests < Minitest::Test
                    test_configuration.name
       assert_includes compilation_tokens(test_configuration), ONBOARDING_FLAG,
                       "shipping tests lost shared onboarding in #{test_configuration.name}"
+      assert_includes compilation_tokens(test_configuration), MIGRATION_FLAG,
+                      "shipping tests lost data migration in #{test_configuration.name}"
       assert_match(/ColumbaApp\.app/, test_configuration.build_settings.fetch('TEST_HOST'),
                    "TEST_HOST changed in #{test_configuration.name}")
       assert_equal '$(TEST_HOST)', test_configuration.build_settings.fetch('BUNDLE_LOADER'),
@@ -2165,15 +2172,15 @@ class ModelBTargetIsolationTests < Minitest::Test
     end
   end
 
-  def test_reconciler_authoritatively_repairs_model_b_onboarding_mapping
-    Dir.mktmpdir('columba-modelb-onboarding') do |directory|
+  def test_reconciler_authoritatively_repairs_model_b_shared_feature_mapping
+    Dir.mktmpdir('columba-modelb-shared-features') do |directory|
       temporary_project = File.join(directory, 'Columba.xcodeproj')
       FileUtils.cp_r(PROJECT_PATH, temporary_project)
       fixture = Xcodeproj::Project.open(temporary_project)
       model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
       debug = model_b.build_configurations.find { |configuration| configuration.name == 'Debug' }
       debug.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
-        (compilation_tokens(debug) - [ONBOARDING_FLAG] + ['UNRELATED_MODEL_B_CONDITION']).uniq.join(' ')
+        (compilation_tokens(debug) - [ONBOARDING_FLAG, MIGRATION_FLAG] + ['UNRELATED_MODEL_B_CONDITION']).uniq.join(' ')
       fixture.save
 
       run_reconciler(temporary_project, 'onboarding-mapping')
@@ -2182,6 +2189,7 @@ class ModelBTargetIsolationTests < Minitest::Test
       reconciled_model_b.build_configurations.each do |configuration|
         tokens = compilation_tokens(configuration)
         assert_includes tokens, ONBOARDING_FLAG, configuration.name
+        assert_includes tokens, MIGRATION_FLAG, configuration.name
       end
       assert_includes compilation_tokens(
         reconciled_model_b.build_configurations.find { |configuration| configuration.name == 'Debug' }
