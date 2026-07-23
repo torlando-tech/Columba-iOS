@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Dispatch
 import SQLite3
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1746,6 +1747,16 @@ public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
 
 // MARK: - PathTable
 
+/// Timing returned by `PathTable.insert(_:)` for low-overhead runtime diagnostics.
+/// It contains aggregate duration only and no path or destination information.
+public struct PathInsertMetrics: Sendable {
+    public let persistenceDurationMilliseconds: Double
+
+    public init(persistenceDurationMilliseconds: Double) {
+        self.persistenceDurationMilliseconds = persistenceDurationMilliseconds
+    }
+}
+
 /// In-memory path table. Python's RNS.Transport.path_table is the source of
 /// truth for the network state; AppServices.handlePythonEvent mirrors each
 /// `announce` event into this Compat-layer table via `insert(_:)`. The
@@ -1853,15 +1864,21 @@ public final class PathTable: @unchecked Sendable {
     /// Insert or update a path entry. Keyed by `destinationHash`; replacing
     /// an existing entry yields the new copy to all live `pathUpdates`
     /// subscribers so the UI re-renders.
-    public func insert(_ entry: PathEntry) async {
+    public func insert(_ entry: PathEntry) async -> PathInsertMetrics {
         lock.lock()
         entries[entry.destinationHash] = entry
+        let persistStart = DispatchTime.now().uptimeNanoseconds
         persist(entry)
+        let persistEnd = DispatchTime.now().uptimeNanoseconds
         let continuationsCopy = continuations.values
         lock.unlock()
         for continuation in continuationsCopy {
             continuation.yield(entry)
         }
+        let persistenceDurationMilliseconds = Double(persistEnd - persistStart) / 1_000_000
+        return PathInsertMetrics(
+            persistenceDurationMilliseconds: persistenceDurationMilliseconds
+        )
     }
 
     /// Stream of path-table updates. Each subscriber gets its own continuation;

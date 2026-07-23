@@ -423,7 +423,7 @@ public struct ContactsView: View {
             .padding(.vertical, 12)
         }
         .refreshable {
-            await vm.loadContacts()
+            await vm.loadContacts(force: true)
         }
     }
 

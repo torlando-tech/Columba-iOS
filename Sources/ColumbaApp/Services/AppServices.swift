@@ -17,7 +17,8 @@ import CryptoKit
 #if canImport(UIKit)
 import UIKit
 #endif
-#if os(iOS)
+#if canImport(Darwin)
+import Darwin
 #endif
 import os.log
 
@@ -85,6 +86,271 @@ enum DiagLog {
     }
     #endif
     #endif
+}
+
+/// Low-overhead, privacy-safe runtime instrumentation for physical-device soak tests.
+///
+/// Samples cumulative process CPU every 15 seconds, observes thermal-state changes,
+/// and aggregates announce and path-table persistence activity. Diagnostic output
+/// contains counts and interface classes only: no endpoints, hashes, names, or content.
+final class RuntimeActivityMonitor: @unchecked Sendable {
+    static let shared = RuntimeActivityMonitor()
+
+    struct Lease: Hashable, Sendable {
+        fileprivate let generation: UInt64
+        fileprivate let identifier: UInt64
+    }
+
+    private enum AnnounceSource {
+        case tcp
+        case ble
+        case auto
+        case other
+    }
+
+    private struct Counters {
+        var announceTCP = 0
+        var announceBLE = 0
+        var announceAuto = 0
+        var announceOther = 0
+        var pathWrites = 0
+        var pathWriteMilliseconds = 0.0
+        var pathWriteMaxMilliseconds = 0.0
+
+        var announceTotal: Int {
+            announceTCP + announceBLE + announceAuto + announceOther
+        }
+    }
+
+    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "network.columba.runtime-activity", qos: .utility)
+    private var timer: DispatchSourceTimer?
+    private var thermalObserver: NSObjectProtocol?
+    private var counters = Counters()
+    private var lastSampleUptime = ProcessInfo.processInfo.systemUptime
+    private var lastCPUSeconds = 0.0
+    private var generationCounter: UInt64 = 0
+    private var activeGeneration: UInt64?
+    private var nextLeaseIdentifier: UInt64 = 0
+    private var activeLeases: Set<Lease> = []
+
+    init() {}
+
+    var activeLeaseCountForTesting: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return activeLeases.count
+    }
+
+    var isRunningForTesting: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return activeGeneration != nil
+    }
+
+    func acquire() -> Lease {
+        lock.lock()
+        nextLeaseIdentifier &+= 1
+
+        if let generation = activeGeneration {
+            let lease = Lease(
+                generation: generation,
+                identifier: nextLeaseIdentifier
+            )
+            activeLeases.insert(lease)
+            lock.unlock()
+            return lease
+        }
+
+        precondition(timer == nil && activeLeases.isEmpty)
+        generationCounter &+= 1
+        let generation = generationCounter
+        activeGeneration = generation
+        let lease = Lease(
+            generation: generation,
+            identifier: nextLeaseIdentifier
+        )
+        activeLeases.insert(lease)
+        counters = Counters()
+        lastSampleUptime = ProcessInfo.processInfo.systemUptime
+        lastCPUSeconds = Self.processCPUSeconds()
+
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 15, repeating: 15)
+        timer.setEventHandler { [weak self] in
+            self?.emitSample(reason: "periodic", generation: generation)
+        }
+        self.timer = timer
+        thermalObserver = NotificationCenter.default.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.emitSample(reason: "thermal_change", generation: generation)
+        }
+        lock.unlock()
+
+        timer.activate()
+        emitSample(reason: "start", generation: generation)
+        return lease
+    }
+
+    func release(_ lease: Lease) {
+        lock.lock()
+        guard activeGeneration == lease.generation,
+              activeLeases.remove(lease) != nil else {
+            lock.unlock()
+            return
+        }
+        guard activeLeases.isEmpty else {
+            lock.unlock()
+            return
+        }
+        guard let timer else {
+            activeGeneration = nil
+            lock.unlock()
+            return
+        }
+
+        let observer = thermalObserver
+        let finalLine = makeSampleLineLocked(reason: "stop")
+        activeGeneration = nil
+
+        // The last release owns teardown while holding the monitor lock. New
+        // acquisitions and accepted callbacks cannot cross the final sample.
+        timer.setEventHandler {}
+        timer.cancel()
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        DiagLog.log(finalLine)
+        self.timer = nil
+        thermalObserver = nil
+        lock.unlock()
+    }
+
+    func recordAnnounce(interfaceName: String, configuredType: InterfaceType?) {
+        let source = Self.classify(
+            interfaceName: interfaceName,
+            configuredType: configuredType
+        )
+        lock.lock()
+        guard activeGeneration != nil else {
+            lock.unlock()
+            return
+        }
+        switch source {
+        case .tcp: counters.announceTCP += 1
+        case .ble: counters.announceBLE += 1
+        case .auto: counters.announceAuto += 1
+        case .other: counters.announceOther += 1
+        }
+        lock.unlock()
+    }
+
+    func recordPathTableWrite(durationMilliseconds: Double) {
+        lock.lock()
+        guard activeGeneration != nil else {
+            lock.unlock()
+            return
+        }
+        counters.pathWrites += 1
+        counters.pathWriteMilliseconds += durationMilliseconds
+        counters.pathWriteMaxMilliseconds = max(
+            counters.pathWriteMaxMilliseconds,
+            durationMilliseconds
+        )
+        lock.unlock()
+    }
+
+    private static func classify(
+        interfaceName: String,
+        configuredType: InterfaceType?
+    ) -> AnnounceSource {
+        if let configuredType {
+            switch configuredType {
+            case .tcpClient, .tcpServer: return .tcp
+            case .ble: return .ble
+            case .autoInterface, .multipeer: return .auto
+            case .rnode: return .other
+            }
+        }
+
+        // Dynamically spawned Auto/BLE peer interfaces do not have a matching
+        // InterfaceEntity, so retain a class-name fallback for those children.
+        let normalized = interfaceName.lowercased()
+        if normalized.contains("tcp") { return .tcp }
+        if normalized.contains("bluetooth") || normalized.contains("ble") { return .ble }
+        if normalized.contains("auto") || normalized.contains("multipeer") { return .auto }
+        return .other
+    }
+
+    private func emitSample(reason: String, generation: UInt64) {
+        lock.lock()
+        guard activeGeneration == generation else {
+            lock.unlock()
+            return
+        }
+        let line = makeSampleLineLocked(reason: reason)
+        // Publication is part of the generation's critical section. Teardown
+        // cannot capture its final sample until every accepted callback line
+        // has reached the diagnostic stream.
+        DiagLog.log(line)
+        lock.unlock()
+    }
+
+    /// Build and reset one interval while the caller holds `lock`.
+    private func makeSampleLineLocked(reason: String) -> String {
+        let now = ProcessInfo.processInfo.systemUptime
+        let cpuNow = Self.processCPUSeconds()
+        let elapsed = max(0.001, now - lastSampleUptime)
+        let cpuPercent = max(0, cpuNow - lastCPUSeconds) / elapsed * 100
+        let snapshot = counters
+        counters = Counters()
+        lastSampleUptime = now
+        lastCPUSeconds = cpuNow
+
+        let announceRate = Double(snapshot.announceTotal) / elapsed * 60
+        let pathAverage = snapshot.pathWrites == 0
+            ? 0
+            : snapshot.pathWriteMilliseconds / Double(snapshot.pathWrites)
+        return "[PERF] reason=\(reason) thermal=\(Self.thermalStateName()) sample_seconds=\(String(format: "%.1f", elapsed)) cpu_pct=\(String(format: "%.1f", cpuPercent)) announce_total=\(snapshot.announceTotal) announce_per_min=\(String(format: "%.1f", announceRate)) announce_tcp=\(snapshot.announceTCP) announce_ble=\(snapshot.announceBLE) announce_auto=\(snapshot.announceAuto) announce_other=\(snapshot.announceOther) path_writes=\(snapshot.pathWrites) path_write_ms_avg=\(String(format: "%.3f", pathAverage)) path_write_ms_max=\(String(format: "%.3f", snapshot.pathWriteMaxMilliseconds))"
+    }
+
+    private static func thermalStateName() -> String {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: return "nominal"
+        case .fair: return "fair"
+        case .serious: return "serious"
+        case .critical: return "critical"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private static func processCPUSeconds() -> Double {
+        #if canImport(Darwin)
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else { return 0 }
+        let user = Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1_000_000
+        let system = Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1_000_000
+        return user + system
+        #else
+        return 0
+        #endif
+    }
+}
+
+/// RAII fallback for callers that fail to invoke AppServices.shutdown().
+/// Normal mutation is main-actor confined by AppServices; holder destruction
+/// releases any remaining generation-bound lease without actor-isolated access.
+private final class RuntimeActivityMonitorLeaseHolder {
+    var lease: RuntimeActivityMonitor.Lease?
+
+    deinit {
+        if let lease {
+            RuntimeActivityMonitor.shared.release(lease)
+        }
+    }
 }
 
 /// Central LXMF service layer for the SwiftUI application.
@@ -227,6 +493,65 @@ public final class AppServices {
     /// `LXMRouter` and `ReticulumTransport` stubs delegate real work
     /// (announce listening, opportunistic LXMF send/receive) through this.
     public private(set) var backend: (any RnsBackend)?
+
+    /// Generation-bound retain on the process-global activity monitor. Each
+    /// active AppServices instance holds one lease; only the last release stops
+    /// instrumentation.
+    private let runtimeActivityMonitorLeaseHolder = RuntimeActivityMonitorLeaseHolder()
+
+    /// Retain a successful operation's lease for this service instance. If a
+    /// prior successful operation already retained one, the operation's extra
+    /// lease is released rather than accumulated.
+    private func retainRuntimeActivityMonitorLease(_ lease: RuntimeActivityMonitor.Lease) {
+        guard runtimeActivityMonitorLeaseHolder.lease == nil else {
+            RuntimeActivityMonitor.shared.release(lease)
+            return
+        }
+        runtimeActivityMonitorLeaseHolder.lease = lease
+    }
+
+    private func releaseRuntimeActivityMonitorLease() {
+        guard let lease = runtimeActivityMonitorLeaseHolder.lease else { return }
+        runtimeActivityMonitorLeaseHolder.lease = nil
+        RuntimeActivityMonitor.shared.release(lease)
+    }
+
+    private func requireActiveRuntimeForInterfaceMutation() throws {
+        guard runtimeActivityMonitorLeaseHolder.lease != nil else {
+            throw AppServicesError.transportNotConnected
+        }
+    }
+
+    /// MainActor methods are reentrant at each await. This FIFO gate prevents
+    /// initialize, shutdown, and reconnect from committing through one another.
+    private var lifecycleOperationActive = false
+    private var lifecycleOperationWaiters: [CheckedContinuation<Void, Never>] = []
+
+    private func acquireLifecycleOperation() async {
+        guard lifecycleOperationActive else {
+            lifecycleOperationActive = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            lifecycleOperationWaiters.append(continuation)
+        }
+    }
+
+    private func releaseLifecycleOperation() {
+        guard !lifecycleOperationWaiters.isEmpty else {
+            lifecycleOperationActive = false
+            return
+        }
+        lifecycleOperationWaiters.removeFirst().resume()
+    }
+
+    func withLifecycleOperation<T>(
+        _ operation: () async throws -> T
+    ) async rethrows -> T {
+        await acquireLifecycleOperation()
+        defer { releaseLifecycleOperation() }
+        return try await operation()
+    }
 
     /// The bound backend downcast to the Python impl — for Python-only wiring
     /// (BLE callback bridge and diagnose_* deep links). This API is compiled
@@ -795,12 +1120,6 @@ public final class AppServices {
     /// Call `initialize(tcpServerAddress:)` to set up all components.
     public init() {}
 
-    // Note: No deinit needed - stateObserverTask is automatically cancelled
-    // when the Task reference is deallocated, and shutdown() should be
-    // called explicitly for clean teardown.
-
-    // MARK: - Service Initialization
-
     /// Initialize all LXMF components.
     ///
     /// This async method sets up the complete LXMF stack:
@@ -817,7 +1136,22 @@ public final class AppServices {
     /// - Parameter tcpServerAddress: TCP server address (e.g., "tcp://10.0.0.1:4242" or "10.0.0.1:4242")
     /// - Throws: InterfaceError, DatabaseError, or other initialization errors
     public func initialize(tcpServerAddress: String) async throws {
+        try await withLifecycleOperation {
+            try await initializeUnlocked(tcpServerAddress: tcpServerAddress)
+        }
+    }
+
+    private func initializeUnlocked(tcpServerAddress: String) async throws {
         DiagLog.clear()
+        let monitorLease = RuntimeActivityMonitor.shared.acquire()
+        var initializationSucceeded = false
+        defer {
+            if initializationSucceeded {
+                retainRuntimeActivityMonitorLease(monitorLease)
+            } else {
+                RuntimeActivityMonitor.shared.release(monitorLease)
+            }
+        }
         DiagLog.log("[INIT] Starting with TCP server: \(tcpServerAddress)")
 
         // 1. Load identity from persistent storage (try Keychain first, then file)
@@ -958,6 +1292,7 @@ public final class AppServices {
         // notification now that the backend is up (see helper docs). Idempotent.
         registerTestAnnounceObserver()
 
+        initializationSucceeded = true
         logger.info("Initialization complete")
     }
 
@@ -2078,6 +2413,12 @@ public final class AppServices {
     /// TCP is unaffected.
     @MainActor
     public func applyInterfaceChanges() async {
+        await withLifecycleOperation {
+            await applyInterfaceChangesUnlocked()
+        }
+    }
+
+    private func applyInterfaceChangesUnlocked() async {
         // Model B: the NE owns the RNS node + all interfaces; the app's `backend` here is
         // the thin `ProxyRnsBackend`, whose `addInterface` throws `unsupportedInProxy`. The
         // python-shaped hot-add/-remove path below is therefore both wrong (it would error
@@ -2204,13 +2545,13 @@ public final class AppServices {
                 }
             }
         case .autoInterface(let cfg):
-            try? await startAutoInterface(groupId: cfg.groupId ?? "reticulum")
+            try? await startAutoInterfaceUnlocked(groupId: cfg.groupId ?? "reticulum")
         case .ble:
             #if canImport(CoreBluetooth)
-            try? await startBLEInterface()
+            try? await startBLEInterfaceUnlocked()
             #endif
         case .rnode(let cfg):
-            try? await startRNodeInterface(config: cfg, name: entity.name)
+            try? await startRNodeInterfaceUnlocked(config: cfg, name: entity.name)
         case .multipeer:
             break // Multipeer status mirror not wired for hot-add yet.
         }
@@ -2229,13 +2570,13 @@ public final class AppServices {
                 tcpInterfaces.removeValue(forKey: entity.id)
             }
         case .autoInterface:
-            await stopAutoInterface()
+            await stopAutoInterfaceUnlocked()
         case .ble:
             #if canImport(CoreBluetooth)
-            await stopBLEInterface()
+            await stopBLEInterfaceUnlocked()
             #endif
         case .rnode:
-            await stopRNodeInterface()
+            await stopRNodeInterfaceUnlocked()
         case .multipeer:
             break
         }
@@ -2250,7 +2591,7 @@ public final class AppServices {
             case .tcpClient(let config):
                 let entityId = entity.id
                 do {
-                    try await connectTCPInterface(entityId: entityId, host: config.targetHost, port: config.targetPort)
+                    try await connectTCPInterfaceUnlocked(entityId: entityId, host: config.targetHost, port: config.targetPort)
                     DiagLog.log("[RESPAWN] TCP \(entityId) connected")
                 } catch {
                     DiagLog.log("[RESPAWN] TCP \(entityId) failed: \(error)")
@@ -2258,7 +2599,7 @@ public final class AppServices {
             case .autoInterface(let config):
                 let groupId = config.groupId ?? "reticulum"
                 do {
-                    try await startAutoInterface(groupId: groupId)
+                    try await startAutoInterfaceUnlocked(groupId: groupId)
                     DiagLog.log("[RESPAWN] AutoInterface started groupId=\(groupId)")
                 } catch {
                     DiagLog.log("[RESPAWN] AutoInterface failed: \(error)")
@@ -2266,7 +2607,7 @@ public final class AppServices {
             case .ble:
                 #if canImport(CoreBluetooth)
                 do {
-                    try await startBLEInterface()
+                    try await startBLEInterfaceUnlocked()
                     DiagLog.log("[RESPAWN] BLEInterface started")
                 } catch {
                     DiagLog.log("[RESPAWN] BLEInterface failed: \(error)")
@@ -2413,6 +2754,13 @@ public final class AppServices {
             // NodeDetailsView) can parse limits + stamp cost from it.
             let appData = Data(hexString: appDataHex) ?? Data()
             let displayName = AppDataParser.displayName(from: appData, aspect: aspect)
+            let configuredType = pythonInterfaceEntities.values.first {
+                expectedSectionName(for: $0) == interfaceName
+            }?.type
+            RuntimeActivityMonitor.shared.recordAnnounce(
+                interfaceName: interfaceName,
+                configuredType: configuredType
+            )
             DiagLog.log("[RNS] announce dest=\(destHash) aspect=\(aspect) name=\"\(displayName)\" iface=\"\(interfaceName)\" hops=\(hops)")
 
             // Aspect is now the SOLE signal Contact.init uses to type an
@@ -2454,7 +2802,10 @@ public final class AppServices {
                     isLXSTTelephony: aspect == "lxst.telephony",
                     isKnownDestination: true
                 )
-                await pathTable.insert(entry)
+                let metrics = await pathTable.insert(entry)
+                RuntimeActivityMonitor.shared.recordPathTableWrite(
+                    durationMilliseconds: metrics.persistenceDurationMilliseconds
+                )
             }
 
             NotificationCenter.default.post(
@@ -2587,7 +2938,30 @@ public final class AppServices {
     ///   - identityHash: Hex hash of the identity (used for DB filename)
     ///   - tcpServerAddress: TCP server address (e.g., "10.0.0.1:4242")
     public func initialize(identity: Identity, identityHash: String, tcpServerAddress: String) async throws {
+        try await withLifecycleOperation {
+            try await initializeUnlocked(
+                identity: identity,
+                identityHash: identityHash,
+                tcpServerAddress: tcpServerAddress
+            )
+        }
+    }
+
+    private func initializeUnlocked(
+        identity: Identity,
+        identityHash: String,
+        tcpServerAddress: String
+    ) async throws {
         DiagLog.clear()
+        let monitorLease = RuntimeActivityMonitor.shared.acquire()
+        var initializationSucceeded = false
+        defer {
+            if initializationSucceeded {
+                retainRuntimeActivityMonitorLease(monitorLease)
+            } else {
+                RuntimeActivityMonitor.shared.release(monitorLease)
+            }
+        }
         DiagLog.log("[INIT2] Starting with identity: \(identityHash), tcp: \(tcpServerAddress)")
 
         self.identity = identity
@@ -2761,6 +3135,7 @@ public final class AppServices {
         // notification now that the backend is up (see helper docs). Idempotent.
         registerTestAnnounceObserver()
 
+        initializationSucceeded = true
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
 
@@ -2824,10 +3199,24 @@ public final class AppServices {
     ///   - identityHash: Hex hash of the new identity
     ///   - tcpServerAddress: TCP server address to reconnect to
     public func switchIdentity(to newIdentity: Identity, identityHash: String, tcpServerAddress: String) async throws {
+        try await withLifecycleOperation {
+            try await switchIdentityUnlocked(
+                to: newIdentity,
+                identityHash: identityHash,
+                tcpServerAddress: tcpServerAddress
+            )
+        }
+    }
+
+    private func switchIdentityUnlocked(
+        to newIdentity: Identity,
+        identityHash: String,
+        tcpServerAddress: String
+    ) async throws {
         logger.info("Switching identity to: \(identityHash)")
 
         // Tear down current stack
-        await shutdown()
+        await shutdownUnlocked()
 
         // NOTE: Path table is NOT cleared here — path entries (announce routes)
         // are identity-agnostic and remain valid across identity switches.
@@ -2837,7 +3226,11 @@ public final class AppServices {
         try? await Task.sleep(for: .milliseconds(200))
 
         // Re-initialize with new identity
-        try await initialize(identity: newIdentity, identityHash: identityHash, tcpServerAddress: tcpServerAddress)
+        try await initializeUnlocked(
+            identity: newIdentity,
+            identityHash: identityHash,
+            tcpServerAddress: tcpServerAddress
+        )
 
         logger.info("Identity switch complete: \(identityHash)")
     }
@@ -3004,8 +3397,15 @@ public final class AppServices {
     ///
     /// - Parameter groupId: Group ID for peer discovery (default: "reticulum")
     public func startAutoInterface(groupId: String = "reticulum") async throws {
+        try await withLifecycleOperation {
+            try requireActiveRuntimeForInterfaceMutation()
+            try await startAutoInterfaceUnlocked(groupId: groupId)
+        }
+    }
+
+    private func startAutoInterfaceUnlocked(groupId: String = "reticulum") async throws {
         // Stop existing auto interface if any
-        await stopAutoInterface()
+        await stopAutoInterfaceUnlocked()
 
         // Ensure we have base stack (identity, transport, router)
         if transport == nil {
@@ -3041,6 +3441,12 @@ public final class AppServices {
 
     /// Stop the AutoInterface.
     public func stopAutoInterface() async {
+        await withLifecycleOperation {
+            await stopAutoInterfaceUnlocked()
+        }
+    }
+
+    private func stopAutoInterfaceUnlocked() async {
         guard let auto = autoInterface else { return }
         await auto.disconnect()
         if let transport = transport {
@@ -3065,10 +3471,17 @@ public final class AppServices {
     ///      are how `IOSBLEDriver` actually calls into Swift.)
     ///   4. Update Compat-layer BLEInterface stub for the UI.
     public func startBLEInterface() async throws {
+        try await withLifecycleOperation {
+            try requireActiveRuntimeForInterfaceMutation()
+            try await startBLEInterfaceUnlocked()
+        }
+    }
+
+    private func startBLEInterfaceUnlocked() async throws {
         logger.info("[BLE_DIAG] startBLEInterface() called")
 
         if bleInterface != nil {
-            await stopBLEInterface()
+            await stopBLEInterfaceUnlocked()
             try? await Task.sleep(for: .milliseconds(500))
         }
 
@@ -3171,6 +3584,12 @@ public final class AppServices {
 
     /// Stop the BLE interface.
     public func stopBLEInterface() async {
+        await withLifecycleOperation {
+            await stopBLEInterfaceUnlocked()
+        }
+    }
+
+    private func stopBLEInterfaceUnlocked() async {
         guard let ble = bleInterface else { return }
         await ble.disconnect()
         if let transport = transport {
@@ -3193,7 +3612,14 @@ public final class AppServices {
     /// and establishes direct peer-to-peer WiFi connections without
     /// requiring shared infrastructure.
     public func startMPCInterface() async throws {
-        await stopMPCInterface()
+        try await withLifecycleOperation {
+            try requireActiveRuntimeForInterfaceMutation()
+            try await startMPCInterfaceUnlocked()
+        }
+    }
+
+    private func startMPCInterfaceUnlocked() async throws {
+        await stopMPCInterfaceUnlocked()
 
         if transport == nil {
             try await initializeBaseStack()
@@ -3223,6 +3649,12 @@ public final class AppServices {
 
     /// Stop the Multipeer Connectivity interface.
     public func stopMPCInterface() async {
+        await withLifecycleOperation {
+            await stopMPCInterfaceUnlocked()
+        }
+    }
+
+    private func stopMPCInterfaceUnlocked() async {
         guard let mpc = mpcInterface else { return }
         await mpc.disconnect()
         if let transport = transport {
@@ -3243,6 +3675,13 @@ public final class AppServices {
     ///   - config: RNode radio configuration (device name, frequency, etc.)
     ///   - name: Display name for the interface
     public func startRNodeInterface(config rnodeConfig: RNodeConfig, name: String) async throws {
+        try await withLifecycleOperation {
+            try requireActiveRuntimeForInterfaceMutation()
+            try await startRNodeInterfaceUnlocked(config: rnodeConfig, name: name)
+        }
+    }
+
+    private func startRNodeInterfaceUnlocked(config rnodeConfig: RNodeConfig, name: String) async throws {
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B: the RNode protocol stack (RNodeInterface + KISS framing) runs in the
         // Network Extension — the app hosts ONLY the CoreBluetooth NUS radio. Start the
@@ -3323,6 +3762,12 @@ public final class AppServices {
 
     /// Stop or clear the runtime's RNode interface state.
     public func stopRNodeInterface() async {
+        await withLifecycleOperation {
+            await stopRNodeInterfaceUnlocked()
+        }
+    }
+
+    private func stopRNodeInterfaceUnlocked() async {
         #if COLUMBA_RUNTIME_MODEL_B
         rnodeConnectWatchdog?.cancel()
         rnodeConnectWatchdog = nil
@@ -3574,6 +4019,12 @@ public final class AppServices {
 
     /// Disconnect a specific BLE peer.
     public func disconnectBLEPeer(identityHex: String) async {
+        await withLifecycleOperation {
+            await disconnectBLEPeerUnlocked(identityHex: identityHex)
+        }
+    }
+
+    private func disconnectBLEPeerUnlocked(identityHex: String) async {
         // Resolve identity → address via the bridge; if found, ask the
         // bridge to drop the GATT connection. The Compat stub's
         // disconnectPeer was a no-op, so this is the path that actually
@@ -3595,6 +4046,12 @@ public final class AppServices {
     ///
     /// Disconnects the TCP interface, shuts down the router, and cleans up resources.
     public func shutdown() async {
+        await withLifecycleOperation {
+            await shutdownUnlocked()
+        }
+    }
+
+    private func shutdownUnlocked() async {
         logger.info("Shutting down AppServices")
 
         stateObserverTask?.cancel()
@@ -3663,20 +4120,21 @@ public final class AppServices {
         await router?.shutdown()
 
         // Disconnect all TCP interfaces
-        await stopTCPInterface()
+        await stopTCPInterfaceUnlocked()
 
         // Stop RNode interface
-        await stopRNodeInterface()
+        await stopRNodeInterfaceUnlocked()
 
         // Stop BLE interface
         #if canImport(CoreBluetooth)
-        await stopBLEInterface()
+        await stopBLEInterfaceUnlocked()
         #endif
 
         // Stop auto interface
-        await stopAutoInterface()
+        await stopAutoInterfaceUnlocked()
 
         isConnected = false
+        releaseRuntimeActivityMonitorLease()
         logger.info("AppServices shutdown complete")
     }
 
@@ -3686,6 +4144,13 @@ public final class AppServices {
     /// Idempotent: if an interface is already running for `entityId` with the same
     /// `host:port`, returns without disturbing it.
     public func connectTCPInterface(entityId: String, host: String, port: UInt16) async throws {
+        try await withLifecycleOperation {
+            try requireActiveRuntimeForInterfaceMutation()
+            try await connectTCPInterfaceUnlocked(entityId: entityId, host: host, port: port)
+        }
+    }
+
+    private func connectTCPInterfaceUnlocked(entityId: String, host: String, port: UInt16) async throws {
         let endpoint = TCPEndpoint(host: host, port: port)
 
         // Already running with the same endpoint — leave it alone.
@@ -3769,6 +4234,12 @@ public final class AppServices {
 
     /// Stop a specific TCP interface by entity ID.
     public func stopTCPInterface(entityId: String) async {
+        await withLifecycleOperation {
+            await stopTCPInterfaceUnlocked(entityId: entityId)
+        }
+    }
+
+    private func stopTCPInterfaceUnlocked(entityId: String) async {
         guard let interface = tcpInterfaces[entityId] else { return }
         await interface.disconnect()
         await transport?.removeInterface(id: entityId)
@@ -3778,6 +4249,12 @@ public final class AppServices {
 
     /// Stop all TCP interfaces.
     public func stopTCPInterface() async {
+        await withLifecycleOperation {
+            await stopTCPInterfaceUnlocked()
+        }
+    }
+
+    private func stopTCPInterfaceUnlocked() async {
         for (entityId, interface) in tcpInterfaces {
             await interface.disconnect()
             await transport?.removeInterface(id: entityId)
@@ -3790,7 +4267,10 @@ public final class AppServices {
     /// Reconnect only the TCP interface without tearing down BLE/Auto/RNode.
     /// Uses the legacy "tcp-server" entity ID for backward compatibility.
     public func reconnectTCPOnly(host: String, port: UInt16) async throws {
-        try await connectTCPInterface(entityId: "tcp-server", host: host, port: port)
+        try await withLifecycleOperation {
+            try requireActiveRuntimeForInterfaceMutation()
+            try await connectTCPInterfaceUnlocked(entityId: "tcp-server", host: host, port: port)
+        }
     }
 
     // MARK: - Reconnection
@@ -3805,10 +4285,16 @@ public final class AppServices {
     /// - Parameter tcpServerAddress: New TCP server address (e.g., "tcp://10.0.0.1:4242")
     /// - Throws: InterfaceError or other initialization errors
     public func reconnect(tcpServerAddress: String) async throws {
+        try await withLifecycleOperation {
+            try await reconnectUnlocked(tcpServerAddress: tcpServerAddress)
+        }
+    }
+
+    private func reconnectUnlocked(tcpServerAddress: String) async throws {
         logger.info("Reconnecting to new TCP server: \(tcpServerAddress)")
 
         // 1. Shutdown existing connection
-        await shutdown()
+        await shutdownUnlocked()
 
         // 2. Clear path table (old paths may not be valid for new network)
         if let pathTable = pathTable {
@@ -3830,6 +4316,16 @@ public final class AppServices {
     private func reinitializeConnection(tcpServerAddress: String) async throws {
         guard let existingIdentity = identity else {
             throw AppServicesError.identityNotInitialized
+        }
+
+        let monitorLease = RuntimeActivityMonitor.shared.acquire()
+        var reinitializationSucceeded = false
+        defer {
+            if reinitializationSucceeded {
+                retainRuntimeActivityMonitorLease(monitorLease)
+            } else {
+                RuntimeActivityMonitor.shared.release(monitorLease)
+            }
         }
 
         // Parse server address
@@ -3905,6 +4401,7 @@ public final class AppServices {
         // Restart state observer
         startStateObserver()
 
+        reinitializationSucceeded = true
         logger.info("Connection re-initialized to \(host):\(port)")
     }
 

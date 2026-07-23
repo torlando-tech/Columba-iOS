@@ -26,6 +26,11 @@ struct NetworkAnnouncesTab: View {
     /// Called when a contact is selected.
     var onContactSelected: ((Contact) -> Void)?
 
+    /// Keep the live SwiftUI hierarchy bounded even when the path table holds
+    /// thousands of destinations. Additional rows are appended near the end.
+    private static let pageSize = 100
+    @State private var visibleLimit = NetworkAnnouncesTab.pageSize
+
     // MARK: - Body
 
     var body: some View {
@@ -54,6 +59,9 @@ struct NetworkAnnouncesTab: View {
                 announcesList
             }
         }
+        .onChange(of: viewModel.announceFilter) { _, _ in resetVisibleWindow() }
+        .onChange(of: viewModel.interfaceFilter) { _, _ in resetVisibleWindow() }
+        .onChange(of: viewModel.searchText) { _, _ in resetVisibleWindow() }
     }
 
     // MARK: - Empty State
@@ -220,9 +228,12 @@ struct NetworkAnnouncesTab: View {
     // MARK: - Announces List
 
     private var announcesList: some View {
-        ScrollView {
+        let filtered = viewModel.filteredNetworkAnnounces
+        let visible = filtered.prefix(visibleLimit)
+
+        return ScrollView {
             LazyVStack(spacing: 12) {
-                ForEach(viewModel.filteredNetworkAnnounces) { contact in
+                ForEach(visible) { contact in
                     ContactCard(
                         contact: contact,
                         showInterfaceIcon: true,
@@ -239,6 +250,14 @@ struct NetworkAnnouncesTab: View {
                         }
                     )
                 }
+
+                if visibleLimit < filtered.count {
+                    ProgressView()
+                        .padding(.vertical, 12)
+                        .onAppear {
+                            loadNextPage(totalCount: filtered.count)
+                        }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -246,6 +265,14 @@ struct NetworkAnnouncesTab: View {
         .refreshable {
             await viewModel.refreshAnnounces()
         }
+    }
+
+    private func loadNextPage(totalCount: Int) {
+        visibleLimit = min(visibleLimit + Self.pageSize, totalCount)
+    }
+
+    private func resetVisibleWindow() {
+        visibleLimit = Self.pageSize
     }
 
     /// Tappable banner shown above the list while new announces are buffered.

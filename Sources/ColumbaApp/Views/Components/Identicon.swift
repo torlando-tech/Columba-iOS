@@ -57,7 +57,7 @@ public struct Identicon: View {
         dotScale: CGFloat = 0.7,
         dotSpacing: CGFloat = 1.0
     ) {
-        self.pattern = IdenticonGenerator.generate(from: hash, gridSize: gridSize)
+        self.pattern = IdenticonGenerator.cachedPattern(from: hash, gridSize: gridSize)
         self.dotScale = dotScale
         self.dotSpacing = dotSpacing
     }
@@ -75,7 +75,7 @@ public struct Identicon: View {
         dotScale: CGFloat = 0.7,
         dotSpacing: CGFloat = 1.0
     ) {
-        self.pattern = IdenticonGenerator.generate(fromHex: hexHash, gridSize: gridSize)
+        self.pattern = IdenticonGenerator.cachedPattern(fromHex: hexHash, gridSize: gridSize)
         self.dotScale = dotScale
         self.dotSpacing = dotSpacing
     }
