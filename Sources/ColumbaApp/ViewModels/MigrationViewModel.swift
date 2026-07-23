@@ -22,7 +22,6 @@ final class MigrationViewModel {
         case idle
         case loadingPreview
         case exporting(progress: Float)
-        case exportComplete(url: URL)
         case passwordRequired(fileData: Data)
         case wrongPassword(fileData: Data)
         case importPreview(preview: MigrationPreview, fileData: Data, password: String?)
@@ -35,7 +34,6 @@ final class MigrationViewModel {
             case (.idle, .idle): return true
             case (.loadingPreview, .loadingPreview): return true
             case (.exporting(let a), .exporting(let b)): return a == b
-            case (.exportComplete(let a), .exportComplete(let b)): return a == b
             case (.passwordRequired, .passwordRequired): return true
             case (.wrongPassword, .wrongPassword): return true
             case (.importPreview, .importPreview): return true
@@ -104,15 +102,24 @@ final class MigrationViewModel {
         exportPassword.count >= 8 && exportPassword == exportPasswordConfirm
     }
 
-    /// Start the export process.
-    func startExport() async {
-        guard isExportPasswordValid, activeExportGeneration == nil else { return }
+    /// Whether a new export can begin. File-picker cancellation and failure
+    /// both leave this true once the user supplies another valid password.
+    var canStartExport: Bool {
+        isExportPasswordValid && activeExportGeneration == nil
+    }
+
+    /// Generate the encrypted backup and return its temporary URL so the view
+    /// can immediately present the system file exporter.
+    func startExport() async -> URL? {
+        guard canStartExport else { return nil }
         let generation = UUID()
         activeExportGeneration = generation
         defer {
             if activeExportGeneration == generation {
                 activeExportGeneration = nil
             }
+            exportPassword = ""
+            exportPasswordConfirm = ""
         }
         let password = exportPassword
         showExportPasswordSheet = false
@@ -125,17 +132,34 @@ final class MigrationViewModel {
                     self?.state = .exporting(progress: progress)
                 }
             }
+            // Invalidate queued progress jobs before handing the generated
+            // backup to the system save flow. Generation is not save success.
             activeExportGeneration = nil
-            state = .exportComplete(url: url)
-            logger.info("Export complete: \(url.lastPathComponent)")
+            state = .exporting(progress: 1)
+            logger.info("Export generated: \(url.lastPathComponent)")
+            return url
         } catch {
             activeExportGeneration = nil
             state = .error(message: "Export failed: \(error.localizedDescription)")
             logger.error("Export failed: \(error)")
+            return nil
         }
+    }
 
-        exportPassword = ""
-        exportPasswordConfirm = ""
+    /// Finalize the export only after the system file picker completes.
+    /// Cancellation returns to idle; write failures remain visible and retryable.
+    func handleExportSaveResult(_ result: Result<URL, Error>) {
+        switch result {
+        case .success:
+            state = .idle
+        case .failure(let error):
+            if error is CancellationError ||
+                (error as? CocoaError)?.code == CocoaError.Code.userCancelled {
+                state = .idle
+            } else {
+                state = .error(message: "Save failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Import
