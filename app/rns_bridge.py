@@ -498,6 +498,27 @@ def set_propagation_node(dest_hash_hex: str, stamp_cost: int = 0) -> dict[str, A
         return {"ok": True, "reason": "ok"}
 
 
+def set_incoming_message_size_limit_kb(limit_kb: int) -> dict[str, Any]:
+    """Set LXMRouter.delivery_per_transfer_limit in KB.
+
+    This single router property drives both the delivery_resource_advertised
+    transfer limit and the propagation WANT transfer limit. It must be applied
+    on a running router; callers should treat not-started/no-router as errors.
+    """
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "reason": "not-started"}
+        router = _state["router"]
+        if router is None:
+            return {"ok": False, "reason": "no-router"}
+        bounded = max(512, min(int(limit_kb), 131072))
+        try:
+            router.delivery_per_transfer_limit = bounded
+        except Exception as e:
+            return {"ok": False, "reason": f"set-failed: {e}"}
+        return {"ok": True, "reason": "ok", "limit_kb": bounded}
+
+
 def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
     """Block until the current LXMF propagation-node sync finishes (or
     times out). Returns `{ok, state, received_messages, reason}`.

@@ -393,6 +393,11 @@ actor MigrationImporter {
                     await settingsRepository.setSyncInterval(interval)
                     settingsImported += 1
                 }
+            case "incoming_message_size_limit_kb":
+                if let value = Int(pref.value) {
+                    await settingsRepository.setIncomingMessageSizeLimitKB(value)
+                    settingsImported += 1
+                }
             case "auto_announce_enabled":
                 UserDefaults.standard.set(pref.value == "true", forKey: "auto_announce_enabled")
                 settingsImported += 1

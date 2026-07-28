@@ -14,6 +14,17 @@ import RNSAPI
 /// Uses App Group UserDefaults for data sharing between main app
 /// and Network Extension. Stores server configuration and identity info.
 public actor SettingsRepository {
+    public enum IncomingMessageSizeLimit {
+        public static let minimumKB = 512
+        public static let defaultKB = 1_024
+        public static let unlimitedKB = 131_072
+
+        public static func normalize(_ valueKB: Int?) -> Int {
+            guard let valueKB else { return defaultKB }
+            return min(max(valueKB, minimumKB), unlimitedKB)
+        }
+    }
+
     // MARK: - Keys
 
     private enum Keys {
@@ -29,6 +40,7 @@ public actor SettingsRepository {
         static let periodicSyncEnabled = "periodicSyncEnabled"
         static let syncIntervalSeconds = "syncIntervalSeconds"
         static let lastSyncTimestamp = "lastSyncTimestamp"
+        static let incomingMessageSizeLimitKB = "incoming_message_size_limit_kb"
         static let iconName = "profileIconName"
         static let iconFgColor = "profileIconFgColor"
         static let iconBgColor = "profileIconBgColor"
@@ -200,6 +212,41 @@ public actor SettingsRepository {
     /// Set sync interval in seconds.
     public func setSyncInterval(_ interval: TimeInterval) {
         defaults.set(interval, forKey: Keys.syncIntervalSeconds)
+    }
+
+    // MARK: - Incoming Message Size Limit
+
+    /// Get the inbound packed-message cap in KB, clamped to Android-compatible bounds.
+    public func getIncomingMessageSizeLimitKB() -> Int {
+        let raw = defaults.object(forKey: Keys.incomingMessageSizeLimitKB)
+        let stored: Int?
+        switch raw {
+        case let value as Int:
+            stored = value
+        case let value as NSNumber:
+            stored = value.intValue
+        case let value as String:
+            stored = Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            stored = nil
+        }
+        let normalized = IncomingMessageSizeLimit.normalize(stored)
+        if normalized != stored {
+            defaults.set(normalized, forKey: Keys.incomingMessageSizeLimitKB)
+        } else if raw == nil {
+            defaults.set(normalized, forKey: Keys.incomingMessageSizeLimitKB)
+        }
+        return normalized
+    }
+
+    /// Persist the inbound packed-message cap in KB.
+    public func setIncomingMessageSizeLimitKB(_ valueKB: Int) {
+        defaults.set(IncomingMessageSizeLimit.normalize(valueKB), forKey: Keys.incomingMessageSizeLimitKB)
+    }
+
+    /// Clear the stored cap so the default is used next read.
+    public func clearIncomingMessageSizeLimitKB() {
+        defaults.removeObject(forKey: Keys.incomingMessageSizeLimitKB)
     }
 
     /// Get last sync timestamp.

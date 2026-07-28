@@ -93,7 +93,8 @@ final class MigrationRoundTripTests: XCTestCase {
             .string("displayName", "Alice"),
             .bool("notifications_enabled", true),
             .int("announce_interval_hours", 6),
-            .double("syncIntervalSeconds", 43_200)
+            .double("syncIntervalSeconds", 43_200),
+            .int("incoming_message_size_limit_kb", 5_120)
         ])
 
         return MigrationBundle(
