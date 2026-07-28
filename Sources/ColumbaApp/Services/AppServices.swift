@@ -472,6 +472,9 @@ public final class AppServices {
     /// Propagation node manager for relay discovery and sync.
     public private(set) var propagationManager: PropagationNodeManager?
 
+    /// Shared settings access for startup-time runtime configuration.
+    private let settingsRepository = SettingsRepository()
+
     /// Auto announce manager for periodic network announces.
     public private(set) var autoAnnounceManager: AutoAnnounceManager?
 
