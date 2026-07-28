@@ -2174,6 +2174,7 @@ public final class AppServices {
 
     @MainActor
     public func applyIncomingMessageSizeLimitFromSettings() async {
+        #if COLUMBA_RUNTIME_PYTHON
         let limitKB = await settingsRepository.getIncomingMessageSizeLimitKB()
         guard let pythonBackend = backend as? PythonRNSBackend else {
             DiagLog.log("[LXMF_CAP] skipping inbound cap apply: shipping Python backend unavailable")
@@ -2185,6 +2186,7 @@ public final class AppServices {
         } catch {
             DiagLog.log("[LXMF_CAP] failed to apply inbound cap=\(limitKB)KB error=\(error.localizedDescription)")
         }
+        #endif
     }
 
     /// Look up the matching Python interface for each user `InterfaceEntity`
