@@ -74,7 +74,8 @@ jobs:
             Tests.static.test_host_entitlements_contract \
             Tests.static.test_ci_artifact_isolation \
             Tests.static.test_fetch_python_resilience \
-            Tests.static.test_migration_export_flow
+            Tests.static.test_migration_export_flow \
+            Tests.static.test_ios_stamp_runtime_hardening
 
       - name: Build shipping artifact (embedded Python)
         run: |

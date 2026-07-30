@@ -208,6 +208,28 @@ class NativeStampBridgeTests(unittest.TestCase):
         self.assertFalse(installed)
         install.assert_not_called()
 
+    def test_stop_balances_teardown_publication_when_cleanup_raises(self) -> None:
+        with mock.patch.object(
+            self.bridge,
+            "_clear_transport_class_state",
+            side_effect=RuntimeError("injected stop cleanup failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected stop cleanup failure"):
+                self.bridge.stop()
+        self.assertEqual(0, self.bridge._runtime_teardown_count)
+        self.assertFalse(self.bridge._runtime_teardown_requested.is_set())
+
+    def test_reset_balances_teardown_publication_when_cleanup_raises(self) -> None:
+        with mock.patch.object(
+            self.bridge,
+            "_clear_transport_class_state",
+            side_effect=RuntimeError("injected reset cleanup failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected reset cleanup failure"):
+                self.bridge.reset_identity("/tmp/nonexistent-columba-test-identity")
+        self.assertEqual(0, self.bridge._runtime_teardown_count)
+        self.assertFalse(self.bridge._runtime_teardown_requested.is_set())
+
 
 class NativeStampStaticABITests(unittest.TestCase):
     def test_swift_has_cancellable_abi_and_thread_safe_periodic_polling(self) -> None:

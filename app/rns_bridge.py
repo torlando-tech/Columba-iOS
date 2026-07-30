@@ -231,6 +231,17 @@ def _end_runtime_teardown() -> None:
         _runtime_teardown_count = max(0, _runtime_teardown_count - 1)
         if _runtime_teardown_count == 0:
             _runtime_teardown_requested.clear()
+
+
+def _balanced_runtime_teardown(function):
+    """Balance teardown publication even if cleanup raises unexpectedly."""
+    def wrapped(*args, **kwargs):
+        _begin_runtime_teardown()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _end_runtime_teardown()
+    return wrapped
 # Bumped on every start()/stop()/reset_identity() so the post-start delayed
 # re-announce daemon thread can detect it has been superseded (by a teardown
 # or a restart) and bail before announcing a dead / previous-session
@@ -1017,10 +1028,10 @@ def _clear_transport_class_state() -> None:
         pass
 
 
+@_balanced_runtime_teardown
 def stop() -> None:
     # LXMF owns a process-global callback and may synchronously notify/cancel
     # jobs while clearing it. Never hold the bridge lock across that operation.
-    _begin_runtime_teardown()
     _uninstall_native_stamp_generator()
     with _lock:
         try:
@@ -1092,7 +1103,6 @@ def stop() -> None:
             "telephony_destination": None,
         })
         _put("state", value="disconnected")
-        _end_runtime_teardown()
 
     # Outside the lock: tear down the snapshotted links so a synchronous
     # _on_closed (which re-acquires _lock) can't deadlock.
@@ -1550,13 +1560,13 @@ def fetch_nomadnet_page(
     return {"ok": True, "status": "ok", "data": payload, "content_type": ""}
 
 
+@_balanced_runtime_teardown
 def reset_identity(identity_path: str) -> None:
     """Delete identity bytes on disk and tear down state. Caller must call
     start() again after this. Safe to call when not started."""
     # Cancel native stamp work before acquiring the bridge lock; cancellation
     # callbacks are foreign process-global state and must not participate in
     # bridge lock ordering.
-    _begin_runtime_teardown()
     _uninstall_native_stamp_generator()
     global _telephony_destination
     with _lock:
@@ -1614,7 +1624,6 @@ def reset_identity(identity_path: str) -> None:
             "handler": None,
             "telephony_destination": None,
         })
-        _end_runtime_teardown()
     # Outside the lock: tear down the snapshotted links.
     for _link in links_to_teardown:
         try:
