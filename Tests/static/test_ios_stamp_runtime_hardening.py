@@ -85,7 +85,12 @@ class DependencyPayloadTests(unittest.TestCase):
             "serial/__init__.py", "ble_reticulum/BLEInterface.py",
         ):
             self.assertIn(payload, self.source)
-        self.assertIn("*.dist-info/METADATA", self.source)
+        for name in ("rns", "lxmf", "pyserial", "ble-reticulum"):
+            self.assertIn(f'"{name}"', self.source)
+        self.assertIn("direct_url.json", self.source)
+        self.assertIn("vcs_info", self.source)
+        self.assertIn("commit_id", self.source)
+        self.assertIn('in {"unknown", "0.0.0"}', self.source)
 
 
 class NativeStampBridgeTests(unittest.TestCase):
@@ -176,6 +181,32 @@ class NativeStampBridgeTests(unittest.TestCase):
         self.bridge.stop()
         self.assertIsNone(self.stamper.calls[-1][0][0])
         self.assertEqual(3, len(self.stamper.calls))
+
+    def test_teardown_during_registration_clears_new_callback(self) -> None:
+        self.bridge._runtime_teardown_requested.clear()
+
+        def install_then_request_teardown():
+            self.bridge._runtime_teardown_requested.set()
+
+        with mock.patch.object(
+            self.bridge,
+            "_install_native_stamp_generator",
+            side_effect=install_then_request_teardown,
+        ) as install, mock.patch.object(
+            self.bridge, "_uninstall_native_stamp_generator"
+        ) as uninstall:
+            installed = self.bridge._install_native_stamp_generator_unless_stopping()
+
+        self.assertFalse(installed)
+        install.assert_called_once_with()
+        uninstall.assert_called_once_with()
+
+    def test_pending_teardown_prevents_registration(self) -> None:
+        self.bridge._runtime_teardown_requested.set()
+        with mock.patch.object(self.bridge, "_install_native_stamp_generator") as install:
+            installed = self.bridge._install_native_stamp_generator_unless_stopping()
+        self.assertFalse(installed)
+        install.assert_not_called()
 
 
 class NativeStampStaticABITests(unittest.TestCase):

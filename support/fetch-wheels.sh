@@ -112,7 +112,7 @@ install_pure_python() {
 }
 
 validate_pure_python() {
-    local dst=$1 metadata_count metadata
+    local dst=$1
     for payload in \
         RNS/__init__.py \
         LXMF/__init__.py \
@@ -130,19 +130,57 @@ validate_pure_python() {
         exit 1
     }
 
-    # Require named and versioned metadata for all four packages. This catches
-    # stale host build tooling producing an empty UNKNOWN-0.0.0 distribution.
-    metadata_count=0
-    for metadata in "$dst"/*.dist-info/METADATA; do
-        [ -s "$metadata" ] || continue
-        grep -q '^Name: .\+' "$metadata" || continue
-        grep -q '^Version: .\+' "$metadata" || continue
-        metadata_count=$((metadata_count + 1))
-    done
-    [ "$metadata_count" -ge 4 ] || {
-        echo "error: expected version metadata for four pure-Python packages in $dst" >&2
-        exit 1
-    }
+    # Validate the exact distributions and immutable VCS revisions, not merely
+    # the number of metadata directories produced by pip.
+    "$PIP_PYTHON" - "$dst" \
+        "${RETICULUM_LOCAL:+LOCAL}${RETICULUM_LOCAL:-$RETICULUM_REF}" \
+        "${LXMF_LOCAL:+LOCAL}${LXMF_LOCAL:-$LXMF_REF}" \
+        "${BLE_RETICULUM_LOCAL:+LOCAL}${BLE_RETICULUM_LOCAL:-$BLE_RETICULUM_REF}" <<'PY'
+import email.parser
+import json
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1])
+expected_refs = dict(zip(("rns", "lxmf", "ble-reticulum"), sys.argv[2:]))
+expected_names = {"rns", "lxmf", "pyserial", "ble-reticulum"}
+found = {}
+
+
+def normalized(value):
+    return re.sub(r"[-_.]+", "-", value.strip().lower())
+
+
+for metadata_path in root.glob("*.dist-info/METADATA"):
+    metadata = email.parser.Parser().parsestr(metadata_path.read_text(encoding="utf-8"))
+    name = normalized(metadata.get("Name", ""))
+    version = metadata.get("Version", "").strip().lower()
+    if name in expected_names:
+        if not version or version in {"unknown", "0.0.0"}:
+            raise SystemExit(f"error: invalid {name} package version: {version!r}")
+        if name in found:
+            raise SystemExit(f"error: duplicate package metadata for {name}")
+        found[name] = metadata_path.parent
+
+missing = expected_names - found.keys()
+if missing:
+    raise SystemExit(f"error: missing package metadata for: {', '.join(sorted(missing))}")
+
+for name, expected_ref in expected_refs.items():
+    if expected_ref.startswith("LOCAL"):
+        continue
+    direct_url_path = found[name] / "direct_url.json"
+    try:
+        direct_url = json.loads(direct_url_path.read_text(encoding="utf-8"))
+        commit_id = direct_url["vcs_info"]["commit_id"]
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise SystemExit(f"error: invalid VCS metadata for {name}: {error}")
+    if commit_id != expected_ref:
+        raise SystemExit(
+            f"error: {name} VCS revision {commit_id!r} does not match {expected_ref!r}"
+        )
+PY
 }
 
 copy_pure_python() {

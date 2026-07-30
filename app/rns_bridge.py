@@ -198,7 +198,39 @@ def _uninstall_native_stamp_generator() -> None:
         RNS.log(f"native stamp gen: unregister failed: {e}", RNS.LOG_DEBUG)
 
 
+def _install_native_stamp_generator_unless_stopping() -> bool:
+    """Install only while this startup still owns the runtime lifecycle."""
+    if _runtime_teardown_requested.is_set():
+        return False
+    _install_native_stamp_generator()
+    # Teardown may have begun during registration while waiting for `_lock`.
+    if _runtime_teardown_requested.is_set():
+        _uninstall_native_stamp_generator()
+        return False
+    return True
+
+
 _lock = threading.Lock()
+# Teardown publishes intent without waiting for `_lock`, allowing a start that
+# already owns it to reject or undo process-global callback registration.
+_runtime_teardown_requested = threading.Event()
+_runtime_teardown_lock = threading.Lock()
+_runtime_teardown_count = 0
+
+
+def _begin_runtime_teardown() -> None:
+    global _runtime_teardown_count
+    with _runtime_teardown_lock:
+        _runtime_teardown_count += 1
+        _runtime_teardown_requested.set()
+
+
+def _end_runtime_teardown() -> None:
+    global _runtime_teardown_count
+    with _runtime_teardown_lock:
+        _runtime_teardown_count = max(0, _runtime_teardown_count - 1)
+        if _runtime_teardown_count == 0:
+            _runtime_teardown_requested.clear()
 # Bumped on every start()/stop()/reset_identity() so the post-start delayed
 # re-announce daemon thread can detect it has been superseded (by a teardown
 # or a restart) and bail before announcing a dead / previous-session
@@ -510,7 +542,7 @@ def start(
 
         # Install only after startup has fully assembled all state, so an
         # exception during partial startup cannot retain a global callback.
-        _install_native_stamp_generator()
+        _install_native_stamp_generator_unless_stopping()
         _state["started"] = True
         _put("state", value="connected")
         return _local_info()
@@ -988,6 +1020,7 @@ def _clear_transport_class_state() -> None:
 def stop() -> None:
     # LXMF owns a process-global callback and may synchronously notify/cancel
     # jobs while clearing it. Never hold the bridge lock across that operation.
+    _begin_runtime_teardown()
     _uninstall_native_stamp_generator()
     with _lock:
         try:
@@ -1059,6 +1092,7 @@ def stop() -> None:
             "telephony_destination": None,
         })
         _put("state", value="disconnected")
+        _end_runtime_teardown()
 
     # Outside the lock: tear down the snapshotted links so a synchronous
     # _on_closed (which re-acquires _lock) can't deadlock.
@@ -1522,6 +1556,7 @@ def reset_identity(identity_path: str) -> None:
     # Cancel native stamp work before acquiring the bridge lock; cancellation
     # callbacks are foreign process-global state and must not participate in
     # bridge lock ordering.
+    _begin_runtime_teardown()
     _uninstall_native_stamp_generator()
     global _telephony_destination
     with _lock:
@@ -1579,6 +1614,7 @@ def reset_identity(identity_path: str) -> None:
             "handler": None,
             "telephony_destination": None,
         })
+        _end_runtime_teardown()
     # Outside the lock: tear down the snapshotted links.
     for _link in links_to_teardown:
         try:
