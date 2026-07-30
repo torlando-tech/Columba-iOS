@@ -38,38 +38,28 @@ PIP_PYTHON="$PIP_VENV/bin/python"
 #  umsgpack in RNS.vendor.umsgpack. Installing the binary msgpack wheel from PyPI
 #  pulls a macOS-built .so that won't load on iOS.)
 #
-# RNS is sourced permanently from Torlando's fork branch (not PyPI, not a local
-# checkout) so every build — CI and local — resolves the same dependency. The
-# patches/columba-ios branch carries iOS-specific patches (e.g. the
-# AutoInterface.detach() teardown that lets Columba hot-add / hot-remove
-# interfaces on a running stack).
-#
+# RNS is sourced from an immutable Torlando fork commit (not PyPI or a moving
+# branch) so every build resolves the same reviewed dependency payload.
 # To develop the fork itself, point at a local working copy explicitly:
 #   RETICULUM_LOCAL=~/repos/Reticulum support/fetch-wheels.sh
-# Otherwise the GitHub branch is always used — the local checkout is never
-# picked up implicitly (that made builds depend on whatever branch happened to
-# be checked out on the dev's machine).
-RETICULUM_BRANCH="patches/columba-ios"
+# Otherwise the pinned GitHub commit is used — a local checkout is never picked
+# up implicitly.
+RETICULUM_REF="${RETICULUM_REF:-1c2cf73443ce73613bd67ea8412e7923d34cd7e6}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
 else
-    RNS_SPEC="git+https://github.com/torlando-tech/Reticulum.git@${RETICULUM_BRANCH}"
+    RNS_SPEC="git+https://github.com/torlando-tech/Reticulum.git@${RETICULUM_REF}"
 fi
-# LXMF: torlando-tech fork with the external stamp generator hook. iOS embedded
-# CPython has no `_multiprocessing`, so stock LXStamper's job_linux crashes and
-# no stamp is produced (messages to stamp-cost peers like Sideband never
-# deliver). The fork's `set_external_generator` lets us run the PoW in native
-# Swift (see app/rns_bridge.py + Sources/SwiftBLEBridge/StampGenerator.swift).
-# Branch is 0.9.9 + the hook (forward-port of feature/external-stamp-generator).
-# Point at a local working copy to develop the fork:
-#   LXMF_LOCAL=~/repos/LXMF support/fetch-wheels.sh   (branch feature/external-stamp-generator-0.9.9)
-LXMF_BRANCH="feature/external-stamp-generator-0.9.9"
+# LXMF is likewise pinned to the cooperative external-stamp producer commit.
+# Point at a local working copy only when explicitly developing the fork:
+#   LXMF_LOCAL=~/repos/LXMF support/fetch-wheels.sh
+LXMF_REF="${LXMF_REF:-fbcb8f83109b93d2491632427716c7fcd645c605}"
 if [ -n "${LXMF_LOCAL:-}" ]; then
     echo "==> LXMF_LOCAL set — using local LXMF checkout: $LXMF_LOCAL"
     LXMF_SPEC="$LXMF_LOCAL"
 else
-    LXMF_SPEC="git+https://github.com/torlando-tech/LXMF.git@${LXMF_BRANCH}"
+    LXMF_SPEC="git+https://github.com/torlando-tech/LXMF.git@${LXMF_REF}"
 fi
 PYSERIAL_SPEC="pyserial>=3.5"
 # ble-reticulum is not on PyPI; install from GitHub unless an explicit local
@@ -91,6 +81,8 @@ fi
 
 rm -rf "$SIM_DIR" "$DEV_DIR"
 mkdir -p "$SIM_DIR" "$DEV_DIR"
+PURE_DIR="$PIP_VENV/pure-python"
+mkdir -p "$PURE_DIR"
 
 install_binary_wheel() {
     # $1 platform tag, $2 destination dir, $3+ pkg specs
@@ -119,6 +111,46 @@ install_pure_python() {
         "$@"
 }
 
+validate_pure_python() {
+    local dst=$1 metadata_count metadata
+    for payload in \
+        RNS/__init__.py \
+        LXMF/__init__.py \
+        serial/__init__.py \
+        ble_reticulum/BLEInterface.py; do
+        [ -s "$dst/$payload" ] || {
+            echo "error: pure-Python payload missing from $dst: $payload" >&2
+            exit 1
+        }
+    done
+    # Keep the shipping BLE entry point explicit: an empty/mispackaged VCS
+    # wheel must fail before either platform payload is published.
+    [ -s "$dst/ble_reticulum/BLEInterface.py" ] || {
+        echo "error: ble-reticulum package payload missing from $dst" >&2
+        exit 1
+    }
+
+    # Require named and versioned metadata for all four packages. This catches
+    # stale host build tooling producing an empty UNKNOWN-0.0.0 distribution.
+    metadata_count=0
+    for metadata in "$dst"/*.dist-info/METADATA; do
+        [ -s "$metadata" ] || continue
+        grep -q '^Name: .\+' "$metadata" || continue
+        grep -q '^Version: .\+' "$metadata" || continue
+        metadata_count=$((metadata_count + 1))
+    done
+    [ "$metadata_count" -ge 4 ] || {
+        echo "error: expected version metadata for four pure-Python packages in $dst" >&2
+        exit 1
+    }
+}
+
+copy_pure_python() {
+    local src=$1 dst=$2
+    cp -R "$src/." "$dst/"
+    validate_pure_python "$dst"
+}
+
 # cffi is needed because cryptography $CRYPTO_VERSION still depends on cffi for
 # parts of its OpenSSL bindings. Pin cffi 2.0.0 (matching cp313 wheel
 # availability on BeeWare).
@@ -129,13 +161,10 @@ BINARY_WHEELS=(
 install_binary_wheel "$PLATFORM_SIM" "$SIM_DIR" "${BINARY_WHEELS[@]}"
 install_binary_wheel "$PLATFORM_DEV" "$DEV_DIR" "${BINARY_WHEELS[@]}"
 
-for dst in "$SIM_DIR" "$DEV_DIR"; do
-    install_pure_python "$dst" "$RNS_SPEC" "$LXMF_SPEC" "$PYSERIAL_SPEC" "$BLE_RETICULUM_SPEC"
-    [ -s "$dst/ble_reticulum/BLEInterface.py" ] || {
-        echo "error: ble-reticulum package payload missing from $dst" >&2
-        exit 1
-    }
-done
+install_pure_python "$PURE_DIR" "$RNS_SPEC" "$LXMF_SPEC" "$PYSERIAL_SPEC" "$BLE_RETICULUM_SPEC"
+validate_pure_python "$PURE_DIR"
+copy_pure_python "$PURE_DIR" "$SIM_DIR"
+copy_pure_python "$PURE_DIR" "$DEV_DIR"
 
 echo
 echo "Wheels installed:"

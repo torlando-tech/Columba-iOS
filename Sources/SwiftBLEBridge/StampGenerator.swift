@@ -47,8 +47,14 @@ enum StampGenerator {
     /// hours-to-centuries — still an indefinite GIL freeze — so 32 is the
     /// defensible ceiling; a message requesting more is undeliverable anyway.)
     static let maxCost = 32
-    static func generate(workblock: Data, cost: Int) -> Data? {
+
+    static func generate(
+        workblock: Data,
+        cost: Int,
+        isCancelled: @escaping () -> Bool = { false }
+    ) -> Data? {
         guard cost >= 0, cost <= maxCost else { return nil }
+        guard !isCancelled() else { return nil }
         if cost == 0 { return Data(repeating: 0, count: stampSize) }
 
         // Absorb the workblock once. CC_SHA256_CTX is a flat value struct with
@@ -82,7 +88,13 @@ enum StampGenerator {
                 CC_SHA256_Final(&digest, &ctx)
 
                 if leadingZeroBits(digest) >= cost {
-                    result.trySet(Data(candidate))
+                    // Cancellation wins if it raced the proof. StampResultBox
+                    // also refuses a proof after any sibling observed cancel.
+                    if isCancelled() {
+                        result.cancel()
+                    } else {
+                        result.trySet(Data(candidate))
+                    }
                     return
                 }
 
@@ -95,9 +107,12 @@ enum StampGenerator {
                 }
 
                 rounds &+= 1
-                // Cheap periodic stop-check so losing workers exit shortly after
-                // a sibling finds a stamp.
-                if rounds & 0xFFF == 0 && result.isFound() { return }
+                // Poll foreign cancellation at a bounded interval rather than
+                // crossing the Python C callback boundary for every candidate.
+                if rounds & 0xFF == 0,  // at most 256 candidates per worker
+                   result.shouldStop(isCancelled: isCancelled) {
+                    return
+                }
             }
         }
 
@@ -115,13 +130,40 @@ enum StampGenerator {
     }
 }
 
-/// Thread-safe holder for the first stamp found. All access is via the lock —
-/// no data races; `isFound()` is only polled every few thousand rounds.
+/// Thread-safe shared search state. Cancellation and proof publication are
+/// linearized by the same lock, so a proof can never overwrite observed cancel.
 private final class StampResultBox: @unchecked Sendable {
-    private let state = OSAllocatedUnfairLock<Data?>(initialState: nil)
-    func trySet(_ d: Data) { state.withLock { if $0 == nil { $0 = d } } }
-    func isFound() -> Bool { state.withLock { $0 != nil } }
-    func get() -> Data? { state.withLock { $0 } }
+    private struct SearchState {
+        var stamp: Data?
+        var cancelled = false
+    }
+
+    private let state = OSAllocatedUnfairLock<SearchState>(
+        initialState: SearchState(stamp: nil)
+    )
+
+    func trySet(_ stamp: Data) {
+        state.withLock {
+            if !$0.cancelled && $0.stamp == nil { $0.stamp = stamp }
+        }
+    }
+
+    func cancel() {
+        state.withLock { $0.cancelled = true; $0.stamp = nil }
+    }
+
+    func shouldStop(isCancelled: () -> Bool) -> Bool {
+        if state.withLock({ $0.cancelled || $0.stamp != nil }) { return true }
+        if isCancelled() {
+            cancel()
+            return true
+        }
+        return state.withLock { $0.cancelled || $0.stamp != nil }
+    }
+
+    func get() -> Data? {
+        state.withLock { $0.cancelled ? nil : $0.stamp }
+    }
 }
 
 /// C-ABI shim for Python ctypes (`rns_bridge.py` → `columba_stamp_generate`).
@@ -140,6 +182,46 @@ public func columba_stamp_generate(
     }
     guard let stamp = StampGenerator.generate(workblock: wb, cost: Int(stampCost)),
           stamp.count == StampGenerator.stampSize else {
+        return 0
+    }
+    stamp.withUnsafeBytes { raw in
+        outStamp.withMemoryRebound(to: UInt8.self, capacity: StampGenerator.stampSize) { dst in
+            _ = memcpy(dst, raw.baseAddress!, StampGenerator.stampSize)
+        }
+    }
+    return Int32(StampGenerator.stampSize)
+}
+
+/// C-compatible cooperative cancellation callback. A non-zero result requests
+/// that all native workers stop and that no stamp be returned.
+public typealias ColumbaStampCancellationCallback = @convention(c) (
+    UnsafeMutableRawPointer?
+) -> Int32
+
+/// Token-aware C ABI used by LXMF's three-argument external generator contract.
+/// The legacy `columba_stamp_generate` symbol remains available for callers
+/// that do not support cancellation.
+@_cdecl("columba_stamp_generate_cancellable")
+public func columba_stamp_generate_cancellable(
+    _ workblock: UnsafePointer<CChar>?,
+    _ workblockLen: Int32,
+    _ stampCost: Int32,
+    _ outStamp: UnsafeMutablePointer<CChar>?,
+    _ cancellationCallback: ColumbaStampCancellationCallback?,
+    _ cancellationContext: UnsafeMutableRawPointer?
+) -> Int32 {
+    guard let workblock, let outStamp, let cancellationCallback,
+          workblockLen >= 0, stampCost >= 0 else {
+        return -1
+    }
+    let wb = workblock.withMemoryRebound(to: UInt8.self, capacity: Int(workblockLen)) {
+        Data(bytes: $0, count: Int(workblockLen))
+    }
+    guard let stamp = StampGenerator.generate(
+        workblock: wb,
+        cost: Int(stampCost),
+        isCancelled: { cancellationCallback(cancellationContext) != 0 }
+    ), stamp.count == StampGenerator.stampSize else {
         return 0
     }
     stamp.withUnsafeBytes { raw in

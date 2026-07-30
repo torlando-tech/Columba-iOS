@@ -84,30 +84,50 @@ except OSError:
     _columba_lib = None
 
 
-def _bind_stamp_fn():
+_StampCancellationCallback = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p)
+
+
+def _bind_stamp_fn(symbol: str, cancellable: bool = False):
     if _columba_lib is None:
         return None
     try:
-        fn = _columba_lib.columba_stamp_generate
+        fn = getattr(_columba_lib, symbol)
     except AttributeError:
         return None
-    # (workblock, workblock_len, stamp_cost, out_stamp[32]) -> bytes_written
+    # Legacy: (workblock, workblock_len, stamp_cost, out_stamp) -> bytes_written.
+    # Cancellable: the same arguments plus (callback, opaque_context).
     fn.argtypes = [ctypes.c_char_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_char_p]
+    if cancellable:
+        fn.argtypes.extend([_StampCancellationCallback, ctypes.c_void_p])
     fn.restype = ctypes.c_int32
     return fn
 
 
-_stamp_generate_fn = _bind_stamp_fn()
+_stamp_generate_fn = _bind_stamp_fn("columba_stamp_generate")
+_stamp_generate_cancellable_fn = _bind_stamp_fn(
+    "columba_stamp_generate_cancellable", cancellable=True
+)
 
 
-def _native_stamp_pow(workblock: bytes, stamp_cost: int):
-    """Run the stamp PoW natively (Swift, multi-threaded across cores). Returns
-    the 32-byte stamp, or None if the native symbol is unavailable / found
-    nothing."""
-    if _stamp_generate_fn is None:
+def _native_stamp_pow(workblock: bytes, stamp_cost: int, cancellation_token: Any):
+    """Run native multi-threaded PoW with cooperative LXMF cancellation."""
+    if _stamp_generate_cancellable_fn is None:
         return None
+
+    @_StampCancellationCallback
+    def _is_cancelled(_context):
+        try:
+            return 1 if cancellation_token.is_cancelled() else 0
+        except Exception:
+            # A broken/expired foreign token must fail closed, not leave an
+            # uncancellable native search running indefinitely.
+            return 1
+
     out = ctypes.create_string_buffer(32)
-    n = _stamp_generate_fn(bytes(workblock), len(workblock), int(stamp_cost), out)
+    n = _stamp_generate_cancellable_fn(
+        bytes(workblock), len(workblock), int(stamp_cost), out,
+        _is_cancelled, None,
+    )
     if n == 32:
         return out.raw[:32]
     return None
@@ -123,14 +143,14 @@ def _install_native_stamp_generator() -> None:
     iOS analog of Android's `event_bridge.install_external_stamp_generator`.
     No-ops (warning) if the native symbol or the fork hook is absent."""
     try:
-        from LXMF import LXStamper
+        LXStamper = LXMF.LXStamper
     except Exception as e:  # noqa: BLE001
-        RNS.log(f"native stamp gen: LXStamper import failed: {e}", RNS.LOG_DEBUG)
+        RNS.log(f"native stamp gen: LXStamper unavailable: {e}", RNS.LOG_DEBUG)
         return
-    if _stamp_generate_fn is None:
+    if _stamp_generate_cancellable_fn is None:
         RNS.log(
-            "native stamp gen: columba_stamp_generate symbol not found; stamp "
-            "generation will fail on iOS (no _multiprocessing module)",
+            "native stamp gen: columba_stamp_generate_cancellable symbol not "
+            "found; stamp generation will fail on iOS",
             RNS.LOG_WARNING,
         )
         return
@@ -142,21 +162,40 @@ def _install_native_stamp_generator() -> None:
         )
         return
 
-    def _external_generator(workblock, stamp_cost):
-        # LXStamper contract: (workblock: bytes, stamp_cost: int) -> (stamp, rounds).
-        # `rounds` is cosmetic (generate_stamp recomputes value via stamp_value);
-        # the native generator doesn't surface a round count, so report 0.
+    def _external_generator(workblock, stamp_cost, cancellation_token):
+        # LXStamper contract: (workblock, cost, token) -> (stamp, rounds).
         _t0 = time.time()
-        stamp = _native_stamp_pow(bytes(workblock), int(stamp_cost))
+        stamp = _native_stamp_pow(
+            bytes(workblock), int(stamp_cost), cancellation_token
+        )
         RNS.log(
             f"native stamp: cost={stamp_cost} in {round((time.time()-_t0)*1000)}ms"
-            + ("" if stamp is not None else " (FAILED — no stamp)"),
+            + ("" if stamp is not None else " (cancelled or no stamp)"),
             RNS.LOG_INFO,
         )
         return (stamp, 0) if stamp is not None else (None, 0)
 
-    LXStamper.set_external_generator(_external_generator)
-    RNS.log("native multi-threaded stamp generator registered via set_external_generator", RNS.LOG_INFO)
+    try:
+        LXStamper.set_external_generator(
+            _external_generator, pass_cancellation_token=True
+        )
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"native stamp gen: registration failed: {e}", RNS.LOG_WARNING)
+        return
+    RNS.log("native cancellable stamp generator registered", RNS.LOG_INFO)
+
+
+def _uninstall_native_stamp_generator() -> None:
+    """Clear LXMF's process-global callback and cooperatively cancel its jobs."""
+    try:
+        LXStamper = LXMF.LXStamper
+        setter = getattr(LXStamper, "set_external_generator", None)
+        if setter is not None:
+            setter(None)
+    except Exception as e:  # noqa: BLE001
+        # Teardown is best-effort and must never prevent the remaining bridge
+        # state from being released.
+        RNS.log(f"native stamp gen: unregister failed: {e}", RNS.LOG_DEBUG)
 
 
 _lock = threading.Lock()
@@ -347,7 +386,15 @@ def start(
       3. Neither — generate a fresh identity and persist to `identity_path` (PoC
          and CLI use; iOS production should never hit this branch since the
          Keychain entry is created on first launch by Swift)."""
+    # Registration is process-global. Clear stale callbacks/jobs outside the
+    # bridge lock so LXMF cancellation cannot deadlock against bridge teardown.
     with _lock:
+        if _state["started"]:
+            return _local_info()
+    _uninstall_native_stamp_generator()
+
+    with _lock:
+        # A concurrent start may have completed while cancellation ran.
         if _state["started"]:
             return _local_info()
 
@@ -383,10 +430,6 @@ def start(
             router = LXMF.LXMRouter(identity=identity, storagepath=storage_path)
             router.register_delivery_callback(_delivery_callback)
             _state["router"] = router
-            # Route LXMF stamp PoW to the native Swift generator (iOS has no
-            # _multiprocessing). Must be installed before the first outbound
-            # message to a stamp-requiring peer.
-            _install_native_stamp_generator()
         finally:
             _signal.signal = _orig_signal
 
@@ -465,6 +508,9 @@ def start(
 
         threading.Thread(target=_delayed_reannounce, daemon=True).start()
 
+        # Install only after startup has fully assembled all state, so an
+        # exception during partial startup cannot retain a global callback.
+        _install_native_stamp_generator()
         _state["started"] = True
         _put("state", value="connected")
         return _local_info()
@@ -940,9 +986,10 @@ def _clear_transport_class_state() -> None:
 
 
 def stop() -> None:
+    # LXMF owns a process-global callback and may synchronously notify/cancel
+    # jobs while clearing it. Never hold the bridge lock across that operation.
+    _uninstall_native_stamp_generator()
     with _lock:
-        if not _state["started"]:
-            return
         try:
             existing = _state["handler"]
             if existing is not None:
@@ -1472,6 +1519,10 @@ def fetch_nomadnet_page(
 def reset_identity(identity_path: str) -> None:
     """Delete identity bytes on disk and tear down state. Caller must call
     start() again after this. Safe to call when not started."""
+    # Cancel native stamp work before acquiring the bridge lock; cancellation
+    # callbacks are foreign process-global state and must not participate in
+    # bridge lock ordering.
+    _uninstall_native_stamp_generator()
     global _telephony_destination
     with _lock:
         # Tear down the router first (stops its LXMRouter background threads),
