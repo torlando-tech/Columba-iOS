@@ -44,7 +44,7 @@ PIP_PYTHON="$PIP_VENV/bin/python"
 #   RETICULUM_LOCAL=~/repos/Reticulum support/fetch-wheels.sh
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
-RETICULUM_REF="${RETICULUM_REF:-7d02152122cc069b88c1a02920c71fbf96c1f8d8}"
+RETICULUM_REF="${RETICULUM_REF:-5b3a6ee4f25e2925cf84d4a2b108e6a708fbd395}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
