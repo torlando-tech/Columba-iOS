@@ -18,8 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 FETCH = ROOT / "support" / "fetch-wheels.sh"
 BRIDGE = ROOT / "app" / "rns_bridge.py"
 STAMP = ROOT / "Sources" / "SwiftBLEBridge" / "StampGenerator.swift"
-RNS_SHA = "1c2cf73443ce73613bd67ea8412e7923d34cd7e6"
-LXMF_SHA = "fbcb8f83109b93d2491632427716c7fcd645c605"
+RNS_SHA = "7d02152122cc069b88c1a02920c71fbf96c1f8d8"
+LXMF_SHA = "8912186e48b482a76bf04e2ac4b6c8940991aecc"
 
 
 def load_bridge(lx_stamper: object):

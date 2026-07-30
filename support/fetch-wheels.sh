@@ -44,7 +44,7 @@ PIP_PYTHON="$PIP_VENV/bin/python"
 #   RETICULUM_LOCAL=~/repos/Reticulum support/fetch-wheels.sh
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
-RETICULUM_REF="${RETICULUM_REF:-1c2cf73443ce73613bd67ea8412e7923d34cd7e6}"
+RETICULUM_REF="${RETICULUM_REF:-7d02152122cc069b88c1a02920c71fbf96c1f8d8}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
@@ -54,7 +54,7 @@ fi
 # LXMF is likewise pinned to the cooperative external-stamp producer commit.
 # Point at a local working copy only when explicitly developing the fork:
 #   LXMF_LOCAL=~/repos/LXMF support/fetch-wheels.sh
-LXMF_REF="${LXMF_REF:-fbcb8f83109b93d2491632427716c7fcd645c605}"
+LXMF_REF="${LXMF_REF:-8912186e48b482a76bf04e2ac4b6c8940991aecc}"
 if [ -n "${LXMF_LOCAL:-}" ]; then
     echo "==> LXMF_LOCAL set — using local LXMF checkout: $LXMF_LOCAL"
     LXMF_SPEC="$LXMF_LOCAL"
