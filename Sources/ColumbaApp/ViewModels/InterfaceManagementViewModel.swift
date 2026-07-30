@@ -93,6 +93,11 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Whether the type selector is shown
     public var showTypeSelector: Bool = false
 
+    /// Selection waiting for the type-selector sheet to finish dismissing.
+    /// SwiftUI ignores a second modal presentation requested during dismissal,
+    /// so routing to a wizard/config sheet must happen from the sheet's onDismiss.
+    public var pendingInterfaceTypeSelection: InterfaceType?
+
     /// Whether the delete confirmation is shown
     public var showDeleteConfirmation: Bool = false
 
@@ -265,7 +270,23 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
     /// Show the type selector for adding a new interface.
     public func showAddInterface() {
+        pendingInterfaceTypeSelection = nil
         showTypeSelector = true
+    }
+
+    /// Dismiss the type selector first; the owning view calls
+    /// `completePendingInterfaceTypeSelection()` from its `onDismiss` callback.
+    public func queueInterfaceTypeSelection(_ type: InterfaceType) {
+        pendingInterfaceTypeSelection = type
+        showTypeSelector = false
+    }
+
+    /// Route only after the selector sheet is fully gone, avoiding competing
+    /// sheet/full-screen-cover presentations in the same SwiftUI update cycle.
+    public func completePendingInterfaceTypeSelection() {
+        guard let type = pendingInterfaceTypeSelection else { return }
+        pendingInterfaceTypeSelection = nil
+        selectInterfaceType(type)
     }
 
     /// Select interface type and show config form.
