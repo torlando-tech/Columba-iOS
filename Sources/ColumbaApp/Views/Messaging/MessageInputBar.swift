@@ -24,6 +24,9 @@ struct MessageInputBar: View {
     // MARK: - Properties
 
     @Binding var text: String
+    /// Recreates the TextField after send so UIKit cannot retain the old editor
+    /// while a pending autocorrection callback is being discarded by the binding.
+    var textInputGeneration: UInt64 = 0
     @Binding var attachedImage: UIImage?
     @Binding var attachedFiles: [FileAttachment]
     var replyToMessage: Message?
@@ -123,6 +126,7 @@ struct MessageInputBar: View {
                 HStack(alignment: .bottom, spacing: 8) {
                     // Text field
                     TextField("Type a message...", text: $text, axis: .vertical)
+                        .id(textInputGeneration)
                         .font(.body)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1...6)

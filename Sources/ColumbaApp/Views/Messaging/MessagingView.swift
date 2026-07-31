@@ -22,6 +22,39 @@ import AppKit
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingView")
 
+/// Owns the editor binding generation for the message composer.
+///
+/// UIKit may deliver a final autocorrection callback after the send button has
+/// cleared a SwiftUI `TextField`. A normal `Binding<String>` accepts that stale
+/// callback and repopulates the composer with the corrected word. Bindings made
+/// before `clearAfterSend()` capture the old generation and are ignored.
+@MainActor
+@Observable
+final class MessageComposerTextState {
+    private(set) var text = ""
+    private(set) var generation: UInt64 = 0
+
+    func binding() -> Binding<String> {
+        let acceptedGeneration = generation
+        return Binding(
+            get: { [weak self] in self?.text ?? "" },
+            set: { [weak self] value in
+                self?.accept(value, from: acceptedGeneration)
+            }
+        )
+    }
+
+    func clearAfterSend() {
+        text = ""
+        generation &+= 1
+    }
+
+    private func accept(_ value: String, from bindingGeneration: UInt64) {
+        guard bindingGeneration == generation else { return }
+        text = value
+    }
+}
+
 /// Main messaging/chat screen view.
 ///
 /// Layout:
@@ -44,7 +77,7 @@ struct MessagingView: View {
     // MARK: - State
 
     @State private var viewModel: MessagingViewModel?
-    @State private var messageText = ""
+    @State private var messageComposer = MessageComposerTextState()
     @State private var showPhotoPicker = false
     @State private var showFilePicker = false
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -161,7 +194,8 @@ struct MessagingView: View {
                     // the keyboard and adjusts the scroll view's visible area to match.
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         MessageInputBar(
-                            text: $messageText,
+                            text: messageComposer.binding(),
+                            textInputGeneration: messageComposer.generation,
                             attachedImage: $attachedImage,
                             attachedFiles: $attachedFiles,
                             replyToMessage: vm.replyToMessage,
@@ -576,7 +610,7 @@ struct MessagingView: View {
     // MARK: - Actions
 
     private func sendMessage() {
-        let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = messageComposer.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let image = attachedImage
         let files = attachedFiles
         let replyTarget = viewModel?.replyToMessage
@@ -584,7 +618,7 @@ struct MessagingView: View {
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 
-        messageText = ""
+        messageComposer.clearAfterSend()
         attachedImage = nil
         attachedFiles = []
         withAnimation(.easeInOut(duration: 0.25)) {
