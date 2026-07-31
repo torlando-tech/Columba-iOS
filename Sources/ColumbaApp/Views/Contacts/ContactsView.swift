@@ -122,6 +122,7 @@ public struct ContactsView: View {
                     // Content
                     tabContent(vm)
                 }
+                .accessibilityIdentifier("screen_contacts")
                 .background(Theme.backgroundPrimary)
                 .navigationTitle("Contacts")
                 .navigationBarTitleDisplayMode(.inline)

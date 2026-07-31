@@ -131,6 +131,7 @@ struct SettingsView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                 }
+                .accessibilityIdentifier("screen_settings")
                 .background(Theme.backgroundPrimary)
                 .navigationTitle("Settings")
                 #if os(iOS)

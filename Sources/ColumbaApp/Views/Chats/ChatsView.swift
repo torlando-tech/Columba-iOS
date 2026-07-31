@@ -77,6 +77,7 @@ struct ChatsView: View {
                     ProgressView()
                 }
             }
+            .accessibilityIdentifier("screen_chats")
             .navigationTitle("Chats")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
