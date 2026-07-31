@@ -3735,9 +3735,16 @@ public final class AppServices {
             NotificationObserver.postNetworkStateChanged()
         }
 
-        ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState, reason in
+        guard ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState, reason in
             self?.applyRNodeLinkState(linkState, reason)
-        })
+        }) else {
+            // The failure callback is dispatched onto the next main-queue turn.
+            // Stop the watchdog synchronously so it cannot later replace the
+            // actionable restore-identifier failure with a generic timeout.
+            rnodeConnectWatchdog?.cancel()
+            rnodeConnectWatchdog = nil
+            return
+        }
 
         let seamConfig = RNodeSeamConfig(
             deviceName: rnodeConfig.deviceName,

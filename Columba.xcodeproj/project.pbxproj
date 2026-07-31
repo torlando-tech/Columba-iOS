@@ -58,8 +58,6 @@
 		043 /* IdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F043 /* IdentityManager.swift */; };
 		044 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044 /* IdentityManagerView.swift */; };
 		045 /* LoRaPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F045 /* LoRaPresets.swift */; };
-		046 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046 /* BLEDevicePickerSheet.swift */; };
-		047 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047 /* RNodeConfigSheet.swift */; };
 		048 /* MapLibreMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F048 /* MapLibreMapView.swift */; platformFilter = ios; };
 		049 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = P002 /* MapLibre */; };
 		049B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F049 /* QRScannerView.swift */; platformFilter = ios; };
@@ -124,7 +122,6 @@
 		147A84617097826BCE5DBD49 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030 /* InterfaceManagementViewModel.swift */; };
 		15D4C7BF2F5EBFB685022ED2 /* BackgroundDeliveryGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */; };
 		181FFC68FA29599C2E5C88A4 /* MicronDocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F082 /* MicronDocumentView.swift */; };
-		1BC630C0471DC5E53AFA3E74 /* BLEDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F046 /* BLEDevicePickerSheet.swift */; };
 		1F678E51F2B3D1E715E9FF6F /* AutoAnnounceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F041 /* AutoAnnounceManager.swift */; };
 		1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
 		20FE359F318BADBFD1AB0E2B /* MigrationCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05C /* MigrationCrypto.swift */; };
@@ -144,7 +141,6 @@
 		2DEF38CCE53F632284B5A50D /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8222FC732AF00235991 /* LXMFSwift */; };
 		31F207DBD45E2CA682A3F830 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
-		32BFE0E43B1F4246502992E3 /* RNodeConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F047 /* RNodeConfigSheet.swift */; };
 		33CCBDB91636352EFC4A7790 /* BLEConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F071 /* BLEConnectionsView.swift */; };
 		33E0E91CAEFB07F13C04637D /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
 		35AAE3A0AE037F5B9305CFC1 /* ContactsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F004 /* ContactsViewModel.swift */; };
@@ -496,8 +492,6 @@
 		F043 /* IdentityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManager.swift; sourceTree = "<group>"; };
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
 		F045 /* LoRaPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoRaPresets.swift; sourceTree = "<group>"; };
-		F046 /* BLEDevicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEDevicePickerSheet.swift; sourceTree = "<group>"; };
-		F047 /* RNodeConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeConfigSheet.swift; sourceTree = "<group>"; };
 		F048 /* MapLibreMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLibreMapView.swift; sourceTree = "<group>"; };
 		F049 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		F04A /* AddContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContactSheet.swift; sourceTree = "<group>"; };
@@ -912,8 +906,6 @@
 				BGTF /* BackgroundTransportView.swift */,
 				F038 /* IconPickerView.swift */,
 				F044 /* IdentityManagerView.swift */,
-				F046 /* BLEDevicePickerSheet.swift */,
-				F047 /* RNodeConfigSheet.swift */,
 				F060 /* MigrationScreen.swift */,
 				F066 /* AppearanceCard.swift */,
 				F067 /* CustomThemeEditorView.swift */,
@@ -1390,8 +1382,6 @@
 				E52A4F911C392F54D134116D /* IdentityManager.swift in Sources */,
 				F6BEF0E7AFA4ADE1168F08F1 /* IdentityManagerView.swift in Sources */,
 				97FCC1B1FF91DD6EF2706B04 /* LoRaPresets.swift in Sources */,
-				1BC630C0471DC5E53AFA3E74 /* BLEDevicePickerSheet.swift in Sources */,
-				32BFE0E43B1F4246502992E3 /* RNodeConfigSheet.swift in Sources */,
 				764C62709969DFDB3AC7D820 /* QRScannerView.swift in Sources */,
 				3E8EDA16402CE9043F338509 /* AddContactSheet.swift in Sources */,
 				A0883D932913C56C3C7FD394 /* LocationSharingManager.swift in Sources */,
@@ -1570,8 +1560,6 @@
 				043 /* IdentityManager.swift in Sources */,
 				044 /* IdentityManagerView.swift in Sources */,
 				045 /* LoRaPresets.swift in Sources */,
-				046 /* BLEDevicePickerSheet.swift in Sources */,
-				047 /* RNodeConfigSheet.swift in Sources */,
 				049B /* QRScannerView.swift in Sources */,
 				04AB /* AddContactSheet.swift in Sources */,
 				04BB /* LocationSharingManager.swift in Sources */,
