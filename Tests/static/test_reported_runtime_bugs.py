@@ -14,6 +14,7 @@ PY_BACKEND = ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift"
 SWIFT_BACKEND = ROOT / "Sources/RNSBackendSwift/SwiftRNSBackend.swift"
 APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
+MAIN_TAB_VIEW = ROOT / "Sources/ColumbaApp/Views/MainTabView.swift"
 MESSAGE_BUBBLE = ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
 MESSAGING_VIEW = ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift"
 
@@ -131,6 +132,27 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             cover.group(0),
             re.DOTALL,
         ))
+
+    def test_onboarding_rnode_request_is_consumed_after_main_tab_is_mounted(self) -> None:
+        main_tab = MAIN_TAB_VIEW.read_text()
+        self.assertIn(".onAppear {\n            consumePendingRNodeSetup()", main_tab)
+        self.assertIsNotNone(re.search(
+            r"\.onChange\(of: pendingRNodeSetup\).*?if requested \{\s*"
+            r"consumePendingRNodeSetup\(\)",
+            main_tab,
+            re.DOTALL,
+        ))
+        consumer = re.search(
+            r"private func consumePendingRNodeSetup\(\).*?\n    }",
+            main_tab,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(consumer)
+        assert consumer is not None
+        source = consumer.group(0)
+        self.assertIn("selectedTab = .settings", source)
+        self.assertIn("shouldOpenRNodeWizard = true", source)
+        self.assertIn("pendingRNodeSetup = false", source)
 
     def test_incoming_message_size_limit_contract(self) -> None:
         bridge = BRIDGE_PY.read_text()

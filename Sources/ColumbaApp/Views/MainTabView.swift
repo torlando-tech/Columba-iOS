@@ -34,8 +34,8 @@ struct MainTabView: View {
     @AppStorage("map_http_enabled") private var mapHttpEnabled: Bool = true
     @AppStorage(OnboardingViewModel.pendingRNodeSetupKey) private var pendingRNodeSetup: Bool = false
     /// Session-scoped copy of `pendingRNodeSetup` consumed by `SettingsView` to
-    /// trigger the wizard. Set once by `onAppear` so the persisted flag can be
-    /// cleared atomically and subsequent re-appearances don't re-route the user.
+    /// trigger the wizard. The request may exist before MainTabView appears or
+    /// arrive later when onboarding completes over an already-mounted tab view.
     @State private var shouldOpenRNodeWizard: Bool = false
     /// Which app-root voice-call cover (if any) is showing, driven off
     /// callManager.callState so a call's UI shows from any tab and survives
@@ -101,12 +101,13 @@ struct MainTabView: View {
         }
         .tint(Theme.accentColor)
         .onAppear {
-            // Consume the persisted flag atomically so a cancelled SettingsView
-            // task can't leave the user re-snapped to Settings on every appearance.
-            if pendingRNodeSetup {
-                selectedTab = .settings
-                shouldOpenRNodeWizard = true
-                pendingRNodeSetup = false
+            consumePendingRNodeSetup()
+        }
+        .onChange(of: pendingRNodeSetup) { _, requested in
+            // MainTabView can already be mounted behind onboarding, in which case
+            // its onAppear ran before completeOnboarding persisted this request.
+            if requested {
+                consumePendingRNodeSetup()
             }
         }
         .onChange(of: pendingDeepLink) { _, newValue in
@@ -193,5 +194,14 @@ struct MainTabView: View {
             // calling / established / busy / ended → in-call UI.
             activeCallCover = .active
         }
+    }
+
+    /// Atomically route an onboarding RNode request into Settings and hand the
+    /// wizard trigger to its stable InterfaceManagementViewModel.
+    private func consumePendingRNodeSetup() {
+        guard pendingRNodeSetup else { return }
+        selectedTab = .settings
+        shouldOpenRNodeWizard = true
+        pendingRNodeSetup = false
     }
 }
