@@ -61,7 +61,7 @@
       "location" : "https://github.com/torlando-tech/reticulum-swift.git",
       "state" : {
         "branch" : "fix/ios-rnode-session-restoration",
-        "revision" : "ee7b9c5fa7d87df0e03d5c0931456ff6b008efb8"
+        "revision" : "604a82f17f3af9b9f4c98e9913bc255313130305"
       }
     },
     {
