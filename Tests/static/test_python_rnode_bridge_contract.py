@@ -77,8 +77,10 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
             '@_cdecl("columba_rnode_set_online")',
         ):
             self.assertIn(declaration, native)
-        self.assertIn("transport = BLETransport(", native)
-        self.assertIn("restorationIdentifier:", native)
+        self.assertIn("final class PythonRNodeCoreBluetoothTransport", native)
+        self.assertIn("CBCentralManagerOptionRestoreIdentifierKey", native)
+        self.assertNotIn("import ReticulumSwift", native)
+        self.assertNotIn("ReticulumPythonRNodeTransport", native)
         reconciler = RECONCILER.read_text()
         self.assertIsNotNone(re.search(
             r"PYTHON_ONLY_SOURCE_METADATA\s*=.*?Sources/PythonBridge/PythonRNodeBLEBridge\.swift",

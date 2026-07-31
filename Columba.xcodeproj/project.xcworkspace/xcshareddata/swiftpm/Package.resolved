@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/torlando-tech/reticulum-swift.git",
       "state" : {
-        "branch" : "fix/ios-rnode-session-restoration",
-        "revision" : "604a82f17f3af9b9f4c98e9913bc255313130305"
+        "branch" : "main",
+        "revision" : "52e2a9a5107bf12545a0788ee637686815d47525"
       }
     },
     {

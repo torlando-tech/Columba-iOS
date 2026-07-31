@@ -4,11 +4,11 @@
 //
 //  Native CoreBluetooth/NUS byte-stream owner for IOSRNodeInterface.py. The
 //  Python side owns RNS, KISS framing and radio configuration; this bridge owns
-//  ReticulumSwift.BLETransport and exposes a small synchronous C ABI to ctypes.
+//  a Columba-native CoreBluetooth adapter and exposes a synchronous C ABI.
 //
 
 import Foundation
-import ReticulumSwift
+import CoreBluetooth
 
 public enum PythonRNodeLinkState: Int32, Sendable {
     case disconnected = 0
@@ -25,44 +25,305 @@ protocol PythonRNodeTransporting: AnyObject {
     func send(_ data: Data, completion: @escaping (Error?) -> Void)
 }
 
-private final class ReticulumPythonRNodeTransport: PythonRNodeTransporting {
-    private let transport: BLETransport
-    var onDataReceived: ((Data) -> Void)? {
-        didSet { transport.onDataReceived = onDataReceived }
+private enum PythonRNodeNativeBLEError: LocalizedError {
+    case bluetoothUnavailable
+    case connectionTimedOut
+    case serviceMissing
+    case characteristicsMissing
+    case notConnected
+
+    var errorDescription: String? {
+        switch self {
+        case .bluetoothUnavailable: return "Bluetooth is unavailable"
+        case .connectionTimedOut: return "RNode BLE connection timed out"
+        case .serviceMissing: return "RNode Nordic UART service was not found"
+        case .characteristicsMissing: return "RNode Nordic UART characteristics were not found"
+        case .notConnected: return "RNode BLE transport is not connected"
+        }
     }
+}
+
+/// Columba-owned CoreBluetooth/NUS transport for the shipping Python backend.
+/// This deliberately has no dependency on ReticulumSwift: Python owns RNS,
+/// while this adapter owns only the native BLE byte stream used by ctypes.
+private final class PythonRNodeCoreBluetoothTransport: NSObject,
+    PythonRNodeTransporting, CBCentralManagerDelegate, CBPeripheralDelegate,
+    @unchecked Sendable
+{
+    private static let nusService = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+    private static let nusTX = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
+    private static let nusRX = CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
+
+    private let queue: DispatchQueue
+    private let deviceName: String
+    private let deviceIdentifier: UUID?
+    private let restorationIdentifier: String
+    private var central: CBCentralManager!
+    private var peripheral: CBPeripheral?
+    private var txCharacteristic: CBCharacteristic?
+    private var rxCharacteristic: CBCharacteristic?
+    private var timeout: DispatchWorkItem?
+    private var pendingConnect = false
+    private var intentionallyDisconnected = false
+    private var linkState: PythonRNodeLinkState = .disconnected
+
+    var onDataReceived: ((Data) -> Void)?
     var onStateChange: ((PythonRNodeLinkState, String?) -> Void)?
 
-    init(deviceName: String, deviceIdentifier: UUID?, restorationIdentifier: String? = nil) {
-        transport = BLETransport(
-            deviceName: deviceName,
-            deviceIdentifier: deviceIdentifier,
-            restorationIdentifier: restorationIdentifier ?? BLEConstants.RESTORE_IDENTIFIER_KEY
+    init(deviceName: String, deviceIdentifier: UUID?, restorationIdentifier: String) {
+        self.deviceName = deviceName
+        self.deviceIdentifier = deviceIdentifier
+        self.restorationIdentifier = restorationIdentifier
+        self.queue = DispatchQueue(
+            label: "network.columba.python-rnode.\(restorationIdentifier)",
+            qos: .userInitiated
         )
-        transport.onStateChange = { [weak self] state in
-            let mapped: PythonRNodeLinkState
-            let reason: String?
-            switch state {
-            case .disconnected:
-                mapped = .disconnected
-                reason = nil
-            case .connecting:
-                mapped = .connecting
-                reason = nil
-            case .connected:
-                mapped = .connected
-                reason = nil
-            case .failed(let error):
-                mapped = .failed
-                reason = error.localizedDescription
+        super.init()
+        central = CBCentralManager(
+            delegate: self,
+            queue: queue,
+            options: [CBCentralManagerOptionRestoreIdentifierKey: restorationIdentifier]
+        )
+    }
+
+    func connect() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            intentionallyDisconnected = false
+            guard linkState == .disconnected || linkState == .failed else { return }
+            publish(.connecting)
+            guard central.state == .poweredOn else {
+                pendingConnect = true
+                return
             }
-            self?.onStateChange?(mapped, reason)
+            beginConnection()
         }
     }
 
-    func connect() { transport.connect() }
-    func disconnect() { transport.disconnect() }
+    func disconnect() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            intentionallyDisconnected = true
+            pendingConnect = false
+            timeout?.cancel()
+            timeout = nil
+            central.stopScan()
+            if let peripheral { central.cancelPeripheralConnection(peripheral) }
+            clearPeripheral()
+            publish(.disconnected)
+        }
+    }
+
     func send(_ data: Data, completion: @escaping (Error?) -> Void) {
-        transport.send(data, completion: completion)
+        queue.async { [weak self] in
+            guard let self,
+                  linkState == .connected,
+                  let peripheral,
+                  let characteristic = rxCharacteristic else {
+                completion(PythonRNodeNativeBLEError.notConnected)
+                return
+            }
+            let type: CBCharacteristicWriteType
+            if characteristic.properties.contains(.writeWithoutResponse),
+               peripheral.canSendWriteWithoutResponse {
+                type = .withoutResponse
+            } else if characteristic.properties.contains(.write) {
+                type = .withResponse
+            } else {
+                completion(PythonRNodeNativeBLEError.notConnected)
+                return
+            }
+            let mtu = max(20, peripheral.maximumWriteValueLength(for: type))
+            var offset = 0
+            while offset < data.count {
+                let end = min(offset + mtu, data.count)
+                peripheral.writeValue(data.subdata(in: offset..<end), for: characteristic, type: type)
+                offset = end
+            }
+            completion(nil)
+        }
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        guard central.state == .poweredOn else {
+            if central.state == .unauthorized || central.state == .unsupported {
+                fail(PythonRNodeNativeBLEError.bluetoothUnavailable)
+            }
+            return
+        }
+        if pendingConnect {
+            pendingConnect = false
+            beginConnection()
+        }
+    }
+
+    func centralManager(
+        _ central: CBCentralManager,
+        didDiscover peripheral: CBPeripheral,
+        advertisementData: [String: Any],
+        rssi RSSI: NSNumber
+    ) {
+        let matches = deviceIdentifier.map { peripheral.identifier == $0 }
+            ?? (peripheral.name == deviceName)
+        guard matches else { return }
+        central.stopScan()
+        self.peripheral = peripheral
+        peripheral.delegate = self
+        central.connect(peripheral, options: nil)
+    }
+
+    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard isTarget(peripheral) else {
+            central.cancelPeripheralConnection(peripheral)
+            return
+        }
+        timeout?.cancel()
+        timeout = nil
+        self.peripheral = peripheral
+        peripheral.delegate = self
+        peripheral.discoverServices([Self.nusService])
+    }
+
+    func centralManager(
+        _ central: CBCentralManager,
+        didFailToConnect peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        fail(error ?? PythonRNodeNativeBLEError.notConnected)
+    }
+
+    func centralManager(
+        _ central: CBCentralManager,
+        didDisconnectPeripheral peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        guard self.peripheral?.identifier == peripheral.identifier else { return }
+        clearPeripheral()
+        if intentionallyDisconnected {
+            publish(.disconnected)
+        } else if let error {
+            fail(error)
+        } else {
+            publish(.disconnected)
+        }
+    }
+
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        guard let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral],
+              let match = restored.first(where: isTarget) else { return }
+        peripheral = match
+        match.delegate = self
+        if match.state == .connected {
+            publish(.connecting)
+            match.discoverServices([Self.nusService])
+        }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        if let error { fail(error); return }
+        guard let service = peripheral.services?.first(where: { $0.uuid == Self.nusService }) else {
+            fail(PythonRNodeNativeBLEError.serviceMissing)
+            return
+        }
+        peripheral.discoverCharacteristics([Self.nusTX, Self.nusRX], for: service)
+    }
+
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didDiscoverCharacteristicsFor service: CBService,
+        error: Error?
+    ) {
+        if let error { fail(error); return }
+        txCharacteristic = service.characteristics?.first(where: { $0.uuid == Self.nusTX })
+        rxCharacteristic = service.characteristics?.first(where: { $0.uuid == Self.nusRX })
+        guard let txCharacteristic, rxCharacteristic != nil else {
+            fail(PythonRNodeNativeBLEError.characteristicsMissing)
+            return
+        }
+        peripheral.setNotifyValue(true, for: txCharacteristic)
+    }
+
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        if let error { fail(error); return }
+        guard characteristic.uuid == Self.nusTX,
+              characteristic.isNotifying,
+              rxCharacteristic != nil else { return }
+        publish(.connected)
+    }
+
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        if let error { fail(error); return }
+        guard characteristic.uuid == Self.nusTX, let value = characteristic.value else { return }
+        onDataReceived?(value)
+    }
+
+    private func beginConnection() {
+        guard central.state == .poweredOn else { pendingConnect = true; return }
+        if let deviceIdentifier,
+           let known = central.retrievePeripherals(withIdentifiers: [deviceIdentifier]).first {
+            peripheral = known
+            known.delegate = self
+            central.connect(known, options: nil)
+            startTimeout()
+            return
+        }
+        if let connected = central.retrieveConnectedPeripherals(withServices: [Self.nusService])
+            .first(where: isTarget) {
+            peripheral = connected
+            connected.delegate = self
+            central.connect(connected, options: nil)
+            startTimeout()
+            return
+        }
+        central.scanForPeripherals(
+            withServices: nil,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+        )
+        startTimeout()
+    }
+
+    private func startTimeout() {
+        timeout?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, linkState == .connecting else { return }
+            central.stopScan()
+            if let peripheral { central.cancelPeripheralConnection(peripheral) }
+            fail(PythonRNodeNativeBLEError.connectionTimedOut)
+        }
+        timeout = work
+        queue.asyncAfter(deadline: .now() + 15, execute: work)
+    }
+
+    private func isTarget(_ peripheral: CBPeripheral) -> Bool {
+        deviceIdentifier.map { peripheral.identifier == $0 } ?? (peripheral.name == deviceName)
+    }
+
+    private func clearPeripheral() {
+        peripheral?.delegate = nil
+        peripheral = nil
+        txCharacteristic = nil
+        rxCharacteristic = nil
+    }
+
+    private func fail(_ error: Error) {
+        timeout?.cancel()
+        timeout = nil
+        central.stopScan()
+        clearPeripheral()
+        publish(.failed, error.localizedDescription)
+    }
+
+    private func publish(_ state: PythonRNodeLinkState, _ reason: String? = nil) {
+        linkState = state
+        onStateChange?(state, reason)
     }
 }
 
@@ -82,7 +343,11 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     private let maxBufferedBytes = 1_048_576
 
     init(makeTransport: @escaping (String, UUID?) -> PythonRNodeTransporting = {
-        ReticulumPythonRNodeTransport(deviceName: $0, deviceIdentifier: $1)
+        PythonRNodeCoreBluetoothTransport(
+            deviceName: $0,
+            deviceIdentifier: $1,
+            restorationIdentifier: "com.columba.ble.rnode.legacy"
+        )
     }) {
         self.makeTransport = makeTransport
     }
@@ -313,7 +578,7 @@ final class PythonRNodeBLESessionRegistry: @unchecked Sendable {
     init(makeTransport: @escaping (String, UUID?) -> PythonRNodeTransporting = {
         let stableComponent = $1?.uuidString.lowercased()
             ?? String($0.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" })
-        return ReticulumPythonRNodeTransport(
+        return PythonRNodeCoreBluetoothTransport(
             deviceName: $0,
             deviceIdentifier: $1,
             restorationIdentifier: "com.columba.ble.rnode.session.\(stableComponent)"
