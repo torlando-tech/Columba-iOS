@@ -164,7 +164,8 @@ struct SettingsView: View {
                     #if COLUMBA_MIGRATION_ENABLED
                     MigrationScreen(
                         identityManager: identityManager,
-                        settingsRepository: settingsRepository
+                        settingsRepository: settingsRepository,
+                        appServices: appServices
                     )
                     #else
                     Text("Data migration unavailable in this build")
@@ -1253,6 +1254,12 @@ struct SettingsView: View {
                         )) {
                             ForEach(Self.incomingMessageCapPresets, id: \.kb) { preset in
                                 Text(preset.title).tag(preset.kb)
+                            }
+                            if !Self.incomingMessageCapPresets.contains(where: {
+                                $0.kb == vm.incomingMessageSizeLimitKB
+                            }) {
+                                Text("Custom (\(vm.incomingMessageSizeLimitKB) KB)")
+                                    .tag(vm.incomingMessageSizeLimitKB)
                             }
                         }
                         .pickerStyle(.menu)

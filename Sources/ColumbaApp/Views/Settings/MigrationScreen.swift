@@ -19,10 +19,15 @@ struct MigrationScreen: View {
     @State private var exportDocument: ColumbaBackupDocument?
     @State private var exportFileName = "columba_backup.columba"
 
-    init(identityManager: IdentityManager, settingsRepository: SettingsRepository) {
+    init(
+        identityManager: IdentityManager,
+        settingsRepository: SettingsRepository,
+        appServices: AppServices
+    ) {
         _viewModel = State(initialValue: MigrationViewModel(
             identityManager: identityManager,
-            settingsRepository: settingsRepository
+            settingsRepository: settingsRepository,
+            appServices: appServices
         ))
     }
 

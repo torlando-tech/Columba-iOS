@@ -60,11 +60,17 @@ enum MigrationInterfaceValidationError: Error, LocalizedError {
 actor MigrationImporter {
     private let identityManager: IdentityManager
     private let settingsRepository: SettingsRepository
+    private let appServices: AppServices?
     private let logger = Logger(subsystem: "network.columba.Columba", category: "MigrationImporter")
 
-    init(identityManager: IdentityManager, settingsRepository: SettingsRepository) {
+    init(
+        identityManager: IdentityManager,
+        settingsRepository: SettingsRepository,
+        appServices: AppServices? = nil
+    ) {
         self.identityManager = identityManager
         self.settingsRepository = settingsRepository
+        self.appServices = appServices
     }
 
     /// Validate every restored identity before the importer performs any durable write.
@@ -368,6 +374,7 @@ actor MigrationImporter {
         onProgress(0.8)
 
         // 4. Import settings
+        var importedIncomingMessageSizeLimit = false
         for pref in bundle.settings.preferences {
             switch pref.key {
             case "displayName":
@@ -396,6 +403,7 @@ actor MigrationImporter {
             case "incoming_message_size_limit_kb":
                 if let value = Int(pref.value) {
                     await settingsRepository.setIncomingMessageSizeLimitKB(value)
+                    importedIncomingMessageSizeLimit = true
                     settingsImported += 1
                 }
             case "auto_announce_enabled":
@@ -421,6 +429,9 @@ actor MigrationImporter {
             default:
                 break
             }
+        }
+        if importedIncomingMessageSizeLimit {
+            await appServices?.applyIncomingMessageSizeLimitFromSettings()
         }
         onProgress(1.0)
 

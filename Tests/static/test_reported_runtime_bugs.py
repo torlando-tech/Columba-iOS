@@ -155,6 +155,9 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         self.assertIn('incoming_message_size_limit_kb', migration_exporter)
         migration_importer = (ROOT / "Sources/ColumbaApp/Services/MigrationImporter.swift").read_text()
         self.assertIn('case "incoming_message_size_limit_kb":', migration_importer)
+        self.assertIn("importedIncomingMessageSizeLimit = true", migration_importer)
+        self.assertIn("await appServices?.applyIncomingMessageSizeLimitFromSettings()", migration_importer)
+        self.assertIn('Text("Custom (\\(vm.incomingMessageSizeLimitKB) KB)")', settings)
 
 
 if __name__ == "__main__":

@@ -96,7 +96,8 @@ struct OnboardingView: View {
                                 onRestoreFile: { data in
                                     let vm = MigrationViewModel(
                                         identityManager: identityManager,
-                                        settingsRepository: settingsRepository
+                                        settingsRepository: settingsRepository,
+                                        appServices: appServices
                                     )
                                     restoreSession = RestoreSession(viewModel: vm)
                                     Task { await vm.handleImportFile(data: data) }
