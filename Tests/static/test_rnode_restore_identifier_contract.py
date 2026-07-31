@@ -74,7 +74,8 @@ class RNodeRestoreIdentifierContracts(unittest.TestCase):
         self.assertIsNotNone(
             re.search(
                 r"guard ModelBRNodeService\.shared\.start\(onLinkStateChange:.*?"
-                r"\}\) else \{ return \}",
+                r"\}\) else \{.*?rnodeConnectWatchdog\?\.cancel\(\).*?"
+                r"rnodeConnectWatchdog = nil.*?return",
                 app_services,
                 re.DOTALL,
             )
