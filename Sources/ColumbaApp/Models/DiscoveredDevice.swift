@@ -2,11 +2,8 @@
 //  DiscoveredDevice.swift
 //  ColumbaApp
 //
-//  A discovered BLE peripheral with metadata. Shared by the RNode wizard's
-//  device-discovery step (COLUMBA_RNODE_ENABLED) and the BLE device picker
-//  (COLUMBA_BLE_ENABLED). Lives here (ungated) so neither feature flag owns
-//  the type — extracted from BLEDevicePickerSheet.swift, which used to define
-//  it under COLUMBA_BLE_ENABLED only.
+//  A discovered BLE peripheral with metadata used by the RNode wizard's
+//  device-discovery step.
 //
 
 import Foundation

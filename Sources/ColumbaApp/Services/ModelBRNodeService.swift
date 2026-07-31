@@ -15,6 +15,8 @@
 //
 
 import Foundation
+import ReticulumSwift
+import RNSAPI
 
 public final class ModelBRNodeService: @unchecked Sendable {
 
@@ -35,7 +37,18 @@ public final class ModelBRNodeService: @unchecked Sendable {
     /// verified on a physical device. Flip to true after that verification.
     public static let rnodeBackgroundRestoreEnabled = false
 
+    /// Verifies the app-owned registry against ReticulumSwift's persisted RNode
+    /// identifier before constructing any CoreBluetooth manager.
+    public static var restoreIdentifierContractValid: Bool {
+        CoreBluetoothRestoreIdentifiers.areUnique &&
+            BLEConstants.RESTORE_IDENTIFIER_KEY == CoreBluetoothRestoreIdentifiers.rnodeCentral
+    }
+
     public func start(onLinkStateChange: ((RNodeLinkState, String?) -> Void)? = nil) {
+        guard Self.restoreIdentifierContractValid else {
+            DiagLog.log("[RNODE] Refusing to start: CoreBluetooth restore identifiers conflict")
+            return
+        }
         lock.lock(); defer { lock.unlock() }
         if let srv = server {
             // Already running (e.g. an App-launch restore started us before AppServices

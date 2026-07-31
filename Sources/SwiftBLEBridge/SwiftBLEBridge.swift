@@ -13,6 +13,7 @@
 //
 
 import Foundation
+import RNSAPI
 #if canImport(CoreBluetooth)
 import CoreBluetooth
 #endif
@@ -131,10 +132,8 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     /// connected/scanning/advertising to, then hand the SAME manager instances
     /// back via `willRestoreState`. These strings MUST be stable across launches
     /// — iOS keys its preserved manager state on them. Changing them orphans the
-    /// preserved state. Process-wide constants since there is exactly one
-    /// central + one peripheral manager per app (see `shared`).
-    public static let centralRestoreIdentifier = "network.columba.ble.central"
-    public static let peripheralRestoreIdentifier = "network.columba.ble.peripheral"
+    /// preserved state. The process-wide registry also reserves the distinct
+    /// RNode central identifier owned by ReticulumSwift's BLETransport.
 
     public override init() { super.init() }
 
@@ -260,7 +259,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                     queue: queue,
                     options: [
                         CBCentralManagerOptionRestoreIdentifierKey:
-                            Self.centralRestoreIdentifier
+                            CoreBluetoothRestoreIdentifiers.meshCentral
                     ]
                 )
             }
@@ -270,7 +269,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                     queue: queue,
                     options: [
                         CBPeripheralManagerOptionRestoreIdentifierKey:
-                            Self.peripheralRestoreIdentifier
+                            CoreBluetoothRestoreIdentifiers.meshPeripheral
                     ]
                 )
             }
@@ -328,7 +327,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                     queue: queue,
                     options: [
                         CBCentralManagerOptionRestoreIdentifierKey:
-                            Self.centralRestoreIdentifier
+                            CoreBluetoothRestoreIdentifiers.meshCentral
                     ]
                 )
             }
@@ -338,7 +337,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                     queue: queue,
                     options: [
                         CBPeripheralManagerOptionRestoreIdentifierKey:
-                            Self.peripheralRestoreIdentifier
+                            CoreBluetoothRestoreIdentifiers.meshPeripheral
                     ]
                 )
             }

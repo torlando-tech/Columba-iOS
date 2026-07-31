@@ -9,6 +9,10 @@ import ReticulumSwift
 /// app-group container, so they're deterministic.
 final class RNodeSeamTests: XCTestCase {
 
+    func testCoreBluetoothRestoreIdentifiersAreUniqueAndMatchRNodeTransport() {
+        XCTAssertTrue(ModelBRNodeService.restoreIdentifierContractValid)
+    }
+
     /// In-memory wire: records what's sent, lets the test inject inbound messages.
     final class MockRNodeWire: RNodeSeamWire, @unchecked Sendable {
         private let lock = NSLock()
