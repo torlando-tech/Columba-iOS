@@ -55,17 +55,39 @@ struct DeviceDiscoveryStep: View {
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(.white)
 
-                Text("Make sure your RNode is powered on and in **pairing mode**.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Before selecting a device:")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(Theme.textPrimary)
 
-                Text("Hold the USR button for 5 seconds to enter pairing mode.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.accentColor)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                    HStack(alignment: .top, spacing: 10) {
+                        Text("1")
+                            .font(.caption.bold())
+                            .foregroundStyle(.white)
+                            .frame(width: 22, height: 22)
+                            .background(Theme.accentColor)
+                            .clipShape(Circle())
+                        Text("Hold the USR button for 5 seconds to put the RNode in pairing mode.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+
+                    HStack(alignment: .top, spacing: 10) {
+                        Text("2")
+                            .font(.caption.bold())
+                            .foregroundStyle(.white)
+                            .frame(width: 22, height: 22)
+                            .background(Theme.accentColor)
+                            .clipShape(Circle())
+                        Text("Then select your RNode from the list below and tap Pair in the iOS prompt.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .padding(12)
+                .background(Theme.accentColor.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal, 24)
             }
             .padding(.bottom, 16)
 
@@ -96,10 +118,7 @@ struct DeviceDiscoveryStep: View {
                     Image(systemName: "info.circle.fill")
                         .foregroundStyle(Theme.accentColor)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("When the Bluetooth pairing dialog appears, tap **Pair**.")
-                            .font(.caption)
-                            .foregroundStyle(Theme.textSecondary)
-                        Text("If the RNode isn't responding, hold the left (USR) button for 5 seconds to enter pairing mode.")
+                        Text("Keep the RNode in pairing mode. When the Bluetooth dialog appears, tap **Pair**.")
                             .font(.caption)
                             .foregroundStyle(Theme.textSecondary)
                     }
@@ -225,7 +244,7 @@ struct DeviceDiscoveryStep: View {
 
     private func deviceCard(_ device: DiscoveredDevice) -> some View {
         let isPairing = pairingDeviceName == device.name
-        let isPaired = wizard.selectedDeviceName == device.name && wizard.devicePaired
+        let isPaired = wizard.selectedDeviceIdentifier == device.peripheralId && wizard.devicePaired
 
         return Button {
             selectDevice(device)
@@ -422,14 +441,13 @@ struct DeviceDiscoveryStep: View {
 
     private func selectDevice(_ device: DiscoveredDevice) {
         // If already verified, do nothing
-        if wizard.selectedDeviceName == device.name && wizard.devicePaired { return }
+        if wizard.selectedDeviceIdentifier == device.peripheralId && wizard.devicePaired { return }
 
         // Cancel any in-progress verification
         detectTimeoutTask?.cancel()
         detectTimeoutTask = nil
 
-        wizard.selectedDeviceName = device.name
-        wizard.devicePaired = false
+        wizard.selectDevice(named: device.name, identifier: device.peripheralId)
         pairingError = nil
         pairingDeviceName = device.name
 

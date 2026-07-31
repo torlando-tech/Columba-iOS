@@ -28,6 +28,7 @@ final class PythonConfigWriterTests: XCTestCase {
     func testRNodeEmitsEnabledNativeBridgeAndRadioParameters() {
         var rnode = RNodeConfig()
         rnode.deviceName = "RNode 1234"
+        rnode.deviceIdentifier = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
         rnode.frequency = 915_000_000
         rnode.bandwidth = 125_000
         rnode.txPower = 17
@@ -46,6 +47,7 @@ final class PythonConfigWriterTests: XCTestCase {
         XCTAssertTrue(config.contains("type = IOSRNodeInterface"))
         XCTAssertTrue(config.contains("connection_mode = ble"))
         XCTAssertTrue(config.contains("target_device_name = RNode 1234"))
+        XCTAssertTrue(config.contains("target_device_identifier = AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"))
         XCTAssertTrue(config.contains("frequency = 915000000"))
         XCTAssertTrue(config.contains("bandwidth = 125000"))
         XCTAssertTrue(config.contains("txpower = 17"))
@@ -112,7 +114,7 @@ private final class FakePythonRNodeTransport: PythonRNodeTransporting {
 extension PythonConfigWriterTests {
     func testPythonRNodeNativeBridgeConnectsBuffersAndWrites() {
         let fake = FakePythonRNodeTransport()
-        let bridge = PythonRNodeBLEBridge(makeTransport: { _ in fake })
+        let bridge = PythonRNodeBLEBridge(makeTransport: { _, _ in fake })
         var published: [PythonRNodeLinkState] = []
         bridge.setStateHandler { state, _ in published.append(state) }
 
@@ -140,7 +142,7 @@ extension PythonConfigWriterTests {
 
     func testPythonRNodeNativeBridgeSurfacesFailureReason() {
         let fake = FakePythonRNodeTransport()
-        let bridge = PythonRNodeBLEBridge(makeTransport: { _ in fake })
+        let bridge = PythonRNodeBLEBridge(makeTransport: { _, _ in fake })
         var observed: (PythonRNodeLinkState, String?)?
         bridge.setStateHandler { observed = ($0, $1) }
         XCTAssertTrue(bridge.connect(deviceName: "RNode 1234"))
@@ -154,7 +156,7 @@ extension PythonConfigWriterTests {
 
     func testPythonRNodeBridgeRejectsCompetingDeviceAndIgnoresStaleCallbacks() {
         var transports: [FakePythonRNodeTransport] = []
-        let bridge = PythonRNodeBLEBridge(makeTransport: { _ in
+        let bridge = PythonRNodeBLEBridge(makeTransport: { _, _ in
             let transport = FakePythonRNodeTransport()
             transports.append(transport)
             return transport
@@ -176,7 +178,7 @@ extension PythonConfigWriterTests {
 
     func testStaleWriteTimeoutDoesNotDisconnectReplacementTransport() {
         var transports: [FakePythonRNodeTransport] = []
-        let bridge = PythonRNodeBLEBridge(makeTransport: { _ in
+        let bridge = PythonRNodeBLEBridge(makeTransport: { _, _ in
             let transport = FakePythonRNodeTransport()
             transports.append(transport)
             return transport
@@ -196,7 +198,7 @@ extension PythonConfigWriterTests {
 
     func testPythonRNodeBridgeFailsInsteadOfDroppingOnBufferOverflow() {
         let fake = FakePythonRNodeTransport()
-        let bridge = PythonRNodeBLEBridge(makeTransport: { _ in fake })
+        let bridge = PythonRNodeBLEBridge(makeTransport: { _, _ in fake })
         XCTAssertTrue(bridge.connect(deviceName: "RNode A"))
 
         fake.onDataReceived?(Data(repeating: 0xAA, count: 1_048_577))
@@ -204,6 +206,67 @@ extension PythonConfigWriterTests {
         XCTAssertEqual(bridge.snapshot().1, "RNode inbound buffer overflow")
         XCTAssertEqual(fake.disconnectCount, 1)
         XCTAssertTrue(bridge.read(maxBytes: 1).isEmpty)
+    }
+
+    func testPythonRNodeSessionRegistryAllowsDistinctPhysicalDevicesOnly() {
+        var transports: [FakePythonRNodeTransport] = []
+        let registry = PythonRNodeBLESessionRegistry(makeTransport: { _, _ in
+            let transport = FakePythonRNodeTransport()
+            transports.append(transport)
+            return transport
+        })
+        let firstID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        let secondID = "11111111-2222-3333-4444-555555555555"
+
+        let first = registry.open(deviceName: "RNode", deviceIdentifier: firstID)
+        let second = registry.open(deviceName: "RNode", deviceIdentifier: secondID)
+        XCTAssertGreaterThan(first, 0)
+        XCTAssertGreaterThan(second, 0)
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(registry.activeSessionCount, 2)
+        XCTAssertEqual(transports.count, 2)
+        XCTAssertEqual(
+            registry.snapshot(
+                deviceIdentifier: UUID(uuidString: firstID),
+                deviceName: "RNode"
+            )?.0,
+            .connected
+        )
+        XCTAssertEqual(
+            registry.snapshot(
+                deviceIdentifier: UUID(uuidString: secondID),
+                deviceName: "RNode"
+            )?.0,
+            .connected
+        )
+
+        XCTAssertEqual(
+            registry.open(deviceName: "Renamed RNode", deviceIdentifier: firstID),
+            -2,
+            "the physical UUID, not the display name, owns the claim"
+        )
+        XCTAssertTrue(registry.close(handle: first))
+        XCTAssertEqual(registry.activeSessionCount, 1)
+        XCTAssertGreaterThan(
+            registry.open(deviceName: "Renamed RNode", deviceIdentifier: firstID),
+            0
+        )
+        XCTAssertEqual(registry.activeSessionCount, 2)
+        XCTAssertEqual(transports[1].disconnectCount, 0,
+                       "closing one physical RNode must not disconnect another")
+        registry.closeAll()
+        XCTAssertEqual(registry.activeSessionCount, 0)
+        XCTAssertEqual(transports[1].disconnectCount, 1)
+        XCTAssertEqual(transports[2].disconnectCount, 1)
+
+        let legacy = registry.open(deviceName: "Legacy RNode", deviceIdentifier: nil)
+        XCTAssertGreaterThan(legacy, 0)
+        XCTAssertEqual(
+            registry.open(deviceName: "Identified RNode", deviceIdentifier: firstID),
+            -1,
+            "a name-only legacy claim cannot safely coexist with another RNode"
+        )
+        XCTAssertTrue(registry.close(handle: legacy))
     }
 }
 #endif

@@ -2208,7 +2208,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/torlando-tech/reticulum-swift.git";
 			requirement = {
-				branch = main;
+				branch = "fix/ios-rnode-session-restoration";
 				kind = branch;
 			};
 		};

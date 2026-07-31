@@ -127,6 +127,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
     // RNode fields
     public var configDeviceName: String = ""
+    public var configDeviceIdentifier: UUID?
     public var configFrequency: String = "915000000"
     public var configBandwidth: String = "125000"
     public var configTxPower: String = "17"
@@ -236,11 +237,22 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// it's saved; on Python it's staged until the user taps "Apply"
     /// (see `requiresExplicitApply` / `applyChanges()`).
     public func toggleInterface(_ interface: InterfaceEntity, enabled: Bool) {
-        // Model B supports a single RNode radio — block enabling a second one.
-        if interface.type == .rnode, enabled, BackendPreference.modelB,
-           otherEnabledRNodeExists(excluding: interface.id) {
-            showError("Only one RNode radio can be active at a time. Disable the other RNode first.")
-            return
+        if interface.type == .rnode, enabled {
+            if BackendPreference.modelB,
+               otherEnabledRNodeExists(excluding: interface.id) {
+                showError("This build currently supports one active RNode. Disable the other RNode first.")
+                return
+            }
+            if !BackendPreference.modelB,
+               case .rnode(let config) = interface.config,
+               otherEnabledRNodeTargetsSamePhysicalDevice(
+                   identifier: config.deviceIdentifier,
+                   name: config.deviceName,
+                   excluding: interface.id
+               ) {
+                showError("That physical RNode is already used by another active interface.")
+                return
+            }
         }
         repository.toggleInterface(id: interface.id, enabled: enabled)
         hasPendingChanges = true
@@ -334,12 +346,21 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // Validate
         guard validateForm() else { return }
 
-        // Model B hosts a single shared RNode radio — refuse a second enabled one
-        // (it would silently overwrite the first's config + radio).
-        if configType == .rnode, configEnabled, BackendPreference.modelB,
-           otherEnabledRNodeExists(excluding: editingInterface?.id) {
-            showError("Only one RNode radio can be active at a time. Disable the other RNode first.")
-            return
+        if configType == .rnode, configEnabled {
+            if BackendPreference.modelB,
+               otherEnabledRNodeExists(excluding: editingInterface?.id) {
+                showError("This build currently supports one active RNode. Disable the other RNode first.")
+                return
+            }
+            if !BackendPreference.modelB,
+               otherEnabledRNodeTargetsSamePhysicalDevice(
+                   identifier: configDeviceIdentifier,
+                   name: configDeviceName,
+                   excluding: editingInterface?.id
+               ) {
+                showError("That physical RNode is already used by another active interface.")
+                return
+            }
         }
 
         // Build config
@@ -464,12 +485,27 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         }
     }
 
-    /// Model B hosts a single shared RNode radio (one app-side BLETransport, one NE
-    /// `ne-rnode` interface, one App-Group config key), so enforce one active RNode:
-    /// a second would overwrite the first, and disabling/removing one must not tear
-    /// down a still-enabled sibling.
+    /// Model B currently owns one app-group seam. Shipping Python instead uses
+    /// independent native sessions and checks physical-device identity below.
     private func otherEnabledRNodeExists(excluding id: String? = nil) -> Bool {
         interfaces.contains { $0.type == .rnode && $0.enabled && $0.id != id }
+    }
+
+    private func otherEnabledRNodeTargetsSamePhysicalDevice(
+        identifier: UUID?,
+        name: String,
+        excluding id: String? = nil
+    ) -> Bool {
+        return interfaces.contains { entity in
+            guard entity.type == .rnode, entity.enabled, entity.id != id,
+                  case .rnode(let config) = entity.config else { return false }
+            // Concurrent operation is allowed only when every participant has
+            // a stable physical UUID. A legacy name-only target cannot prove
+            // that it is distinct from another peripheral.
+            guard let identifier,
+                  let existingIdentifier = config.deviceIdentifier else { return true }
+            return identifier == existingIdentifier
+        }
     }
 
     // MARK: - Apply Changes
@@ -593,6 +629,25 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                     rnodeState = await rnode.state
                 }
 
+                var pythonRNodeUpdates: [(String, String, InterfaceStatus)] = []
+                #if COLUMBA_RUNTIME_PYTHON
+                for entity in enabledIfs where entity.type == .rnode {
+                    guard case .rnode(let config) = entity.config else { continue }
+                    let state = PythonRNodeBLESessionRegistry.shared.snapshot(
+                        deviceIdentifier: config.deviceIdentifier,
+                        deviceName: config.deviceName
+                    )?.0
+                    let status: InterfaceStatus
+                    switch state {
+                    case .connected: status = .connected
+                    case .connecting: status = .connecting
+                    case .failed: status = .error
+                    case .disconnected, .none: status = .disconnected
+                    }
+                    pythonRNodeUpdates.append((entity.id, entity.name, status))
+                }
+                #endif
+
                 var mpcState: InterfaceState?
                 var mpcPeerCount: Int?
                 if let mpc = mpcIf {
@@ -655,6 +710,14 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                     }
 
                     // Track RNode interface status
+                    #if COLUMBA_RUNTIME_PYTHON
+                    for (id, name, status) in pythonRNodeUpdates {
+                        if self.interfaceStatus[id] != status {
+                            DiagLog.log("[RNODE_UI] \(name) badge -> \(status.displayName)")
+                        }
+                        self.interfaceStatus[id] = status
+                    }
+                    #else
                     if let rnodeEntity = enabledIfs.first(where: { $0.type == .rnode }) {
                         if AppServices.rnodeBadgeFromNE {
                             // GATED: NE-authoritative badge. refreshNEBackedStatus published
@@ -687,6 +750,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                             self.interfaceStatus[rnodeEntity.id] = .disconnected
                         }
                     }
+                    #endif
 
                     // Track MPC interface status
                     // Parent is always .connected once advertising — use peer count
@@ -829,6 +893,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         configListenPort = "4242"
         configAutoGroupId = "reticulum"
         configDeviceName = ""
+        configDeviceIdentifier = nil
         configFrequency = "915000000"
         configBandwidth = "125000"
         configTxPower = "17"
@@ -866,6 +931,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
         case .rnode(let config):
             configDeviceName = config.deviceName
+            configDeviceIdentifier = config.deviceIdentifier
             configFrequency = String(config.frequency)
             configBandwidth = String(config.bandwidth)
             configTxPower = String(config.txPower)
@@ -902,6 +968,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         case .rnode:
             return .rnode(RNodeConfig(
                 deviceName: configDeviceName.trimmingCharacters(in: .whitespaces),
+                deviceIdentifier: configDeviceIdentifier,
                 frequency: UInt32(configFrequency) ?? 915_000_000,
                 bandwidth: UInt32(configBandwidth) ?? 125_000,
                 txPower: UInt8(configTxPower) ?? 17,

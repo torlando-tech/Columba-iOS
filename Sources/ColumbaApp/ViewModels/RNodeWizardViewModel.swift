@@ -56,7 +56,22 @@ final class RNodeWizardViewModel {
     // MARK: - Step 1: Device
 
     var selectedDeviceName: String = ""
+    var selectedDeviceIdentifier: UUID?
     var devicePaired: Bool = false
+
+    /// Select a radio and use its advertised name as the default interface name.
+    /// Preserve names on existing interfaces and any custom name entered after a
+    /// previous selection.
+    func selectDevice(named name: String, identifier: UUID) {
+        let shouldAdoptDeviceName = !isEditing
+            && (interfaceName == "RNode" || interfaceName == selectedDeviceName)
+        selectedDeviceName = name
+        selectedDeviceIdentifier = identifier
+        if shouldAdoptDeviceName {
+            interfaceName = name
+        }
+        devicePaired = false
+    }
 
     // MARK: - Step 2: Region
 
@@ -310,6 +325,7 @@ final class RNodeWizardViewModel {
     func populateFromConfig(
         name: String,
         deviceName: String,
+        deviceIdentifier: UUID?,
         frequency: UInt32,
         bandwidth: UInt32,
         txPower: UInt8,
@@ -319,6 +335,7 @@ final class RNodeWizardViewModel {
         isEditing = true
         interfaceName = name
         selectedDeviceName = deviceName
+        selectedDeviceIdentifier = deviceIdentifier
         devicePaired = true // already paired when editing existing config
         customFrequency = String(frequency)
         customBandwidth = String(bandwidth)

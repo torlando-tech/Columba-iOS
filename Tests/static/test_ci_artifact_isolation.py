@@ -56,6 +56,12 @@ class ArtifactFixture:
         }
         if flavor == "shipping":
             self.outputs[("nm", str(self.app / executable))] += (
+                b"_columba_rnode_session_open\n"
+                b"_columba_rnode_session_close\n"
+                b"_columba_rnode_session_state\n"
+                b"_columba_rnode_session_read\n"
+                b"_columba_rnode_session_write\n"
+                b"_columba_rnode_session_set_online\n"
                 b"_columba_rnode_connect\n"
                 b"_columba_rnode_disconnect\n"
                 b"_columba_rnode_state\n"

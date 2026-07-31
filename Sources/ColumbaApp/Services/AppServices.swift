@@ -3801,6 +3801,9 @@ public final class AppServices {
         logger.info("RNodeInterface (Model B) stopped")
         #elseif COLUMBA_RUNTIME_PYTHON
         PythonRNodeBLEBridge.shared.setStateHandler(nil)
+        PythonRNodeBLESessionRegistry.shared.closeAll()
+        // Also clear the legacy singleton in case an older deployed Python
+        // payload opened it before the session-handle ABI was installed.
         PythonRNodeBLEBridge.shared.disconnect()
         rnodeInterface = nil
         NotificationObserver.postNetworkStateChanged()

@@ -32,6 +32,12 @@ MODEL_B_SYMBOLS = (
     b"TunnelManager",
 )
 SHIPPING_RNODE_C_ABI_SYMBOLS = (
+    b"_columba_rnode_session_open",
+    b"_columba_rnode_session_close",
+    b"_columba_rnode_session_state",
+    b"_columba_rnode_session_read",
+    b"_columba_rnode_session_write",
+    b"_columba_rnode_session_set_online",
     b"_columba_rnode_connect",
     b"_columba_rnode_disconnect",
     b"_columba_rnode_state",

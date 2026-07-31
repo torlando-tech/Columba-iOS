@@ -32,8 +32,12 @@ private final class ReticulumPythonRNodeTransport: PythonRNodeTransporting {
     }
     var onStateChange: ((PythonRNodeLinkState, String?) -> Void)?
 
-    init(deviceName: String) {
-        transport = BLETransport(deviceName: deviceName)
+    init(deviceName: String, deviceIdentifier: UUID?, restorationIdentifier: String? = nil) {
+        transport = BLETransport(
+            deviceName: deviceName,
+            deviceIdentifier: deviceIdentifier,
+            restorationIdentifier: restorationIdentifier ?? BLEConstants.RESTORE_IDENTIFIER_KEY
+        )
         transport.onStateChange = { [weak self] state in
             let mapped: PythonRNodeLinkState
             let reason: String?
@@ -66,7 +70,7 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     public static let shared = PythonRNodeBLEBridge()
 
     private let lock = NSLock()
-    private let makeTransport: (String) -> PythonRNodeTransporting
+    private let makeTransport: (String, UUID?) -> PythonRNodeTransporting
     private var transport: PythonRNodeTransporting?
     private var deviceName: String?
     private var inbound = Data()
@@ -77,8 +81,8 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     private var interfaceOnline = false
     private let maxBufferedBytes = 1_048_576
 
-    init(makeTransport: @escaping (String) -> PythonRNodeTransporting = {
-        ReticulumPythonRNodeTransport(deviceName: $0)
+    init(makeTransport: @escaping (String, UUID?) -> PythonRNodeTransporting = {
+        ReticulumPythonRNodeTransport(deviceName: $0, deviceIdentifier: $1)
     }) {
         self.makeTransport = makeTransport
     }
@@ -110,7 +114,7 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     }
 
     @discardableResult
-    public func connect(deviceName requestedName: String) -> Bool {
+    public func connect(deviceName requestedName: String, deviceIdentifier: UUID? = nil) -> Bool {
         let requestedName = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !requestedName.isEmpty else { return false }
 
@@ -123,7 +127,7 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
             return false
         }
         let old = transport
-        let radio = makeTransport(requestedName)
+        let radio = makeTransport(requestedName, deviceIdentifier)
         generation &+= 1
         let currentGeneration = generation
         transport = radio
@@ -284,6 +288,224 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     private func publishedStateLocked() -> PythonRNodeLinkState {
         linkState == .connected && !interfaceOnline ? .connecting : linkState
     }
+}
+
+/// Process-wide owner of independent Python RNode byte-stream sessions.
+///
+/// A claim is keyed by CoreBluetooth's stable peripheral UUID when available,
+/// falling back to the normalized advertised name for legacy configurations.
+/// This permits concurrent sessions for different physical RNodes while making
+/// a second claim for the same peripheral fail atomically.
+final class PythonRNodeBLESessionRegistry: @unchecked Sendable {
+    static let shared = PythonRNodeBLESessionRegistry()
+
+    private struct Session {
+        let physicalKey: String
+        let bridge: PythonRNodeBLEBridge
+    }
+
+    private let lock = NSLock()
+    private let makeTransport: (String, UUID?) -> PythonRNodeTransporting
+    private var sessions: [Int32: Session] = [:]
+    private var claims: [String: Int32] = [:]
+    private var nextHandle: Int32 = 1
+
+    init(makeTransport: @escaping (String, UUID?) -> PythonRNodeTransporting = {
+        let stableComponent = $1?.uuidString.lowercased()
+            ?? String($0.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" })
+        return ReticulumPythonRNodeTransport(
+            deviceName: $0,
+            deviceIdentifier: $1,
+            restorationIdentifier: "com.columba.ble.rnode.session.\(stableComponent)"
+        )
+    }) {
+        self.makeTransport = makeTransport
+    }
+
+    @discardableResult
+    func open(deviceName rawName: String, deviceIdentifier rawIdentifier: String?) -> Int32 {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return -1 }
+
+        let identifier: UUID?
+        if let rawIdentifier,
+           !rawIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard let parsed = UUID(uuidString: rawIdentifier) else { return -3 }
+            identifier = parsed
+        } else {
+            identifier = nil
+        }
+        let physicalKey = Self.physicalKey(deviceIdentifier: identifier, deviceName: name)
+
+        lock.lock()
+        let hasLegacyClaim = claims.keys.contains { $0.hasPrefix("name:") }
+        if (identifier == nil && !sessions.isEmpty) || (identifier != nil && hasLegacyClaim) {
+            lock.unlock()
+            DiagLog.log("[RNODE_PY] rejected ambiguous legacy RNode claim for '\(name)'")
+            return -1
+        }
+        guard claims[physicalKey] == nil else {
+            lock.unlock()
+            DiagLog.log("[RNODE_PY] rejected duplicate physical RNode claim '\(physicalKey)'")
+            return -2
+        }
+        let handle = allocateHandleLocked()
+        let bridge = PythonRNodeBLEBridge(makeTransport: makeTransport)
+        sessions[handle] = Session(physicalKey: physicalKey, bridge: bridge)
+        claims[physicalKey] = handle
+        lock.unlock()
+
+        guard bridge.connect(deviceName: name, deviceIdentifier: identifier) else {
+            _ = close(handle: handle)
+            return -4
+        }
+        DiagLog.log("[RNODE_PY] opened session \(handle) for '\(name)' key='\(physicalKey)'")
+        return handle
+    }
+
+    @discardableResult
+    func close(handle: Int32) -> Bool {
+        lock.lock()
+        guard let session = sessions.removeValue(forKey: handle) else {
+            lock.unlock()
+            return false
+        }
+        if claims[session.physicalKey] == handle {
+            claims.removeValue(forKey: session.physicalKey)
+        }
+        lock.unlock()
+        session.bridge.disconnect()
+        DiagLog.log("[RNODE_PY] closed session \(handle)")
+        return true
+    }
+
+    func closeAll() {
+        lock.lock()
+        let current = Array(sessions.values)
+        sessions.removeAll(keepingCapacity: false)
+        claims.removeAll(keepingCapacity: false)
+        lock.unlock()
+        for session in current {
+            session.bridge.disconnect()
+        }
+        DiagLog.log("[RNODE_PY] closed all sessions (\(current.count))")
+    }
+
+    func snapshot(handle: Int32) -> (PythonRNodeLinkState, String?)? {
+        bridge(handle: handle)?.snapshot()
+    }
+
+    func snapshot(
+        deviceIdentifier: UUID?,
+        deviceName: String
+    ) -> (PythonRNodeLinkState, String?)? {
+        let key = Self.physicalKey(
+            deviceIdentifier: deviceIdentifier,
+            deviceName: deviceName
+        )
+        lock.lock()
+        let bridge = claims[key].flatMap { sessions[$0]?.bridge }
+        lock.unlock()
+        return bridge?.snapshot()
+    }
+
+    func read(handle: Int32, maxBytes: Int) -> Data? {
+        bridge(handle: handle)?.read(maxBytes: maxBytes)
+    }
+
+    func write(handle: Int32, data: Data) -> Int {
+        bridge(handle: handle)?.writeSync(data) ?? -1
+    }
+
+    @discardableResult
+    func setInterfaceOnline(handle: Int32, online: Bool) -> Bool {
+        guard let bridge = bridge(handle: handle) else { return false }
+        bridge.setInterfaceOnline(online)
+        return true
+    }
+
+    var activeSessionCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return sessions.count
+    }
+
+    private func bridge(handle: Int32) -> PythonRNodeBLEBridge? {
+        lock.lock(); defer { lock.unlock() }
+        return sessions[handle]?.bridge
+    }
+
+    private func allocateHandleLocked() -> Int32 {
+        while nextHandle <= 0 || sessions[nextHandle] != nil {
+            nextHandle = nextHandle == Int32.max ? 1 : nextHandle + 1
+        }
+        let handle = nextHandle
+        nextHandle = nextHandle == Int32.max ? 1 : nextHandle + 1
+        return handle
+    }
+
+    private static func physicalKey(deviceIdentifier: UUID?, deviceName: String) -> String {
+        deviceIdentifier.map { "id:\($0.uuidString.lowercased())" }
+            ?? "name:\(deviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
+}
+
+@_cdecl("columba_rnode_session_open")
+public func columba_rnode_session_open(
+    _ deviceName: UnsafePointer<CChar>?,
+    _ deviceIdentifier: UnsafePointer<CChar>?
+) -> Int32 {
+    guard let deviceName else { return -1 }
+    return PythonRNodeBLESessionRegistry.shared.open(
+        deviceName: String(cString: deviceName),
+        deviceIdentifier: deviceIdentifier.map { String(cString: $0) }
+    )
+}
+
+@_cdecl("columba_rnode_session_close")
+public func columba_rnode_session_close(_ handle: Int32) -> Int32 {
+    PythonRNodeBLESessionRegistry.shared.close(handle: handle) ? 0 : -1
+}
+
+@_cdecl("columba_rnode_session_state")
+public func columba_rnode_session_state(_ handle: Int32) -> Int32 {
+    PythonRNodeBLESessionRegistry.shared.snapshot(handle: handle)?.0.rawValue
+        ?? PythonRNodeLinkState.disconnected.rawValue
+}
+
+@_cdecl("columba_rnode_session_read")
+public func columba_rnode_session_read(
+    _ handle: Int32,
+    _ output: UnsafeMutablePointer<UInt8>?,
+    _ capacity: Int32
+) -> Int32 {
+    guard let output, capacity > 0 else { return 0 }
+    guard let data = PythonRNodeBLESessionRegistry.shared.read(
+        handle: handle,
+        maxBytes: Int(capacity)
+    ) else { return -1 }
+    data.copyBytes(to: output, count: data.count)
+    return Int32(data.count)
+}
+
+@_cdecl("columba_rnode_session_write")
+public func columba_rnode_session_write(
+    _ handle: Int32,
+    _ bytes: UnsafePointer<UInt8>?,
+    _ count: Int32
+) -> Int32 {
+    guard let bytes, count > 0 else { return 0 }
+    return Int32(PythonRNodeBLESessionRegistry.shared.write(
+        handle: handle,
+        data: Data(bytes: bytes, count: Int(count))
+    ))
+}
+
+@_cdecl("columba_rnode_session_set_online")
+public func columba_rnode_session_set_online(_ handle: Int32, _ online: Int32) -> Int32 {
+    PythonRNodeBLESessionRegistry.shared.setInterfaceOnline(
+        handle: handle,
+        online: online != 0
+    ) ? 0 : -1
 }
 
 @_cdecl("columba_rnode_connect")
