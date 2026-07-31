@@ -154,6 +154,16 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         self.assertIn("shouldOpenRNodeWizard = true", source)
         self.assertIn("pendingRNodeSetup = false", source)
 
+        settings = SETTINGS_VIEW.read_text()
+        self.assertIsNotNone(re.search(
+            r"\.onChange\(of: shouldOpenRNodeWizard\).*?if requested \{\s*"
+            r"openRequestedRNodeWizard\(\)",
+            settings,
+            re.DOTALL,
+        ))
+        self.assertIn("openRequestedRNodeWizard()\n\n            // Poll connection state", settings)
+        self.assertIn("private func openRequestedRNodeWizard()", settings)
+
     def test_incoming_message_size_limit_contract(self) -> None:
         bridge = BRIDGE_PY.read_text()
         self.assertIn("def set_incoming_message_size_limit_kb(", bridge)

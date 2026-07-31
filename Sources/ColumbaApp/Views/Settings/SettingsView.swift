@@ -228,6 +228,11 @@ struct SettingsView: View {
         } message: {
             Text(onboardingReviewError ?? "Please try again.")
         }
+        .onChange(of: shouldOpenRNodeWizard) { _, requested in
+            if requested {
+                openRequestedRNodeWizard()
+            }
+        }
         .task {
             if viewModel == nil {
                 viewModel = SettingsViewModel(
@@ -238,31 +243,33 @@ struct SettingsView: View {
             }
             await viewModel?.loadSettings()
 
-            // If MainTabView handed off an RNode wizard request, launch it now.
-            // Use selectInterfaceType so configType is set before validation runs
-            // when the user taps "Configure RNode" at the end of the wizard.
-            // Only clear the flag after the VM is guaranteed non-nil, so a nil
-            // VM can't silently drop the request and permanently lose the flag.
-            if shouldOpenRNodeWizard {
-                if interfaceViewModel == nil {
-                    let repo = interfaceRepository ?? InterfaceRepository()
-                    interfaceRepository = repo
-                    interfaceViewModel = InterfaceManagementViewModel(
-                        repository: repo,
-                        appServices: appServices
-                    )
-                }
-                if let vm = interfaceViewModel {
-                    vm.selectInterfaceType(.rnode)
-                    shouldOpenRNodeWizard = false
-                }
-            }
+            openRequestedRNodeWizard()
 
             // Poll connection state every 2s so the card stays live
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 await viewModel?.refreshConnectionState()
             }
+        }
+    }
+
+    /// Consume a shell-level onboarding request whether it arrives before this
+    /// view's task starts or while the already-mounted Settings tab is polling.
+    private func openRequestedRNodeWizard() {
+        guard shouldOpenRNodeWizard else { return }
+        if interfaceViewModel == nil {
+            let repo = interfaceRepository ?? InterfaceRepository()
+            interfaceRepository = repo
+            interfaceViewModel = InterfaceManagementViewModel(
+                repository: repo,
+                appServices: appServices
+            )
+        }
+        if let vm = interfaceViewModel {
+            // Use selectInterfaceType so configType is set before validation runs
+            // when the user taps Configure RNode at the end of the wizard.
+            vm.selectInterfaceType(.rnode)
+            shouldOpenRNodeWizard = false
         }
     }
 
