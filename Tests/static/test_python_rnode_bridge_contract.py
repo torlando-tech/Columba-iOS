@@ -103,6 +103,8 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
         self.assertIn("uiInterface.state = .connecting", branch)
         self.assertIn("case .connected:", branch)
         self.assertIn("PythonRNodeBLESessionRegistry.shared.closeAll()", source)
+        self.assertIn("if closeAllPythonSessions", source)
+        self.assertIn("stopRNodeInterfaceUnlocked(closeAllPythonSessions: true)", source)
         self.assertNotIn("rnodeUnavailableInPythonRuntime", source)
 
 
