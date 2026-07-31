@@ -50,6 +50,8 @@ CANONICAL_FLAGS = %w[
 ONBOARDING_FLAG = 'COLUMBA_ONBOARDING_ENABLED'
 MIGRATION_FLAG = 'COLUMBA_MIGRATION_ENABLED'
 SHARED_APP_FLAGS = [ONBOARDING_FLAG, MIGRATION_FLAG].freeze
+RNODE_FLAG = 'COLUMBA_RNODE_ENABLED'
+SHIPPING_APP_FLAGS = [RNODE_FLAG].freeze
 SHIPPING_FORBIDDEN_FLAGS = CANONICAL_FLAGS
 MODEL_B_FLAGS = %w[
   COLUMBA_RUNTIME_MODEL_B
@@ -1124,7 +1126,7 @@ module ModelBTargetIsolation
         Xcodeproj::Project::Object::XCBuildConfiguration
       )
       destination_tokens = compilation_tokens(configuration).reject do |token|
-        (SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS).include?(token)
+        (SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS + SHIPPING_APP_FLAGS).include?(token)
       end
       configuration.name = source.name
       configuration.base_configuration_reference = source.base_configuration_reference
@@ -1137,7 +1139,7 @@ module ModelBTargetIsolation
       set_compilation_tokens(
         configuration,
         required,
-        removed: SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS
+        removed: SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS + SHIPPING_APP_FLAGS
       )
       configuration
     end
@@ -1155,8 +1157,8 @@ module ModelBTargetIsolation
       configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = PYTHON_BRIDGING_HEADER
       set_compilation_tokens(
         configuration,
-        ['COLUMBA_RUNTIME_PYTHON'] + SHARED_APP_FLAGS,
-        removed: SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS
+        ['COLUMBA_RUNTIME_PYTHON'] + SHARED_APP_FLAGS + SHIPPING_APP_FLAGS,
+        removed: SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS + SHIPPING_APP_FLAGS
       )
     end
   end
@@ -1173,11 +1175,12 @@ module ModelBTargetIsolation
     end
     shipping_tests.build_configurations.each do |test_configuration|
       shipping_configuration = shipping_by_name.fetch(test_configuration.name)
-      shipping_flags = compilation_tokens(shipping_configuration) & (CANONICAL_FLAGS + SHARED_APP_FLAGS)
+      shipping_flags = compilation_tokens(shipping_configuration) &
+                       (CANONICAL_FLAGS + SHARED_APP_FLAGS + SHIPPING_APP_FLAGS)
       set_compilation_tokens(
         test_configuration,
         shipping_flags,
-        removed: SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS
+        removed: SHIPPING_FORBIDDEN_FLAGS + SHARED_APP_FLAGS + SHIPPING_APP_FLAGS
       )
     end
   end
@@ -1605,7 +1608,7 @@ module ModelBTargetIsolation
       raise "shipping TEST_HOST changed in #{test_configuration.name}" unless test_host.include?('ColumbaApp.app')
     end
     (shipping.build_configurations + shipping_tests.build_configurations).each do |configuration|
-      missing = SHARED_APP_FLAGS - compilation_tokens(configuration)
+      missing = (SHARED_APP_FLAGS + SHIPPING_APP_FLAGS) - compilation_tokens(configuration)
       next if missing.empty?
 
       raise "shipping configuration lost shared features #{missing.join(', ')} in #{configuration.name}"

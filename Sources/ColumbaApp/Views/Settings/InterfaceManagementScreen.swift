@@ -115,7 +115,10 @@ struct InterfaceManagementScreen: View {
         .toolbarBackground(Theme.backgroundPrimary, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         #endif
-        .sheet(isPresented: $viewModel.showTypeSelector) {
+        .sheet(
+            isPresented: $viewModel.showTypeSelector,
+            onDismiss: { viewModel.completePendingInterfaceTypeSelection() }
+        ) {
             InterfaceTypeSelector(viewModel: viewModel)
                 .presentationDetents([.height(480), .large])
                 .presentationDragIndicator(.visible)
@@ -462,8 +465,7 @@ struct InterfaceTypeSelector: View {
 
     private func typeOption(type: InterfaceType, highlighted: Bool = false) -> some View {
         Button {
-            dismiss()
-            viewModel.selectInterfaceType(type)
+            viewModel.queueInterfaceTypeSelection(type)
         } label: {
             HStack(spacing: 16) {
                 Image(systemName: type.icon)

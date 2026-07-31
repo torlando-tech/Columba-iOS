@@ -7,6 +7,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PROJECT_FILE = ROOT / "Columba.xcodeproj/project.pbxproj"
 BRIDGE_PY = ROOT / "app/rns_bridge.py"
 PYTHON_BRIDGE = ROOT / "Sources/PythonBridge/PythonBridge.swift"
 RNS_BACKEND = ROOT / "Sources/RNSAPI/Protocols/RnsBackend.swift"
@@ -14,6 +15,7 @@ PY_BACKEND = ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift"
 SWIFT_BACKEND = ROOT / "Sources/RNSBackendSwift/SwiftRNSBackend.swift"
 APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
+MAIN_TAB_VIEW = ROOT / "Sources/ColumbaApp/Views/MainTabView.swift"
 MESSAGE_BUBBLE = ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
 MESSAGING_VIEW = ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift"
 
@@ -131,6 +133,61 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             cover.group(0),
             re.DOTALL,
         ))
+
+    def test_onboarding_rnode_request_is_consumed_after_main_tab_is_mounted(self) -> None:
+        main_tab = MAIN_TAB_VIEW.read_text()
+        self.assertIn(".onAppear {\n            consumePendingRNodeSetup()", main_tab)
+        self.assertIsNotNone(re.search(
+            r"\.onChange\(of: pendingRNodeSetup\).*?if requested \{\s*"
+            r"consumePendingRNodeSetup\(\)",
+            main_tab,
+            re.DOTALL,
+        ))
+        consumer = re.search(
+            r"private func consumePendingRNodeSetup\(\).*?\n    }",
+            main_tab,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(consumer)
+        assert consumer is not None
+        source = consumer.group(0)
+        self.assertIn("selectedTab = .settings", source)
+        self.assertIn("shouldOpenRNodeWizard = true", source)
+        self.assertIn("pendingRNodeSetup = false", source)
+
+        settings = SETTINGS_VIEW.read_text()
+        self.assertIsNotNone(re.search(
+            r"\.onChange\(of: shouldOpenRNodeWizard\).*?if requested \{\s*"
+            r"openRequestedRNodeWizard\(\)",
+            settings,
+            re.DOTALL,
+        ))
+        self.assertIn("openRequestedRNodeWizard()\n\n            // Poll connection state", settings)
+        self.assertIn("private func openRequestedRNodeWizard()", settings)
+
+        consumer = re.search(
+            r"private func openRequestedRNodeWizard\(\).*?\n    }",
+            settings,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(consumer)
+        assert consumer is not None
+        consumer_source = consumer.group(0)
+        self.assertIn("#if os(iOS) && COLUMBA_RNODE_ENABLED", consumer_source)
+        self.assertLess(
+            consumer_source.index("#if os(iOS) && COLUMBA_RNODE_ENABLED"),
+            consumer_source.index("shouldOpenRNodeWizard = false"),
+        )
+
+        project = PROJECT_FILE.read_text()
+        shipping_release = re.search(
+            r"TREL /\* Release \*/ = \{.*?\n\t\t\};",
+            project,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(shipping_release)
+        assert shipping_release is not None
+        self.assertIn("COLUMBA_RNODE_ENABLED", shipping_release.group(0))
 
     def test_incoming_message_size_limit_contract(self) -> None:
         bridge = BRIDGE_PY.read_text()
