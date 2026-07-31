@@ -97,6 +97,16 @@ final class RNodeProbeScanner: NSObject {
     /// Set after we auto-retry following a sent-but-unanswered detect probe.
     /// Prevents infinite retry loops — only one detect-retry per probe() call.
     private var detectRetried = false
+    /// ESP32-S3 RNodes can drop the first connection while iOS is still
+    /// discovering the encrypted NUS characteristics. Retry that pre-detect
+    /// disconnect once, then surface the normal wizard timeout.
+    private var earlyDisconnectRetried = false
+    /// Detect writes can race the ESP32-S3 passkey exchange: CoreBluetooth may
+    /// report notifications enabled before the encrypted RX write is accepted.
+    /// Retry the four-byte detect command in place while the user completes the
+    /// pairing dialog, bounded by the wizard's 30-second pairing timeout.
+    private var authenticationDetectRetryCount = 0
+    private static let maxAuthenticationDetectRetries = 10
     /// Incremented on each probe() call and each auto-reconnect. Async closures
     /// capture their generation and no-op if it no longer matches, preventing
     /// stale 3s notify timeouts from firing on subsequent reconnect attempts.
@@ -177,6 +187,8 @@ final class RNodeProbeScanner: NSObject {
         nusDiscovered = false
         needsReconnect = false
         detectRetried = false
+        earlyDisconnectRetried = false
+        authenticationDetectRetryCount = 0
         probeGeneration += 1
         onProbeResult?(.connecting)
         diag("Connecting to \(peripheral.name ?? "?")")
@@ -231,6 +243,25 @@ final class RNodeProbeScanner: NSObject {
         hasSentDetectProbe = true
         peripheral.writeValue(detectCommand, for: rx, type: writeType)
         onProbeResult?(.detectSent)
+    }
+
+    private func scheduleDetectRetryAfterAuthentication() {
+        guard authenticationDetectRetryCount < Self.maxAuthenticationDetectRetries else {
+            diag("Authentication detect retry limit reached")
+            onProbeResult?(.detectWriteFailed("Pairing did not complete"))
+            return
+        }
+        authenticationDetectRetryCount += 1
+        let attempt = authenticationDetectRetryCount
+        let generation = probeGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self,
+                  self.probeGeneration == generation,
+                  self.connectingPeripheral != nil,
+                  !self.hasSentDetectProbe else { return }
+            self.diag("Retrying detect after authentication (attempt \(attempt))")
+            self.sendDetectProbe()
+        }
     }
 }
 
@@ -318,6 +349,17 @@ extension RNodeProbeScanner: CBCentralManagerDelegate {
         if hasSentDetectProbe && !detectRetried {
             needsReconnect = true
             detectRetried = true
+        }
+
+        // ESP32-S3 firmware can disconnect during first-time NUS characteristic
+        // discovery, before CoreBluetooth emits an authentication callback. The
+        // previous code dropped the peripheral reference here, leaving the wizard
+        // to time out even though an immediate second connection usually reaches
+        // the passkey exchange. Bound this recovery to one retry per user tap.
+        if !hasSentDetectProbe && !pairingTriggered && !earlyDisconnectRetried {
+            needsReconnect = true
+            earlyDisconnectRetried = true
+            diag("Retrying one pre-detect disconnect")
         }
 
         // Auto-reconnect when:
@@ -469,7 +511,14 @@ extension RNodeProbeScanner: CBPeripheralDelegate {
             // Auth/encryption errors mean iOS is negotiating a bond — the pairing flow
             // will handle recovery via didUpdateNotificationStateFor. Don't cancel.
             if errStr.contains("Authentication") || errStr.contains("Encryption") || errStr.contains("auth") {
-                diag("Write auth error — pairing in progress, ignoring")
+                diag("Write auth error — pairing in progress, scheduling detect retry")
+                pairingTriggered = true
+                if !pairingAttempted {
+                    pairingAttempted = true
+                    onProbeResult?(.failed("Pairing required — enter PIN on dialog"))
+                }
+                hasSentDetectProbe = false
+                scheduleDetectRetryAfterAuthentication()
                 return
             }
             onProbeResult?(.detectWriteFailed(errStr))

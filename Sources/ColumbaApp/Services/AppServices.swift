@@ -3796,7 +3796,7 @@ public final class AppServices {
         }
     }
 
-    private func stopRNodeInterfaceUnlocked() async {
+    private func stopRNodeInterfaceUnlocked(closeAllPythonSessions: Bool = false) async {
         #if COLUMBA_RUNTIME_MODEL_B
         rnodeConnectWatchdog?.cancel()
         rnodeConnectWatchdog = nil
@@ -3808,6 +3808,14 @@ public final class AppServices {
         logger.info("RNodeInterface (Model B) stopped")
         #elseif COLUMBA_RUNTIME_PYTHON
         PythonRNodeBLEBridge.shared.setStateHandler(nil)
+        if closeAllPythonSessions {
+            // Full runtime shutdown happens after backend.stop() has detached
+            // each Python driver. Sweep only orphaned sessions here; an
+            // individual interface removal must never invalidate peers.
+            PythonRNodeBLESessionRegistry.shared.closeAll()
+        }
+        // Also clear the legacy singleton in case an older deployed Python
+        // payload opened it before the session-handle ABI was installed.
         PythonRNodeBLEBridge.shared.disconnect()
         rnodeInterface = nil
         NotificationObserver.postNetworkStateChanged()
@@ -4151,8 +4159,9 @@ public final class AppServices {
         // Disconnect all TCP interfaces
         await stopTCPInterfaceUnlocked()
 
-        // Stop RNode interface
-        await stopRNodeInterfaceUnlocked()
+        // Stop RNode interface and sweep any orphaned native sessions after
+        // backend.stop() detached the per-interface Python drivers above.
+        await stopRNodeInterfaceUnlocked(closeAllPythonSessions: true)
 
         // Stop BLE interface
         #if canImport(CoreBluetooth)

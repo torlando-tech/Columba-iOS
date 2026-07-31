@@ -278,6 +278,9 @@ class IOSRNodeInterface(Interface):
         # Connection target + mode.
         self.connection_mode = c["connection_mode"] if "connection_mode" in c else self.MODE_BLE
         self.target_device_name = c["target_device_name"] if "target_device_name" in c else None
+        self.target_device_identifier = (
+            c["target_device_identifier"] if "target_device_identifier" in c else None
+        )
         # USB-specific fields. usb_device_id may be stale (Android reassigns
         # IDs across plug cycles); usb_vendor_id + usb_product_id are stable
         # and used by KotlinUSBBridge.findDeviceByVidPid() at start time.
@@ -466,39 +469,15 @@ class IOSRNodeInterface(Interface):
 
         mode_str = "BLE" if self.connection_mode == self.MODE_BLE else "Bluetooth Classic"
 
-        # The KotlinRNodeBridge is a process-wide singleton with one
-        # connectedDeviceName / one GATT client / one shared read buffer at a
-        # time. If a sibling IOSRNodeInterface has already won the
-        # connect-race (two interfaces' start() threads can fire in the same
-        # millisecond because RNS spawns them in the interface-init for-loop),
-        # calling bridge.connect() again clobbers the first connection's state
-        # AND has both python interfaces reading from the same byte stream,
-        # which corrupts both. Bail out cleanly so the first one keeps
-        # working and this one stays offline. (Architectural constraint
-        # inherited from v0.10.x — same single-bridge design.)
-        try:
-            if (
-                hasattr(self.kotlin_bridge, "isConnected")
-                and self.kotlin_bridge.isConnected()
-                and hasattr(self.kotlin_bridge, "getConnectedDeviceName")
-            ):
-                already = self.kotlin_bridge.getConnectedDeviceName()
-                if already and already != self.target_device_name:
-                    RNS.log(
-                        f"Cannot start - KotlinRNodeBridge already serving '{already}'; "
-                        f"only one BLE/Classic RNode at a time. '{self.target_device_name}' "
-                        f"staying offline. To use this RNode, disable the other one "
-                        f"and Apply & Restart.",
-                        RNS.LOG_ERROR,
-                    )
-                    return False
-        except Exception as e:  # noqa: BLE001
-            RNS.log(f"Bridge contention check failed (continuing): {e}", RNS.LOG_DEBUG)
-
         RNS.log(f"Connecting to RNode '{self.target_device_name}' via {mode_str}...", RNS.LOG_INFO)
 
-        # Connect via Kotlin bridge with specified mode
-        if not self.kotlin_bridge.connect(self.target_device_name, self.connection_mode):
+        # Each iOS driver instance owns an independent native BLE session. The
+        # native registry rejects only a duplicate physical peripheral claim.
+        if not self.kotlin_bridge.connect(
+            self.target_device_name,
+            str(self.connection_mode),
+            self.target_device_identifier,
+        ):
             RNS.log(f"Failed to connect to {self.target_device_name}", RNS.LOG_ERROR)
             return False
 

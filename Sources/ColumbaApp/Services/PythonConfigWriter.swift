@@ -139,6 +139,9 @@ enum PythonConfigWriter {
             lines.append("    type = IOSRNodeInterface")
             lines.append("    connection_mode = ble")
             appendValue("target_device_name", cfg.deviceName, to: &lines)
+            if let identifier = cfg.deviceIdentifier {
+                appendValue("target_device_identifier", identifier.uuidString, to: &lines)
+            }
             lines.append("    frequency = \(cfg.frequency)")
             lines.append("    bandwidth = \(cfg.bandwidth)")
             lines.append("    txpower = \(cfg.txPower)")

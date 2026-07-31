@@ -786,6 +786,9 @@ public enum InterfaceMode: String, Codable, Sendable, Equatable, CaseIterable {
 /// in ColumbaApp/Services/InterfaceRepository.swift was removed.
 public struct RNodeConfig: Codable, Equatable, Sendable {
     public var deviceName: String
+    /// Stable CoreBluetooth identity for the physical peripheral. Optional for
+    /// backward compatibility with configurations saved before UUID capture.
+    public var deviceIdentifier: UUID?
     public var frequency: UInt32
     public var bandwidth: UInt32
     public var txPower: UInt8
@@ -809,6 +812,7 @@ public struct RNodeConfig: Codable, Equatable, Sendable {
     public static var defaultUS915: RNodeConfig {
         RNodeConfig(
             deviceName: "",
+            deviceIdentifier: nil,
             frequency: 915_000_000,
             bandwidth: 125_000,
             txPower: 17,
@@ -821,6 +825,7 @@ public struct RNodeConfig: Codable, Equatable, Sendable {
 
     public init(
         deviceName: String = "",
+        deviceIdentifier: UUID? = nil,
         frequency: UInt32 = 0,
         bandwidth: UInt32 = 0,
         txPower: UInt8 = 0,
@@ -830,6 +835,7 @@ public struct RNodeConfig: Codable, Equatable, Sendable {
         ltAlock: Float? = nil
     ) {
         self.deviceName = deviceName
+        self.deviceIdentifier = deviceIdentifier
         self.frequency = frequency
         self.bandwidth = bandwidth
         self.txPower = txPower

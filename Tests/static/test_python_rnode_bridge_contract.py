@@ -24,12 +24,12 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
         self.assertIn("from IOSRNodeDriver import IOSRNodeDriver", interface)
         self.assertIn("class IOSRNodeDriver:", driver)
         for symbol in (
-            "columba_rnode_connect",
-            "columba_rnode_disconnect",
-            "columba_rnode_state",
-            "columba_rnode_read",
-            "columba_rnode_write",
-            "columba_rnode_set_online",
+            "columba_rnode_session_open",
+            "columba_rnode_session_close",
+            "columba_rnode_session_state",
+            "columba_rnode_session_read",
+            "columba_rnode_session_write",
+            "columba_rnode_session_set_online",
         ):
             self.assertIn(symbol, driver)
         self.assertIn("sys.path.insert(0, _interfaces_dir)", interface)
@@ -49,6 +49,7 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
             'type = IOSRNodeInterface',
             'connection_mode = ble',
             'target_device_name',
+            'target_device_identifier',
             'frequency',
             'bandwidth',
             'txpower',
@@ -62,6 +63,12 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
     def test_native_bridge_is_shipping_only_and_exports_complete_c_abi(self) -> None:
         native = NATIVE_BRIDGE.read_text()
         for declaration in (
+            '@_cdecl("columba_rnode_session_open")',
+            '@_cdecl("columba_rnode_session_close")',
+            '@_cdecl("columba_rnode_session_state")',
+            '@_cdecl("columba_rnode_session_read")',
+            '@_cdecl("columba_rnode_session_write")',
+            '@_cdecl("columba_rnode_session_set_online")',
             '@_cdecl("columba_rnode_connect")',
             '@_cdecl("columba_rnode_disconnect")',
             '@_cdecl("columba_rnode_state")',
@@ -70,7 +77,10 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
             '@_cdecl("columba_rnode_set_online")',
         ):
             self.assertIn(declaration, native)
-        self.assertIn("BLETransport(deviceName:", native)
+        self.assertIn("final class PythonRNodeCoreBluetoothTransport", native)
+        self.assertIn("CBCentralManagerOptionRestoreIdentifierKey", native)
+        self.assertNotIn("import ReticulumSwift", native)
+        self.assertNotIn("ReticulumPythonRNodeTransport", native)
         reconciler = RECONCILER.read_text()
         self.assertIsNotNone(re.search(
             r"PYTHON_ONLY_SOURCE_METADATA\s*=.*?Sources/PythonBridge/PythonRNodeBLEBridge\.swift",
@@ -94,6 +104,9 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
         self.assertIn("PythonRNodeBLEBridge.shared.setStateHandler", branch)
         self.assertIn("uiInterface.state = .connecting", branch)
         self.assertIn("case .connected:", branch)
+        self.assertIn("PythonRNodeBLESessionRegistry.shared.closeAll()", source)
+        self.assertIn("if closeAllPythonSessions", source)
+        self.assertIn("stopRNodeInterfaceUnlocked(closeAllPythonSessions: true)", source)
         self.assertNotIn("rnodeUnavailableInPythonRuntime", source)
 
 

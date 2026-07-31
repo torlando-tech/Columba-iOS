@@ -79,6 +79,7 @@ struct RNodeWizardView: View {
                 wizard.populateFromConfig(
                     name: viewModel.configName,
                     deviceName: viewModel.configDeviceName,
+                    deviceIdentifier: viewModel.configDeviceIdentifier,
                     frequency: UInt32(viewModel.configFrequency) ?? 915_000_000,
                     bandwidth: UInt32(viewModel.configBandwidth) ?? 125_000,
                     txPower: UInt8(viewModel.configTxPower) ?? 17,
@@ -88,6 +89,19 @@ struct RNodeWizardView: View {
                 // Jump to review step for editing
                 wizard.currentStepIndex = wizard.activeSteps.count - 1
             }
+        }
+        // Save validation errors belong to the parent interface view model, but
+        // this wizard is presented as a full-screen cover above that screen.
+        // Surface the error here so a rejected save never looks like a dead button.
+        .alert("Couldn't Configure RNode", isPresented: Binding(
+            get: { viewModel.errorMessage != nil },
+            set: { if !$0 { viewModel.errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                viewModel.errorMessage = nil
+            }
+        } message: {
+            Text(viewModel.errorMessage ?? "The RNode configuration could not be saved.")
         }
         .animation(.easeInOut(duration: 0.25), value: wizard.currentStepIndex)
     }
@@ -150,6 +164,7 @@ struct RNodeWizardView: View {
     private func completeWizard() {
         // Transfer wizard state to InterfaceManagementViewModel
         viewModel.configDeviceName = wizard.selectedDeviceName
+        viewModel.configDeviceIdentifier = wizard.selectedDeviceIdentifier
         viewModel.configFrequency = String(wizard.calculatedFrequency)
         viewModel.configBandwidth = String(wizard.effectiveBandwidth)
         viewModel.configTxPower = String(wizard.effectiveTxPower)
