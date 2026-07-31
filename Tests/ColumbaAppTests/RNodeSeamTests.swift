@@ -13,6 +13,20 @@ final class RNodeSeamTests: XCTestCase {
         XCTAssertTrue(ModelBRNodeService.restoreIdentifierContractValid)
     }
 
+    func testRNodeServiceSurfacesRestoreIdentifierContractFailure() {
+        let service = ModelBRNodeService(restoreIdentifierContractValidator: { false })
+        var reported: (RNodeLinkState, String?)?
+
+        let started = service.start { state, reason in
+            reported = (state, reason)
+        }
+
+        XCTAssertFalse(started)
+        XCTAssertEqual(reported?.0, .failed)
+        XCTAssertEqual(reported?.1, "CoreBluetooth restore identifiers conflict")
+        XCTAssertFalse(service.isRunning)
+    }
+
     /// In-memory wire: records what's sent, lets the test inject inbound messages.
     final class MockRNodeWire: RNodeSeamWire, @unchecked Sendable {
         private let lock = NSLock()

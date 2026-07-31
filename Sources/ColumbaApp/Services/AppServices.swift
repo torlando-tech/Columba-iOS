@@ -3735,9 +3735,9 @@ public final class AppServices {
             NotificationObserver.postNetworkStateChanged()
         }
 
-        ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState, reason in
+        guard ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState, reason in
             self?.applyRNodeLinkState(linkState, reason)
-        })
+        }) else { return }
 
         let seamConfig = RNodeSeamConfig(
             deviceName: rnodeConfig.deviceName,

@@ -21,7 +21,15 @@ import RNSAPI
 public final class ModelBRNodeService: @unchecked Sendable {
 
     public static let shared = ModelBRNodeService()
-    private init() {}
+    private let restoreIdentifierContractValidator: @Sendable () -> Bool
+
+    init(
+        restoreIdentifierContractValidator: @escaping @Sendable () -> Bool = {
+            ModelBRNodeService.restoreIdentifierContractValid
+        }
+    ) {
+        self.restoreIdentifierContractValidator = restoreIdentifierContractValidator
+    }
 
     private let lock = NSLock()
     private var wire: AppGroupRNodeSeamWire?
@@ -44,10 +52,13 @@ public final class ModelBRNodeService: @unchecked Sendable {
             BLEConstants.RESTORE_IDENTIFIER_KEY == CoreBluetoothRestoreIdentifiers.rnodeCentral
     }
 
-    public func start(onLinkStateChange: ((RNodeLinkState, String?) -> Void)? = nil) {
-        guard Self.restoreIdentifierContractValid else {
-            DiagLog.log("[RNODE] Refusing to start: CoreBluetooth restore identifiers conflict")
-            return
+    @discardableResult
+    public func start(onLinkStateChange: ((RNodeLinkState, String?) -> Void)? = nil) -> Bool {
+        guard restoreIdentifierContractValidator() else {
+            let reason = "CoreBluetooth restore identifiers conflict"
+            DiagLog.log("[RNODE] Refusing to start: \(reason)")
+            onLinkStateChange?(.failed, reason)
+            return false
         }
         lock.lock(); defer { lock.unlock() }
         if let srv = server {
@@ -56,7 +67,7 @@ public final class ModelBRNodeService: @unchecked Sendable {
             // still reach the UI, then return. Without this the guarded early-return would
             // silently drop the callback on the second start().
             if onLinkStateChange != nil { srv.onLinkStateChange = onLinkStateChange }
-            return
+            return true
         }
         let w = AppGroupRNodeSeamWire(role: .app)
         let srv = AppGroupRNodeServer(wire: w, log: { DiagLog.log($0) })
@@ -65,6 +76,7 @@ public final class ModelBRNodeService: @unchecked Sendable {
         self.wire = w
         self.server = srv
         DiagLog.log("[RNODE] Model B RNode service started (AppGroupRNodeServer)")
+        return true
     }
 
     public func stop() {
@@ -83,7 +95,7 @@ public final class ModelBRNodeService: @unchecked Sendable {
     public func restore() {
         guard let deviceName = RNodeSeamConfig.loadFromAppGroup()?.deviceName,
               !deviceName.isEmpty else { return }
-        start()  // ensure the server is observing the seam (callback wired later by AppServices)
+        guard start() else { return }  // ensure the server is observing the seam
         lock.lock(); let srv = server; lock.unlock()
         srv?.restoreRadio(deviceName: deviceName)
         DiagLog.log("[RNODE] Model B RNode radio restore requested for '\(deviceName)'")

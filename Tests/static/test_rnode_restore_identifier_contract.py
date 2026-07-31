@@ -12,6 +12,7 @@ PROJECT = ROOT / "Columba.xcodeproj/project.pbxproj"
 REGISTRY = SOURCES / "RNSAPI/CoreBluetoothRestoreIdentifiers.swift"
 SWIFT_BLE_BRIDGE = SOURCES / "SwiftBLEBridge/SwiftBLEBridge.swift"
 RNODE_SERVICE = SOURCES / "ColumbaApp/Services/ModelBRNodeService.swift"
+APP_SERVICES = SOURCES / "ColumbaApp/Services/AppServices.swift"
 LEGACY_FILES = (
     SOURCES / "ColumbaApp/Views/Settings/BLEDevicePickerSheet.swift",
     SOURCES / "ColumbaApp/Views/Settings/RNodeConfigSheet.swift",
@@ -56,13 +57,25 @@ class RNodeRestoreIdentifierContracts(unittest.TestCase):
 
         service = RNODE_SERVICE.read_text()
         self.assertIn("import RNSAPI", service)
-        self.assertIn("guard Self.restoreIdentifierContractValid else", service)
+        self.assertIn("guard restoreIdentifierContractValidator() else", service)
+        self.assertIn("onLinkStateChange?(.failed, reason)", service)
+        self.assertIn("return false", service)
         self.assertIsNotNone(
             re.search(
                 r"restoreIdentifierContractValid.*?CoreBluetoothRestoreIdentifiers\.areUnique.*?"
                 r"BLEConstants\.RESTORE_IDENTIFIER_KEY\s*==\s*"
                 r"CoreBluetoothRestoreIdentifiers\.rnodeCentral",
                 service,
+                re.DOTALL,
+            )
+        )
+
+        app_services = APP_SERVICES.read_text()
+        self.assertIsNotNone(
+            re.search(
+                r"guard ModelBRNodeService\.shared\.start\(onLinkStateChange:.*?"
+                r"\}\) else \{ return \}",
+                app_services,
                 re.DOTALL,
             )
         )
