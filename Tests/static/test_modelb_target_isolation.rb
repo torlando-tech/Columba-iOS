@@ -20,6 +20,7 @@ CANONICAL_FLAGS = %w[
 ].freeze
 ONBOARDING_FLAG = 'COLUMBA_ONBOARDING_ENABLED'
 MIGRATION_FLAG = 'COLUMBA_MIGRATION_ENABLED'
+RNODE_FLAG = 'COLUMBA_RNODE_ENABLED'
 MODEL_B_ONLY_SOURCE_PATHS = %w[
   Sources/RNSBackendProxy/ProxyRnsBackend.swift
   Sources/ColumbaApp/Services/TunnelManager.swift
@@ -1260,6 +1261,8 @@ class ModelBTargetIsolationTests < Minitest::Test
                       "shipping app lost shared onboarding in #{shipping.name}"
       assert_includes compilation_tokens(shipping), MIGRATION_FLAG,
                       "shipping app lost data migration in #{shipping.name}"
+      assert_includes compilation_tokens(shipping), RNODE_FLAG,
+                      "shipping app lost RNode setup in #{shipping.name}"
       assert_equal %w[COLUMBA_RUNTIME_MODEL_B ENABLE_NETWORK_EXTENSION COLUMBA_BACKEND_SWIFT],
                    canonical_tokens(model_b), model_b.name
       assert_includes compilation_tokens(model_b), ONBOARDING_FLAG,
@@ -1299,6 +1302,8 @@ class ModelBTargetIsolationTests < Minitest::Test
                       "shipping tests lost shared onboarding in #{test_configuration.name}"
       assert_includes compilation_tokens(test_configuration), MIGRATION_FLAG,
                       "shipping tests lost data migration in #{test_configuration.name}"
+      assert_includes compilation_tokens(test_configuration), RNODE_FLAG,
+                      "shipping tests lost RNode setup in #{test_configuration.name}"
       assert_match(/ColumbaApp\.app/, test_configuration.build_settings.fetch('TEST_HOST'),
                    "TEST_HOST changed in #{test_configuration.name}")
       assert_equal '$(TEST_HOST)', test_configuration.build_settings.fetch('BUNDLE_LOADER'),
@@ -2213,7 +2218,7 @@ class ModelBTargetIsolationTests < Minitest::Test
         configuration = target.build_configurations.find { |candidate| candidate.name == 'Debug' }
         tokens = compilation_tokens(configuration)
         configuration.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
-          (tokens - [ONBOARDING_FLAG] + ['GENUINE_SHIPPING_CONDITION']).uniq.join(' ')
+          (tokens - [ONBOARDING_FLAG, RNODE_FLAG] + ['GENUINE_SHIPPING_CONDITION']).uniq.join(' ')
       end
       fixture_model_b.add_dependency(fixture_shipping)
       duplicate_proxy = fixture.new(Xcodeproj::Project::Object::PBXContainerItemProxy)
@@ -2253,6 +2258,7 @@ class ModelBTargetIsolationTests < Minitest::Test
       [reconciled_shipping, reconciled_shipping_tests].each do |target|
         configuration = target.build_configurations.find { |candidate| candidate.name == 'Debug' }
         assert_includes compilation_tokens(configuration), ONBOARDING_FLAG
+        assert_includes compilation_tokens(configuration), RNODE_FLAG
         assert_includes compilation_tokens(configuration), 'GENUINE_SHIPPING_CONDITION'
       end
       assert_includes compilation_tokens(

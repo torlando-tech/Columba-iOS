@@ -257,6 +257,7 @@ struct SettingsView: View {
     /// view's task starts or while the already-mounted Settings tab is polling.
     private func openRequestedRNodeWizard() {
         guard shouldOpenRNodeWizard else { return }
+        #if os(iOS) && COLUMBA_RNODE_ENABLED
         if interfaceViewModel == nil {
             let repo = interfaceRepository ?? InterfaceRepository()
             interfaceRepository = repo
@@ -271,6 +272,7 @@ struct SettingsView: View {
             vm.selectInterfaceType(.rnode)
             shouldOpenRNodeWizard = false
         }
+        #endif
     }
 
     // MARK: - Network Card

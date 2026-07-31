@@ -7,6 +7,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PROJECT_FILE = ROOT / "Columba.xcodeproj/project.pbxproj"
 BRIDGE_PY = ROOT / "app/rns_bridge.py"
 PYTHON_BRIDGE = ROOT / "Sources/PythonBridge/PythonBridge.swift"
 RNS_BACKEND = ROOT / "Sources/RNSAPI/Protocols/RnsBackend.swift"
@@ -163,6 +164,30 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         ))
         self.assertIn("openRequestedRNodeWizard()\n\n            // Poll connection state", settings)
         self.assertIn("private func openRequestedRNodeWizard()", settings)
+
+        consumer = re.search(
+            r"private func openRequestedRNodeWizard\(\).*?\n    }",
+            settings,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(consumer)
+        assert consumer is not None
+        consumer_source = consumer.group(0)
+        self.assertIn("#if os(iOS) && COLUMBA_RNODE_ENABLED", consumer_source)
+        self.assertLess(
+            consumer_source.index("#if os(iOS) && COLUMBA_RNODE_ENABLED"),
+            consumer_source.index("shouldOpenRNodeWizard = false"),
+        )
+
+        project = PROJECT_FILE.read_text()
+        shipping_release = re.search(
+            r"TREL /\* Release \*/ = \{.*?\n\t\t\};",
+            project,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(shipping_release)
+        assert shipping_release is not None
+        self.assertIn("COLUMBA_RNODE_ENABLED", shipping_release.group(0))
 
     def test_incoming_message_size_limit_contract(self) -> None:
         bridge = BRIDGE_PY.read_text()
