@@ -93,7 +93,8 @@ final class MigrationRoundTripTests: XCTestCase {
             .string("displayName", "Alice"),
             .bool("notifications_enabled", true),
             .int("announce_interval_hours", 6),
-            .double("syncIntervalSeconds", 43_200)
+            .double("syncIntervalSeconds", 43_200),
+            .int("incoming_message_size_limit_kb", 5_120)
         ])
 
         return MigrationBundle(
@@ -305,7 +306,7 @@ final class MigrationRoundTripTests: XCTestCase {
         XCTAssertEqual(Data(base64Encoded: outgoing.content), Data("reply".utf8))
 
         // Settings preferences survive.
-        XCTAssertEqual(restored.settings.preferences.count, 4)
+        XCTAssertEqual(restored.settings.preferences.count, 5)
     }
 
     /// The real importer's decrypt+parse path (previewMigration → decryptAndParse)
@@ -329,7 +330,7 @@ final class MigrationRoundTripTests: XCTestCase {
         XCTAssertEqual(preview.conversationCount, 1)
         XCTAssertEqual(preview.messageCount, 2)
         XCTAssertEqual(preview.interfaceCount, 1)
-        XCTAssertEqual(preview.settingsCount, 4)
+        XCTAssertEqual(preview.settingsCount, 5)
     }
 
     /// The message persistence path (the fix): a restored MessageRecord must

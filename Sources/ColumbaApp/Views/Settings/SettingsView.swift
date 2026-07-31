@@ -164,7 +164,8 @@ struct SettingsView: View {
                     #if COLUMBA_MIGRATION_ENABLED
                     MigrationScreen(
                         identityManager: identityManager,
-                        settingsRepository: settingsRepository
+                        settingsRepository: settingsRepository,
+                        appServices: appServices
                     )
                     #else
                     Text("Data migration unavailable in this build")
@@ -1227,6 +1228,50 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
+#if !COLUMBA_RUNTIME_MODEL_B
+                Divider()
+                    .padding(.vertical, 4)
+
+                Text("INCOMING MESSAGE CAP")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.textSecondary)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Incoming Size Limit")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+
+                        Spacer()
+
+                        Picker("", selection: Binding(
+                            get: { vm.incomingMessageSizeLimitKB },
+                            set: {
+                                vm.incomingMessageSizeLimitKB = SettingsRepository.IncomingMessageSizeLimit.normalize($0)
+                                Task { await vm.saveDeliverySettings() }
+                            }
+                        )) {
+                            ForEach(Self.incomingMessageCapPresets, id: \.kb) { preset in
+                                Text(preset.title).tag(preset.kb)
+                            }
+                            if !Self.incomingMessageCapPresets.contains(where: {
+                                $0.kb == vm.incomingMessageSizeLimitKB
+                            }) {
+                                Text("Custom (\(vm.incomingMessageSizeLimitKB) KB)")
+                                    .tag(vm.incomingMessageSizeLimitKB)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(Theme.accentColor)
+                    }
+
+                    Text("Applies to packed incoming LXMF messages on this device. Oversized direct messages are rejected; oversized propagated messages remain on the relay until the cap is raised.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+#endif
+
                 // Default Delivery Method
                 HStack {
                     Text("Default Method")
@@ -1389,6 +1434,22 @@ struct SettingsView: View {
             }
         }
     }
+
+#if !COLUMBA_RUNTIME_MODEL_B
+    private struct IncomingMessageCapPreset: Identifiable {
+        let kb: Int
+        let title: String
+        var id: Int { kb }
+    }
+
+    private static let incomingMessageCapPresets: [IncomingMessageCapPreset] = [
+        .init(kb: 1_024, title: "1 MB"),
+        .init(kb: 5_120, title: "5 MB"),
+        .init(kb: 10_240, title: "10 MB"),
+        .init(kb: 25_600, title: "25 MB"),
+        .init(kb: 131_072, title: "Unlimited")
+    ]
+#endif
 
     // MARK: - Onboarding Review
 

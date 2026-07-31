@@ -132,6 +132,33 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             re.DOTALL,
         ))
 
+    def test_incoming_message_size_limit_contract(self) -> None:
+        bridge = BRIDGE_PY.read_text()
+        self.assertIn("def set_incoming_message_size_limit_kb(", bridge)
+        self.assertIn("router.delivery_per_transfer_limit = bounded", bridge)
+        self.assertIn('return {"ok": True, "reason": "ok", "limit_kb": bounded}', bridge)
+
+        py_bridge = PYTHON_BRIDGE.read_text()
+        self.assertIn("public func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool", py_bridge)
+        self.assertIn('PyObject_GetAttrString(module, "set_incoming_message_size_limit_kb")', py_bridge)
+
+        py_backend = PY_BACKEND.read_text()
+        self.assertIn("public func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool", py_backend)
+
+        settings = SETTINGS_VIEW.read_text()
+        self.assertIn("Incoming Size Limit", settings)
+        self.assertIn('"1 MB"', settings)
+        self.assertIn('"Unlimited"', settings)
+        self.assertIn("packed incoming LXMF messages", settings)
+
+        migration_exporter = (ROOT / "Sources/ColumbaApp/Services/MigrationExporter.swift").read_text()
+        self.assertIn('incoming_message_size_limit_kb', migration_exporter)
+        migration_importer = (ROOT / "Sources/ColumbaApp/Services/MigrationImporter.swift").read_text()
+        self.assertIn('case "incoming_message_size_limit_kb":', migration_importer)
+        self.assertIn("importedIncomingMessageSizeLimit = true", migration_importer)
+        self.assertIn("await appServices?.applyIncomingMessageSizeLimitFromSettings()", migration_importer)
+        self.assertIn('Text("Custom (\\(vm.incomingMessageSizeLimitKB) KB)")', settings)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,12 +42,14 @@ public final class PythonBridge: @unchecked Sendable {
         case notStarted
         case pythonException(String)
         case marshallingFailure(String)
+        case operationFailed(String)
 
         public var errorDescription: String? {
             switch self {
             case .notStarted: return "Python bridge not started"
             case .pythonException(let m): return "Python error: \(m)"
             case .marshallingFailure(let m): return "Marshalling: \(m)"
+            case .operationFailed(let m): return "Operation failed: \(m)"
             }
         }
     }
@@ -341,6 +343,40 @@ public final class PythonBridge: @unchecked Sendable {
                 }
                 defer { Py_DecRef(result) }
                 return pyBoolFromDict(result, key: "ok") ?? false
+            }
+        }
+    }
+
+    /// Set the router's per-transfer delivery cap in KB.
+    public func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool {
+        let bounded = max(512, min(limitKB, 131_072))
+        return try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else {
+                    throw BridgeError.notStarted
+                }
+                guard let fn = PyObject_GetAttrString(module, "set_incoming_message_size_limit_kb") else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                guard let arg = PyLong_FromLongLong(Int64(bounded)) else {
+                    throw BridgeError.marshallingFailure("limitKB")
+                }
+                guard let result = PyObject_CallOneArg(fn, arg) else {
+                    Py_DecRef(arg)
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                Py_DecRef(arg)
+                defer { Py_DecRef(result) }
+                let ok = pyBoolFromDict(result, key: "ok") ?? false
+                guard ok else {
+                    let reason = pyStringFromDict(result, key: "reason") ?? "unknown"
+                    if reason == "not-started" || reason == "no-router" {
+                        throw BridgeError.notStarted
+                    }
+                    throw BridgeError.operationFailed(reason)
+                }
+                return true
             }
         }
     }

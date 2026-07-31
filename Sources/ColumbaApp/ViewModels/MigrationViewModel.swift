@@ -75,14 +75,19 @@ final class MigrationViewModel {
 
     // MARK: - Init
 
-    init(identityManager: IdentityManager, settingsRepository: SettingsRepository) {
+    init(
+        identityManager: IdentityManager,
+        settingsRepository: SettingsRepository,
+        appServices: AppServices? = nil
+    ) {
         self.exporter = MigrationExporter(
             identityManager: identityManager,
             settingsRepository: settingsRepository
         )
         self.importer = MigrationImporter(
             identityManager: identityManager,
-            settingsRepository: settingsRepository
+            settingsRepository: settingsRepository,
+            appServices: appServices
         )
     }
 

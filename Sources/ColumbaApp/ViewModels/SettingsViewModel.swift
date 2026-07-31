@@ -238,6 +238,8 @@ public final class SettingsViewModel {
 
     /// Default delivery method for large messages: "direct" or "propagated"
     public var defaultDeliveryMethod: String = "direct"
+    /// Incoming packed-message cap in KB.
+    public var incomingMessageSizeLimitKB: Int = SettingsRepository.IncomingMessageSizeLimit.defaultKB
 
     /// Whether to retry via relay when direct delivery fails.
     public var retryViaRelay: Bool = false
@@ -352,6 +354,7 @@ public final class SettingsViewModel {
 
         // Load delivery/retrieval settings
         defaultDeliveryMethod = await settingsRepository.getDefaultDeliveryMethod()
+        incomingMessageSizeLimitKB = await settingsRepository.getIncomingMessageSizeLimitKB()
         retryViaRelay = await settingsRepository.getRetryViaRelay()
         autoSelectRelay = await settingsRepository.getAutoSelectRelay()
         autoRetrieveEnabled = await settingsRepository.getPeriodicSyncEnabled()
@@ -661,10 +664,12 @@ public final class SettingsViewModel {
     @MainActor
     public func saveDeliverySettings() async {
         await settingsRepository.setDefaultDeliveryMethod(defaultDeliveryMethod)
+        await settingsRepository.setIncomingMessageSizeLimitKB(incomingMessageSizeLimitKB)
         await settingsRepository.setRetryViaRelay(retryViaRelay)
         await settingsRepository.setAutoSelectRelay(autoSelectRelay)
         await settingsRepository.setPeriodicSyncEnabled(autoRetrieveEnabled)
         await settingsRepository.setSyncInterval(autoRetrieveInterval)
+        await appServices.applyIncomingMessageSizeLimitFromSettings()
 
         // Update propagation manager
         if let propManager = appServices.propagationManager {

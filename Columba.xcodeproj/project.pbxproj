@@ -115,6 +115,7 @@
 		0B768533EC90008D3E23C326 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
 		0E85864BF022C4B2A2595D0F /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 15F82FBE10E56E30D4706B40 /* ReticulumSwift */; };
 		0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* IncomingMessageSizeLimitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B6C /* IncomingMessageSizeLimitTests.swift */; };
 		113FFF9C5A228CC0C294A3D9 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		11D0621686D1D65C9602C911 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */; };
 		11DE32B4ABEF3646B6B42728 /* MaterialDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F036 /* MaterialDesignIcons.swift */; };
@@ -414,6 +415,7 @@
 		71922EC204982A357F814F23 /* CallControlButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallControlButton.swift; sourceTree = "<group>"; };
 		7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecSelectionSheet.swift; sourceTree = "<group>"; };
 		853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MigrationRoundTripTests.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5061728394A5B6C /* IncomingMessageSizeLimitTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = IncomingMessageSizeLimitTests.swift; sourceTree = "<group>"; };
 		86E428836698BA8A8973A92F /* CallManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
 		894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundDeliveryPage.swift; sourceTree = "<group>"; };
 		8CAFC5BF3DDB882B1864F1C0 /* PythonRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonRNSBackend.swift; sourceTree = "<group>"; };
@@ -997,6 +999,7 @@
 				ACT01 /* AnnounceClassificationTests.swift */,
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
 				853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */,
+				B1C2D3E4F5061728394A5B6C /* IncomingMessageSizeLimitTests.swift */,
 				6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */,
 				RFT001 /* RuntimeFlavorTests.swift */,
 				RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */,
@@ -1660,6 +1663,7 @@
 				9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */,
 				ACT02 /* AnnounceClassificationTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* IncomingMessageSizeLimitTests.swift in Sources */,
 				26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */,
 				RFT002 /* RuntimeFlavorTests.swift in Sources */,
 				RMLT002 /* RuntimeActivityMonitorLeaseTests.swift in Sources */,

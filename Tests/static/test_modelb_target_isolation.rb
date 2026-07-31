@@ -109,6 +109,7 @@ SHIPPING_TEST_SOURCE_PATHS = %w[
   Tests/ColumbaAppTests/MessageFormattedTimeTests.swift
   Tests/ColumbaAppTests/AnnounceClassificationTests.swift
   Tests/ColumbaAppTests/MigrationRoundTripTests.swift
+  Tests/ColumbaAppTests/IncomingMessageSizeLimitTests.swift
   Tests/ColumbaAppTests/PythonConfigWriterTests.swift
   Tests/ColumbaAppTests/RuntimeFlavorTests.swift
 ].freeze

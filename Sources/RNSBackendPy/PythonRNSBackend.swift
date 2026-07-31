@@ -140,6 +140,12 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         try await bridge.setPropagationNode(destHashHex: destHashHex, stampCost: stampCost)
     }
 
+    /// Set the inbound packed-message cap in KB.
+    @discardableResult
+    public func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool {
+        try await bridge.setIncomingMessageSizeLimitKB(limitKB)
+    }
+
     /// Block until the configured propagation-node sync completes.
     public func propagationSync(timeout: TimeInterval = 60.0) async throws -> PropagationSyncResult {
         Self.map(try await bridge.propagationSync(timeout: timeout))

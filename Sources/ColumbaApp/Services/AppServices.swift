@@ -472,6 +472,9 @@ public final class AppServices {
     /// Propagation node manager for relay discovery and sync.
     public private(set) var propagationManager: PropagationNodeManager?
 
+    /// Shared settings access for startup-time runtime configuration.
+    private let settingsRepository = SettingsRepository()
+
     /// Auto announce manager for periodic network announces.
     public private(set) var autoAnnounceManager: AutoAnnounceManager?
 
@@ -1575,6 +1578,8 @@ public final class AppServices {
             return
         }
 
+        await applyIncomingMessageSizeLimitFromSettings()
+
         // Outbound LXMF now goes directly through `backend.lxmf.sendLxmfMessage`
         // (MessagingViewModel + RnsLxmf) with TYPED fields, so the old Compat
         // router sendHook — which forwarded content only and dropped every field —
@@ -2168,6 +2173,23 @@ public final class AppServices {
             }
         }
         #endif // DEBUG — test-only deep-link observers
+    }
+
+    @MainActor
+    public func applyIncomingMessageSizeLimitFromSettings() async {
+        #if COLUMBA_RUNTIME_PYTHON
+        let limitKB = await settingsRepository.getIncomingMessageSizeLimitKB()
+        guard let pythonBackend = backend as? PythonRNSBackend else {
+            DiagLog.log("[LXMF_CAP] skipping inbound cap apply: shipping Python backend unavailable")
+            return
+        }
+        do {
+            let applied = try await pythonBackend.setIncomingMessageSizeLimitKB(limitKB)
+            DiagLog.log("[LXMF_CAP] applied inbound cap=\(limitKB)KB applied=\(applied)")
+        } catch {
+            DiagLog.log("[LXMF_CAP] failed to apply inbound cap=\(limitKB)KB error=\(error.localizedDescription)")
+        }
+        #endif
     }
 
     /// Look up the matching Python interface for each user `InterfaceEntity`
