@@ -2,6 +2,7 @@
 """Contracts for shipping iOS↔Android BLEInterface lifecycle and framing."""
 
 from pathlib import Path
+import re
 import unittest
 
 
@@ -15,6 +16,7 @@ DRIVER = ROOT / "app/ble/IOSBLEDriver.py"
 INTERFACE = ROOT / "app/ble/IOSBLEInterface.py"
 FETCH_WHEELS = ROOT / "support/fetch-wheels.sh"
 PROJECT = ROOT / "Columba.xcodeproj/project.pbxproj"
+EXPORTS = ROOT / "Sources/ColumbaApp/Resources/ColumbaApp.exports"
 
 
 class IOSBLEBridgeContracts(unittest.TestCase):
@@ -226,6 +228,30 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         shipping_debug = project.split("TDBG /* Debug */ = {", 1)[1]
         shipping_debug = shipping_debug.split("name = Debug;", 1)[0]
         self.assertIn("ENABLE_DEBUG_DYLIB = NO;", shipping_debug)
+
+    def test_archive_exports_every_python_native_binding(self) -> None:
+        project = PROJECT.read_text()
+        shipping_debug = project.split("TDBG /* Debug */ = {", 1)[1]
+        shipping_debug = shipping_debug.split("name = Debug;", 1)[0]
+        shipping_release = project.split("TREL /* Release */ = {", 1)[1]
+        shipping_release = shipping_release.split("name = Release;", 1)[0]
+        setting = (
+            "EXPORTED_SYMBOLS_FILE = "
+            "Sources/ColumbaApp/Resources/ColumbaApp.exports;"
+        )
+        self.assertIn(setting, shipping_debug)
+        self.assertIn(setting, shipping_release)
+        self.assertIn("STRIP_STYLE = non-global;", shipping_release)
+
+        declared = set()
+        for source in (ROOT / "Sources").rglob("*.swift"):
+            declared.update(re.findall(r'@_cdecl\("([^\"]+)"\)', source.read_text()))
+        exported = {
+            line.removeprefix("_")
+            for line in EXPORTS.read_text().splitlines()
+            if line and not line.startswith("#")
+        }
+        self.assertEqual(declared, exported)
 
     def test_central_payload_capacity_refreshes_after_handshake(self) -> None:
         source = BRIDGE.read_text()
