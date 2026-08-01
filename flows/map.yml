@@ -17,8 +17,7 @@ tags:
       id: "screen_chats"
     timeout: 30000
 - tapOn:
-    text: "Map"
-    optional: true
+    id: "tab_map|map.fill"
 # Wait on MapLibre's native idle signal: no camera transition, all requested
 # tiles loaded, and all fade/transition animations complete.
 - extendedWaitUntil:

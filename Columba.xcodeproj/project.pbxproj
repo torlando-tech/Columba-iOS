@@ -2051,6 +2051,7 @@
 				DEVELOPMENT_TEAM = M2977H5PM5;
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				EXPORTED_SYMBOLS_FILE = Sources/ColumbaApp/Resources/ColumbaApp.exports;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Columba;
@@ -2072,6 +2073,7 @@
 				MARKETING_VERSION = 0.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRIP_STYLE = non-global;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RUNTIME_PYTHON COLUMBA_ONBOARDING_ENABLED COLUMBA_MIGRATION_ENABLED COLUMBA_RNODE_ENABLED";

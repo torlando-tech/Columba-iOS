@@ -15,10 +15,7 @@ tags:
     visible:
       id: "screen_chats"
     timeout: 30000
-# Default tab is Chats — no tap needed if onboarding lands there.
-- tapOn:
-    text: "Chats"
-    optional: true
+# Default tab is Chats, so no navigation tap is required.
 - assertVisible:
     id: "screen_chats"
 - takeScreenshot: "chats-list"

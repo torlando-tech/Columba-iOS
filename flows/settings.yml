@@ -16,8 +16,7 @@ tags:
       id: "screen_chats"
     timeout: 30000
 - tapOn:
-    text: "Settings"
-    optional: true
+    id: "tab_settings|gearshape.fill"
 - extendedWaitUntil:
     visible:
       id: "screen_settings"

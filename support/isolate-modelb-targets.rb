@@ -41,6 +41,8 @@ EXTENSION_TARGET_NAME = 'ColumbaNetworkExtension'
 LEGACY_SWIFT_CONFIGURATION_NAMES = %w[Debug-Swift Release-Swift].freeze
 SHIPPING_ENTITLEMENTS = 'Sources/ColumbaApp/Resources/ColumbaApp.entitlements'
 MODEL_B_ENTITLEMENTS = 'Sources/ColumbaApp/Resources/ColumbaModelBApp.entitlements'
+PYTHON_NATIVE_EXPORTS_FILE = 'Sources/ColumbaApp/Resources/ColumbaApp.exports'
+PYTHON_NATIVE_BUILD_SETTINGS = %w[EXPORTED_SYMBOLS_FILE STRIP_STYLE].freeze
 CANONICAL_FLAGS = %w[
   COLUMBA_RUNTIME_PYTHON
   COLUMBA_RUNTIME_MODEL_B
@@ -1133,6 +1135,7 @@ module ModelBTargetIsolation
       configuration.build_settings = duplicate_value(source.build_settings)
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = MODEL_B_ENTITLEMENTS
       configuration.build_settings.delete('SWIFT_OBJC_BRIDGING_HEADER')
+      PYTHON_NATIVE_BUILD_SETTINGS.each { |setting| configuration.build_settings.delete(setting) }
       required = destination_tokens
       required.concat(SHARED_APP_FLAGS)
       required.concat(MODEL_B_FLAGS)
@@ -1155,6 +1158,13 @@ module ModelBTargetIsolation
     shipping.build_configurations.each do |configuration|
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = SHIPPING_ENTITLEMENTS
       configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = PYTHON_BRIDGING_HEADER
+      if configuration.name == 'Release'
+        configuration.build_settings['EXPORTED_SYMBOLS_FILE'] = PYTHON_NATIVE_EXPORTS_FILE
+        configuration.build_settings['STRIP_STYLE'] = 'non-global'
+      else
+        configuration.build_settings.delete('EXPORTED_SYMBOLS_FILE')
+        configuration.build_settings.delete('STRIP_STYLE')
+      end
       set_compilation_tokens(
         configuration,
         ['COLUMBA_RUNTIME_PYTHON'] + SHARED_APP_FLAGS + SHIPPING_APP_FLAGS,

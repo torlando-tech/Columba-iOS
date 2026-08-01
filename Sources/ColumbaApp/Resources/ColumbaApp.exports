@@ -1,0 +1,31 @@
+# C ABI entry points resolved at runtime by embedded Python through ctypes.CDLL(None).
+# Keep this list synchronized with every @_cdecl declaration in Sources.
+_columba_ble_configure_power
+_columba_ble_connect
+_columba_ble_disconnect
+_columba_ble_get_peer_mtu
+_columba_ble_get_peer_role
+_columba_ble_request_identity_resync
+_columba_ble_send
+_columba_ble_set_identity
+_columba_ble_start
+_columba_ble_start_advertising
+_columba_ble_start_scanning
+_columba_ble_stop
+_columba_ble_stop_advertising
+_columba_ble_stop_scanning
+_columba_ble_sync_existing_connections
+_columba_rnode_connect
+_columba_rnode_disconnect
+_columba_rnode_read
+_columba_rnode_session_close
+_columba_rnode_session_open
+_columba_rnode_session_read
+_columba_rnode_session_set_online
+_columba_rnode_session_state
+_columba_rnode_session_write
+_columba_rnode_set_online
+_columba_rnode_state
+_columba_rnode_write
+_columba_stamp_generate
+_columba_stamp_generate_cancellable

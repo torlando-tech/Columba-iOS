@@ -60,6 +60,7 @@ struct MainTabView: View {
             )
             .tabItem {
                 Label(Tab.chats.title, systemImage: Tab.chats.icon)
+                    .accessibilityIdentifier("tab_chats")
             }
             .tag(Tab.chats)
 
@@ -71,6 +72,7 @@ struct MainTabView: View {
             )
             .tabItem {
                 Label(Tab.contacts.title, systemImage: Tab.contacts.icon)
+                    .accessibilityIdentifier("tab_contacts")
             }
             .tag(Tab.contacts)
 
@@ -82,6 +84,7 @@ struct MainTabView: View {
             )
                 .tabItem {
                     Label(Tab.map.title, systemImage: Tab.map.icon)
+                        .accessibilityIdentifier("tab_map")
                 }
                 .tag(Tab.map)
             #endif
@@ -96,6 +99,7 @@ struct MainTabView: View {
             )
             .tabItem {
                 Label(Tab.settings.title, systemImage: Tab.settings.icon)
+                    .accessibilityIdentifier("tab_settings")
             }
             .tag(Tab.settings)
         }
