@@ -51,6 +51,20 @@ class UIScreenshotterReadinessContractTests(unittest.TestCase):
                 source = (ROOT / relative_path).read_text()
                 self.assertIn(f'.accessibilityIdentifier("{identifier}")', source)
 
+    def test_flows_use_stable_tab_identifiers_instead_of_visible_text(self):
+        tabs = {
+            "contacts-list.yml": "tab_contacts",
+            "settings.yml": "tab_settings",
+            "map.yml": "tab_map",
+        }
+        main_tabs = (ROOT / "Sources/ColumbaApp/Views/MainTabView.swift").read_text()
+        for filename, identifier in tabs.items():
+            with self.subTest(flow=filename):
+                flow = (ROOT / "flows" / filename).read_text()
+                self.assertIn(f'id: "{identifier}"', flow)
+                self.assertNotIn("optional: true", flow)
+                self.assertIn(f'.accessibilityIdentifier("{identifier}")', main_tabs)
+
     def test_pull_request_ci_installs_runs_and_uploads_screenshotter_output(self):
         workflow = (ROOT / ".github/workflows/tests.yml").read_text()
         self.assertIn("Tests.static.test_ui_screenshotter_readiness", workflow)
