@@ -53,15 +53,15 @@ class UIScreenshotterReadinessContractTests(unittest.TestCase):
 
     def test_flows_use_stable_tab_identifiers_instead_of_visible_text(self):
         tabs = {
-            "contacts-list.yml": "tab_contacts",
-            "settings.yml": "tab_settings",
-            "map.yml": "tab_map",
+            "contacts-list.yml": ("tab_contacts", "person.2.fill"),
+            "settings.yml": ("tab_settings", "gearshape.fill"),
+            "map.yml": ("tab_map", "map.fill"),
         }
         main_tabs = (ROOT / "Sources/ColumbaApp/Views/MainTabView.swift").read_text()
-        for filename, identifier in tabs.items():
+        for filename, (identifier, native_fallback) in tabs.items():
             with self.subTest(flow=filename):
                 flow = (ROOT / "flows" / filename).read_text()
-                self.assertIn(f'id: "{identifier}"', flow)
+                self.assertIn(f'id: "{identifier}|{native_fallback}"', flow)
                 self.assertNotIn("optional: true", flow)
                 self.assertIn(f'.accessibilityIdentifier("{identifier}")', main_tabs)
 

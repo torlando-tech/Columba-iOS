@@ -20,7 +20,7 @@ tags:
       id: "screen_chats"
     timeout: 30000
 - tapOn:
-    id: "tab_contacts"
+    id: "tab_contacts|person.2.fill"
 - extendedWaitUntil:
     visible:
       id: "screen_contacts"
