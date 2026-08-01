@@ -677,7 +677,7 @@ class WorkflowContractTests(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertNotIn("Columba-Swift", workflow)
         self.assertGreaterEqual(workflow.count("-scheme Columba"), 3)
-        self.assertGreaterEqual(workflow.count("-scheme Columba-ModelB"), 2)
+        self.assertGreaterEqual(workflow.count("-scheme Columba-ModelB"), 1)
         self.assertIn('-derivedDataPath "$PWD/DerivedData-Python"', workflow)
         self.assertIn('-derivedDataPath "$PWD/DerivedData-ModelB"', workflow)
         self.assertIn(
@@ -707,6 +707,28 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("-resultBundlePath ModelBTestResults.xcresult", workflow)
         self.assertIn("rm -rf ModelBTestResults.xcresult", workflow)
 
+    def test_workflow_runs_python_modelb_and_ui_as_independent_lanes(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("\n  python:\n", workflow)
+        self.assertIn("\n  modelb:\n", workflow)
+        self.assertIn("\n  ui:\n", workflow)
+        self.assertNotIn("\n    needs:", workflow)
+
+        modelb = workflow.split("\n  modelb:\n", 1)[1].split("\n  ui:\n", 1)[0]
+        self.assertNotIn("Fetch Python framework + wheels", modelb)
+        self.assertNotIn("support/fetch-python.sh", modelb)
+        self.assertIn("Build and run Model B tests", modelb)
+        self.assertNotIn("Build Model B artifact", modelb)
+
+        python_lane = workflow.split("\n  python:\n", 1)[1].split("\n  modelb:\n", 1)[0]
+        self.assertIn("Build and run shipping tests", python_lane)
+        self.assertNotIn("Build shipping artifact (embedded Python)", python_lane)
+        self.assertIn("Build post-processed Release artifact", python_lane)
+
+        ui = workflow.split("\n  ui:\n", 1)[1]
+        self.assertIn("if: github.event_name == 'pull_request'", ui)
+        self.assertIn("Run screenshot flows", ui)
+
     def test_every_shell_block_is_fail_fast_and_builds_use_adhoc_signing(self):
         lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
         for index, line in enumerate(lines):
@@ -718,7 +740,7 @@ class WorkflowContractTests(unittest.TestCase):
             'CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" '
             'PROVISIONING_PROFILE_SPECIFIER=""'
         )
-        self.assertEqual(workflow.count(signing), 5)
+        self.assertEqual(workflow.count(signing), 4)
         self.assertIn("test_host_entitlements_contract", workflow)
         self.assertIn("test_ci_artifact_isolation", workflow)
         self.assertIn("test_ios_ble_bridge_contract", workflow)

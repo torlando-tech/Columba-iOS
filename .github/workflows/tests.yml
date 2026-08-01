@@ -10,11 +10,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Keep the shipping, Model B, and UI lanes independent. They intentionally use
+# separate runners and DerivedData so a slow UI flow or one flavor cannot block
+# feedback from the other validation lanes.
 jobs:
-  test:
+  python:
     # macos-26 carries Xcode 26.x, which the embedded-Python shipping scheme
-    # needs — the Python.framework clang module map fails to resolve under
-    # Xcode 16.x ("module 'Python' … not defined in any loaded module map").
+    # needs. The Python.framework module map does not resolve under Xcode 16.x.
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +28,6 @@ jobs:
           git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
           git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
 
-      # The shipping (`Columba`) scheme links Python.xcframework and bundles
-      # wheels. Fetch both before resolving or building either flavor.
       - name: Fetch Python framework + wheels
         run: |
           set -euo pipefail
@@ -43,17 +43,12 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
-      # Resolve both explicit flavor schemes up front so all later actions
-      # reuse the same local Swift package resolution.
-      - name: Resolve Swift packages
+      - name: Resolve shipping Swift packages
         run: |
           set -euo pipefail
           xcodebuild -resolvePackageDependencies \
             -project Columba.xcodeproj \
             -scheme Columba
-          xcodebuild -resolvePackageDependencies \
-            -project Columba.xcodeproj \
-            -scheme Columba-ModelB
 
       - name: Find simulator
         id: sim
@@ -64,9 +59,6 @@ jobs:
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $DEVICE_ID"
 
-      # Simulator ad-hoc signing leaves effective entitlements empty. Exercise
-      # source entitlement contracts in CI; signed archives/device products are
-      # still checked strictly by the artifact checker.
       - name: Run static flavor and entitlement contracts
         run: |
           set -euo pipefail
@@ -80,16 +72,22 @@ jobs:
             Tests.static.test_ui_screenshotter_readiness \
             Tests.static.test_collect_maestro_screenshots
 
-      - name: Build shipping artifact (embedded Python)
+      # xcodebuild test builds the Debug host. Reuse that product for artifact
+      # isolation checks instead of paying for a separate shipping build first.
+      - name: Build and run shipping tests
         run: |
           set -euo pipefail
-          xcodebuild build \
+          rm -rf TestResults.xcresult
+          xcodebuild test \
             -project Columba.xcodeproj \
             -scheme Columba \
             -configuration Debug \
             -sdk iphonesimulator \
             -destination "id=${{ steps.sim.outputs.device_id }}" \
             -derivedDataPath "$PWD/DerivedData-Python" \
+            -only-testing:ColumbaAppTests \
+            -resultBundlePath TestResults.xcresult \
+            -enableCodeCoverage YES \
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
 
       - name: Verify shipping artifact isolation
@@ -99,8 +97,8 @@ jobs:
           python3 support/verify-flavor-artifact.py shipping "$SHIPPING_APP"
 
       # A normal Release build still contains symbols that Xcode removes during
-      # archive post-processing. Force that same stripping stage in CI, then
-      # validate every embedded-Python C ABI export against the final Mach-O.
+      # archive post-processing. Force that stripping stage and inspect the
+      # final Mach-O against every embedded-Python C ABI export.
       - name: Build post-processed Release artifact
         run: |
           set -euo pipefail
@@ -120,11 +118,169 @@ jobs:
           RELEASE_APP="$PWD/DerivedData-Python/Build/Products/Release-iphonesimulator/ColumbaApp.app"
           python3 support/verify-flavor-artifact.py shipping "$RELEASE_APP"
 
-      # PRs exercise the same deterministic Maestro flows used by the
-      # ui-screenshotter agent. Reuse the shipping simulator artifact built
-      # above instead of paying for a second Xcode build in another job.
+      - name: Export coverage report (function-level lcov)
+        run: |
+          set -euo pipefail
+          XCRESULT=TestResults.xcresult
+          if [ ! -d "$XCRESULT" ]; then
+            echo "$XCRESULT does not exist" >&2
+            exit 1
+          fi
+          mkdir -p coverage
+          xcrun xccov view --report --json "$XCRESULT" > coverage/coverage.json
+
+          python3 <<'PY'
+          import json, sys
+          data = json.load(open('coverage/coverage.json'))
+          out = []
+          file_count = 0
+          for target in data.get('targets', []):
+              for f in target.get('files', []):
+                  path = f['path']
+                  if 'Tests' in path or 'SourcePackages' in path or 'DerivedData' in path:
+                      continue
+                  out.append(f"SF:{path}")
+                  for fn in f.get('functions', []):
+                      ln = fn.get('lineNumber', 0)
+                      hits = fn.get('executionCount', 0)
+                      name = fn.get('name', '?')
+                      out.append(f"FN:{ln},{name}")
+                      out.append(f"FNDA:{hits},{name}")
+                  out.append("end_of_record")
+                  file_count += 1
+          with open('coverage/coverage.lcov', 'w') as fh:
+              fh.write("\n".join(out) + "\n")
+          print(f"Wrote {file_count} files, {len(out)} total lcov lines")
+          if file_count == 0:
+              print("ERROR: zero files; coverage extraction is broken", file=sys.stderr)
+              sys.exit(1)
+          PY
+          head -5 coverage/coverage.lcov
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/coverage.lcov
+          fail_ci_if_error: false
+
+  modelb:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone sibling packages
+        run: |
+          set -euo pipefail
+          git clone https://github.com/torlando-tech/reticulum-swift.git ../reticulum-swift
+          git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
+          git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          echo "Available Xcodes:"; ls -d /Applications/Xcode_*.app 2>/dev/null || true
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Resolve Model B Swift packages
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project Columba.xcodeproj \
+            -scheme Columba-ModelB
+
+      - name: Find simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          DEVICE_ID=$(xcrun simctl list devices available -j \
+            | python3 -c "import sys,json; devs=json.load(sys.stdin)['devices']; print(next(d['udid'] for rt in devs for d in devs[rt] if 'iPhone' in d['name']))")
+          echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+          echo "Using simulator: $DEVICE_ID"
+
+      # xcodebuild test builds the app and extension. Verify those exact products
+      # instead of performing a redundant Model B build first.
+      - name: Build and run Model B tests
+        run: |
+          set -euo pipefail
+          rm -rf ModelBTestResults.xcresult
+          xcodebuild test \
+            -project Columba.xcodeproj \
+            -scheme Columba-ModelB \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.sim.outputs.device_id }}" \
+            -derivedDataPath "$PWD/DerivedData-ModelB" \
+            -only-testing:ColumbaModelBAppTests \
+            -resultBundlePath ModelBTestResults.xcresult \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Verify Model B artifact isolation
+        run: |
+          set -euo pipefail
+          MODELB_APP="$PWD/DerivedData-ModelB/Build/Products/Debug-iphonesimulator/ColumbaModelBApp.app"
+          python3 support/verify-flavor-artifact.py \
+            modelb "$MODELB_APP" --allow-empty-simulator-entitlements
+
+  ui:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone sibling packages
+        run: |
+          set -euo pipefail
+          git clone https://github.com/torlando-tech/reticulum-swift.git ../reticulum-swift
+          git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
+          git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
+
+      - name: Fetch Python framework + wheels
+        run: |
+          set -euo pipefail
+          support/fetch-python.sh
+          support/fetch-wheels.sh
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          echo "Available Xcodes:"; ls -d /Applications/Xcode_*.app 2>/dev/null || true
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Resolve shipping Swift packages
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project Columba.xcodeproj \
+            -scheme Columba
+
+      - name: Find simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          DEVICE_ID=$(xcrun simctl list devices available -j \
+            | python3 -c "import sys,json; devs=json.load(sys.stdin)['devices']; print(next(d['udid'] for rt in devs for d in devs[rt] if 'iPhone' in d['name']))")
+          echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+          echo "Using simulator: $DEVICE_ID"
+
+      - name: Build shipping artifact for UI flows
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project Columba.xcodeproj \
+            -scheme Columba \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.sim.outputs.device_id }}" \
+            -derivedDataPath "$PWD/DerivedData-Python" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
+
       - name: Cache Maestro
-        if: github.event_name == 'pull_request'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -133,14 +289,12 @@ jobs:
           key: maestro-cli-2.8.0-macos
 
       - name: Set up Java for Maestro
-        if: github.event_name == 'pull_request'
         uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Install Maestro
-        if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
           MAESTRO_VERSION=2.8.0
@@ -161,7 +315,6 @@ jobs:
           "$HOME/.maestro/bin/maestro" --version
 
       - name: Run screenshot flows
-        if: github.event_name == 'pull_request'
         env:
           MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true'
         run: |
@@ -188,7 +341,7 @@ jobs:
           exit "$screenshot_status"
 
       - name: Upload UI screenshots and Maestro diagnostics
-        if: always() && github.event_name == 'pull_request'
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ui-screenshots
@@ -197,113 +350,3 @@ jobs:
             ~/.maestro/tests/**
           if-no-files-found: warn
           retention-days: 14
-
-      # The Model B scheme explicitly builds its app and network extension.
-      - name: Build Model B artifact
-        run: |
-          set -euo pipefail
-          xcodebuild build \
-            -project Columba.xcodeproj \
-            -scheme Columba-ModelB \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination "id=${{ steps.sim.outputs.device_id }}" \
-            -derivedDataPath "$PWD/DerivedData-ModelB" \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
-
-      - name: Verify Model B artifact isolation
-        run: |
-          set -euo pipefail
-          MODELB_APP="$PWD/DerivedData-ModelB/Build/Products/Debug-iphonesimulator/ColumbaModelBApp.app"
-          python3 support/verify-flavor-artifact.py \
-            modelb "$MODELB_APP" --allow-empty-simulator-entitlements
-
-      - name: Build and run Model B tests
-        run: |
-          set -euo pipefail
-          rm -rf ModelBTestResults.xcresult
-          xcodebuild test \
-            -project Columba.xcodeproj \
-            -scheme Columba-ModelB \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination "id=${{ steps.sim.outputs.device_id }}" \
-            -derivedDataPath "$PWD/DerivedData-ModelB" \
-            -only-testing:ColumbaModelBAppTests \
-            -resultBundlePath ModelBTestResults.xcresult \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
-
-      - name: Build and run shipping tests
-        run: |
-          set -euo pipefail
-          rm -rf TestResults.xcresult
-          xcodebuild test \
-            -project Columba.xcodeproj \
-            -scheme Columba \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination "id=${{ steps.sim.outputs.device_id }}" \
-            -derivedDataPath "$PWD/DerivedData-Python" \
-            -only-testing:ColumbaAppTests \
-            -resultBundlePath TestResults.xcresult \
-            -enableCodeCoverage YES \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
-
-      - name: Export coverage report (function-level lcov)
-        run: |
-          set -euo pipefail
-          # Coverage on iOS app projects with -resultBundlePath lives
-          # inside the .xcresult bundle. The only toolchain path that
-          # reads it cleanly under Xcode 16 is
-          # `xccov view --report --json`, which exposes function-level
-          # granularity (no per-line `DA:` records). Per-line data
-          # would require either a working `xccov view --file` (broken
-          # against both the bare .xcresult and `xcresulttool export
-          # coverage`'s output: "Error: unrecognized file format") or
-          # a raw .profdata (Xcode embeds it inside the xcresult, not
-          # in DerivedData). codecov's `patch` check is configured
-          # `informational: true` so the absence of line records is
-          # advisory rather than blocking.
-          XCRESULT=TestResults.xcresult
-          if [ ! -d "$XCRESULT" ]; then
-            echo "$XCRESULT does not exist" >&2
-            exit 1
-          fi
-          mkdir -p coverage
-          xcrun xccov view --report --json "$XCRESULT" > coverage/coverage.json
-
-          python3 <<'PY'
-          import json, sys
-          data = json.load(open('coverage/coverage.json'))
-          out = []
-          file_count = 0
-          for target in data.get('targets', []):
-              for f in target.get('files', []):
-                  path = f['path']
-                  # Filter out tests + third-party packages so the
-                  # report shows first-party app code only.
-                  if 'Tests' in path or 'SourcePackages' in path or 'DerivedData' in path:
-                      continue
-                  out.append(f"SF:{path}")
-                  for fn in f.get('functions', []):
-                      ln = fn.get('lineNumber', 0)
-                      hits = fn.get('executionCount', 0)
-                      name = fn.get('name', '?')
-                      out.append(f"FN:{ln},{name}")
-                      out.append(f"FNDA:{hits},{name}")
-                  out.append("end_of_record")
-                  file_count += 1
-          with open('coverage/coverage.lcov', 'w') as fh:
-              fh.write("\n".join(out) + "\n")
-          print(f"Wrote {file_count} files, {len(out)} total lcov lines")
-          if file_count == 0:
-              print("ERROR: zero files — coverage extraction is broken", file=sys.stderr)
-              sys.exit(1)
-          PY
-          head -5 coverage/coverage.lcov
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage/coverage.lcov
-          fail_ci_if_error: false
