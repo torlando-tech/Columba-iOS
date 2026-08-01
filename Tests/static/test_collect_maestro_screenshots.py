@@ -55,6 +55,21 @@ class CollectMaestroScreenshotsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 MODULE.collect(source, root / "bad-output")
 
+    def test_allow_missing_collects_outputs_from_later_successful_flows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "maestro"
+            output = root / "artifact"
+            for name in MODULE.SCREENSHOTS[1:]:
+                path = source / "run" / name / "takeScreenshot" / f"{name}.png"
+                self.make_png(path, name.encode())
+
+            MODULE.collect(source, output, allow_missing=True)
+
+            self.assertFalse((output / f"{MODULE.SCREENSHOTS[0]}.png").exists())
+            for name in MODULE.SCREENSHOTS[1:]:
+                self.assertTrue((output / f"{name}.png").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

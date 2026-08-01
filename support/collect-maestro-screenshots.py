@@ -23,10 +23,16 @@ def latest_screenshot(source: Path, name: str) -> Path:
     return max(candidates, key=lambda path: path.stat().st_mtime_ns)
 
 
-def collect(source: Path, output: Path) -> None:
+def collect(source: Path, output: Path, *, allow_missing: bool = False) -> None:
     output.mkdir(parents=True, exist_ok=True)
     for name in SCREENSHOTS:
-        screenshot = latest_screenshot(source, name)
+        try:
+            screenshot = latest_screenshot(source, name)
+        except FileNotFoundError:
+            if not allow_missing:
+                raise
+            print(f"missing {name}: Maestro did not reach takeScreenshot")
+            continue
         if screenshot.read_bytes()[: len(PNG_SIGNATURE)] != PNG_SIGNATURE:
             raise ValueError(f"Maestro output is not a PNG: {screenshot}")
         destination = output / f"{name}.png"
@@ -43,8 +49,13 @@ def main() -> None:
         help="Maestro diagnostics root (default: ~/.maestro/tests)",
     )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="collect successful flows while the workflow reports failures separately",
+    )
     args = parser.parse_args()
-    collect(args.source, args.output)
+    collect(args.source, args.output, allow_missing=args.allow_missing)
 
 
 if __name__ == "__main__":

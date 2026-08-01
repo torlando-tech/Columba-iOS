@@ -60,9 +60,18 @@ class UIScreenshotterReadinessContractTests(unittest.TestCase):
         self.assertIn("xcrun simctl install", workflow)
         self.assertIn('"$GITHUB_WORKSPACE/flows/$flow"', workflow)
         self.assertIn("support/collect-maestro-screenshots.py", workflow)
+        self.assertIn("screenshot_status=0", workflow)
+        self.assertIn("if ! (", workflow)
+        self.assertIn("--allow-missing", workflow)
+        self.assertIn('exit "$screenshot_status"', workflow)
         for filename in self.flows:
             self.assertIn(filename, workflow)
-        self.assertIn("actions/upload-artifact@v4", workflow)
+        self.assertIn(
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            workflow,
+        )
+        for action in ("actions/cache", "actions/setup-java", "actions/upload-artifact"):
+            self.assertNotIn(f"{action}@v4", workflow)
         self.assertIn("ui-screenshots", workflow)
         self.assertIn("github.event_name == 'pull_request'", workflow)
         self.assertTrue((ROOT / "support/collect-maestro-screenshots.py").is_file())
