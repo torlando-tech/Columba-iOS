@@ -73,6 +73,7 @@ jobs:
           python3 -B -m unittest \
             Tests.static.test_host_entitlements_contract \
             Tests.static.test_ci_artifact_isolation \
+            Tests.static.test_ios_ble_bridge_contract \
             Tests.static.test_fetch_python_resilience \
             Tests.static.test_migration_export_flow \
             Tests.static.test_ios_stamp_runtime_hardening \
@@ -96,6 +97,28 @@ jobs:
           set -euo pipefail
           SHIPPING_APP="$PWD/DerivedData-Python/Build/Products/Debug-iphonesimulator/ColumbaApp.app"
           python3 support/verify-flavor-artifact.py shipping "$SHIPPING_APP"
+
+      # A normal Release build still contains symbols that Xcode removes during
+      # archive post-processing. Force that same stripping stage in CI, then
+      # validate every embedded-Python C ABI export against the final Mach-O.
+      - name: Build post-processed Release artifact
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project Columba.xcodeproj \
+            -scheme Columba \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.sim.outputs.device_id }}" \
+            -derivedDataPath "$PWD/DerivedData-Python" \
+            DEPLOYMENT_POSTPROCESSING=YES STRIP_INSTALLED_PRODUCT=YES \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Verify post-processed Release native ABI
+        run: |
+          set -euo pipefail
+          RELEASE_APP="$PWD/DerivedData-Python/Build/Products/Release-iphonesimulator/ColumbaApp.app"
+          python3 support/verify-flavor-artifact.py shipping "$RELEASE_APP"
 
       # PRs exercise the same deterministic Maestro flows used by the
       # ui-screenshotter agent. Reuse the shipping simulator artifact built

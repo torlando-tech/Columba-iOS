@@ -31,20 +31,28 @@ MODEL_B_SYMBOLS = (
     b"NEReticulumNode",
     b"TunnelManager",
 )
-SHIPPING_RNODE_C_ABI_SYMBOLS = (
-    b"_columba_rnode_session_open",
-    b"_columba_rnode_session_close",
-    b"_columba_rnode_session_state",
-    b"_columba_rnode_session_read",
-    b"_columba_rnode_session_write",
-    b"_columba_rnode_session_set_online",
-    b"_columba_rnode_connect",
-    b"_columba_rnode_disconnect",
-    b"_columba_rnode_state",
-    b"_columba_rnode_read",
-    b"_columba_rnode_write",
-    b"_columba_rnode_set_online",
+NATIVE_EXPORTS_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "Sources/ColumbaApp/Resources/ColumbaApp.exports"
 )
+
+
+def _load_native_exports() -> Tuple[bytes, ...]:
+    try:
+        lines = NATIVE_EXPORTS_FILE.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise RuntimeError("cannot read native ABI export manifest: {}".format(error))
+    exports = tuple(
+        line.strip().encode("ascii")
+        for line in lines
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    if not exports or len(exports) != len(set(exports)):
+        raise RuntimeError("native ABI export manifest is empty or contains duplicates")
+    return exports
+
+
+SHIPPING_NATIVE_C_ABI_SYMBOLS = _load_native_exports()
 SHIPPING_RNODE_PYTHON_PAYLOADS = (
     "app/rnode/IOSRNodeInterface.py",
     "app/rnode/IOSRNodeDriver.py",
@@ -382,14 +390,15 @@ def _verify_shipping(
                 marker.decode("ascii")
             )
         )
-    missing_rnode_symbol = next(
-        (name for name in SHIPPING_RNODE_C_ABI_SYMBOLS if name not in symbols),
+    defined_symbols = set(symbols.splitlines())
+    missing_native_symbol = next(
+        (name for name in SHIPPING_NATIVE_C_ABI_SYMBOLS if name not in defined_symbols),
         None,
     )
-    if missing_rnode_symbol is not None:
+    if missing_native_symbol is not None:
         raise VerificationError(
-            "shipping executable is missing Python RNode C ABI symbol {}".format(
-                missing_rnode_symbol.decode("ascii")
+            "shipping executable is missing embedded-Python C ABI symbol {}".format(
+                missing_native_symbol.decode("ascii")
             )
         )
     if PYTHON_LOAD not in libraries:

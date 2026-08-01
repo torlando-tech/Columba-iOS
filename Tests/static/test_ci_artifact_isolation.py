@@ -13,6 +13,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 CHECKER = ROOT / "support/verify-flavor-artifact.py"
 WORKFLOW = ROOT / ".github/workflows/tests.yml"
+EXPORTS = ROOT / "Sources/ColumbaApp/Resources/ColumbaApp.exports"
 
 
 def load_checker():
@@ -55,19 +56,13 @@ class ArtifactFixture:
             ("nm", str(self.app / executable)): b"_$s7Columba13ShippingGraphV\n",
         }
         if flavor == "shipping":
-            self.outputs[("nm", str(self.app / executable))] += (
-                b"_columba_rnode_session_open\n"
-                b"_columba_rnode_session_close\n"
-                b"_columba_rnode_session_state\n"
-                b"_columba_rnode_session_read\n"
-                b"_columba_rnode_session_write\n"
-                b"_columba_rnode_session_set_online\n"
-                b"_columba_rnode_connect\n"
-                b"_columba_rnode_disconnect\n"
-                b"_columba_rnode_state\n"
-                b"_columba_rnode_read\n"
-                b"_columba_rnode_write\n"
-                b"_columba_rnode_set_online\n"
+            native_exports = (
+                line.encode("ascii")
+                for line in EXPORTS.read_text().splitlines()
+                if line and not line.startswith("#")
+            )
+            self.outputs[("nm", str(self.app / executable))] += b"".join(
+                symbol + b"\n" for symbol in native_exports
             )
             framework = self.app / "Frameworks/Python.framework"
             framework.mkdir(parents=True)
@@ -171,14 +166,19 @@ class ArtifactCheckerTests(unittest.TestCase):
             shutil.rmtree(fixture.app / "app_packages/ble_reticulum")
             self.assert_rejected(fixture, "shipping", "ble_reticulum")
 
-    def test_shipping_rejects_missing_python_rnode_bridge_symbol_or_payload(self):
-        with tempfile.TemporaryDirectory() as directory:
-            fixture = ArtifactFixture(Path(directory), "shipping")
-            key = ("nm", str(fixture.app / fixture.executable))
-            fixture.outputs[key] = fixture.outputs[key].replace(
-                b"_columba_rnode_write\n", b""
-            )
-            self.assert_rejected(fixture, "shipping", "missing Python RNode C ABI symbol")
+    def test_shipping_rejects_any_missing_python_native_symbol_or_rnode_payload(self):
+        for symbol in (
+            b"_columba_ble_send",
+            b"_columba_rnode_write",
+            b"_columba_stamp_generate",
+        ):
+            with self.subTest(symbol=symbol), tempfile.TemporaryDirectory() as directory:
+                fixture = ArtifactFixture(Path(directory), "shipping")
+                key = ("nm", str(fixture.app / fixture.executable))
+                fixture.outputs[key] = fixture.outputs[key].replace(symbol + b"\n", b"")
+                self.assert_rejected(
+                    fixture, "shipping", "missing embedded-Python C ABI symbol"
+                )
 
         for name in ("IOSRNodeInterface.py", "IOSRNodeDriver.py"):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
@@ -685,10 +685,16 @@ class WorkflowContractTests(unittest.TestCase):
             workflow,
         )
         self.assertIn(
+            'RELEASE_APP="$PWD/DerivedData-Python/Build/Products/Release-iphonesimulator/ColumbaApp.app"',
+            workflow,
+        )
+        self.assertIn(
             'MODELB_APP="$PWD/DerivedData-ModelB/Build/Products/Debug-iphonesimulator/ColumbaModelBApp.app"',
             workflow,
         )
         self.assertIn('verify-flavor-artifact.py shipping "$SHIPPING_APP"', workflow)
+        self.assertIn('verify-flavor-artifact.py shipping "$RELEASE_APP"', workflow)
+        self.assertIn("DEPLOYMENT_POSTPROCESSING=YES STRIP_INSTALLED_PRODUCT=YES", workflow)
         self.assertIn('modelb "$MODELB_APP" --allow-empty-simulator-entitlements', workflow)
 
     def test_workflow_runs_both_dedicated_test_targets_and_keeps_shipping_coverage(self):
@@ -712,9 +718,10 @@ class WorkflowContractTests(unittest.TestCase):
             'CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" '
             'PROVISIONING_PROFILE_SPECIFIER=""'
         )
-        self.assertEqual(workflow.count(signing), 4)
+        self.assertEqual(workflow.count(signing), 5)
         self.assertIn("test_host_entitlements_contract", workflow)
         self.assertIn("test_ci_artifact_isolation", workflow)
+        self.assertIn("test_ios_ble_bridge_contract", workflow)
         self.assertIn("--allow-empty-simulator-entitlements", workflow)
         self.assertNotIn("CODE_SIGNING_ALLOWED=NO", workflow)
 
