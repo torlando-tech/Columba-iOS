@@ -718,11 +718,19 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("Fetch Python framework + wheels", modelb)
         self.assertNotIn("support/fetch-python.sh", modelb)
         self.assertIn("Build and run Model B tests", modelb)
-        self.assertNotIn("Build Model B artifact", modelb)
+        self.assertIn("Build Model B artifact", modelb)
+        self.assertLess(
+            modelb.index("Verify Model B artifact isolation"),
+            modelb.index("Build and run Model B tests"),
+        )
 
         python_lane = workflow.split("\n  python:\n", 1)[1].split("\n  modelb:\n", 1)[0]
         self.assertIn("Build and run shipping tests", python_lane)
-        self.assertNotIn("Build shipping artifact (embedded Python)", python_lane)
+        self.assertIn("Build shipping artifact (embedded Python)", python_lane)
+        self.assertLess(
+            python_lane.index("Verify shipping artifact isolation"),
+            python_lane.index("Build and run shipping tests"),
+        )
         self.assertIn("Build post-processed Release artifact", python_lane)
 
         ui = workflow.split("\n  ui:\n", 1)[1]
@@ -740,7 +748,7 @@ class WorkflowContractTests(unittest.TestCase):
             'CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" '
             'PROVISIONING_PROFILE_SPECIFIER=""'
         )
-        self.assertEqual(workflow.count(signing), 4)
+        self.assertEqual(workflow.count(signing), 6)
         self.assertIn("test_host_entitlements_contract", workflow)
         self.assertIn("test_ci_artifact_isolation", workflow)
         self.assertIn("test_ios_ble_bridge_contract", workflow)
