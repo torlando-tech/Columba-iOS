@@ -42,6 +42,11 @@ struct MapLibreMapView: UIViewRepresentable {
         let initialStyleURL = mapStyleURL(forDarkMode: isDark)
         context.coordinator.lastStyleURL = initialStyleURL
         let mapView = MLNMapView(frame: .zero, styleURL: initialStyleURL)
+        // Stable UI-automation landmark while the style and visible tiles load.
+        // The coordinator promotes this to `map_canvas_ready` only after
+        // MapLibre reports that all currently requested tiles and transitions
+        // are complete.
+        mapView.accessibilityIdentifier = "screen_map"
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         mapView.showsUserLocation = showsUserLocation
         mapView.delegate = context.coordinator
@@ -176,6 +181,18 @@ struct MapLibreMapView: UIViewRepresentable {
 
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
             metersPerPixel = mapView.metersPerPoint(atLatitude: mapView.centerCoordinate.latitude)
+        }
+
+        func mapViewWillStartLoadingMap(_ mapView: MLNMapView) {
+            mapView.accessibilityIdentifier = "screen_map"
+        }
+
+        func mapViewDidBecomeIdle(_ mapView: MLNMapView) {
+            // MLNMapViewDelegate defines idle as no active camera transition,
+            // all currently requested tiles loaded, and all fade/transition
+            // animations completed. This is the screenshotter's real network
+            // and render readiness signal; an animation timeout is not.
+            mapView.accessibilityIdentifier = "map_canvas_ready"
         }
 
         func mapView(_ mapView: MLNMapView, didUpdate userLocation: MLNUserLocation?) {

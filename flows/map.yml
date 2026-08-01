@@ -10,26 +10,21 @@ tags:
 - launchApp:
     clearState: true
     clearKeychain: true
-- waitForAnimationToEnd:
-    timeout: 5000
-- runFlow:
-    when:
-      visible: "Skip"
-    commands:
-      - tapOn: "Skip"
-      - waitForAnimationToEnd:
-          timeout: 3000
-- runFlow:
-    when:
-      visible: "Get Started"
-    commands:
-      - tapOn: "Get Started"
-      - waitForAnimationToEnd:
-          timeout: 3000
+    arguments:
+      ui-screenshotter: true
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 30000
 - tapOn:
     text: "Map"
     optional: true
-# Maps need a beat to load tile JSON + first-render
-- waitForAnimationToEnd:
-    timeout: 8000
+# Wait on MapLibre's native idle signal: no camera transition, all requested
+# tiles loaded, and all fade/transition animations complete.
+- extendedWaitUntil:
+    visible:
+      id: "map_canvas_ready"
+    timeout: 20000
+- assertVisible:
+    id: "map_canvas_ready"
 - takeScreenshot: "map"

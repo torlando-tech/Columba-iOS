@@ -501,7 +501,17 @@ struct RootView: View {
         self._pendingDeepLink = pendingDeepLink
         // Migrate existing users so they skip onboarding
         OnboardingViewModel.migrateExistingUsers()
-        self._showOnboarding = State(initialValue: !OnboardingViewModel.hasCompletedOnboarding)
+        #if DEBUG
+        let isScreenshotterLaunch = ProcessInfo.processInfo.arguments.contains("ui-screenshotter")
+        #else
+        let isScreenshotterLaunch = false
+        #endif
+        // Maestro clears app state and Keychain before every screenshot. Its
+        // explicit DEBUG-only launch argument bypasses the interactive wizard;
+        // initializeServices() creates the disposable test identity below.
+        self._showOnboarding = State(
+            initialValue: !OnboardingViewModel.hasCompletedOnboarding && !isScreenshotterLaunch
+        )
     }
 
     // MARK: - Body
@@ -762,7 +772,18 @@ struct RootView: View {
                 active = existing
             } else {
                 #if COLUMBA_ONBOARDING_ENABLED
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("ui-screenshotter") {
+                    DiagLog.log("[STARTUP] Step 2: creating disposable screenshotter identity")
+                    let created = try await identityManager.createIdentity(displayName: "ColumbaSim")
+                    let switched = try await identityManager.switchToIdentity(created.identityHash)
+                    active = switched.0
+                } else {
+                    throw AppServicesError.identityNotInitialized
+                }
+                #else
                 throw AppServicesError.identityNotInitialized
+                #endif
                 #else
                 DiagLog.log("[STARTUP] Step 2: no identity — auto-creating for smoke test")
                 let created = try await identityManager.createIdentity(displayName: "ColumbaSim")

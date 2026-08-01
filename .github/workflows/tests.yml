@@ -75,7 +75,9 @@ jobs:
             Tests.static.test_ci_artifact_isolation \
             Tests.static.test_fetch_python_resilience \
             Tests.static.test_migration_export_flow \
-            Tests.static.test_ios_stamp_runtime_hardening
+            Tests.static.test_ios_stamp_runtime_hardening \
+            Tests.static.test_ui_screenshotter_readiness \
+            Tests.static.test_collect_maestro_screenshots
 
       - name: Build shipping artifact (embedded Python)
         run: |
@@ -94,6 +96,84 @@ jobs:
           set -euo pipefail
           SHIPPING_APP="$PWD/DerivedData-Python/Build/Products/Debug-iphonesimulator/ColumbaApp.app"
           python3 support/verify-flavor-artifact.py shipping "$SHIPPING_APP"
+
+      # PRs exercise the same deterministic Maestro flows used by the
+      # ui-screenshotter agent. Reuse the shipping simulator artifact built
+      # above instead of paying for a second Xcode build in another job.
+      - name: Cache Maestro
+        if: github.event_name == 'pull_request'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.maestro/bin
+            ~/.maestro/lib
+          key: maestro-cli-2.8.0-macos
+
+      - name: Set up Java for Maestro
+        if: github.event_name == 'pull_request'
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Maestro
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          MAESTRO_VERSION=2.8.0
+          MAESTRO_SHA256=b3e561161904fb391875ca5834d5b22cf0b01c052dd1b408ad83e30d8f8951b3
+          if [ ! -x "$HOME/.maestro/bin/maestro" ]; then
+            archive="$RUNNER_TEMP/maestro.zip"
+            extract="$RUNNER_TEMP/maestro-extract"
+            curl --fail --location --retry 3 \
+              "https://github.com/mobile-dev-inc/Maestro/releases/download/cli-${MAESTRO_VERSION}/maestro.zip" \
+              --output "$archive"
+            echo "$MAESTRO_SHA256  $archive" | shasum -a 256 --check
+            rm -rf "$extract" "$HOME/.maestro"
+            mkdir -p "$extract" "$HOME/.maestro"
+            unzip -q "$archive" -d "$extract"
+            cp -R "$extract/maestro/." "$HOME/.maestro/"
+          fi
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+          "$HOME/.maestro/bin/maestro" --version
+
+      - name: Run screenshot flows
+        if: github.event_name == 'pull_request'
+        env:
+          MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true'
+        run: |
+          set -euo pipefail
+          DEVICE_ID="${{ steps.sim.outputs.device_id }}"
+          SHIPPING_APP="$PWD/DerivedData-Python/Build/Products/Debug-iphonesimulator/ColumbaApp.app"
+          xcrun simctl boot "$DEVICE_ID" 2>/dev/null || true
+          xcrun simctl bootstatus "$DEVICE_ID" -b
+          xcrun simctl install "$DEVICE_ID" "$SHIPPING_APP"
+          export PATH="$HOME/.maestro/bin:$PATH"
+          mkdir -p ui-screenshots
+          screenshot_status=0
+          for flow in contacts-list.yml chats-list.yml settings.yml map.yml; do
+            if ! (
+              cd ui-screenshots
+              maestro --device "$DEVICE_ID" test "$GITHUB_WORKSPACE/flows/$flow"
+            ); then
+              screenshot_status=1
+            fi
+          done
+          python3 support/collect-maestro-screenshots.py \
+            --allow-missing \
+            --output "$PWD/ui-screenshots"
+          exit "$screenshot_status"
+
+      - name: Upload UI screenshots and Maestro diagnostics
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-screenshots
+          path: |
+            ui-screenshots/**
+            ~/.maestro/tests/**
+          if-no-files-found: warn
+          retention-days: 14
 
       # The Model B scheme explicitly builds its app and network extension.
       - name: Build Model B artifact

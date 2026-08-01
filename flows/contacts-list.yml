@@ -13,26 +13,19 @@ tags:
 - launchApp:
     clearState: true
     clearKeychain: true
-- waitForAnimationToEnd:
-    timeout: 5000
-# Onboarding may show on a fresh install; skip if "Skip" / "Get Started" is visible.
-- runFlow:
-    when:
-      visible: "Skip"
-    commands:
-      - tapOn: "Skip"
-      - waitForAnimationToEnd:
-          timeout: 3000
-- runFlow:
-    when:
-      visible: "Get Started"
-    commands:
-      - tapOn: "Get Started"
-      - waitForAnimationToEnd:
-          timeout: 3000
+    arguments:
+      ui-screenshotter: true
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 30000
 - tapOn:
     text: "Contacts"
     optional: true
-- waitForAnimationToEnd:
-    timeout: 3000
+- extendedWaitUntil:
+    visible:
+      id: "screen_contacts"
+    timeout: 10000
+- assertVisible:
+    id: "screen_contacts"
 - takeScreenshot: "contacts-list"

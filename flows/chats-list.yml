@@ -9,26 +9,16 @@ tags:
 - launchApp:
     clearState: true
     clearKeychain: true
-- waitForAnimationToEnd:
-    timeout: 5000
-- runFlow:
-    when:
-      visible: "Skip"
-    commands:
-      - tapOn: "Skip"
-      - waitForAnimationToEnd:
-          timeout: 3000
-- runFlow:
-    when:
-      visible: "Get Started"
-    commands:
-      - tapOn: "Get Started"
-      - waitForAnimationToEnd:
-          timeout: 3000
+    arguments:
+      ui-screenshotter: true
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 30000
 # Default tab is Chats — no tap needed if onboarding lands there.
 - tapOn:
     text: "Chats"
     optional: true
-- waitForAnimationToEnd:
-    timeout: 3000
+- assertVisible:
+    id: "screen_chats"
 - takeScreenshot: "chats-list"
