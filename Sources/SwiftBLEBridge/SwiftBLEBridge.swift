@@ -1219,6 +1219,18 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
               client.notificationsReady,
               let peerIdentity = client.peerIdentity else { return }
 
+        // CoreBluetooth can still report the mandatory 20-byte fallback in
+        // didConnect, before ATT service discovery and subscription settle.
+        // Refresh at the acknowledged end of the handshake and republish only
+        // when the usable characteristic-value capacity actually changed.
+        let refreshedMtu = peripheral.maximumWriteValueLength(for: .withoutResponse)
+        if refreshedMtu != client.mtu {
+            client.mtu = refreshedMtu
+            client.mtuFired = true
+            callbackInvoker?.invoke(slot: .onMtuNegotiated, args: [address, refreshedMtu])
+            emitInfo("payload-capacity-updated addr=\(address) mtu=\(refreshedMtu)")
+        }
+
         client.state = .established
         cancelConnectionTimeoutLocked(address: address)
         client.connectedAt = Date()

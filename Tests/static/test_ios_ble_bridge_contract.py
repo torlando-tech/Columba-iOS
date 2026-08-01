@@ -14,6 +14,7 @@ BINDINGS = ROOT / "Sources/SwiftBLEBridge/BleNativeBindings.swift"
 DRIVER = ROOT / "app/ble/IOSBLEDriver.py"
 INTERFACE = ROOT / "app/ble/IOSBLEInterface.py"
 FETCH_WHEELS = ROOT / "support/fetch-wheels.sh"
+PROJECT = ROOT / "Columba.xcodeproj/project.pbxproj"
 
 
 class IOSBLEBridgeContracts(unittest.TestCase):
@@ -219,6 +220,28 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         )
         self.assertIn("public func columbaBLEForceLinkNativeBindings()", bindings)
         self.assertIn("columbaBLEForceLinkNativeBindings()", app)
+
+    def test_debug_build_keeps_ctypes_exports_in_main_executable(self) -> None:
+        project = PROJECT.read_text()
+        shipping_debug = project.split("TDBG /* Debug */ = {", 1)[1]
+        shipping_debug = shipping_debug.split("name = Debug;", 1)[0]
+        self.assertIn("ENABLE_DEBUG_DYLIB = NO;", shipping_debug)
+
+    def test_central_payload_capacity_refreshes_after_handshake(self) -> None:
+        source = BRIDGE.read_text()
+        acknowledgement = source[source.index("didWriteValueFor characteristic:"):]
+        acknowledgement = acknowledgement.split("public func peripheralIsReady", 1)[0]
+        refresh = acknowledgement.index(
+            "peripheral.maximumWriteValueLength(for: .withoutResponse)"
+        )
+        republish = acknowledgement.index("slot: .onMtuNegotiated", refresh)
+        established = acknowledgement.index("client.state = .established", refresh)
+        self.assertLess(refresh, republish)
+        self.assertLess(republish, established)
+
+    def test_ble_ui_labels_characteristic_payload_not_raw_att_mtu(self) -> None:
+        view = (ROOT / "Sources/ColumbaApp/Views/Settings/BLEConnectionsView.swift").read_text()
+        self.assertIn('label: "Max GATT payload"', view)
 
     def test_wheel_fetch_uses_modern_packaging_and_requires_ble_runtime(self) -> None:
         script = FETCH_WHEELS.read_text()

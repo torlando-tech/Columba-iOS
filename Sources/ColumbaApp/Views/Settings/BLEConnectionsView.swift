@@ -209,7 +209,7 @@ struct BLEConnectionsView: View {
             signalStrengthRow(conn)
 
             // Connection details
-            detailRow(label: "MTU", value: "\(conn.mtu) bytes")
+            detailRow(label: "Max GATT payload", value: "\(conn.mtu) bytes")
             detailRow(label: "Connected", value: formatDuration(conn.connectionDuration))
             detailRow(label: "Last Activity", value: formatTimestamp(conn.lastActivity))
 
