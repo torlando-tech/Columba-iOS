@@ -17,6 +17,7 @@ INTERFACE = ROOT / "app/ble/IOSBLEInterface.py"
 FETCH_WHEELS = ROOT / "support/fetch-wheels.sh"
 PROJECT = ROOT / "Columba.xcodeproj/project.pbxproj"
 EXPORTS = ROOT / "Sources/ColumbaApp/Resources/ColumbaApp.exports"
+RECONCILER = ROOT / "support/isolate-modelb-targets.rb"
 
 
 class IOSBLEBridgeContracts(unittest.TestCase):
@@ -252,6 +253,26 @@ class IOSBLEBridgeContracts(unittest.TestCase):
             if line and not line.startswith("#")
         }
         self.assertEqual(declared, exported)
+
+    def test_reconciler_keeps_native_exports_shipping_only(self) -> None:
+        source = RECONCILER.read_text()
+        self.assertIn(
+            "PYTHON_NATIVE_EXPORTS_FILE = "
+            "'Sources/ColumbaApp/Resources/ColumbaApp.exports'",
+            source,
+        )
+        self.assertIn(
+            "PYTHON_NATIVE_BUILD_SETTINGS.each { |setting| "
+            "configuration.build_settings.delete(setting) }",
+            source,
+        )
+        self.assertIn(
+            "configuration.build_settings['EXPORTED_SYMBOLS_FILE'] = "
+            "PYTHON_NATIVE_EXPORTS_FILE",
+            source,
+        )
+        self.assertIn("if configuration.name == 'Release'", source)
+        self.assertIn("configuration.build_settings['STRIP_STYLE'] = 'non-global'", source)
 
     def test_central_payload_capacity_refreshes_after_handshake(self) -> None:
         source = BRIDGE.read_text()

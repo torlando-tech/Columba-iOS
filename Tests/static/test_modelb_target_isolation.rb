@@ -72,6 +72,7 @@ PYTHON_ONLY_SOURCE_PATHS = %w[
 PYTHON_FRAMEWORK_PATH = 'Frameworks/Python.xcframework'
 PYTHON_RESOURCE_PATH = 'app'
 PYTHON_BRIDGING_HEADER = 'Sources/PythonBridge/ColumbaPython-Bridging-Header.h'
+PYTHON_NATIVE_EXPORTS_FILE = 'Sources/ColumbaApp/Resources/ColumbaApp.exports'
 PYTHON_EMBED_PHASE_NAME = 'Embed Frameworks'
 PYTHON_SHELL_PHASE_NAME = 'Install Python stdlib & process dylibs'
 PYTHON_INSTALL_SCRIPT = <<~'SH'.freeze
@@ -441,9 +442,18 @@ class ModelBTargetIsolationTests < Minitest::Test
     @shipping.build_configurations.each do |configuration|
       assert_equal PYTHON_BRIDGING_HEADER,
                    configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER']
+      assert_equal PYTHON_NATIVE_EXPORTS_FILE,
+                   configuration.build_settings['EXPORTED_SYMBOLS_FILE']
+      if configuration.name == 'Release'
+        assert_equal 'non-global', configuration.build_settings['STRIP_STYLE']
+      else
+        refute configuration.build_settings.key?('STRIP_STYLE')
+      end
     end
     @model_b.build_configurations.each do |configuration|
       refute configuration.build_settings.key?('SWIFT_OBJC_BRIDGING_HEADER')
+      refute configuration.build_settings.key?('EXPORTED_SYMBOLS_FILE')
+      refute configuration.build_settings.key?('STRIP_STYLE')
     end
 
     shipping_products = @shipping.package_product_dependencies.map(&:product_name)
@@ -751,6 +761,46 @@ class ModelBTargetIsolationTests < Minitest::Test
       assert phase_owners.values.all?(&:one?), 'repair retained a multi-owner build phase'
       assert all_build_files.all? { |build_file| build_file_owners[build_file.uuid].one? },
              'repair retained an orphan or multi-owner PBXBuildFile'
+      assert_second_run_byte_idempotent(temporary_project)
+    end
+  end
+
+  def test_reconciler_scopes_python_native_archive_settings_to_shipping
+    Dir.mktmpdir('columba-python-native-settings') do |directory|
+      temporary_project = File.join(directory, 'Columba.xcodeproj')
+      FileUtils.cp_r(PROJECT_PATH, temporary_project)
+      fixture = Xcodeproj::Project.open(temporary_project)
+      shipping = fixture.targets.find { |target| target.name == 'ColumbaApp' }
+      model_b = fixture.targets.find { |target| target.name == 'ColumbaModelBApp' }
+
+      shipping.build_configurations.each do |configuration|
+        configuration.build_settings.delete('EXPORTED_SYMBOLS_FILE')
+        configuration.build_settings['STRIP_STYLE'] = 'all'
+      end
+      model_b.build_configurations.each do |configuration|
+        configuration.build_settings['EXPORTED_SYMBOLS_FILE'] = 'Stale/Exports.list'
+        configuration.build_settings['STRIP_STYLE'] = 'non-global'
+      end
+      fixture.save
+
+      run_reconciler(temporary_project, 'python-native-settings')
+      reconciled = Xcodeproj::Project.open(temporary_project)
+      reconciled_shipping = reconciled.targets.find { |target| target.name == 'ColumbaApp' }
+      reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
+
+      reconciled_shipping.build_configurations.each do |configuration|
+        assert_equal PYTHON_NATIVE_EXPORTS_FILE,
+                     configuration.build_settings['EXPORTED_SYMBOLS_FILE']
+        if configuration.name == 'Release'
+          assert_equal 'non-global', configuration.build_settings['STRIP_STYLE']
+        else
+          refute configuration.build_settings.key?('STRIP_STYLE')
+        end
+      end
+      reconciled_model_b.build_configurations.each do |configuration|
+        refute configuration.build_settings.key?('EXPORTED_SYMBOLS_FILE')
+        refute configuration.build_settings.key?('STRIP_STYLE')
+      end
       assert_second_run_byte_idempotent(temporary_project)
     end
   end
