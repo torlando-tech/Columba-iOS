@@ -66,6 +66,26 @@ public struct PeerLocation: Identifiable, Equatable {
     }
 }
 
+enum TelemetryDisplayNameResolver {
+    static func resolve(incoming: String?, existing: String?) -> String? {
+        for candidate in [incoming, existing] {
+            if let candidate,
+               !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    static func diagnosticValue(_ displayName: String?) -> String {
+        guard let data = try? JSONEncoder().encode(displayName ?? ""),
+              let encoded = String(data: data, encoding: .utf8) else {
+            return "\"\""
+        }
+        return encoded
+    }
+}
+
 // MARK: - SharingDuration
 
 /// Duration options for location sharing (matches Android Columba SharingDuration).
@@ -286,12 +306,21 @@ public final class LocationSharingManager: NSObject {
         // Sideband-compatible Telemeter codec to get the structured location.
         guard let location = LXMFSwift.TelemetryPacket.decode(from: packet.payload)?.location else { return }
 
+        // A telemetry frame does not carry the sender's LXMF announce name.
+        // Prefer the name resolved by IncomingMessageHandler, but do not let a
+        // later frame with no currently cached announce erase a name already
+        // attached to this peer's map marker.
+        let resolvedDisplayName = TelemetryDisplayNameResolver.resolve(
+            incoming: displayName,
+            existing: peerLocations[peerHash]?.displayName
+        )
+
         // Preserve existing icon if new message doesn't include one
         let resolvedIcon = iconAppearance ?? peerLocations[peerHash]?.iconAppearance
 
         let peerLoc = PeerLocation(
             id: peerHash,
-            displayName: displayName,
+            displayName: resolvedDisplayName,
             latitude: location.latitude,
             longitude: location.longitude,
             altitude: location.altitude,
@@ -315,7 +344,8 @@ public final class LocationSharingManager: NSObject {
         // MDI glyph name; fg/bg are 6-char RGB hex.
         let iconDesc = resolvedIcon.map { "\($0.iconName) fg=\($0.fgColor) bg=\($0.bgColor)" }
             ?? "- fg=- bg=-"
-        DiagLog.log("[LOC-RECV] peer=\(hex) lat=\(location.latitude) lon=\(location.longitude) icon=\(iconDesc)")
+        let diagnosticName = TelemetryDisplayNameResolver.diagnosticValue(resolvedDisplayName)
+        DiagLog.log("[LOC-RECV] peer=\(hex) name=\(diagnosticName) lat=\(location.latitude) lon=\(location.longitude) icon=\(iconDesc)")
     }
 
     /// Update foreground/background state to adjust send interval.
