@@ -240,7 +240,7 @@ class IOSBLEBridgeContracts(unittest.TestCase):
             "EXPORTED_SYMBOLS_FILE = "
             "Sources/ColumbaApp/Resources/ColumbaApp.exports;"
         )
-        self.assertIn(setting, shipping_debug)
+        self.assertNotIn(setting, shipping_debug)
         self.assertIn(setting, shipping_release)
         self.assertIn("STRIP_STYLE = non-global;", shipping_release)
 

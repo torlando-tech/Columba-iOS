@@ -442,11 +442,12 @@ class ModelBTargetIsolationTests < Minitest::Test
     @shipping.build_configurations.each do |configuration|
       assert_equal PYTHON_BRIDGING_HEADER,
                    configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER']
-      assert_equal PYTHON_NATIVE_EXPORTS_FILE,
-                   configuration.build_settings['EXPORTED_SYMBOLS_FILE']
       if configuration.name == 'Release'
+        assert_equal PYTHON_NATIVE_EXPORTS_FILE,
+                     configuration.build_settings['EXPORTED_SYMBOLS_FILE']
         assert_equal 'non-global', configuration.build_settings['STRIP_STYLE']
       else
+        refute configuration.build_settings.key?('EXPORTED_SYMBOLS_FILE')
         refute configuration.build_settings.key?('STRIP_STYLE')
       end
     end
@@ -789,11 +790,12 @@ class ModelBTargetIsolationTests < Minitest::Test
       reconciled_model_b = reconciled.targets.find { |target| target.name == 'ColumbaModelBApp' }
 
       reconciled_shipping.build_configurations.each do |configuration|
-        assert_equal PYTHON_NATIVE_EXPORTS_FILE,
-                     configuration.build_settings['EXPORTED_SYMBOLS_FILE']
         if configuration.name == 'Release'
+          assert_equal PYTHON_NATIVE_EXPORTS_FILE,
+                       configuration.build_settings['EXPORTED_SYMBOLS_FILE']
           assert_equal 'non-global', configuration.build_settings['STRIP_STYLE']
         else
+          refute configuration.build_settings.key?('EXPORTED_SYMBOLS_FILE')
           refute configuration.build_settings.key?('STRIP_STYLE')
         end
       end

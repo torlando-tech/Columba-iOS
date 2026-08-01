@@ -2005,7 +2005,6 @@
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
-				EXPORTED_SYMBOLS_FILE = Sources/ColumbaApp/Resources/ColumbaApp.exports;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/ColumbaApp/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Columba;

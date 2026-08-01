@@ -1158,10 +1158,11 @@ module ModelBTargetIsolation
     shipping.build_configurations.each do |configuration|
       configuration.build_settings['CODE_SIGN_ENTITLEMENTS'] = SHIPPING_ENTITLEMENTS
       configuration.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = PYTHON_BRIDGING_HEADER
-      configuration.build_settings['EXPORTED_SYMBOLS_FILE'] = PYTHON_NATIVE_EXPORTS_FILE
       if configuration.name == 'Release'
+        configuration.build_settings['EXPORTED_SYMBOLS_FILE'] = PYTHON_NATIVE_EXPORTS_FILE
         configuration.build_settings['STRIP_STYLE'] = 'non-global'
       else
+        configuration.build_settings.delete('EXPORTED_SYMBOLS_FILE')
         configuration.build_settings.delete('STRIP_STYLE')
       end
       set_compilation_tokens(
