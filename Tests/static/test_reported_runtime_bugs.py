@@ -18,9 +18,24 @@ SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
 MAIN_TAB_VIEW = ROOT / "Sources/ColumbaApp/Views/MainTabView.swift"
 MESSAGE_BUBBLE = ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
 MESSAGING_VIEW = ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift"
+INCOMING_MESSAGE_HANDLER = ROOT / "Sources/ColumbaApp/Services/IncomingMessageHandler.swift"
+LOCATION_SHARING_MANAGER = ROOT / "Sources/ColumbaApp/Services/LocationSharingManager.swift"
 
 
 class ReportedRuntimeBugContracts(unittest.TestCase):
+    def test_inbound_telemetry_retains_lxmf_display_name(self) -> None:
+        handler = INCOMING_MESSAGE_HANDLER.read_text()
+        telemetry_dispatch = re.search(
+            r"handleIncomingTelemetry\(.*?\n\s*\)", handler, re.DOTALL
+        )
+        self.assertIsNotNone(telemetry_dispatch)
+        assert telemetry_dispatch is not None
+        self.assertIn("displayName: senderDisplayName", telemetry_dispatch.group(0))
+        self.assertNotIn("displayName: nil", telemetry_dispatch.group(0))
+
+        manager = LOCATION_SHARING_MANAGER.read_text()
+        self.assertIn("TelemetryDisplayNameResolver.resolve(", manager)
+
     def test_inbound_event_preserves_canonical_lxmf_hash_end_to_end(self) -> None:
         bridge = BRIDGE_PY.read_text()
         callback = re.search(

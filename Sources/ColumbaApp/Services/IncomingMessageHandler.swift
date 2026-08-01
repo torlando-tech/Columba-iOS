@@ -309,11 +309,23 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 requiredOK = false
             }
 
-            // Look up sender display name from path table (announce data) and update conversation
+            // Look up the sender's LXMF display name from announce data. Keep a
+            // local copy for telemetry: FIELD_TELEMETRY does not embed the name,
+            // so passing nil here discards information we just resolved.
+            var senderDisplayName: String?
             if let pathTable = self.pathTable {
                 if let entry = await pathTable.lookup(destinationHash: sourceHash),
                    !entry.displayName.isEmpty {
+                    senderDisplayName = entry.displayName
                     try? await self.messageRepository.ensureConversation(sourceHash, displayName: entry.displayName)
+                }
+            }
+            if senderDisplayName == nil,
+               message.fields?[LXMessage.FIELD_TELEMETRY] != nil {
+                do {
+                    senderDisplayName = try await self.messageRepository.fetchConversation(sourceHash)?.displayName
+                } catch {
+                    self.logger.debug("Could not resolve persisted display name for telemetry sender \(sourceHashHex): \(error.localizedDescription)")
                 }
             }
 
@@ -364,7 +376,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     self.locationSharingManager?.handleIncomingTelemetry(
                         from: message.sourceHash,
                         packet: packet,
-                        displayName: nil,
+                        displayName: senderDisplayName,
                         iconAppearance: peerIcon
                     )
                     #endif

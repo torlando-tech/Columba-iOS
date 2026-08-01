@@ -277,6 +277,21 @@ def _wait_for_loc_recv(sim, *, timeout: float = 30.0) -> str:
     pytest.fail(f"iOS never logged [LOC-RECV] for inbound telemetry within {timeout}s")
 
 
+def _wait_for_peer_display_name(sim, sideband, *, timeout: float = 20.0) -> str:
+    """Return the non-empty lxmf.delivery name iOS learned for Sideband."""
+    pat = re.compile(
+        rf'announce dest={sideband.identity_hex}\s+aspect=lxmf\.delivery\s+name="([^"]+)"'
+    )
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for line in reversed(sim._tail_diag(800)):
+            match = pat.search(line)
+            if match:
+                return match.group(1)
+        time.sleep(0.4)
+    pytest.fail("iOS did not observe a named Sideband lxmf.delivery announce")
+
+
 def test_location_sideband_to_ios(sim, sideband):
     """Sideband → iOS location telemetry with an icon appearance.
 
@@ -306,15 +321,18 @@ def test_location_sideband_to_ios(sim, sideband):
     # expose). Capture first — it's logged on receipt regardless of UI
     # state, so it's independent of the map-navigation step below.
     line = _wait_for_loc_recv(sim)
+    expected_name = _wait_for_peer_display_name(sim, sideband)
     m = re.search(
-        r"\[LOC-RECV\] peer=(\w+) lat=(-?[\d.]+) lon=(-?[\d.]+) "
+        r'\[LOC-RECV\] peer=(\w+) name="([^"]*)" lat=(-?[\d.]+) lon=(-?[\d.]+) '
         r"icon=(\S+) fg=(\S+) bg=(\S+)",
         line,
     )
     assert m, f"[LOC-RECV] line didn't parse: {line!r}"
-    peer, lat, lon, icon, fg, bg = m.groups()
+    peer, display_name, lat, lon, icon, fg, bg = m.groups()
     assert peer == sideband.identity_hex[:len(peer)], \
         f"telemetry attributed to {peer}, expected {sideband.identity_hex[:len(peer)]}"
+    assert display_name == expected_name, \
+        f"telemetry marker lost LXMF display name: got {display_name!r}, expected {expected_name!r}"
     assert abs(float(lat) - expect_lat) < 1e-4, f"lat drift: {lat}"
     assert abs(float(lon) - expect_lon) < 1e-4, f"lon drift: {lon}"
     assert icon == icon_name, f"icon name didn't round-trip: {icon!r}"

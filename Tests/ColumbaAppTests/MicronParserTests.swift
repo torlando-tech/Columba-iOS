@@ -1207,6 +1207,28 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         XCTAssertEqual(maximumActive, 1)
     }
 
+    func testTelemetryDisplayNamePrefersCurrentLXMFAnnounceName() {
+        XCTAssertEqual(
+            TelemetryDisplayNameResolver.resolve(incoming: "Current Name", existing: "Older Name"),
+            "Current Name"
+        )
+    }
+
+    func testTelemetryDisplayNameRetainsExistingNameWhenFrameHasNoName() {
+        XCTAssertEqual(
+            TelemetryDisplayNameResolver.resolve(incoming: nil, existing: "Known Peer"),
+            "Known Peer"
+        )
+        XCTAssertEqual(
+            TelemetryDisplayNameResolver.resolve(incoming: "   ", existing: "Known Peer"),
+            "Known Peer"
+        )
+    }
+
+    func testTelemetryDisplayNameRemainsNilWhenNoNameHasBeenResolved() {
+        XCTAssertNil(TelemetryDisplayNameResolver.resolve(incoming: nil, existing: nil))
+    }
+
     // Note: the empty/field-map/wire discriminator is covered through the public
     // adapters by testFieldMapRowRecoversAttachments + testWireRowRecoversAttachments
     // (which call mapRecord/mapToLXMessage -> the internal recoverFields/normalizedFieldMap).
