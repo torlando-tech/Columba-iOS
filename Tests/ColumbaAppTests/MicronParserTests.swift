@@ -1229,6 +1229,16 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         XCTAssertNil(TelemetryDisplayNameResolver.resolve(incoming: nil, existing: nil))
     }
 
+    func testTelemetryDiagnosticNameIsSingleLineJSON() throws {
+        let encoded = TelemetryDisplayNameResolver.diagnosticValue("Peer \"North\"\nInjected")
+        XCTAssertEqual(encoded, "\"Peer \\\"North\\\"\\nInjected\"")
+        XCTAssertFalse(encoded.contains("\n"))
+        XCTAssertEqual(
+            try JSONDecoder().decode(String.self, from: Data(encoded.utf8)),
+            "Peer \"North\"\nInjected"
+        )
+    }
+
     // Note: the empty/field-map/wire discriminator is covered through the public
     // adapters by testFieldMapRowRecoversAttachments + testWireRowRecoversAttachments
     // (which call mapRecord/mapToLXMessage -> the internal recoverFields/normalizedFieldMap).

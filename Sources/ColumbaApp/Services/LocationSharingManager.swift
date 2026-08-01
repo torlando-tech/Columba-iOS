@@ -76,6 +76,14 @@ enum TelemetryDisplayNameResolver {
         }
         return nil
     }
+
+    static func diagnosticValue(_ displayName: String?) -> String {
+        guard let data = try? JSONEncoder().encode(displayName ?? ""),
+              let encoded = String(data: data, encoding: .utf8) else {
+            return "\"\""
+        }
+        return encoded
+    }
 }
 
 // MARK: - SharingDuration
@@ -336,7 +344,8 @@ public final class LocationSharingManager: NSObject {
         // MDI glyph name; fg/bg are 6-char RGB hex.
         let iconDesc = resolvedIcon.map { "\($0.iconName) fg=\($0.fgColor) bg=\($0.bgColor)" }
             ?? "- fg=- bg=-"
-        DiagLog.log("[LOC-RECV] peer=\(hex) name=\"\(resolvedDisplayName ?? "")\" lat=\(location.latitude) lon=\(location.longitude) icon=\(iconDesc)")
+        let diagnosticName = TelemetryDisplayNameResolver.diagnosticValue(resolvedDisplayName)
+        DiagLog.log("[LOC-RECV] peer=\(hex) name=\(diagnosticName) lat=\(location.latitude) lon=\(location.longitude) icon=\(iconDesc)")
     }
 
     /// Update foreground/background state to adjust send interval.

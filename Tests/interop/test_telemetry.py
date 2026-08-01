@@ -27,6 +27,7 @@ compile gate this used to be blocked on was removed on 2026-05-28.)
 """
 
 from __future__ import annotations
+import json
 import re
 import time
 from pathlib import Path
@@ -323,12 +324,14 @@ def test_location_sideband_to_ios(sim, sideband):
     line = _wait_for_loc_recv(sim)
     expected_name = _wait_for_peer_display_name(sim, sideband)
     m = re.search(
-        r'\[LOC-RECV\] peer=(\w+) name="([^"]*)" lat=(-?[\d.]+) lon=(-?[\d.]+) '
+        r'\[LOC-RECV\] peer=(\w+) name=("(?:\\.|[^"\\])*") '
+        r'lat=(-?[\d.]+) lon=(-?[\d.]+) '
         r"icon=(\S+) fg=(\S+) bg=(\S+)",
         line,
     )
     assert m, f"[LOC-RECV] line didn't parse: {line!r}"
-    peer, display_name, lat, lon, icon, fg, bg = m.groups()
+    peer, encoded_name, lat, lon, icon, fg, bg = m.groups()
+    display_name = json.loads(encoded_name)
     assert peer == sideband.identity_hex[:len(peer)], \
         f"telemetry attributed to {peer}, expected {sideband.identity_hex[:len(peer)]}"
     assert display_name == expected_name, \
