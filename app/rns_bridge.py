@@ -98,8 +98,8 @@ def _bind_stamp_fn(symbol: str, argtypes: list[Any], restype: Any = ctypes.c_int
 
 # Native stamp jobs keep executable work and cancellation state in Swift. Python
 # only calls signed C-ABI functions. In particular, never pass a ctypes callback
-# into native code: CFUNCTYPE requires a dynamically generated libffi trampoline,
-# which hardened iOS can terminate as CODESIGNING 2 Invalid Page.
+# into native code: executable callback trampolines can violate hardened iOS
+# code-signing policy and terminate the process with an invalid-page error.
 _stamp_job_start_fn = _bind_stamp_fn(
     "columba_stamp_job_start",
     [ctypes.c_char_p, ctypes.c_int32, ctypes.c_int32],
@@ -179,6 +179,12 @@ def _native_stamp_pow(workblock: bytes, stamp_cost: int, cancellation_token: Any
                 return out.raw[:32]
             if status < 0:
                 return None
+            if status != 0:
+                RNS.log(
+                    f"native stamp gen: unexpected poll status {status}",
+                    RNS.LOG_WARNING,
+                )
+                return None
             time.sleep(0.01)
     finally:
         release_job(job_id)
@@ -241,6 +247,12 @@ def _uninstall_native_stamp_generator() -> None:
     try:
         if _stamp_jobs_cancel_all_fn is not None:
             _stamp_jobs_cancel_all_fn()
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"native stamp gen: cancel-all failed: {e}", RNS.LOG_DEBUG)
+
+    # Always attempt process-global callback removal, even when native cleanup
+    # fails. Retaining it can reference stale embedded-runtime state.
+    try:
         LXStamper = LXMF.LXStamper
         setter = getattr(LXStamper, "set_external_generator", None)
         if setter is not None:

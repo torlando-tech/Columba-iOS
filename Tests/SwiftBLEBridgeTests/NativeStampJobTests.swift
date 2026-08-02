@@ -63,6 +63,18 @@ final class NativeStampJobTests: XCTestCase {
         XCTAssertEqual(columba_stamp_job_release(jobID), -1)
     }
 
+    func testCancelledWorkerActuallyStops() {
+        let job = NativeStampJob(workblock: Data("stop-worker".utf8), cost: 32)
+        job.start()
+        job.cancel()
+        XCTAssertTrue(job.waitForCompletion(timeout: .now() + 1))
+        var output = [CChar](repeating: 0, count: StampGenerator.stampSize)
+        let status = output.withUnsafeMutableBufferPointer {
+            job.poll(into: $0.baseAddress!)
+        }
+        XCTAssertEqual(status, -2)
+    }
+
     func testCancelAllDetachesEveryActiveJobWithoutAffectingFutureJobs() throws {
         let first = startJob(workblock: Data("first".utf8), cost: 32)
         let second = startJob(workblock: Data("second".utf8), cost: 32)

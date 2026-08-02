@@ -196,6 +196,24 @@ class NativeStampBridgeTests(unittest.TestCase):
         proof = hashlib.sha256(workblock + stamp).digest()
         self.assertGreaterEqual(256 - int.from_bytes(proof, "big").bit_length(), cost)
 
+    def test_unexpected_positive_poll_status_fails_closed(self) -> None:
+        polls = []
+        released = []
+
+        def poll(job_id, _output):
+            polls.append(job_id)
+            return 1 if len(polls) == 1 else -2
+
+        self.configure_native_jobs(
+            start=mock.Mock(return_value=91),
+            poll=poll,
+            release=lambda job_id: released.append(job_id) or 0,
+        )
+        token = types.SimpleNamespace(is_cancelled=lambda: False)
+        self.assertIsNone(self.bridge._native_stamp_pow(b"work", 8, token))
+        self.assertEqual([91], polls)
+        self.assertEqual([91], released)
+
     def test_install_requests_three_argument_contract_and_forwards_exact_token(self) -> None:
         token = object()
         self.configure_native_jobs()
@@ -215,6 +233,12 @@ class NativeStampBridgeTests(unittest.TestCase):
             self.bridge._uninstall_native_stamp_generator()
         self.assertIsNone(self.stamper.calls[-1][0][0])
         self.assertEqual(4, len(self.stamper.calls))
+
+    def test_cancel_all_failure_does_not_retain_global_callback(self) -> None:
+        self.configure_native_jobs(cancel_all=mock.Mock(side_effect=RuntimeError("boom")))
+        self.bridge._install_native_stamp_generator()
+        self.bridge._uninstall_native_stamp_generator()
+        self.assertIsNone(self.stamper.calls[-1][0][0])
 
     def test_repeated_stop_when_not_started_still_clears_global_callback(self) -> None:
         self.configure_native_jobs()
@@ -276,9 +300,12 @@ class NativeStampBridgeTests(unittest.TestCase):
 
 class NativeStampStaticABITests(unittest.TestCase):
     def test_shipping_stamp_bridge_uses_no_python_callback_trampoline(self) -> None:
-        source = BRIDGE.read_text(encoding="utf-8")
-        self.assertNotIn("ctypes.CFUNCTYPE(", source)
-        self.assertNotIn("ctypes.PYFUNCTYPE(", source)
+        forbidden = re.compile(r"\b(?:CFUNCTYPE|PYFUNCTYPE)\b")
+        offenders = []
+        for path in sorted((ROOT / "app").rglob("*.py")):
+            if forbidden.search(path.read_text(encoding="utf-8")):
+                offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual([], offenders, "shipping Python creates a native callback trampoline")
 
     def test_swift_has_native_job_abi_and_thread_safe_periodic_polling(self) -> None:
         source = STAMP.read_text(encoding="utf-8")
@@ -296,6 +323,7 @@ class NativeStampStaticABITests(unittest.TestCase):
         self.assertIn("StampCancellationState", source)
         self.assertRegex(source, r"rounds\s*&\s*0x(?:FF|[1-9A-F][0-9A-F]+)\s*==\s*0")
         self.assertIn("OSAllocatedUnfairLock", source)
+        self.assertIn("func poll(into outStamp:", source)
         self.assertNotRegex(source, r"nonatomic|UnsafeMutablePointer<Bool>")
 
     def test_shutdown_paths_unregister_before_taking_bridge_lock(self) -> None:

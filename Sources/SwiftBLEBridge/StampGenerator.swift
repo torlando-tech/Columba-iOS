@@ -216,6 +216,7 @@ enum NativeStampJobStatus: Equatable {
 final class NativeStampJob: @unchecked Sendable {
     private let state = OSAllocatedUnfairLock<NativeStampJobStatus>(initialState: .running)
     private let cancellation = StampCancellationState()
+    private let completion = DispatchSemaphore(value: 0)
     private let workblock: Data
     private let cost: Int
 
@@ -226,6 +227,7 @@ final class NativeStampJob: @unchecked Sendable {
 
     func start() {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
+            defer { completion.signal() }
             let stamp = StampGenerator.generate(
                 workblock: workblock,
                 cost: cost,
@@ -245,14 +247,41 @@ final class NativeStampJob: @unchecked Sendable {
     }
 
     func cancel() {
-        cancellation.cancel()
         state.withLock { status in
+            cancellation.cancel()
             status = .cancelled
         }
     }
 
-    var status: NativeStampJobStatus {
-        state.withLock { $0 }
+    /// Poll and copy under the same job lock used by cancellation. This is the
+    /// linearization point: a completed cancel can never be followed by a poll
+    /// that publishes a previously snapshotted proof.
+    func poll(into outStamp: UnsafeMutablePointer<CChar>) -> Int32 {
+        state.withLock { status in
+            switch status {
+            case .running:
+                return 0
+            case .cancelled:
+                return -2
+            case .failed:
+                return -3
+            case .succeeded(let stamp):
+                guard stamp.count == StampGenerator.stampSize else { return -3 }
+                stamp.withUnsafeBytes { raw in
+                    outStamp.withMemoryRebound(
+                        to: UInt8.self,
+                        capacity: StampGenerator.stampSize
+                    ) { dst in
+                        _ = memcpy(dst, raw.baseAddress!, StampGenerator.stampSize)
+                    }
+                }
+                return Int32(StampGenerator.stampSize)
+            }
+        }
+    }
+
+    func waitForCompletion(timeout: DispatchTime) -> Bool {
+        completion.wait(timeout: timeout) == .success
     }
 }
 
@@ -288,9 +317,12 @@ enum NativeStampJobRegistry {
         return jobID
     }
 
-    static func status(of jobID: UInt64) -> NativeStampJobStatus? {
+    static func poll(
+        _ jobID: UInt64,
+        into outStamp: UnsafeMutablePointer<CChar>
+    ) -> Int32? {
         let job = state.withLock { $0.jobs[jobID] }
-        return job?.status
+        return job?.poll(into: outStamp)
     }
 
     @discardableResult
@@ -344,25 +376,10 @@ public func columba_stamp_job_poll(
     _ outStamp: UnsafeMutablePointer<CChar>?
 ) -> Int32 {
     guard jobID != 0, let outStamp,
-          let status = NativeStampJobRegistry.status(of: jobID) else {
+          let status = NativeStampJobRegistry.poll(jobID, into: outStamp) else {
         return -1
     }
-    switch status {
-    case .running:
-        return 0
-    case .cancelled:
-        return -2
-    case .failed:
-        return -3
-    case .succeeded(let stamp):
-        guard stamp.count == StampGenerator.stampSize else { return -3 }
-        stamp.withUnsafeBytes { raw in
-            outStamp.withMemoryRebound(to: UInt8.self, capacity: StampGenerator.stampSize) { dst in
-                _ = memcpy(dst, raw.baseAddress!, StampGenerator.stampSize)
-            }
-        }
-        return Int32(StampGenerator.stampSize)
-    }
+    return status
 }
 
 /// Request cooperative cancellation. Repeated cancellation remains successful
