@@ -171,6 +171,7 @@ class ArtifactCheckerTests(unittest.TestCase):
             b"_columba_ble_send",
             b"_columba_rnode_write",
             b"_columba_stamp_generate",
+            b"_columba_stamp_job_start",
         ):
             with self.subTest(symbol=symbol), tempfile.TemporaryDirectory() as directory:
                 fixture = ArtifactFixture(Path(directory), "shipping")

@@ -74,8 +74,8 @@ import LXMF
 # LXStamper's macOS `job_simple` branch.) We offload the proof-of-work to a
 # native, multi-threaded Swift implementation reached via ctypes — the iOS
 # analog of Columba Android's `event_bridge.install_external_stamp_generator`
-# + Kotlin `StampGenerator`. `columba_stamp_generate` is a @_cdecl shim in
-# SwiftBLEBridge (statically linked → resolvable through `CDLL(None)`).
+# + Kotlin `StampGenerator`. The `columba_stamp_job_*` @_cdecl shims live in
+# SwiftBLEBridge and are statically linked so `CDLL(None)` can resolve them.
 import ctypes
 
 try:
@@ -84,53 +84,104 @@ except OSError:
     _columba_lib = None
 
 
-_StampCancellationCallback = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p)
-
-
-def _bind_stamp_fn(symbol: str, cancellable: bool = False):
+def _bind_stamp_fn(symbol: str, argtypes: list[Any], restype: Any = ctypes.c_int32):
     if _columba_lib is None:
         return None
     try:
         fn = getattr(_columba_lib, symbol)
     except AttributeError:
         return None
-    # Legacy: (workblock, workblock_len, stamp_cost, out_stamp) -> bytes_written.
-    # Cancellable: the same arguments plus (callback, opaque_context).
-    fn.argtypes = [ctypes.c_char_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_char_p]
-    if cancellable:
-        fn.argtypes.extend([_StampCancellationCallback, ctypes.c_void_p])
-    fn.restype = ctypes.c_int32
+    fn.argtypes = argtypes
+    fn.restype = restype
     return fn
 
 
-_stamp_generate_fn = _bind_stamp_fn("columba_stamp_generate")
-_stamp_generate_cancellable_fn = _bind_stamp_fn(
-    "columba_stamp_generate_cancellable", cancellable=True
+# Native stamp jobs keep executable work and cancellation state in Swift. Python
+# only calls signed C-ABI functions. In particular, never pass a ctypes callback
+# into native code: CFUNCTYPE requires a dynamically generated libffi trampoline,
+# which hardened iOS can terminate as CODESIGNING 2 Invalid Page.
+_stamp_job_start_fn = _bind_stamp_fn(
+    "columba_stamp_job_start",
+    [ctypes.c_char_p, ctypes.c_int32, ctypes.c_int32],
+    ctypes.c_uint64,
+)
+_stamp_job_poll_fn = _bind_stamp_fn(
+    "columba_stamp_job_poll",
+    [ctypes.c_uint64, ctypes.c_char_p],
+)
+_stamp_job_cancel_fn = _bind_stamp_fn(
+    "columba_stamp_job_cancel",
+    [ctypes.c_uint64],
+)
+_stamp_job_release_fn = _bind_stamp_fn(
+    "columba_stamp_job_release",
+    [ctypes.c_uint64],
+)
+_stamp_jobs_cancel_all_fn = _bind_stamp_fn(
+    "columba_stamp_jobs_cancel_all",
+    [],
 )
 
 
+def _native_stamp_jobs_available() -> bool:
+    return all(
+        fn is not None
+        for fn in (
+            _stamp_job_start_fn,
+            _stamp_job_poll_fn,
+            _stamp_job_cancel_fn,
+            _stamp_job_release_fn,
+            _stamp_jobs_cancel_all_fn,
+        )
+    )
+
+
+def _token_is_cancelled(cancellation_token: Any) -> bool:
+    """Treat an invalid or expired foreign token as cancellation."""
+    try:
+        return bool(cancellation_token.is_cancelled())
+    except Exception:
+        return True
+
+
 def _native_stamp_pow(workblock: bytes, stamp_cost: int, cancellation_token: Any):
-    """Run native multi-threaded PoW with cooperative LXMF cancellation."""
-    if _stamp_generate_cancellable_fn is None:
+    """Run native multi-threaded PoW with job-owned native cancellation."""
+    if not _native_stamp_jobs_available():
         return None
 
-    @_StampCancellationCallback
-    def _is_cancelled(_context):
-        try:
-            return 1 if cancellation_token.is_cancelled() else 0
-        except Exception:
-            # A broken/expired foreign token must fail closed, not leave an
-            # uncancellable native search running indefinitely.
-            return 1
+    start_job = _stamp_job_start_fn
+    poll_job = _stamp_job_poll_fn
+    cancel_job = _stamp_job_cancel_fn
+    release_job = _stamp_job_release_fn
+    assert start_job is not None
+    assert poll_job is not None
+    assert cancel_job is not None
+    assert release_job is not None
+
+    payload = bytes(workblock)
+    job_id = int(start_job(payload, len(payload), int(stamp_cost)))
+    if job_id == 0:
+        return None
 
     out = ctypes.create_string_buffer(32)
-    n = _stamp_generate_cancellable_fn(
-        bytes(workblock), len(workblock), int(stamp_cost), out,
-        _is_cancelled, None,
-    )
-    if n == 32:
-        return out.raw[:32]
-    return None
+    try:
+        while True:
+            if _token_is_cancelled(cancellation_token):
+                cancel_job(job_id)
+
+            status = int(poll_job(job_id, out))
+            if status == 32:
+                # Close the race where cancellation arrives after the pre-poll
+                # check but before Python observes a completed native proof.
+                if _token_is_cancelled(cancellation_token):
+                    cancel_job(job_id)
+                    return None
+                return out.raw[:32]
+            if status < 0:
+                return None
+            time.sleep(0.01)
+    finally:
+        release_job(job_id)
 
 
 def _install_native_stamp_generator() -> None:
@@ -147,10 +198,10 @@ def _install_native_stamp_generator() -> None:
     except Exception as e:  # noqa: BLE001
         RNS.log(f"native stamp gen: LXStamper unavailable: {e}", RNS.LOG_DEBUG)
         return
-    if _stamp_generate_cancellable_fn is None:
+    if not _native_stamp_jobs_available():
         RNS.log(
-            "native stamp gen: columba_stamp_generate_cancellable symbol not "
-            "found; stamp generation will fail on iOS",
+            "native stamp gen: native job symbols not found; stamp generation "
+            "will fail on iOS",
             RNS.LOG_WARNING,
         )
         return
@@ -188,6 +239,8 @@ def _install_native_stamp_generator() -> None:
 def _uninstall_native_stamp_generator() -> None:
     """Clear LXMF's process-global callback and cooperatively cancel its jobs."""
     try:
+        if _stamp_jobs_cancel_all_fn is not None:
+            _stamp_jobs_cancel_all_fn()
         LXStamper = LXMF.LXStamper
         setter = getattr(LXStamper, "set_external_generator", None)
         if setter is not None:

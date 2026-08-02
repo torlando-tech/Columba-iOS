@@ -64,5 +64,10 @@ let package = Package(
             dependencies: ["RNSAPI"],
             path: "Tests/RNSAPITests"
         ),
+        .testTarget(
+            name: "SwiftBLEBridgeTests",
+            dependencies: ["SwiftBLEBridge"],
+            path: "Tests/SwiftBLEBridgeTests"
+        ),
     ]
 )
