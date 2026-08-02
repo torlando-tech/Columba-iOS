@@ -257,7 +257,10 @@ final class NativeStampJob: @unchecked Sendable {
     /// linearization point: a completed cancel can never be followed by a poll
     /// that publishes a previously snapshotted proof.
     func poll(into outStamp: UnsafeMutablePointer<CChar>) -> Int32 {
-        state.withLock { status in
+        // Carry the address as a Sendable integer through the lock closure. The
+        // caller owns this fixed 32-byte buffer for the duration of the C call.
+        let outStampAddress = UInt(bitPattern: outStamp)
+        return state.withLock { status in
             switch status {
             case .running:
                 return 0
@@ -266,9 +269,14 @@ final class NativeStampJob: @unchecked Sendable {
             case .failed:
                 return -3
             case .succeeded(let stamp):
-                guard stamp.count == StampGenerator.stampSize else { return -3 }
+                guard stamp.count == StampGenerator.stampSize,
+                      let destination = UnsafeMutablePointer<CChar>(
+                        bitPattern: outStampAddress
+                      ) else {
+                    return -3
+                }
                 stamp.withUnsafeBytes { raw in
-                    outStamp.withMemoryRebound(
+                    destination.withMemoryRebound(
                         to: UInt8.self,
                         capacity: StampGenerator.stampSize
                     ) { dst in
