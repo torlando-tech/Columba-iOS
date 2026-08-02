@@ -38,23 +38,19 @@ enum StampGenerator {
     /// `cost` leading zero bits. Multi-threaded across (capped) cores; blocks
     /// until found. Returns nil for an out-of-range / infeasible cost.
     ///
-    /// `maxCost` is a hard fail-fast bound: this runs synchronously from Python
-    /// via ctypes (holding the GIL for the whole call), so an infeasible cost
-    /// would freeze all RNS I/O — message delivery, announces, link events —
-    /// with no way to cancel. The practical LXMF range is 0–22 bits (Sideband's
-    /// default); 32 leaves generous headroom (~10 bits, 1024×) while keeping
-    /// the worst case bounded. (Greptile suggested 64, but 2^33–2^64 work is
-    /// hours-to-centuries — still an indefinite GIL freeze — so 32 is the
-    /// defensible ceiling; a message requesting more is undeliverable anyway.)
+    /// `maxCost` is a hard fail-fast bound for both the legacy synchronous ABI
+    /// and native asynchronous jobs. The practical LXMF range is 0–22 bits;
+    /// 32 leaves generous headroom while preventing nonsensical or malicious
+    /// requests from creating effectively unbounded work.
     static let maxCost = 32
 
     static func generate(
         workblock: Data,
         cost: Int,
-        isCancelled: @escaping () -> Bool = { false }
+        cancellation: StampCancellationState = StampCancellationState()
     ) -> Data? {
         guard cost >= 0, cost <= maxCost else { return nil }
-        guard !isCancelled() else { return nil }
+        guard !cancellation.isCancelled else { return nil }
         if cost == 0 { return Data(repeating: 0, count: stampSize) }
 
         // Absorb the workblock once. CC_SHA256_CTX is a flat value struct with
@@ -90,7 +86,7 @@ enum StampGenerator {
                 if leadingZeroBits(digest) >= cost {
                     // Cancellation wins if it raced the proof. StampResultBox
                     // also refuses a proof after any sibling observed cancel.
-                    if isCancelled() {
+                    if cancellation.isCancelled {
                         result.cancel()
                     } else {
                         result.trySet(Data(candidate))
@@ -107,10 +103,10 @@ enum StampGenerator {
                 }
 
                 rounds &+= 1
-                // Poll foreign cancellation at a bounded interval rather than
-                // crossing the Python C callback boundary for every candidate.
+                // Poll native cancellation at a bounded interval rather than
+                // taking the cancellation lock for every candidate.
                 if rounds & 0xFF == 0,  // at most 256 candidates per worker
-                   result.shouldStop(isCancelled: isCancelled) {
+                   result.shouldStop(cancellation: cancellation) {
                     return
                 }
             }
@@ -127,6 +123,22 @@ enum StampGenerator {
             if b == 0 { count += 8 } else { count += b.leadingZeroBitCount; break }
         }
         return count
+    }
+}
+
+/// Native cancellation state shared by the job registry and every PoW worker.
+/// Python changes this state only through a signed C-ABI cancel function. No
+/// dynamically generated Python callback or executable heap trampoline crosses
+/// into Swift.
+final class StampCancellationState: @unchecked Sendable {
+    private let cancelled = OSAllocatedUnfairLock(initialState: false)
+
+    var isCancelled: Bool {
+        cancelled.withLock { $0 }
+    }
+
+    func cancel() {
+        cancelled.withLock { $0 = true }
     }
 }
 
@@ -152,9 +164,9 @@ private final class StampResultBox: @unchecked Sendable {
         state.withLock { $0.cancelled = true; $0.stamp = nil }
     }
 
-    func shouldStop(isCancelled: () -> Bool) -> Bool {
+    func shouldStop(cancellation: StampCancellationState) -> Bool {
         if state.withLock({ $0.cancelled || $0.stamp != nil }) { return true }
-        if isCancelled() {
+        if cancellation.isCancelled {
             cancel()
             return true
         }
@@ -192,42 +204,207 @@ public func columba_stamp_generate(
     return Int32(StampGenerator.stampSize)
 }
 
-/// C-compatible cooperative cancellation callback. A non-zero result requests
-/// that all native workers stop and that no stamp be returned.
-public typealias ColumbaStampCancellationCallback = @convention(c) (
-    UnsafeMutableRawPointer?
-) -> Int32
+/// A native asynchronous PoW operation. The registry owns it while Python polls;
+/// the worker closure also retains it until every native worker has stopped.
+enum NativeStampJobStatus: Equatable {
+    case running
+    case succeeded(Data)
+    case cancelled
+    case failed
+}
 
-/// Token-aware C ABI used by LXMF's three-argument external generator contract.
-/// The legacy `columba_stamp_generate` symbol remains available for callers
-/// that do not support cancellation.
-@_cdecl("columba_stamp_generate_cancellable")
-public func columba_stamp_generate_cancellable(
-    _ workblock: UnsafePointer<CChar>?,
-    _ workblockLen: Int32,
-    _ stampCost: Int32,
-    _ outStamp: UnsafeMutablePointer<CChar>?,
-    _ cancellationCallback: ColumbaStampCancellationCallback?,
-    _ cancellationContext: UnsafeMutableRawPointer?
-) -> Int32 {
-    guard let workblock, let outStamp, let cancellationCallback,
-          workblockLen >= 0, stampCost >= 0 else {
-        return -1
+final class NativeStampJob: @unchecked Sendable {
+    private let state = OSAllocatedUnfairLock<NativeStampJobStatus>(initialState: .running)
+    private let cancellation = StampCancellationState()
+    private let completion = DispatchSemaphore(value: 0)
+    private let workblock: Data
+    private let cost: Int
+
+    init(workblock: Data, cost: Int) {
+        self.workblock = workblock
+        self.cost = cost
     }
-    let wb = workblock.withMemoryRebound(to: UInt8.self, capacity: Int(workblockLen)) {
-        Data(bytes: $0, count: Int(workblockLen))
-    }
-    guard let stamp = StampGenerator.generate(
-        workblock: wb,
-        cost: Int(stampCost),
-        isCancelled: { cancellationCallback(cancellationContext) != 0 }
-    ), stamp.count == StampGenerator.stampSize else {
-        return 0
-    }
-    stamp.withUnsafeBytes { raw in
-        outStamp.withMemoryRebound(to: UInt8.self, capacity: StampGenerator.stampSize) { dst in
-            _ = memcpy(dst, raw.baseAddress!, StampGenerator.stampSize)
+
+    func start() {
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            defer { completion.signal() }
+            let stamp = StampGenerator.generate(
+                workblock: workblock,
+                cost: cost,
+                cancellation: cancellation
+            )
+            state.withLock { status in
+                guard status == .running else { return }
+                if cancellation.isCancelled {
+                    status = .cancelled
+                } else if let stamp {
+                    status = .succeeded(stamp)
+                } else {
+                    status = .failed
+                }
+            }
         }
     }
-    return Int32(StampGenerator.stampSize)
+
+    func cancel() {
+        state.withLock { status in
+            cancellation.cancel()
+            status = .cancelled
+        }
+    }
+
+    /// Poll and copy under the same job lock used by cancellation. This is the
+    /// linearization point: a completed cancel can never be followed by a poll
+    /// that publishes a previously snapshotted proof.
+    func poll(into outStamp: UnsafeMutablePointer<CChar>) -> Int32 {
+        // Carry the address as a Sendable integer through the lock closure. The
+        // caller owns this fixed 32-byte buffer for the duration of the C call.
+        let outStampAddress = UInt(bitPattern: outStamp)
+        return state.withLock { status in
+            switch status {
+            case .running:
+                return 0
+            case .cancelled:
+                return -2
+            case .failed:
+                return -3
+            case .succeeded(let stamp):
+                guard stamp.count == StampGenerator.stampSize,
+                      let destination = UnsafeMutablePointer<CChar>(
+                        bitPattern: outStampAddress
+                      ) else {
+                    return -3
+                }
+                stamp.withUnsafeBytes { raw in
+                    destination.withMemoryRebound(
+                        to: UInt8.self,
+                        capacity: StampGenerator.stampSize
+                    ) { dst in
+                        _ = memcpy(dst, raw.baseAddress!, StampGenerator.stampSize)
+                    }
+                }
+                return Int32(StampGenerator.stampSize)
+            }
+        }
+    }
+
+    func waitForCompletion(timeout: DispatchTime) -> Bool {
+        completion.wait(timeout: timeout) == .success
+    }
+}
+
+/// Process-wide native job ownership for the synchronous Python external-stamper
+/// contract. Registry operations never wait for PoW and never hold this lock
+/// while cancelling a job.
+enum NativeStampJobRegistry {
+    private struct RegistryState {
+        var nextID: UInt64 = 1
+        var jobs: [UInt64: NativeStampJob] = [:]
+    }
+
+    private static let state = OSAllocatedUnfairLock<RegistryState>(
+        initialState: RegistryState()
+    )
+
+    static func start(workblock: Data, cost: Int) -> UInt64 {
+        guard cost >= 0, cost <= StampGenerator.maxCost else { return 0 }
+        let job = NativeStampJob(workblock: workblock, cost: cost)
+        let jobID = state.withLock { registry -> UInt64 in
+            var candidate = registry.nextID
+            repeat {
+                if candidate == 0 { candidate = 1 }
+                if registry.jobs[candidate] == nil { break }
+                candidate &+= 1
+            } while true
+            registry.jobs[candidate] = job
+            registry.nextID = candidate &+ 1
+            if registry.nextID == 0 { registry.nextID = 1 }
+            return candidate
+        }
+        job.start()
+        return jobID
+    }
+
+    static func poll(
+        _ jobID: UInt64,
+        into outStamp: UnsafeMutablePointer<CChar>
+    ) -> Int32? {
+        let job = state.withLock { $0.jobs[jobID] }
+        return job?.poll(into: outStamp)
+    }
+
+    @discardableResult
+    static func cancel(_ jobID: UInt64) -> Bool {
+        let job = state.withLock { $0.jobs[jobID] }
+        guard let job else { return false }
+        job.cancel()
+        return true
+    }
+
+    @discardableResult
+    static func release(_ jobID: UInt64) -> Bool {
+        let job = state.withLock { $0.jobs.removeValue(forKey: jobID) }
+        guard let job else { return false }
+        job.cancel()
+        return true
+    }
+
+    static func cancelAll() -> Int {
+        let jobs = state.withLock { registry -> [NativeStampJob] in
+            let jobs = Array(registry.jobs.values)
+            registry.jobs.removeAll(keepingCapacity: true)
+            return jobs
+        }
+        for job in jobs { job.cancel() }
+        return jobs.count
+    }
+}
+
+/// Start a native asynchronous stamp operation and return its process-local job
+/// ID. Zero means invalid arguments or an unsupported cost.
+@_cdecl("columba_stamp_job_start")
+public func columba_stamp_job_start(
+    _ workblock: UnsafePointer<CChar>?,
+    _ workblockLen: Int32,
+    _ stampCost: Int32
+) -> UInt64 {
+    guard let workblock, workblockLen >= 0, stampCost >= 0 else { return 0 }
+    let data = workblock.withMemoryRebound(to: UInt8.self, capacity: Int(workblockLen)) {
+        Data(bytes: $0, count: Int(workblockLen))
+    }
+    return NativeStampJobRegistry.start(workblock: data, cost: Int(stampCost))
+}
+
+/// Poll a native job. Returns 0 while running, 32 after copying a completed
+/// stamp, -2 when cancelled, -3 on generation failure, and -1 for bad input or
+/// an unknown/released job.
+@_cdecl("columba_stamp_job_poll")
+public func columba_stamp_job_poll(
+    _ jobID: UInt64,
+    _ outStamp: UnsafeMutablePointer<CChar>?
+) -> Int32 {
+    guard jobID != 0, let outStamp,
+          let status = NativeStampJobRegistry.poll(jobID, into: outStamp) else {
+        return -1
+    }
+    return status
+}
+
+/// Request cooperative cancellation. Repeated cancellation remains successful
+/// until Python releases the job.
+@_cdecl("columba_stamp_job_cancel")
+public func columba_stamp_job_cancel(_ jobID: UInt64) -> Int32 {
+    NativeStampJobRegistry.cancel(jobID) ? 0 : -1
+}
+
+/// End Python ownership. Releasing an active job also cancels its native work.
+@_cdecl("columba_stamp_job_release")
+public func columba_stamp_job_release(_ jobID: UInt64) -> Int32 {
+    NativeStampJobRegistry.release(jobID) ? 0 : -1
+}
+
+/// Cancel and detach every active job during embedded-runtime teardown.
+@_cdecl("columba_stamp_jobs_cancel_all")
+public func columba_stamp_jobs_cancel_all() -> Int32 {
+    Int32(NativeStampJobRegistry.cancelAll())
 }

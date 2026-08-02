@@ -43,6 +43,11 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
+      - name: Run native stamp job regressions
+        run: |
+          set -euo pipefail
+          swift test --filter NativeStampJobTests
+
       - name: Resolve shipping Swift packages
         run: |
           set -euo pipefail

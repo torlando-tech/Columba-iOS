@@ -105,7 +105,26 @@ class NativeStampBridgeTests(unittest.TestCase):
         self.stamper = Stamper
         self.bridge = load_bridge(Stamper)
 
-    def test_token_is_forwarded_and_cancellation_returns_no_stamp(self) -> None:
+    def configure_native_jobs(
+        self,
+        *,
+        start=None,
+        poll=None,
+        cancel=None,
+        release=None,
+        cancel_all=None,
+    ) -> None:
+        setattr(self.bridge, "_stamp_job_start_fn", start or mock.Mock(return_value=1))
+        setattr(self.bridge, "_stamp_job_poll_fn", poll or mock.Mock(return_value=-2))
+        setattr(self.bridge, "_stamp_job_cancel_fn", cancel or mock.Mock(return_value=0))
+        setattr(self.bridge, "_stamp_job_release_fn", release or mock.Mock(return_value=0))
+        setattr(
+            self.bridge,
+            "_stamp_jobs_cancel_all_fn",
+            cancel_all or mock.Mock(return_value=0),
+        )
+
+    def test_token_cancellation_cancels_and_releases_native_job(self) -> None:
         class Token:
             def __init__(self):
                 self.checks = 0
@@ -115,20 +134,38 @@ class NativeStampBridgeTests(unittest.TestCase):
                 return True
 
         token = Token()
-        seen = {}
+        events = []
 
-        def native(workblock, length, cost, output, cancellation, context):
-            seen["args"] = (bytes(workblock), length, cost, context)
-            seen["cancelled"] = cancellation(context)
+        def start(workblock, length, cost):
+            events.append(("start", bytes(workblock), length, cost))
+            return 41
+
+        def cancel(job_id):
+            events.append(("cancel", job_id))
             return 0
 
-        self.bridge._stamp_generate_cancellable_fn = native
+        def poll(job_id, _output):
+            events.append(("poll", job_id))
+            return -2
+
+        def release(job_id):
+            events.append(("release", job_id))
+            return 0
+
+        self.configure_native_jobs(start=start, poll=poll, cancel=cancel, release=release)
         self.assertIsNone(self.bridge._native_stamp_pow(b"work", 9, token))
-        self.assertEqual((b"work", 4, 9, None), seen["args"])
-        self.assertEqual(1, seen["cancelled"])
+        self.assertEqual(
+            [
+                ("start", b"work", 4, 9),
+                ("cancel", 41),
+                ("poll", 41),
+                ("release", 41),
+            ],
+            events,
+        )
         self.assertEqual(1, token.checks)
 
-    def test_valid_nonzero_cost_native_proof_path_returns_exact_stamp(self) -> None:
+    def test_valid_nonzero_cost_native_job_returns_exact_stamp(self) -> None:
         workblock = b"payload"
         cost = 7
         candidate_number = 0
@@ -140,22 +177,46 @@ class NativeStampBridgeTests(unittest.TestCase):
                 break
             candidate_number += 1
 
-        def native(_workblock, _length, native_cost, output, cancellation, context):
-            self.assertEqual(cost, native_cost)
-            self.assertEqual(0, cancellation(context))
+        released = []
+
+        def poll(job_id, output):
+            self.assertEqual(73, job_id)
             ctypes.memmove(output, expected, len(expected))
             return len(expected)
 
-        self.bridge._stamp_generate_cancellable_fn = native
+        self.configure_native_jobs(
+            start=mock.Mock(return_value=73),
+            poll=poll,
+            release=lambda job_id: released.append(job_id) or 0,
+        )
         token = types.SimpleNamespace(is_cancelled=lambda: False)
         stamp = self.bridge._native_stamp_pow(workblock, cost, token)
         self.assertEqual(expected, stamp)
+        self.assertEqual([73], released)
         proof = hashlib.sha256(workblock + stamp).digest()
         self.assertGreaterEqual(256 - int.from_bytes(proof, "big").bit_length(), cost)
 
+    def test_unexpected_positive_poll_status_fails_closed(self) -> None:
+        polls = []
+        released = []
+
+        def poll(job_id, _output):
+            polls.append(job_id)
+            return 1 if len(polls) == 1 else -2
+
+        self.configure_native_jobs(
+            start=mock.Mock(return_value=91),
+            poll=poll,
+            release=lambda job_id: released.append(job_id) or 0,
+        )
+        token = types.SimpleNamespace(is_cancelled=lambda: False)
+        self.assertIsNone(self.bridge._native_stamp_pow(b"work", 8, token))
+        self.assertEqual([91], polls)
+        self.assertEqual([91], released)
+
     def test_install_requests_three_argument_contract_and_forwards_exact_token(self) -> None:
         token = object()
-        self.bridge._stamp_generate_cancellable_fn = object()
+        self.configure_native_jobs()
         self.bridge._native_stamp_pow = mock.Mock(return_value=b"x" * 32)
 
         self.bridge._install_native_stamp_generator()
@@ -166,15 +227,21 @@ class NativeStampBridgeTests(unittest.TestCase):
         self.bridge._native_stamp_pow.assert_called_once_with(b"block", 5, token)
 
     def test_repeated_install_uninstall_does_not_retain_global_callback(self) -> None:
-        self.bridge._stamp_generate_cancellable_fn = object()
+        self.configure_native_jobs()
         for _ in range(2):
             self.bridge._install_native_stamp_generator()
             self.bridge._uninstall_native_stamp_generator()
         self.assertIsNone(self.stamper.calls[-1][0][0])
         self.assertEqual(4, len(self.stamper.calls))
 
+    def test_cancel_all_failure_does_not_retain_global_callback(self) -> None:
+        self.configure_native_jobs(cancel_all=mock.Mock(side_effect=RuntimeError("boom")))
+        self.bridge._install_native_stamp_generator()
+        self.bridge._uninstall_native_stamp_generator()
+        self.assertIsNone(self.stamper.calls[-1][0][0])
+
     def test_repeated_stop_when_not_started_still_clears_global_callback(self) -> None:
-        self.bridge._stamp_generate_cancellable_fn = object()
+        self.configure_native_jobs()
         self.bridge._install_native_stamp_generator()
         self.bridge._state["started"] = False
         self.bridge.stop()
@@ -232,13 +299,31 @@ class NativeStampBridgeTests(unittest.TestCase):
 
 
 class NativeStampStaticABITests(unittest.TestCase):
-    def test_swift_has_cancellable_abi_and_thread_safe_periodic_polling(self) -> None:
+    def test_shipping_stamp_bridge_uses_no_python_callback_trampoline(self) -> None:
+        forbidden = re.compile(r"\b(?:CFUNCTYPE|PYFUNCTYPE)\b")
+        offenders = []
+        for path in sorted((ROOT / "app").rglob("*.py")):
+            if forbidden.search(path.read_text(encoding="utf-8")):
+                offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual([], offenders, "shipping Python creates a native callback trampoline")
+
+    def test_swift_has_native_job_abi_and_thread_safe_periodic_polling(self) -> None:
         source = STAMP.read_text(encoding="utf-8")
-        self.assertIn('@_cdecl("columba_stamp_generate")', source)
-        self.assertIn('@_cdecl("columba_stamp_generate_cancellable")', source)
-        self.assertIn("isCancelled:", source)
+        for symbol in (
+            "columba_stamp_generate",
+            "columba_stamp_job_start",
+            "columba_stamp_job_poll",
+            "columba_stamp_job_cancel",
+            "columba_stamp_job_release",
+            "columba_stamp_jobs_cancel_all",
+        ):
+            self.assertIn(f'@_cdecl("{symbol}")', source)
+        self.assertNotIn("columba_stamp_generate_cancellable", source)
+        self.assertNotIn("@convention(c)", source)
+        self.assertIn("StampCancellationState", source)
         self.assertRegex(source, r"rounds\s*&\s*0x(?:FF|[1-9A-F][0-9A-F]+)\s*==\s*0")
         self.assertIn("OSAllocatedUnfairLock", source)
+        self.assertIn("func poll(into outStamp:", source)
         self.assertNotRegex(source, r"nonatomic|UnsafeMutablePointer<Bool>")
 
     def test_shutdown_paths_unregister_before_taking_bridge_lock(self) -> None:

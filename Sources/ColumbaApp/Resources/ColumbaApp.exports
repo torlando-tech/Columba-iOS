@@ -28,4 +28,8 @@ _columba_rnode_set_online
 _columba_rnode_state
 _columba_rnode_write
 _columba_stamp_generate
-_columba_stamp_generate_cancellable
+_columba_stamp_job_cancel
+_columba_stamp_job_poll
+_columba_stamp_job_release
+_columba_stamp_job_start
+_columba_stamp_jobs_cancel_all
