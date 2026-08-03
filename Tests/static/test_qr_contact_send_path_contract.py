@@ -119,7 +119,7 @@ class QRContactSendPathContractTests(unittest.TestCase):
         start = body.index("        } catch {\n            var failure")
         final_failure = body[start:]
         self.assertIn("lxMessage.state = .failed", final_failure)
-        self.assertIn("repository.saveMessage(lxMessage)", final_failure)
+        self.assertIn("persistMessage(lxMessage, replacing: localRetryHash)", final_failure)
         self.assertIn("failure.localizedDescription", final_failure)
         self.assertIn("DiagLog.log", final_failure)
         self.assertNotIn('errorMessage = "Failed to send: \\(error.localizedDescription)"', final_failure)
@@ -136,6 +136,22 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertIn("imageData: failedMessage.imageData", retry)
         self.assertIn("attachments: failedMessage.attachments", retry)
         self.assertNotIn("repository.deleteMessage", retry)
+
+    def test_retry_replacement_is_staged_and_atomic(self) -> None:
+        send = self._swift_function(
+            "Sources/ColumbaApp/ViewModels/MessagingViewModel.swift",
+            "    public func sendMessage(\n",
+            "    /// Retry sending a failed message.",
+        )
+        repository = self._read("Sources/ColumbaApp/Services/MessageRepository.swift")
+        stage = send.index("lxMessage.state = .outbound")
+        wire_send = send.index("backend.lxmf.sendLxmfMessage")
+        self.assertLess(stage, wire_send)
+        self.assertIn("repository.replaceMessage(lxMessage, replacing: storedHash)", send)
+        self.assertIn('execute("BEGIN IMMEDIATE")', repository)
+        self.assertIn('execute("COMMIT")', repository)
+        self.assertIn("replacementSourceMissing", repository)
+        self.assertNotIn("repository.deleteMessage(oldHash)", send)
 
     def test_existing_qr_contact_can_refresh_peer_identity(self) -> None:
         add_sheet = self._read("Sources/ColumbaApp/Views/Contacts/AddContactSheet.swift")

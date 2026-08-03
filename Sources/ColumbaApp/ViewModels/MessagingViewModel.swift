@@ -247,6 +247,14 @@ public final class MessagingViewModel {
         (error as? SendFailure)?.category ?? "backend-error"
     }
 
+    private func persistMessage(_ message: LXMessage, replacing oldHash: Data?) async throws {
+        if let oldHash {
+            try await repository.replaceMessage(message, replacing: oldHash)
+        } else {
+            try await repository.saveMessage(message)
+        }
+    }
+
     /// Send a text-only message (convenience wrapper).
     @MainActor
     public func sendMessage(text: String) async -> Bool {
@@ -338,6 +346,19 @@ public final class MessagingViewModel {
         let optimisticId = optimisticHash.map { String(format: "%02x", $0) }.joined()
         lxMessage.hash = optimisticHash
 
+        // A retry must stop being durably retryable before the wire send starts.
+        // If canonical replacement later fails, this outbound row remains the
+        // single durable owner and cannot be sent again as a failed message.
+        if let storedHash = replacedStorageHash ?? localRetryHash {
+            lxMessage.state = .outbound
+            do {
+                try await repository.replaceMessage(lxMessage, replacing: storedHash)
+            } catch {
+                errorMessage = "The failed message could not be prepared for retry. Please try again."
+                return false
+            }
+        }
+
         // Build reply preview for optimistic display
         let replyPreview: String? = {
             guard let replyToId else { return nil }
@@ -411,13 +432,13 @@ public final class MessagingViewModel {
 
             // Persist so a subsequent loadMessages() doesn't wipe it.
             do {
-                try await repository.saveMessage(lxMessage)
-                if let oldHash = replacedStorageHash ?? localRetryHash,
-                   oldHash != lxMessage.hash {
-                    try await repository.deleteMessage(oldHash)
-                }
+                try await persistMessage(lxMessage, replacing: localRetryHash)
             } catch {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
+                if let index = messages.firstIndex(where: { $0.id == realId }) {
+                    messages[index].deliveryStatus = .sending
+                }
+                errorMessage = "Message was sent, but local confirmation could not be saved. It will remain pending and will not be retried automatically."
             }
 
             return true
@@ -475,13 +496,13 @@ public final class MessagingViewModel {
                         }
                     }
                     do {
-                        try await repository.saveMessage(retryMessage)
-                        if let oldHash = replacedStorageHash ?? localRetryHash,
-                           oldHash != retryMessage.hash {
-                            try await repository.deleteMessage(oldHash)
-                        }
+                        try await persistMessage(retryMessage, replacing: localRetryHash)
                     } catch {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
+                        if let index = messages.firstIndex(where: { $0.id == realId }) {
+                            messages[index].deliveryStatus = .sending
+                        }
+                        errorMessage = "Message was relayed, but local confirmation could not be saved. It will remain pending and will not be retried automatically."
                     }
                     return true
                 } catch {
@@ -495,11 +516,7 @@ public final class MessagingViewModel {
             lxMessage.state = .failed
             var persisted = false
             do {
-                try await repository.saveMessage(lxMessage)
-                if let oldHash = replacedStorageHash ?? localRetryHash,
-                   oldHash != lxMessage.hash {
-                    try await repository.deleteMessage(oldHash)
-                }
+                try await persistMessage(lxMessage, replacing: localRetryHash)
                 persisted = true
             } catch {
                 logger.error("[MSG_VM] saveMessage(failed) failed: \(error.localizedDescription)")

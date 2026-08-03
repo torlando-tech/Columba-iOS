@@ -31,6 +31,7 @@
 import Foundation
 import RNSAPI
 import LXMFSwift
+import SQLite3
 
 /// Actor for thread-safe message database operations.
 ///
@@ -55,6 +56,10 @@ public actor MessageRepository {
 
     /// The GRDB-backed canonical store written by the Swift / NE backend.
     private let database: LXMFSwift.LXMFDatabase
+    /// Path used for the app-owned atomic retry rekey. LXMFDatabase exposes
+    /// save and delete as separate transactions, so retries use one SQLite
+    /// transaction against the same WAL database instead.
+    private let replacementPath: String
 
     // MARK: - Initialization
 
@@ -69,6 +74,7 @@ public actor MessageRepository {
     /// - Throws: rethrows `LXMFSwift.LXMFDatabase` initialization errors.
     public init(grdbPath: String) throws {
         self.database = try LXMFSwift.LXMFDatabase(path: grdbPath, readonly: false)
+        self.replacementPath = grdbPath
     }
 
     // MARK: - Conversation Operations
@@ -212,6 +218,99 @@ public actor MessageRepository {
         }
     }
 
+    /// Atomically rekey an app-owned optimistic or failed row to the canonical
+    /// hash accepted by the network backend. Payload columns stay on the same
+    /// row, so a crash cannot expose both a stale retry and a sent duplicate.
+    public func replaceMessage(_ message: RNSAPI.LXMessage, replacing oldId: Data) async throws {
+        var connection: OpaquePointer?
+        guard sqlite3_open_v2(
+            replacementPath,
+            &connection,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        ) == SQLITE_OK, let connection else {
+            throw MessageRepositoryError.sqlite("open failed")
+        }
+        defer { sqlite3_close(connection) }
+        sqlite3_busy_timeout(connection, 5_000)
+
+        func execute(_ sql: String) throws {
+            guard sqlite3_exec(connection, sql, nil, nil, nil) == SQLITE_OK else {
+                throw MessageRepositoryError.sqlite(String(cString: sqlite3_errmsg(connection)))
+            }
+        }
+
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        func bind(_ data: Data, to statement: OpaquePointer?, at index: Int32) throws {
+            let result = data.withUnsafeBytes { bytes in
+                sqlite3_bind_blob(statement, index, bytes.baseAddress, Int32(data.count), transient)
+            }
+            guard result == SQLITE_OK else {
+                throw MessageRepositoryError.sqlite(String(cString: sqlite3_errmsg(connection)))
+            }
+        }
+
+        try execute("BEGIN IMMEDIATE")
+        do {
+            var statement: OpaquePointer?
+            defer { sqlite3_finalize(statement) }
+            let sql = """
+                UPDATE messages
+                SET message_id = ?, state = ?, method = ?, timestamp = ?, updated_at = ?
+                WHERE message_id = ?
+                """
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw MessageRepositoryError.sqlite(String(cString: sqlite3_errmsg(connection)))
+            }
+            try bind(message.hash, to: statement, at: 1)
+            sqlite3_bind_int(statement, 2, Int32(Self.mapStateToGRDB(message.state).rawValue))
+            sqlite3_bind_int(statement, 3, Int32(Self.mapMethodToGRDB(message.method).rawValue))
+            sqlite3_bind_double(statement, 4, message.timestamp)
+            sqlite3_bind_double(statement, 5, Date().timeIntervalSince1970)
+            try bind(oldId, to: statement, at: 6)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw MessageRepositoryError.sqlite(String(cString: sqlite3_errmsg(connection)))
+            }
+            guard sqlite3_changes(connection) == 1 else {
+                throw MessageRepositoryError.replacementSourceMissing
+            }
+
+            var conversationStatement: OpaquePointer?
+            defer { sqlite3_finalize(conversationStatement) }
+            let conversationSQL = """
+                UPDATE conversations
+                SET last_message_timestamp = ?, updated_at = ?
+                WHERE destination_hash = ? AND last_message_timestamp <= ?
+                """
+            guard sqlite3_prepare_v2(
+                connection,
+                conversationSQL,
+                -1,
+                &conversationStatement,
+                nil
+            ) == SQLITE_OK else {
+                throw MessageRepositoryError.sqlite(String(cString: sqlite3_errmsg(connection)))
+            }
+            sqlite3_bind_double(conversationStatement, 1, message.timestamp)
+            sqlite3_bind_double(conversationStatement, 2, Date().timeIntervalSince1970)
+            try bind(message.destinationHash, to: conversationStatement, at: 3)
+            sqlite3_bind_double(conversationStatement, 4, message.timestamp)
+            guard sqlite3_step(conversationStatement) == SQLITE_DONE else {
+                throw MessageRepositoryError.sqlite(String(cString: sqlite3_errmsg(connection)))
+            }
+            try execute("COMMIT")
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+
+        NotificationCenter.default.post(
+            name: Self.conversationActivityNotification,
+            object: nil,
+            userInfo: [Self.conversationHashUserInfoKey: message.destinationHash]
+        )
+    }
+
     /// Get message by ID (LXMessage form), rebuilt from the GRDB record.
     public func getMessage(id: Data) async throws -> RNSAPI.LXMessage? {
         try await database.getMessageRecord(id: id).map(Self.mapToLXMessage)
@@ -262,6 +361,11 @@ public actor MessageRepository {
         }
         return out
     }
+}
+
+enum MessageRepositoryError: Error {
+    case replacementSourceMissing
+    case sqlite(String)
 }
 
 // MARK: - Adapters (LXMFSwift <- -> RNSAPI)

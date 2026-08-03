@@ -277,3 +277,77 @@ final class AnnounceClassificationTests: XCTestCase {
         XCTAssertNil(MessagingViewModel.failureDescription(for: .queued(messageHash: "00")))
     }
 }
+
+final class MessageRepositoryAtomicReplacementTests: XCTestCase {
+    private func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-atomic-retry-\(UUID().uuidString).sqlite")
+    }
+
+    private func removeDatabase(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(atPath: url.path + "-shm")
+        try? FileManager.default.removeItem(atPath: url.path + "-wal")
+    }
+
+    func testRetryReplacementRekeysExactlyOneDurableRow() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x11, count: 16)
+        let oldHash = Data(repeating: 0x22, count: 32)
+        let canonicalHash = Data(repeating: 0x33, count: 32)
+
+        let failed = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("payload".utf8)
+        )
+        failed.hash = oldHash
+        failed.state = .failed
+        failed.method = .opportunistic
+        try await repository.saveMessage(failed)
+
+        let sent = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("payload".utf8)
+        )
+        sent.hash = canonicalHash
+        sent.state = .sent
+        sent.method = .propagated
+        try await repository.replaceMessage(sent, replacing: oldHash)
+
+        let oldRecord = try await repository.getMessageRecord(id: oldHash)
+        let storedCanonical = try await repository.getMessageRecord(id: canonicalHash)
+        let canonicalRecord = try XCTUnwrap(storedCanonical)
+        XCTAssertNil(oldRecord)
+        XCTAssertEqual(canonicalRecord.content, Data("payload".utf8))
+        XCTAssertEqual(canonicalRecord.state, LXMessageState.sent.rawValue)
+    }
+
+    func testMissingRetrySourceDoesNotCreateCanonicalRow() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let canonicalHash = Data(repeating: 0x44, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: Data(repeating: 0x55, count: 16),
+            sourceIdentity: nil,
+            content: Data("payload".utf8)
+        )
+        message.hash = canonicalHash
+        message.state = .sent
+
+        do {
+            try await repository.replaceMessage(
+                message,
+                replacing: Data(repeating: 0x66, count: 32)
+            )
+            XCTFail("Expected replacement of a missing source row to fail")
+        } catch {
+            let canonicalRecord = try await repository.getMessageRecord(id: canonicalHash)
+            XCTAssertNil(canonicalRecord)
+        }
+    }
+}
