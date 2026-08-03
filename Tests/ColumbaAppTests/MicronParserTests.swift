@@ -773,6 +773,39 @@ final class MessageRepositoryAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testAnnouncedDisplayNameRefreshesVisibleChatList() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-chat-announced-name-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+        }
+
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let viewModel = ChatsViewModel(
+            repository: repository,
+            notificationObserver: NotificationObserver()
+        )
+        let destination = Data([0x05, 0xc5, 0x7e, 0x42] + Array(repeating: 0xaa, count: 12))
+        try await repository.ensureConversation(destination, displayName: "Peer 05c57e42")
+        await viewModel.loadConversations()
+        XCTAssertEqual(viewModel.conversations.first?.displayName, "Peer 05c57e42")
+
+        let applied = try await repository.applyAnnouncedDisplayName(
+            destination,
+            displayName: "Hermes Homelab"
+        )
+        XCTAssertTrue(applied)
+
+        for _ in 0..<100 where viewModel.conversations.first?.displayName != "Hermes Homelab" {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(viewModel.conversations.first?.displayName, "Hermes Homelab")
+    }
+
+    @MainActor
     func testConversationReadNotificationClearsVisibleUnreadBadge() async throws {
         let databaseURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("columba-chat-read-\(UUID().uuidString).sqlite")
