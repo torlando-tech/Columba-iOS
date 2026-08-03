@@ -158,7 +158,7 @@ class QRContactSendPathContractTests(unittest.TestCase):
         view_model = self._read("Sources/ColumbaApp/ViewModels/MessagingViewModel.swift")
         repository = self._read("Sources/ColumbaApp/Services/MessageRepository.swift")
         app_services = self._read("Sources/ColumbaApp/Services/AppServices.swift")
-        self.assertIn("messageRepository.recoverInterruptedRetries()", app_services)
+        self.assertGreaterEqual(app_services.count("messageRepository.recoverInterruptedRetries()"), 3)
         self.assertIn("Verify whether it arrived before retrying", view_model)
         self.assertIn("repository.hasUncertainRetry(for: conversationHash)", view_model)
         self.assertIn("public func recoverInterruptedRetries", repository)

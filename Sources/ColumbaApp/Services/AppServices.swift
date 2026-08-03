@@ -3905,7 +3905,12 @@ public final class AppServices {
             Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: existingIdentity.hexHash)
             let grdbPath = Self.grdbDatabaseFilePath(for: existingIdentity.hexHash)
             self.grdbDatabasePath = grdbPath
-            self.messageRepository = try MessageRepository(grdbPath: grdbPath)
+            let messageRepository = try MessageRepository(grdbPath: grdbPath)
+            self.messageRepository = messageRepository
+            let recoveredRetryCount = try await messageRepository.recoverInterruptedRetries()
+            if recoveredRetryCount > 0 {
+                logger.warning("Recovered \(recoveredRetryCount, privacy: .public) interrupted message retries")
+            }
         }
 
         // 5. Router
