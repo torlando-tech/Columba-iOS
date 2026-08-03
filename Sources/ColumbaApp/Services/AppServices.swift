@@ -1188,7 +1188,12 @@ public final class AppServices {
         Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: newIdentity.hexHash)
         let grdbPath = Self.grdbDatabaseFilePath(for: newIdentity.hexHash)
         self.grdbDatabasePath = grdbPath
-        self.messageRepository = try MessageRepository(grdbPath: grdbPath)
+        let messageRepository = try MessageRepository(grdbPath: grdbPath)
+        self.messageRepository = messageRepository
+        let recoveredRetryCount = try await messageRepository.recoverInterruptedRetries()
+        if recoveredRetryCount > 0 {
+            logger.warning("Recovered \(recoveredRetryCount, privacy: .public) interrupted message retries")
+        }
 
         // 5. Create LXMRouter with identity and database path
         let newRouter = try await LXMRouter(identity: newIdentity, databasePath: dbPath)
@@ -3020,7 +3025,12 @@ public final class AppServices {
         Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: identityHash)
         let grdbPath = Self.grdbDatabaseFilePath(for: identityHash)
         self.grdbDatabasePath = grdbPath
-        self.messageRepository = try MessageRepository(grdbPath: grdbPath)
+        let messageRepository = try MessageRepository(grdbPath: grdbPath)
+        self.messageRepository = messageRepository
+        let recoveredRetryCount = try await messageRepository.recoverInterruptedRetries()
+        if recoveredRetryCount > 0 {
+            logger.warning("Recovered \(recoveredRetryCount, privacy: .public) interrupted message retries")
+        }
 
         // 5. Create LXMRouter with identity and database path
         let newRouter = try await LXMRouter(identity: identity, databasePath: dbPath)

@@ -50,7 +50,6 @@ public final class MessagingViewModel {
     private let settingsRepository = SettingsRepository()
     private let displayName: String?
     private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingViewModel")
-    private var didRecoverInterruptedRetries = false
 
     /// Observation token for incoming message notifications.
     private var notificationTask: Any?
@@ -129,14 +128,6 @@ public final class MessagingViewModel {
         defer { isLoading = false }
 
         do {
-            var recoveredInterruptedRetries = 0
-            if !didRecoverInterruptedRetries {
-                recoveredInterruptedRetries = try await repository.recoverInterruptedRetries(
-                    for: conversationHash
-                )
-                didRecoverInterruptedRetries = true
-            }
-
             // Ensure conversation exists, then clear unread state as soon as the
             // user opens it. Message decoding or reply-preview failures must not
             // leave a stale badge behind after the conversation was viewed.
@@ -146,6 +137,9 @@ public final class MessagingViewModel {
             // Fetch most recent page
             let records = try await repository.fetchMessageRecords(
                 for: conversationHash, limit: Self.pageSize, offset: 0)
+            let hasInterruptedRetry = records.contains {
+                $0.receivingInterface == MessageRepository.uncertainRetryMarker
+            }
             let loaded = records.reversed()
                 .map { Message(from: $0, localHash: appServices.localIdentityHash) }
                 .filter { !$0.isEmpty }  // Hide telemetry-only messages (e.g. location sharing)
@@ -171,7 +165,7 @@ public final class MessagingViewModel {
             // were included in the page we just displayed.
             try await repository.markConversationRead(conversationHash)
 
-            errorMessage = recoveredInterruptedRetries > 0
+            errorMessage = hasInterruptedRetry
                 ? "A message retry was interrupted before delivery confirmation. Verify whether it arrived before retrying."
                 : nil
         } catch {
@@ -306,16 +300,6 @@ public final class MessagingViewModel {
             return false
         }
 
-        // Process ownership prevents another view from recovering a retry that
-        // is still active. On every return, any row still marked `.sending` is
-        // released as an unknown-delivery failure.
-        defer {
-            if let retryHash = localRetryHash {
-                Task { [repository] in
-                    await repository.finishRetry(retryHash)
-                }
-            }
-        }
 
         // Always start with opportunistic (single encrypted packet, no link needed).
         // For large messages that exceed single-packet size, handleOutbound() will

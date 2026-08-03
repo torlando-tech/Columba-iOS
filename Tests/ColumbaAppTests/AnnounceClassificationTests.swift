@@ -368,18 +368,19 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         try await repository.saveMessage(retry)
 
         retry.state = .sending
-        try await repository.replaceMessage(retry, replacing: retryHash)
-        let recoveredCount = try await repository.recoverInterruptedRetries(for: destination)
+        try await repository.stageRetry(retry, replacing: retryHash)
+        let recoveredCount = try await repository.recoverInterruptedRetries()
         XCTAssertEqual(recoveredCount, 1)
 
         let storedRecovered = try await repository.getMessageRecord(id: retryHash)
         let recovered = try XCTUnwrap(storedRecovered)
         XCTAssertEqual(recovered.state, LXMessageState.failed.rawValue)
-        let secondRecoveryCount = try await repository.recoverInterruptedRetries(for: destination)
+        XCTAssertEqual(recovered.receivingInterface, MessageRepository.uncertainRetryMarker)
+        let secondRecoveryCount = try await repository.recoverInterruptedRetries()
         XCTAssertEqual(secondRecoveryCount, 0)
     }
 
-    func testActiveRetryIsNotRecoveredUntilItsOwnerFinishes() async throws {
+    func testNonAppSendingRowIsNotRecovered() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }
         let repository = try MessageRepository(grdbPath: databaseURL.path)
@@ -395,13 +396,13 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         try await repository.saveMessage(retry)
 
         retry.state = .sending
-        try await repository.stageRetry(retry, replacing: retryHash)
-        let whileActive = try await repository.recoverInterruptedRetries(for: destination)
-        XCTAssertEqual(whileActive, 0)
+        try await repository.replaceMessage(retry, replacing: retryHash)
+        let recoveredCount = try await repository.recoverInterruptedRetries()
+        XCTAssertEqual(recoveredCount, 0)
 
-        await repository.finishRetry(retryHash)
         let stored = try await repository.getMessageRecord(id: retryHash)
-        let finished = try XCTUnwrap(stored)
-        XCTAssertEqual(finished.state, LXMessageState.failed.rawValue)
+        let untouched = try XCTUnwrap(stored)
+        XCTAssertEqual(untouched.state, LXMessageState.sending.rawValue)
+        XCTAssertNil(untouched.receivingInterface)
     }
 }

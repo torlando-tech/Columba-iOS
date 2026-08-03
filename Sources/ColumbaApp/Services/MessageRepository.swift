@@ -51,6 +51,8 @@ public actor MessageRepository {
         Notification.Name("network.columba.conversationActivity")
 
     public static let conversationHashUserInfoKey = "conversationHash"
+    public static let stagedRetryMarker = "columba-app-retry-staged-v1"
+    public static let uncertainRetryMarker = "columba-app-retry-uncertain-v1"
 
     // MARK: - Properties
 
@@ -58,9 +60,7 @@ public actor MessageRepository {
     private let database: LXMFSwift.LXMFDatabase
     /// Suspension-aware pool used only for atomic app-owned retry replacement.
     private let replacementPool: DatabasePool
-    /// Retry hashes actively owned by this process. Recovery ignores these so
-    /// reopening a conversation cannot race a send still awaiting its outcome.
-    private var activeRetryHashes: Set<Data> = []
+
 
     // MARK: - Initialization
 
@@ -229,21 +229,41 @@ public actor MessageRepository {
     /// hash accepted by the network backend. Payload columns stay on the same
     /// row, so a crash cannot expose both a stale retry and a sent duplicate.
     public func replaceMessage(_ message: RNSAPI.LXMessage, replacing oldId: Data) async throws {
+        try await replaceMessageRecord(message, replacing: oldId, retryMarker: nil)
+    }
+
+    /// Stage one failed retry as app-owned `.sending` before network submission.
+    /// The durable marker lets startup recovery distinguish it from NE work.
+    public func stageRetry(_ message: RNSAPI.LXMessage, replacing oldId: Data) async throws {
+        try await replaceMessageRecord(
+            message,
+            replacing: oldId,
+            retryMarker: Self.stagedRetryMarker
+        )
+    }
+
+    private func replaceMessageRecord(
+        _ message: RNSAPI.LXMessage,
+        replacing oldId: Data,
+        retryMarker: String?
+    ) async throws {
         try await replacementPool.write { db in
             try db.execute(
                 sql: """
                     UPDATE messages
-                    SET message_id = ?, state = ?, method = ?, timestamp = ?, updated_at = ?
+                    SET message_id = ?, state = ?, method = ?, timestamp = ?,
+                        receiving_interface = ?, updated_at = ?
                     WHERE message_id = ?
                     """,
-                arguments: [
+                arguments: StatementArguments([
                     message.hash,
                     Self.mapStateToGRDB(message.state).rawValue,
                     Self.mapMethodToGRDB(message.method).rawValue,
                     message.timestamp,
+                    retryMarker,
                     Date().timeIntervalSince1970,
                     oldId,
-                ]
+                ] as [DatabaseValueConvertible?])
             )
             guard db.changesCount == 1 else {
                 throw MessageRepositoryError.replacementSourceMissing
@@ -270,70 +290,26 @@ public actor MessageRepository {
         )
     }
 
-    /// Stage one failed retry as `.sending` before network submission and mark
-    /// it as actively owned by this process.
-    public func stageRetry(_ message: RNSAPI.LXMessage, replacing oldId: Data) async throws {
-        activeRetryHashes.insert(message.hash)
-        do {
-            try await replaceMessage(message, replacing: oldId)
-        } catch {
-            activeRetryHashes.remove(message.hash)
-            throw error
-        }
-    }
-
-    /// Release process ownership. If no definitive result replaced the staged
-    /// row, expose it as failed instead of leaving it indefinitely pending.
-    public func finishRetry(_ messageId: Data) async {
-        activeRetryHashes.remove(messageId)
-        try? await replacementPool.write { db in
+    /// Recover only app-owned retries left staged by a prior process. The
+    /// uncertainty marker remains durable until a later retry or deletion, so
+    /// a transient UI-load failure cannot erase the warning.
+    public func recoverInterruptedRetries() async throws -> Int {
+        try await replacementPool.write { db in
             try db.execute(
                 sql: """
-                    UPDATE messages SET state = ?, updated_at = ?
-                    WHERE message_id = ? AND state = ?
+                    UPDATE messages
+                    SET state = ?, receiving_interface = ?, updated_at = ?
+                    WHERE incoming = 0 AND state = ? AND receiving_interface = ?
                     """,
                 arguments: [
                     LXMFSwift.LXMessageState.failed.rawValue,
+                    Self.uncertainRetryMarker,
                     Date().timeIntervalSince1970,
-                    messageId,
                     LXMFSwift.LXMessageState.sending.rawValue,
+                    Self.stagedRetryMarker,
                 ]
             )
-        }
-    }
-
-    /// Recover retry rows left in `.sending` by termination before the backend
-    /// returned a definitive result. They become user-visible failures rather
-    /// than remaining indefinitely pending or being resent automatically.
-    public func recoverInterruptedRetries(for destinationHash: Data) async throws -> Int {
-        let active = activeRetryHashes
-        return try await replacementPool.write { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT message_id FROM messages
-                    WHERE destination_hash = ? AND incoming = 0 AND state = ?
-                    """,
-                arguments: [
-                    destinationHash,
-                    LXMFSwift.LXMessageState.sending.rawValue,
-                ]
-            )
-            let interrupted = rows.compactMap { row -> Data? in
-                let messageId: Data = row["message_id"]
-                return active.contains(messageId) ? nil : messageId
-            }
-            for messageId in interrupted {
-                try db.execute(
-                    sql: "UPDATE messages SET state = ?, updated_at = ? WHERE message_id = ?",
-                    arguments: [
-                        LXMFSwift.LXMessageState.failed.rawValue,
-                        Date().timeIntervalSince1970,
-                        messageId,
-                    ]
-                )
-            }
-            return interrupted.count
+            return db.changesCount
         }
     }
 
