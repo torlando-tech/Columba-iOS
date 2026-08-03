@@ -70,11 +70,16 @@ public enum AppDataParser {
         destinationHash: Data
     ) -> Bool {
         guard let existingName, !existingName.isEmpty else { return true }
+        let generatedFallback = generatedConversationName(destinationHash: destinationHash)
+        return existingName.caseInsensitiveCompare(generatedFallback) == .orderedSame
+    }
+
+    /// The placeholder used when a message arrives before its peer announce.
+    public static func generatedConversationName(destinationHash: Data) -> String {
         let hashPrefix = destinationHash.prefix(4)
             .map { String(format: "%02x", $0) }
             .joined()
-        let generatedFallback = "Peer \(hashPrefix)"
-        return existingName.caseInsensitiveCompare(generatedFallback) == .orderedSame
+        return "Peer \(hashPrefix)"
     }
 
     /// Pull a UTF-8 string out of a `.string` or `.binary` MessagePackValue.

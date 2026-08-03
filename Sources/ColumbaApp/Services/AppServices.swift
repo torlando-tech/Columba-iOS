@@ -2856,13 +2856,11 @@ public final class AppServices {
             // UPDATE-only (never creates a conversation for a bare announce) and
             // only fills an empty/nil name or the exact generated hash fallback
             // (never clobbers a custom or previously announced name).
-            if !displayName.isEmpty, let repo = self.messageRepository,
-               let convo = try? await repo.fetchConversation(data) {
-                if AppDataParser.shouldReplaceConversationName(
-                    convo.displayName,
-                    destinationHash: data
-                ) {
-                    try? await repo.updateDisplayName(data, displayName: displayName)
+            if !displayName.isEmpty, let repo = self.messageRepository {
+                if (try? await repo.applyAnnouncedDisplayName(
+                    data,
+                    displayName: displayName
+                )) == true {
                     DiagLog.log("[RNS] stamped display name onto convo \(data.map { String(format: "%02x", $0) }.joined().prefix(8))")
                 }
             }
