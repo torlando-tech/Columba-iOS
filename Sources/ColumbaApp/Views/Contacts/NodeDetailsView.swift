@@ -56,7 +56,7 @@ struct NodeDetailsView: View {
     /// Live snapshot seeded from the parent-supplied `contact` and refreshed
     /// whenever the path table reports a newer entry for this destination.
     /// All bindings in the view read from this so the badge transitions from
-    /// "Expired" to "Online" the moment an announce arrives.
+    /// "No Active Path" to "Online" the moment an announce arrives.
     @State private var liveContact: Contact?
     /// Source of truth for the toolbar star, kept separate from `liveContact`
     /// because `mergedContact`/`applyOfflineState` always re-derive
@@ -135,9 +135,6 @@ struct NodeDetailsView: View {
                 }
             }
         }
-        .refreshable {
-            await refreshFromNetwork()
-        }
         .task(id: contact.id) {
             // Seed the live snapshot from the parent-supplied contact so the
             // first render uses whatever the parent already knew, then keep
@@ -195,7 +192,7 @@ struct NodeDetailsView: View {
                 .fill(isOnline ? Theme.success : Theme.error)
                 .frame(width: 8, height: 8)
 
-            Text(isOnline ? "Online" : "Expired")
+            Text(isOnline ? "Online" : "No Active Path")
                 .font(.subheadline)
                 .fontWeight(.medium)
                 .foregroundStyle(isOnline ? Theme.success : Theme.error)
@@ -208,12 +205,10 @@ struct NodeDetailsView: View {
         }
     }
 
-    // MARK: - Expired Hint
+    // MARK: - Missing Path Hint
 
-    /// Help text shown when a contact's path entry has expired (no recent
-    /// announce on the network). Most common right after scanning a QR — the
-    /// destination hash is known but the network hasn't yet relayed an
-    /// announce we can use to route to them.
+    /// Help text shown when no current path is cached. Browsing remains passive;
+    /// the messaging backend requests and awaits a path only when Send is used.
     private var expiredHint: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "info.circle.fill")
@@ -221,12 +216,12 @@ struct NodeDetailsView: View {
                 .foregroundStyle(Theme.accentColor)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Path needs refresh")
+                Text("No active path")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(Theme.textPrimary)
 
-                Text("We haven't routed to this contact recently. Tap an action to issue a path request — any node on the network with a recent announce will respond.")
+                Text("Columba will request a path automatically when you send a message.")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -644,17 +639,4 @@ struct NodeDetailsView: View {
         }
     }
 
-    /// Pull-to-refresh handler. Re-resolves path data and, if the transport
-    /// supports it, sends an active path request to probe for the contact.
-    private func refreshFromNetwork() async {
-        // Trigger an active probe so the network has a chance to surface a
-        // fresh announce before we re-read the table. This is best-effort —
-        // if no node responds, we just re-display whatever the cache holds.
-        if let transport = appServices.transport {
-            await transport.requestPath(for: contact.identityHash)
-        }
-        // Give the path request a brief window to land before reloading.
-        try? await Task.sleep(for: .milliseconds(500))
-        await loadPathDetails()
-    }
 }

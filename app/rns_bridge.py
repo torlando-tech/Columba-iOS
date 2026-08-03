@@ -1367,6 +1367,69 @@ def persist() -> dict[str, Any]:
         return {"ok": True, "reason": "persisted"}
 
 
+def remember_peer_identity(dest_hash_hex: str, public_key_hex: str) -> dict[str, Any]:
+    """Retain a QR-provided LXMF delivery identity without requesting a path."""
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "reason": "not-started"}
+    try:
+        dest_hash = bytes.fromhex(dest_hash_hex)
+        public_key = bytes.fromhex(public_key_hex)
+    except ValueError:
+        return {"ok": False, "reason": "bad-identity"}
+    if len(dest_hash) != 16 or len(public_key) != 64:
+        return {"ok": False, "reason": "bad-identity"}
+    try:
+        candidate = RNS.Identity(create_keys=False)
+        candidate.load_public_key(public_key)
+        candidate_dest = RNS.Destination(
+            candidate, RNS.Destination.OUT, RNS.Destination.SINGLE,
+            "lxmf", "delivery",
+        )
+        if candidate_dest.hash != dest_hash:
+            return {"ok": False, "reason": "identity-mismatch"}
+        RNS.Identity.remember(None, dest_hash, public_key, None)
+        persistence_result = RNS.Identity.persist_data()
+        # Current RNS returns None on success. An explicit False from this
+        # boundary means the identity was not durably retained.
+        if persistence_result is False:
+            return {"ok": False, "reason": "persist-failed"}
+        return {"ok": True, "reason": "remembered"}
+    except Exception as e:
+        return {"ok": False, "reason": f"remember-failed: {e}"}
+
+
+def resolve_path(dest_hash_hex: str, timeout_seconds: float = 10.0) -> dict[str, Any]:
+    """Request a missing path once and wait boundedly for route + identity."""
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "reason": "not-started"}
+    try:
+        dest_hash = bytes.fromhex(dest_hash_hex)
+    except ValueError:
+        return {"ok": False, "reason": "bad-hash"}
+
+    def resolved() -> bool:
+        try:
+            return bool(RNS.Transport.has_path(dest_hash)) and RNS.Identity.recall(dest_hash) is not None
+        except Exception:
+            return False
+
+    if resolved():
+        return {"ok": True, "reason": "known"}
+    try:
+        RNS.Transport.request_path(dest_hash)
+    except Exception as e:
+        return {"ok": False, "reason": f"request-failed: {e}"}
+
+    deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    while time.monotonic() < deadline:
+        if resolved():
+            return {"ok": True, "reason": "resolved"}
+        time.sleep(0.1)
+    return {"ok": False, "reason": "timeout"}
+
+
 def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                        method: str = "opportunistic") -> dict[str, Any]:
     """Send an LXMF message. Returns a dict with 'ok' (bool) and 'reason'

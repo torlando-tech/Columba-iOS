@@ -31,6 +31,7 @@
 import Foundation
 import RNSAPI
 import LXMFSwift
+import GRDB
 
 /// Actor for thread-safe message database operations.
 ///
@@ -50,11 +51,16 @@ public actor MessageRepository {
         Notification.Name("network.columba.conversationActivity")
 
     public static let conversationHashUserInfoKey = "conversationHash"
+    public static let stagedRetryMarker = "columba-app-retry-staged-v1"
+    public static let uncertainRetryMarker = "columba-app-retry-uncertain-v1"
 
     // MARK: - Properties
 
     /// The GRDB-backed canonical store written by the Swift / NE backend.
     private let database: LXMFSwift.LXMFDatabase
+    /// Suspension-aware pool used only for atomic app-owned retry replacement.
+    private let replacementPool: DatabasePool
+
 
     // MARK: - Initialization
 
@@ -69,6 +75,13 @@ public actor MessageRepository {
     /// - Throws: rethrows `LXMFSwift.LXMFDatabase` initialization errors.
     public init(grdbPath: String) throws {
         self.database = try LXMFSwift.LXMFDatabase(path: grdbPath, readonly: false)
+        var config = Configuration()
+        config.defaultTransactionKind = .immediate
+        config.observesSuspensionNotifications = true
+        config.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA busy_timeout=5000")
+        }
+        self.replacementPool = try DatabasePool(path: grdbPath, configuration: config)
     }
 
     // MARK: - Conversation Operations
@@ -212,6 +225,153 @@ public actor MessageRepository {
         }
     }
 
+    /// Atomically rekey an app-owned optimistic or failed row to the canonical
+    /// hash accepted by the network backend. Payload columns stay on the same
+    /// row, so a crash cannot expose both a stale retry and a sent duplicate.
+    public func replaceMessage(_ message: RNSAPI.LXMessage, replacing oldId: Data) async throws {
+        try await replaceMessageRecord(message, replacing: oldId, retryMarker: nil)
+    }
+
+    /// Stage one failed retry as app-owned `.sending` before network submission.
+    /// The compare-and-set prevents concurrent taps from owning the same row.
+    public func stageRetry(_ message: RNSAPI.LXMessage, replacing oldId: Data) async throws {
+        try await replacementPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE messages
+                    SET message_id = ?, state = ?, method = ?, timestamp = ?,
+                        receiving_interface = ?, updated_at = ?
+                    WHERE message_id = ? AND incoming = 0 AND state = ?
+                      AND (receiving_interface IS NULL OR receiving_interface = ?)
+                    """,
+                arguments: [
+                    message.hash,
+                    Self.mapStateToGRDB(message.state).rawValue,
+                    Self.mapMethodToGRDB(message.method).rawValue,
+                    message.timestamp,
+                    Self.stagedRetryMarker,
+                    Date().timeIntervalSince1970,
+                    oldId,
+                    LXMFSwift.LXMessageState.failed.rawValue,
+                    Self.uncertainRetryMarker,
+                ]
+            )
+            guard db.changesCount == 1 else {
+                throw MessageRepositoryError.replacementSourceMissing
+            }
+            try db.execute(
+                sql: """
+                    UPDATE conversations
+                    SET last_message_timestamp = ?, updated_at = ?
+                    WHERE destination_hash = ? AND last_message_timestamp <= ?
+                    """,
+                arguments: [
+                    message.timestamp,
+                    Date().timeIntervalSince1970,
+                    message.destinationHash,
+                    message.timestamp,
+                ]
+            )
+        }
+        NotificationCenter.default.post(
+            name: Self.conversationActivityNotification,
+            object: nil,
+            userInfo: [Self.conversationHashUserInfoKey: message.destinationHash]
+        )
+    }
+
+    private func replaceMessageRecord(
+        _ message: RNSAPI.LXMessage,
+        replacing oldId: Data,
+        retryMarker: String?
+    ) async throws {
+        try await replacementPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE messages
+                    SET message_id = ?, state = ?, method = ?, timestamp = ?,
+                        receiving_interface = ?, updated_at = ?
+                    WHERE message_id = ?
+                    """,
+                arguments: StatementArguments([
+                    message.hash,
+                    Self.mapStateToGRDB(message.state).rawValue,
+                    Self.mapMethodToGRDB(message.method).rawValue,
+                    message.timestamp,
+                    retryMarker,
+                    Date().timeIntervalSince1970,
+                    oldId,
+                ] as [DatabaseValueConvertible?])
+            )
+            guard db.changesCount == 1 else {
+                throw MessageRepositoryError.replacementSourceMissing
+            }
+            try db.execute(
+                sql: """
+                    UPDATE conversations
+                    SET last_message_timestamp = ?, updated_at = ?
+                    WHERE destination_hash = ? AND last_message_timestamp <= ?
+                    """,
+                arguments: [
+                    message.timestamp,
+                    Date().timeIntervalSince1970,
+                    message.destinationHash,
+                    message.timestamp,
+                ]
+            )
+        }
+
+        NotificationCenter.default.post(
+            name: Self.conversationActivityNotification,
+            object: nil,
+            userInfo: [Self.conversationHashUserInfoKey: message.destinationHash]
+        )
+    }
+
+    /// Recover only app-owned retries left staged by a prior process. The
+    /// uncertainty marker remains durable until a later retry or deletion, so
+    /// a transient UI-load failure cannot erase the warning.
+    public func recoverInterruptedRetries() async throws -> Int {
+        try await replacementPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE messages
+                    SET state = ?, receiving_interface = ?, updated_at = ?
+                    WHERE incoming = 0 AND state = ? AND receiving_interface = ?
+                    """,
+                arguments: [
+                    LXMFSwift.LXMessageState.failed.rawValue,
+                    Self.uncertainRetryMarker,
+                    Date().timeIntervalSince1970,
+                    LXMFSwift.LXMessageState.sending.rawValue,
+                    Self.stagedRetryMarker,
+                ]
+            )
+            return db.changesCount
+        }
+    }
+
+    /// Check the entire conversation, independently of message pagination, for
+    /// a recovered retry whose delivery outcome remains unknown.
+    public func hasUncertainRetry(for destinationHash: Data) async throws -> Bool {
+        try await replacementPool.read { db in
+            let count = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*) FROM messages
+                    WHERE destination_hash = ? AND incoming = 0 AND state = ?
+                      AND receiving_interface = ?
+                    """,
+                arguments: [
+                    destinationHash,
+                    LXMFSwift.LXMessageState.failed.rawValue,
+                    Self.uncertainRetryMarker,
+                ]
+            ) ?? 0
+            return count > 0
+        }
+    }
+
     /// Get message by ID (LXMessage form), rebuilt from the GRDB record.
     public func getMessage(id: Data) async throws -> RNSAPI.LXMessage? {
         try await database.getMessageRecord(id: id).map(Self.mapToLXMessage)
@@ -262,6 +422,10 @@ public actor MessageRepository {
         }
         return out
     }
+}
+
+enum MessageRepositoryError: Error {
+    case replacementSourceMissing
 }
 
 // MARK: - Adapters (LXMFSwift <- -> RNSAPI)

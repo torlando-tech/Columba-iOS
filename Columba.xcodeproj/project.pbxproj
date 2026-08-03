@@ -140,6 +140,9 @@
 		2DAA350A34E3332DEC1545B0 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		2DEF38CCE53F632284B5A50D /* MonospaceLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F084 /* MonospaceLineView.swift */; };
 		2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8222FC732AF00235991 /* LXMFSwift */; };
+		D4E5F60718293A4B5C6D7E8B /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = D4E5F60718293A4B5C6D7E8A /* GRDB */; };
+		D4E5F60718293A4B5C6D7E8D /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = D4E5F60718293A4B5C6D7E8C /* GRDB */; };
+		E5F60718293A4B5C6D7E8F91 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = E5F60718293A4B5C6D7E8F90 /* GRDB */; };
 		31F207DBD45E2CA682A3F830 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
 		33CCBDB91636352EFC4A7790 /* BLEConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F071 /* BLEConnectionsView.swift */; };
 		33E0E91CAEFB07F13C04637D /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
@@ -582,6 +585,7 @@
 				11D0621686D1D65C9602C911 /* RNSAPI in Frameworks */,
 				876F4CCF3FA441B67D08BBEC /* SwiftBLEBridge in Frameworks */,
 				E34B504A6DCC8F5E7F44E491 /* LXMFSwift in Frameworks */,
+				D4E5F60718293A4B5C6D7E8D /* GRDB in Frameworks */,
 				73B2FC9ECC25BA7B4AFF3D96 /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -614,6 +618,7 @@
 				F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */,
 				13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */,
 				2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */,
+				D4E5F60718293A4B5C6D7E8B /* GRDB in Frameworks */,
 				83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -628,6 +633,7 @@
 				9D9069A3F6302111A4727454 /* SwiftBLEBridge in Frameworks */,
 				35DF1F7406C71743BBE8C39B /* ReticulumSwift in Frameworks */,
 				98547ADE9B17DD692240E7F7 /* LXMFSwift in Frameworks */,
+				E5F60718293A4B5C6D7E8F91 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1114,6 +1120,7 @@
 				F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */,
 				5D099DB326374C07812E3FBD /* SwiftBLEBridge */,
 				E0DE32143A4DF2A0284C1911 /* LXMFSwift */,
+				D4E5F60718293A4B5C6D7E8C /* GRDB */,
 				030380C51B178354F4D4E88F /* ReticulumSwift */,
 			);
 			productName = ColumbaModelBApp;
@@ -1182,6 +1189,7 @@
 				0FD6A68A52A54D21FDB70324 /* RNSAPI */,
 				5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */,
 				2F8EC8222FC732AF00235991 /* LXMFSwift */,
+				D4E5F60718293A4B5C6D7E8A /* GRDB */,
 				A1380C075A9F67E1B173EA94 /* ReticulumSwift */,
 			);
 			productName = ColumbaApp;
@@ -1207,6 +1215,7 @@
 				E049A7D4D6D58690C0B674CE /* RNSAPI */,
 				DD88CFE74E7E22427BC4D163 /* SwiftBLEBridge */,
 				DA31FE974552414C399D4949 /* ReticulumSwift */,
+				E5F60718293A4B5C6D7E8F90 /* GRDB */,
 				85B9530D8CAE0E16D5371319 /* LXMFSwift */,
 			);
 			productName = ColumbaAppTests;
@@ -2287,6 +2296,14 @@
 			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
 			productName = LXSTSwift;
 		};
+		D4E5F60718293A4B5C6D7E8A /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = GRDB;
+		};
+		D4E5F60718293A4B5C6D7E8C /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = GRDB;
+		};
 		B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
@@ -2318,6 +2335,10 @@
 		F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RNSAPI;
+		};
+		E5F60718293A4B5C6D7E8F90 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = GRDB;
 		};
 		FE4D25F362FFD8A793C143FC /* LXSTSwift */ = {
 			isa = XCSwiftPackageProductDependency;

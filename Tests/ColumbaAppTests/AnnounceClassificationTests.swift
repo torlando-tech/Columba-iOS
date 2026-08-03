@@ -1,6 +1,7 @@
 import XCTest
 @testable import ColumbaApp
 import RNSAPI
+import GRDB
 
 /// Tests for `Contact.init(from: PathEntry)` announce classification — the
 /// single backend-independent point where every networkAnnounces entry gets
@@ -138,6 +139,60 @@ final class AnnounceClassificationTests: XCTestCase {
         XCTAssertEqual(enriched.badgeType, .audio)
     }
 
+    func testSavedConversationIsExplicitlyTypedAsLXMFDelivery() {
+        let saved = Contact(from: ConversationRecord(
+            hash: Data(repeating: 0x42, count: 16),
+            displayName: "Saved peer",
+            isFavorite: 1
+        ))
+
+        XCTAssertEqual(saved.destinationAspect, .lxmfDelivery)
+        XCTAssertEqual(saved.badgeType, .peer)
+    }
+
+    func testValidLXMAContactBindsDestinationHashToPublicIdentity() throws {
+        let identity = Identity()
+        let destinationHash = Destination.hash(
+            identity: identity,
+            appName: "lxmf",
+            aspects: ["delivery"]
+        )
+        let destinationHex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        let publicKeyHex = identity.publicKeys.map { String(format: "%02x", $0) }.joined()
+        let uri = "lxma://\(destinationHex):\(publicKeyHex)"
+
+        let parsed = ContactsViewModel.parseLXMA(uri)
+
+        XCTAssertEqual(parsed?.destinationHash, destinationHash)
+        XCTAssertEqual(parsed?.publicKey, identity.publicKeys)
+    }
+
+    func testLXMAContactRejectsPublicIdentityThatDoesNotOwnDestination() throws {
+        let destinationIdentity = Identity()
+        let differentIdentity = Identity()
+        let destinationHash = Destination.hash(
+            identity: destinationIdentity,
+            appName: "lxmf",
+            aspects: ["delivery"]
+        )
+        let destinationHex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        let publicKeyHex = differentIdentity.publicKeys.map { String(format: "%02x", $0) }.joined()
+        let uri = "lxma://\(destinationHex):\(publicKeyHex)"
+
+        XCTAssertNil(ContactsViewModel.parseLXMA(uri))
+    }
+
+    func testSharedQRCodeUsesLXMFDeliveryDestinationNotIdentityHash() {
+        let info = IdentityInfo(
+            identityHash: String(repeating: "11", count: 16),
+            publicKeyHex: String(repeating: "22", count: 64),
+            destinationHash: String(repeating: "33", count: 16)
+        )
+
+        XCTAssertTrue(info.qrCodeString.hasPrefix("lxma://\(String(repeating: "33", count: 16))"))
+        XCTAssertFalse(info.qrCodeString.contains(String(repeating: "11", count: 16)))
+    }
+
     /// Aspect is the sole relay signal: an UNTAGGED announce (no aspect) whose
     /// app_data happens to be propagation-shaped is NOT promoted to a relay.
     /// (Both backends guarantee a genuine propagation node arrives tagged
@@ -192,5 +247,264 @@ final class AnnounceClassificationTests: XCTestCase {
         )
 
         XCTAssertEqual(contact.resolvedDisplayName, "Peer ABABABAB")
+    }
+
+    func testSendPathTimeoutExplainsWhatFailed() {
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .requestingPath),
+            "No active path to this contact was found after waiting 10 seconds."
+        )
+    }
+
+    func testSendReadinessAndDestinationFailuresAreActionable() {
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .notStarted),
+            "The messaging network is not ready."
+        )
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .badHash),
+            "The contact has an invalid LXMF destination."
+        )
+    }
+
+    func testSendBackendReasonIsPreserved() {
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .other("No propagation node is configured.")),
+            "No propagation node is configured."
+        )
+    }
+
+    func testQueuedSendHasNoFailureDescription() {
+        XCTAssertNil(MessagingViewModel.failureDescription(for: .queued(messageHash: "00")))
+    }
+}
+
+final class MessageRepositoryAtomicReplacementTests: XCTestCase {
+    private func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-atomic-retry-\(UUID().uuidString).sqlite")
+    }
+
+    private func removeDatabase(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(atPath: url.path + "-shm")
+        try? FileManager.default.removeItem(atPath: url.path + "-wal")
+    }
+
+    private func rawMessageSnapshot(_ queue: DatabaseQueue, id: Data) throws -> [String: String] {
+        try queue.read { db in
+            let row = try XCTUnwrap(
+                Row.fetchOne(db, sql: "SELECT * FROM messages WHERE message_id = ?", arguments: [id])
+            )
+            return Dictionary(uniqueKeysWithValues: row.columnNames.map { name in
+                let value: DatabaseValue = row[name]
+                return (name, String(reflecting: value))
+            })
+        }
+    }
+
+    func testRetryReplacementRekeysExactlyOneDurableRow() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let queue = try DatabaseQueue(path: databaseURL.path)
+        let destination = Data(repeating: 0x11, count: 16)
+        let oldHash = Data(repeating: 0x22, count: 32)
+        let canonicalHash = Data(repeating: 0x33, count: 32)
+
+        let failed = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("payload".utf8),
+            title: Data("title".utf8),
+            fields: [
+                RNSAPI.LXMessage.FIELD_IMAGE: ["png", Data([0x01, 0x02])] as [Any],
+                RNSAPI.LXMessage.FIELD_FILE_ATTACHMENTS: [
+                    ["notes.txt", Data("attachment".utf8)] as [Any]
+                ] as [Any],
+                RNSAPI.LXMessage.FIELD_APP_DATA: ["reply_to": "parent-hash"],
+            ]
+        )
+        failed.hash = oldHash
+        failed.state = .failed
+        failed.method = .opportunistic
+        try await repository.saveMessage(failed)
+        try await repository.updateReplyToId(oldHash, replyToId: "parent-hash")
+        let originalStored = try await repository.getMessageRecord(id: oldHash)
+        let original = try XCTUnwrap(originalStored)
+        let originalRaw = try rawMessageSnapshot(queue, id: oldHash)
+
+        failed.state = .sending
+        try await repository.stageRetry(failed, replacing: oldHash)
+
+        let sent = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("payload".utf8)
+        )
+        sent.hash = canonicalHash
+        sent.state = .sent
+        sent.method = .propagated
+        try await repository.replaceMessage(sent, replacing: oldHash)
+
+        let oldRecord = try await repository.getMessageRecord(id: oldHash)
+        let storedCanonical = try await repository.getMessageRecord(id: canonicalHash)
+        let canonicalRecord = try XCTUnwrap(storedCanonical)
+        let canonicalRaw = try rawMessageSnapshot(queue, id: canonicalHash)
+        XCTAssertNil(oldRecord)
+        XCTAssertEqual(canonicalRecord.content, Data("payload".utf8))
+        XCTAssertEqual(canonicalRaw["title"], originalRaw["title"])
+        XCTAssertEqual(canonicalRecord.packedLxmf, original.packedLxmf)
+        XCTAssertEqual(canonicalRecord.replyToId, "parent-hash")
+        XCTAssertEqual(canonicalRecord.state, LXMessageState.sent.rawValue)
+        XCTAssertEqual(canonicalRecord.method, LXDeliveryMethod.propagated.rawValue)
+        XCTAssertEqual(canonicalRecord.timestamp, sent.timestamp)
+        XCTAssertNil(canonicalRecord.receivingInterface)
+    }
+
+    func testMissingRetrySourceDoesNotCreateCanonicalRow() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let canonicalHash = Data(repeating: 0x44, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: Data(repeating: 0x55, count: 16),
+            sourceIdentity: nil,
+            content: Data("payload".utf8)
+        )
+        message.hash = canonicalHash
+        message.state = .sent
+
+        do {
+            try await repository.replaceMessage(
+                message,
+                replacing: Data(repeating: 0x66, count: 32)
+            )
+            XCTFail("Expected replacement of a missing source row to fail")
+        } catch {
+            let canonicalRecord = try await repository.getMessageRecord(id: canonicalHash)
+            XCTAssertNil(canonicalRecord)
+        }
+    }
+
+    func testReplacementRollsBackAfterPostUpdateFailure() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let queue = try DatabaseQueue(path: databaseURL.path)
+        let destination = Data(repeating: 0x81, count: 16)
+        let oldHash = Data(repeating: 0x82, count: 32)
+        let canonicalHash = Data(repeating: 0x83, count: 32)
+        let failed = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("rollback-payload".utf8),
+            title: Data("rollback-title".utf8),
+            fields: [
+                RNSAPI.LXMessage.FIELD_FILE_ATTACHMENTS: [
+                    ["rollback.bin", Data([0xaa, 0xbb, 0xcc])] as [Any]
+                ] as [Any]
+            ]
+        )
+        failed.hash = oldHash
+        failed.state = .failed
+        failed.method = .opportunistic
+        try await repository.saveMessage(failed)
+        try await repository.updateReplyToId(oldHash, replyToId: "rollback-parent")
+        let before = try rawMessageSnapshot(queue, id: oldHash)
+
+        try await queue.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER force_conversation_update_failure
+                BEFORE UPDATE ON conversations
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced post-message-update failure');
+                END
+                """)
+        }
+
+        let sent = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("ignored-new-content".utf8)
+        )
+        sent.hash = canonicalHash
+        sent.state = .sent
+        sent.method = .propagated
+        do {
+            try await repository.replaceMessage(sent, replacing: oldHash)
+            XCTFail("Expected the conversation trigger to abort replacement")
+        } catch {
+            let after = try rawMessageSnapshot(queue, id: oldHash)
+            XCTAssertEqual(after, before)
+            let canonical = try await repository.getMessageRecord(id: canonicalHash)
+            XCTAssertNil(canonical)
+        }
+    }
+
+    func testInterruptedRetryIsRecoveredAsUserVisibleFailure() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x61, count: 16)
+        let retryHash = Data(repeating: 0x62, count: 32)
+        let retry = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("retry".utf8)
+        )
+        retry.hash = retryHash
+        retry.state = .failed
+        try await repository.saveMessage(retry)
+
+        retry.state = .sending
+        try await repository.stageRetry(retry, replacing: retryHash)
+        do {
+            try await repository.stageRetry(retry, replacing: retryHash)
+            XCTFail("Expected a second retry owner to lose the compare-and-set")
+        } catch {
+            // Expected: the first stage changed the durable source state.
+        }
+        let uncertainBeforeRecovery = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertFalse(uncertainBeforeRecovery)
+        let recoveredCount = try await repository.recoverInterruptedRetries()
+        XCTAssertEqual(recoveredCount, 1)
+
+        let storedRecovered = try await repository.getMessageRecord(id: retryHash)
+        let recovered = try XCTUnwrap(storedRecovered)
+        XCTAssertEqual(recovered.state, LXMessageState.failed.rawValue)
+        XCTAssertEqual(recovered.receivingInterface, MessageRepository.uncertainRetryMarker)
+        let uncertainAfterRecovery = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertTrue(uncertainAfterRecovery)
+        let secondRecoveryCount = try await repository.recoverInterruptedRetries()
+        XCTAssertEqual(secondRecoveryCount, 0)
+    }
+
+    func testNonAppSendingRowIsNotRecovered() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x71, count: 16)
+        let retryHash = Data(repeating: 0x72, count: 32)
+        let retry = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("active".utf8)
+        )
+        retry.hash = retryHash
+        retry.state = .failed
+        try await repository.saveMessage(retry)
+
+        retry.state = .sending
+        try await repository.replaceMessage(retry, replacing: retryHash)
+        let recoveredCount = try await repository.recoverInterruptedRetries()
+        XCTAssertEqual(recoveredCount, 0)
+        let hasUncertainRetry = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertFalse(hasUncertainRetry)
+
+        let stored = try await repository.getMessageRecord(id: retryHash)
+        let untouched = try XCTUnwrap(stored)
+        XCTAssertEqual(untouched.state, LXMessageState.sending.rawValue)
+        XCTAssertNil(untouched.receivingInterface)
     }
 }

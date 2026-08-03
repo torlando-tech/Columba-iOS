@@ -234,6 +234,12 @@ public protocol RnsCore: AnyObject, Sendable {
     func statusSnapshot() async -> StatusSnapshot?
     @discardableResult func persist() async -> Bool
 
+    /// Retain a verified peer public identity without requesting a network path.
+    /// QR imports use this so a later propagated send can encrypt for an offline
+    /// peer. Backends that do not own an identity cache may return false.
+    @discardableResult
+    func rememberPeerIdentity(destHashHex: String, publicKey: Data) async -> Bool
+
     /// Lowercase-hex destination hashes this node has actually registered
     /// (its `lxmf.delivery` destination, plus `lxst.telephony` where the backend
     /// surfaces it). Backend-neutral so the Network Extension's sniff-only
@@ -252,6 +258,9 @@ public extension RnsCore {
     /// Default: no native BLE interface ⇒ no peers. Keeps the non-Model-B backends
     /// (Swift / Python) conforming without each needing a stub.
     func bleConnections() async -> [BLEConnectionInfo] { [] }
+
+    @discardableResult
+    func rememberPeerIdentity(destHashHex: String, publicKey: Data) async -> Bool { false }
 }
 
 /// RNS.Link operations backing LXST voice (the Swift state machine drives these;
