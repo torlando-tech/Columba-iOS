@@ -349,6 +349,7 @@ public final class MessagingViewModel {
             fields: fields.isEmpty ? nil : fields,
             desiredMethod: .opportunistic
         )
+        lxMessage.method = .opportunistic
         lxMessage.fallbackMethod = fallbackForLargeMessages
 
         // Use a canonical-width local ID so failed rows remain retryable after
