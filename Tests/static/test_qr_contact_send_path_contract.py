@@ -144,15 +144,27 @@ class QRContactSendPathContractTests(unittest.TestCase):
             "    /// Retry sending a failed message.",
         )
         repository = self._read("Sources/ColumbaApp/Services/MessageRepository.swift")
-        stage = send.index("lxMessage.state = .outbound")
+        stage = send.index("lxMessage.state = .sending")
         wire_send = send.index("backend.lxmf.sendLxmfMessage")
         self.assertLess(stage, wire_send)
-        self.assertIn("repository.replaceMessage(lxMessage, replacing: storedHash)", send)
+        self.assertIn("repository.stageRetry(lxMessage, replacing: storedHash)", send)
+        self.assertIn("repository.finishRetry(retryHash)", send)
         self.assertIn("config.observesSuspensionNotifications = true", repository)
         self.assertIn("try await replacementPool.write", repository)
         self.assertIn("retryMessage.method = .propagated", send)
         self.assertIn("replacementSourceMissing", repository)
         self.assertNotIn("repository.deleteMessage(oldHash)", send)
+
+    def test_interrupted_retry_is_recovered_once_as_failed(self) -> None:
+        view_model = self._read("Sources/ColumbaApp/ViewModels/MessagingViewModel.swift")
+        repository = self._read("Sources/ColumbaApp/Services/MessageRepository.swift")
+        self.assertIn("private var didRecoverInterruptedRetries = false", view_model)
+        self.assertIn("repository.recoverInterruptedRetries", view_model)
+        self.assertIn("didRecoverInterruptedRetries = true", view_model)
+        self.assertIn("Verify whether it arrived before retrying", view_model)
+        self.assertIn("public func recoverInterruptedRetries", repository)
+        self.assertIn("LXMFSwift.LXMessageState.sending.rawValue", repository)
+        self.assertIn("incoming = 0 AND state = ?", repository)
 
     def test_existing_qr_contact_can_refresh_peer_identity(self) -> None:
         add_sheet = self._read("Sources/ColumbaApp/Views/Contacts/AddContactSheet.swift")

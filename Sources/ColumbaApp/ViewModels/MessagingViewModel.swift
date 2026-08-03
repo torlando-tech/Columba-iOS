@@ -50,6 +50,7 @@ public final class MessagingViewModel {
     private let settingsRepository = SettingsRepository()
     private let displayName: String?
     private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingViewModel")
+    private var didRecoverInterruptedRetries = false
 
     /// Observation token for incoming message notifications.
     private var notificationTask: Any?
@@ -128,6 +129,14 @@ public final class MessagingViewModel {
         defer { isLoading = false }
 
         do {
+            var recoveredInterruptedRetries = 0
+            if !didRecoverInterruptedRetries {
+                recoveredInterruptedRetries = try await repository.recoverInterruptedRetries(
+                    for: conversationHash
+                )
+                didRecoverInterruptedRetries = true
+            }
+
             // Ensure conversation exists, then clear unread state as soon as the
             // user opens it. Message decoding or reply-preview failures must not
             // leave a stale badge behind after the conversation was viewed.
@@ -162,7 +171,9 @@ public final class MessagingViewModel {
             // were included in the page we just displayed.
             try await repository.markConversationRead(conversationHash)
 
-            errorMessage = nil
+            errorMessage = recoveredInterruptedRetries > 0
+                ? "A message retry was interrupted before delivery confirmation. Verify whether it arrived before retrying."
+                : nil
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -295,6 +306,17 @@ public final class MessagingViewModel {
             return false
         }
 
+        // Process ownership prevents another view from recovering a retry that
+        // is still active. On every return, any row still marked `.sending` is
+        // released as an unknown-delivery failure.
+        defer {
+            if let retryHash = localRetryHash {
+                Task { [repository] in
+                    await repository.finishRetry(retryHash)
+                }
+            }
+        }
+
         // Always start with opportunistic (single encrypted packet, no link needed).
         // For large messages that exceed single-packet size, handleOutbound() will
         // auto-fallback using the fallbackMethod (direct or propagated per settings).
@@ -347,12 +369,12 @@ public final class MessagingViewModel {
         lxMessage.hash = optimisticHash
 
         // A retry must stop being durably retryable before the wire send starts.
-        // If canonical replacement later fails, this outbound row remains the
-        // single durable owner and cannot be sent again as a failed message.
+        // A new conversation view recovers an interrupted `.sending` row as a
+        // visible failure with an unknown-delivery warning.
         if let storedHash = replacedStorageHash ?? localRetryHash {
-            lxMessage.state = .outbound
+            lxMessage.state = .sending
             do {
-                try await repository.replaceMessage(lxMessage, replacing: storedHash)
+                try await repository.stageRetry(lxMessage, replacing: storedHash)
             } catch {
                 errorMessage = "The failed message could not be prepared for retry. Please try again."
                 return false
@@ -436,9 +458,9 @@ public final class MessagingViewModel {
             } catch {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
                 if let index = messages.firstIndex(where: { $0.id == realId }) {
-                    messages[index].deliveryStatus = .sending
+                    messages[index].deliveryStatus = .failed
                 }
-                errorMessage = "Message was sent, but local confirmation could not be saved. It will remain pending and will not be retried automatically."
+                errorMessage = "Message was sent, but local confirmation could not be saved. Verify whether it arrived before retrying."
             }
 
             return true
@@ -501,9 +523,9 @@ public final class MessagingViewModel {
                     } catch {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                         if let index = messages.firstIndex(where: { $0.id == realId }) {
-                            messages[index].deliveryStatus = .sending
+                            messages[index].deliveryStatus = .failed
                         }
-                        errorMessage = "Message was relayed, but local confirmation could not be saved. It will remain pending and will not be retried automatically."
+                        errorMessage = "Message was relayed, but local confirmation could not be saved. Verify whether it arrived before retrying."
                     }
                     return true
                 } catch {

@@ -58,6 +58,9 @@ public actor MessageRepository {
     private let database: LXMFSwift.LXMFDatabase
     /// Suspension-aware pool used only for atomic app-owned retry replacement.
     private let replacementPool: DatabasePool
+    /// Retry hashes actively owned by this process. Recovery ignores these so
+    /// reopening a conversation cannot race a send still awaiting its outcome.
+    private var activeRetryHashes: Set<Data> = []
 
     // MARK: - Initialization
 
@@ -265,6 +268,73 @@ public actor MessageRepository {
             object: nil,
             userInfo: [Self.conversationHashUserInfoKey: message.destinationHash]
         )
+    }
+
+    /// Stage one failed retry as `.sending` before network submission and mark
+    /// it as actively owned by this process.
+    public func stageRetry(_ message: RNSAPI.LXMessage, replacing oldId: Data) async throws {
+        activeRetryHashes.insert(message.hash)
+        do {
+            try await replaceMessage(message, replacing: oldId)
+        } catch {
+            activeRetryHashes.remove(message.hash)
+            throw error
+        }
+    }
+
+    /// Release process ownership. If no definitive result replaced the staged
+    /// row, expose it as failed instead of leaving it indefinitely pending.
+    public func finishRetry(_ messageId: Data) async {
+        activeRetryHashes.remove(messageId)
+        try? await replacementPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE messages SET state = ?, updated_at = ?
+                    WHERE message_id = ? AND state = ?
+                    """,
+                arguments: [
+                    LXMFSwift.LXMessageState.failed.rawValue,
+                    Date().timeIntervalSince1970,
+                    messageId,
+                    LXMFSwift.LXMessageState.sending.rawValue,
+                ]
+            )
+        }
+    }
+
+    /// Recover retry rows left in `.sending` by termination before the backend
+    /// returned a definitive result. They become user-visible failures rather
+    /// than remaining indefinitely pending or being resent automatically.
+    public func recoverInterruptedRetries(for destinationHash: Data) async throws -> Int {
+        let active = activeRetryHashes
+        return try await replacementPool.write { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT message_id FROM messages
+                    WHERE destination_hash = ? AND incoming = 0 AND state = ?
+                    """,
+                arguments: [
+                    destinationHash,
+                    LXMFSwift.LXMessageState.sending.rawValue,
+                ]
+            )
+            let interrupted = rows.compactMap { row -> Data? in
+                let messageId: Data = row["message_id"]
+                return active.contains(messageId) ? nil : messageId
+            }
+            for messageId in interrupted {
+                try db.execute(
+                    sql: "UPDATE messages SET state = ?, updated_at = ? WHERE message_id = ?",
+                    arguments: [
+                        LXMFSwift.LXMessageState.failed.rawValue,
+                        Date().timeIntervalSince1970,
+                        messageId,
+                    ]
+                )
+            }
+            return interrupted.count
+        }
     }
 
     /// Get message by ID (LXMessage form), rebuilt from the GRDB record.
