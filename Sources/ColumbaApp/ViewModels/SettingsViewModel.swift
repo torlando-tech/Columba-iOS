@@ -44,10 +44,10 @@ public struct IdentityInfo: Equatable {
     /// QR code string in Android Columba-compatible format.
     /// Format: `lxma://<destination_hash_hex>:<public_key_hex>`
     public var qrCodeString: String {
-        guard !identityHash.isEmpty, !publicKeyHex.isEmpty else {
-            return identityHash
+        guard !destinationHash.isEmpty, !publicKeyHex.isEmpty else {
+            return destinationHash
         }
-        return "lxma://\(identityHash):\(publicKeyHex)"
+        return "lxma://\(destinationHash):\(publicKeyHex)"
     }
 
     public init(

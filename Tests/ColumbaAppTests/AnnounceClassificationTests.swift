@@ -138,6 +138,60 @@ final class AnnounceClassificationTests: XCTestCase {
         XCTAssertEqual(enriched.badgeType, .audio)
     }
 
+    func testSavedConversationIsExplicitlyTypedAsLXMFDelivery() {
+        let saved = Contact(from: ConversationRecord(
+            hash: Data(repeating: 0x42, count: 16),
+            displayName: "Saved peer",
+            isFavorite: 1
+        ))
+
+        XCTAssertEqual(saved.destinationAspect, .lxmfDelivery)
+        XCTAssertEqual(saved.badgeType, .peer)
+    }
+
+    func testValidLXMAContactBindsDestinationHashToPublicIdentity() throws {
+        let identity = Identity()
+        let destinationHash = Destination.hash(
+            identity: identity,
+            appName: "lxmf",
+            aspects: ["delivery"]
+        )
+        let destinationHex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        let publicKeyHex = identity.publicKeys.map { String(format: "%02x", $0) }.joined()
+        let uri = "lxma://\(destinationHex):\(publicKeyHex)"
+
+        let parsed = ContactsViewModel.parseLXMA(uri)
+
+        XCTAssertEqual(parsed?.destinationHash, destinationHash)
+        XCTAssertEqual(parsed?.publicKey, identity.publicKeys)
+    }
+
+    func testLXMAContactRejectsPublicIdentityThatDoesNotOwnDestination() throws {
+        let destinationIdentity = Identity()
+        let differentIdentity = Identity()
+        let destinationHash = Destination.hash(
+            identity: destinationIdentity,
+            appName: "lxmf",
+            aspects: ["delivery"]
+        )
+        let destinationHex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        let publicKeyHex = differentIdentity.publicKeys.map { String(format: "%02x", $0) }.joined()
+        let uri = "lxma://\(destinationHex):\(publicKeyHex)"
+
+        XCTAssertNil(ContactsViewModel.parseLXMA(uri))
+    }
+
+    func testSharedQRCodeUsesLXMFDeliveryDestinationNotIdentityHash() {
+        let info = IdentityInfo(
+            identityHash: String(repeating: "11", count: 16),
+            publicKeyHex: String(repeating: "22", count: 64),
+            destinationHash: String(repeating: "33", count: 16)
+        )
+
+        XCTAssertTrue(info.qrCodeString.hasPrefix("lxma://\(String(repeating: "33", count: 16))"))
+        XCTAssertFalse(info.qrCodeString.contains(String(repeating: "11", count: 16)))
+    }
+
     /// Aspect is the sole relay signal: an UNTAGGED announce (no aspect) whose
     /// app_data happens to be propagation-shaped is NOT promoted to a relay.
     /// (Both backends guarantee a genuine propagation node arrives tagged
@@ -192,5 +246,34 @@ final class AnnounceClassificationTests: XCTestCase {
         )
 
         XCTAssertEqual(contact.resolvedDisplayName, "Peer ABABABAB")
+    }
+
+    func testSendPathTimeoutExplainsWhatFailed() {
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .requestingPath),
+            "No active path to this contact was found after waiting 10 seconds."
+        )
+    }
+
+    func testSendReadinessAndDestinationFailuresAreActionable() {
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .notStarted),
+            "The messaging network is not ready."
+        )
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .badHash),
+            "The contact has an invalid LXMF destination."
+        )
+    }
+
+    func testSendBackendReasonIsPreserved() {
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .other("No propagation node is configured.")),
+            "No propagation node is configured."
+        )
+    }
+
+    func testQueuedSendHasNoFailureDescription() {
+        XCTAssertNil(MessagingViewModel.failureDescription(for: .queued(messageHash: "00")))
     }
 }

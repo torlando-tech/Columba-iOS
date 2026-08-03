@@ -95,6 +95,13 @@ public final class PythonBridge: @unchecked Sendable {
     /// access regardless of thread — the same pattern the BLE callback path
     /// already relies on.
     private let blockingQueue = DispatchQueue(label: "network.columba.python.blocking", qos: .userInitiated)
+    /// Dedicated path resolver queue so unrelated blocking bridge work cannot
+    /// delay the start of a send's bounded path wait.
+    private let pathResolutionQueue = DispatchQueue(
+        label: "network.columba.python.path-resolution",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
     private var module: UnsafeMutablePointer<PyObject>?
 
     public init() {}
@@ -447,6 +454,60 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 Py_DecRef(arg)
+                defer { Py_DecRef(result) }
+                return pyBoolFromDict(result, key: "ok") ?? false
+            }
+        }
+    }
+
+    /// Retain a verified QR peer identity in Python's known-destination cache.
+    /// This performs no path request.
+    public func rememberPeerIdentity(destHashHex: String, publicKey: Data) async throws -> Bool {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else { return false }
+                guard let fn = PyObject_GetAttrString(module, "remember_peer_identity") else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                guard let args = PyTuple_New(2) else { throw BridgeError.marshallingFailure("PyTuple_New") }
+                defer { Py_DecRef(args) }
+                guard let dest = PyUnicode_FromString(destHashHex),
+                      let key = PyUnicode_FromString(publicKey.toHex()) else {
+                    throw BridgeError.marshallingFailure("PyUnicode_FromString")
+                }
+                PyTuple_SetItem(args, 0, dest)
+                PyTuple_SetItem(args, 1, key)
+                guard let result = PyObject_CallObject(fn, args) else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(result) }
+                return pyBoolFromDict(result, key: "ok") ?? false
+            }
+        }
+    }
+
+    /// Resolve a recipient path at send time. Python issues at most one active
+    /// request and waits until both the route and recalled identity are usable.
+    public func resolvePath(destHashHex: String, timeout: TimeInterval = 10.0) async throws -> Bool {
+        try await runOnQueue(on: pathResolutionQueue) { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else { return false }
+                guard let fn = PyObject_GetAttrString(module, "resolve_path") else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                guard let args = PyTuple_New(2) else { throw BridgeError.marshallingFailure("PyTuple_New") }
+                defer { Py_DecRef(args) }
+                guard let dest = PyUnicode_FromString(destHashHex),
+                      let seconds = PyFloat_FromDouble(max(0, timeout)) else {
+                    throw BridgeError.marshallingFailure("path arguments")
+                }
+                PyTuple_SetItem(args, 0, dest)
+                PyTuple_SetItem(args, 1, seconds)
+                guard let result = PyObject_CallObject(fn, args) else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
                 defer { Py_DecRef(result) }
                 return pyBoolFromDict(result, key: "ok") ?? false
             }

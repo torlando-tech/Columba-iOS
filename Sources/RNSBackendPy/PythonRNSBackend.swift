@@ -84,6 +84,14 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
     }
 
     @discardableResult
+    public func rememberPeerIdentity(destHashHex: String, publicKey: Data) async -> Bool {
+        (try? await bridge.rememberPeerIdentity(
+            destHashHex: destHashHex,
+            publicKey: publicKey
+        )) ?? false
+    }
+
+    @discardableResult
     public func sendLxmfMessage(
         destHashHex: String,
         content: String,
@@ -96,6 +104,14 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         replyQuotedContent: String?,
         extraFields: [UInt8: Data]?
     ) async throws -> SendOutcome {
+        // Browse/add/open remain passive. Only an actual non-propagated send
+        // actively resolves the recipient path, with one request and a bounded
+        // wait in Python. Propagated sends need the retained identity but do not
+        // require the recipient to be online.
+        if method != .propagated,
+           try await bridge.resolvePath(destHashHex: destHashHex, timeout: 10.0) == false {
+            return .requestingPath
+        }
         // Build the canonical LXMF field map (shared builder → identical to the
         // Swift backend) and forward it MessagePack-packed (hex) to Python, which
         // unpacks it onto the outbound LXMF message.
@@ -125,6 +141,9 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
     @discardableResult
     public func sendReaction(destHashHex: String, targetMessageHashHex: String, emoji: String) async throws -> SendOutcome {
         guard let targetHash = try? targetMessageHashHex.hexToData() else { return .badHash }
+        if try await bridge.resolvePath(destHashHex: destHashHex, timeout: 10.0) == false {
+            return .requestingPath
+        }
         // Canonical FIELD_REACTION (0x40) on an empty-content message.
         let reaction: [UInt8: Any] = [
             LxmfFields.REACTION_TO: targetHash,

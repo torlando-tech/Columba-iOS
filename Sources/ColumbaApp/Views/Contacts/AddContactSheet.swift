@@ -71,6 +71,13 @@ struct AddContactSheet: View {
                 }
                 .padding(.horizontal, 24)
 
+                if let errorMessage = viewModel.errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(Theme.error)
+                        .padding(.horizontal, 24)
+                }
+
                 Spacer()
 
                 // Buttons
@@ -109,30 +116,31 @@ struct AddContactSheet: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .alert("Contact Already Added", isPresented: $alreadyExists) {
+            .alert("Contact Updated", isPresented: $alreadyExists) {
                 Button("OK") { onDismiss() }
             } message: {
-                Text("This contact is already in your contacts list.")
+                Text("The QR identity was refreshed for this existing contact.")
             }
         }
     }
 
     private func addContact() {
-        if viewModel.contactExists(scannedContact.destinationHash) {
-            alreadyExists = true
-            return
-        }
-
+        let existed = viewModel.contactExists(scannedContact.destinationHash)
         isAdding = true
         Task {
             let name = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
-            await viewModel.addContactFromQR(
+            let succeeded = await viewModel.addContactFromQR(
                 destinationHash: scannedContact.destinationHash,
                 publicKey: scannedContact.publicKey,
                 nickname: name.isEmpty ? nil : name
             )
             isAdding = false
-            onDismiss()
+            guard succeeded else { return }
+            if existed {
+                alreadyExists = true
+            } else {
+                onDismiss()
+            }
         }
     }
 }

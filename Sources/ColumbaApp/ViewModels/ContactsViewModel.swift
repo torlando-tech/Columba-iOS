@@ -215,7 +215,10 @@ public struct Contact: Identifiable, Sendable, Hashable {
         self.iconFgColor = record.iconFgColor
         self.iconBgColor = record.iconBgColor
         self.interfaceId = nil
-        self.aspect = nil
+        // Conversation records are keyed by LXMF delivery destinations. This is
+        // explicit provenance, not payload-shape inference, so saved/QR contacts
+        // remain chat-capable even when no announce is currently cached.
+        self.aspect = "lxmf.delivery"
     }
 
     public init(
@@ -963,6 +966,17 @@ public final class ContactsViewModel {
             return nil
         }
 
+        // Bind the claimed delivery hash to the supplied public identity. A QR
+        // code is explicit LXMF-delivery provenance only when these agree.
+        guard let identity = try? Identity(publicKeyBytes: pubkeyData),
+              Destination.hash(
+                identity: identity,
+                appName: "lxmf",
+                aspects: ["delivery"]
+              ) == hashData else {
+            return nil
+        }
+
         return (destinationHash: hashData, publicKey: pubkeyData)
     }
 
@@ -975,11 +989,21 @@ public final class ContactsViewModel {
 
     /// Add a contact from a QR code scan or deep link.
     @MainActor
-    public func addContactFromQR(destinationHash: Data, publicKey: Data, nickname: String?) async {
+    public func addContactFromQR(destinationHash: Data, publicKey: Data, nickname: String?) async -> Bool {
         let hex = destinationHash.map { String(format: "%02x", $0) }.joined()
-        guard !myContacts.contains(where: { $0.id == hex }) else { return }
 
         do {
+            // Retain the already-validated public identity locally. This is a
+            // cache write only: path discovery remains strictly send-triggered.
+            let remembered = await appServices.backend?.core.rememberPeerIdentity(
+                destHashHex: hex,
+                publicKey: publicKey
+            ) ?? false
+            guard remembered else {
+                errorMessage = "The contact identity could not be saved. Please try again."
+                return false
+            }
+            guard !myContacts.contains(where: { $0.id == hex }) else { return true }
             try await messageRepository.ensureConversation(
                 destinationHash,
                 displayName: nickname
@@ -997,15 +1021,18 @@ public final class ContactsViewModel {
                 timestamp: Date(),
                 isOnline: false,
                 isFavorite: true,
-                isRelay: false
+                isRelay: false,
+                aspect: "lxmf.delivery"
             )
             if let existingIndex = myContacts.firstIndex(where: { $0.id == hex }) {
                 myContacts[existingIndex] = contact
             } else {
                 myContacts.append(contact)
             }
+            return true
         } catch {
             errorMessage = "Failed to add contact: \(error.localizedDescription)"
+            return false
         }
     }
 

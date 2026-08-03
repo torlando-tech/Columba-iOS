@@ -115,7 +115,10 @@ public actor SettingsRepository {
 
     /// Get whether to retry failed direct sends via relay.
     public func getRetryViaRelay() -> Bool {
-        defaults.bool(forKey: Keys.retryViaRelay)
+        guard defaults.object(forKey: Keys.retryViaRelay) != nil else {
+            return true
+        }
+        return defaults.bool(forKey: Keys.retryViaRelay)
     }
 
     /// Set whether to retry via relay on direct failure.

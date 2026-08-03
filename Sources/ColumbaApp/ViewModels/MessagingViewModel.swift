@@ -196,9 +196,56 @@ public final class MessagingViewModel {
         }
     }
 
-    /// Thrown when the backend rejects a send pre-flight (bad hash / not started)
-    /// so the existing catch path (retry-via-relay, then failed status) runs.
-    private enum SendError: Error { case notQueued }
+    /// Actionable failure returned when a backend does not accept a send.
+    private struct SendFailure: LocalizedError {
+        let category: String
+        let errorDescription: String?
+    }
+
+    static func failureDescription(for outcome: SendOutcome) -> String? {
+        switch outcome {
+        case .queued:
+            return nil
+        case .requestingPath:
+            return "No active path to this contact was found after waiting 10 seconds."
+        case .badHash:
+            return "The contact has an invalid LXMF destination."
+        case .notStarted:
+            return "The messaging network is not ready."
+        case .other(let reason):
+            return reason.isEmpty ? "The messaging backend rejected the message." : reason
+        }
+    }
+
+    private static func failureCategory(for outcome: SendOutcome) -> String {
+        switch outcome {
+        case .queued: return "invalid-message-hash"
+        case .requestingPath: return "path-unavailable"
+        case .badHash: return "invalid-destination"
+        case .notStarted: return "backend-not-started"
+        case .other: return "backend-rejected"
+        }
+    }
+
+    private static func queuedHash(from outcome: SendOutcome) throws -> Data {
+        if case .queued(let hashHex) = outcome {
+            guard let hash = Data(hexString: hashHex), hash.count == 32 else {
+                throw SendFailure(
+                    category: "invalid-message-hash",
+                    errorDescription: "The network backend accepted the message but returned an invalid message identifier."
+                )
+            }
+            return hash
+        }
+        throw SendFailure(
+            category: failureCategory(for: outcome),
+            errorDescription: failureDescription(for: outcome)
+        )
+    }
+
+    private static func failureCategory(_ error: Error) -> String {
+        (error as? SendFailure)?.category ?? "backend-error"
+    }
 
     /// Send a text-only message (convenience wrapper).
     @MainActor
@@ -221,7 +268,9 @@ public final class MessagingViewModel {
         imageData: Data?,
         imageFormat: String?,
         attachments: [(name: String, data: Data)]?,
-        replyToId: String? = nil
+        replyToId: String? = nil,
+        localRetryHash: Data? = nil,
+        replacedStorageHash: Data? = nil
     ) async -> Bool {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty || imageData != nil || (attachments != nil && !attachments!.isEmpty) else {
@@ -282,9 +331,12 @@ public final class MessagingViewModel {
         )
         lxMessage.fallbackMethod = fallbackForLargeMessages
 
-        // Generate temporary hash for optimistic UI
-        let optimisticId = UUID().uuidString
-        lxMessage.hash = optimisticId.data(using: .utf8)!
+        // Use a canonical-width local ID so failed rows remain retryable after
+        // reload. A retry reuses its existing ID and atomically replaces that
+        // row instead of accumulating stale failed copies.
+        let optimisticHash = localRetryHash ?? Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+        let optimisticId = optimisticHash.map { String(format: "%02x", $0) }.joined()
+        lxMessage.hash = optimisticHash
 
         // Build reply preview for optimistic display
         let replyPreview: String? = {
@@ -309,9 +361,15 @@ public final class MessagingViewModel {
             replyToPreview: replyPreview
         )
 
-        // Add to UI immediately
+        // Add to UI immediately, or replace the existing failed row in place.
         withAnimation(.easeOut(duration: 0.25)) {
-            messages.append(optimisticMessage)
+            if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
+                messages[index] = optimisticMessage
+                messages[index].messageHash = optimisticHash
+            } else {
+                messages.append(optimisticMessage)
+                messages[messages.count - 1].messageHash = optimisticHash
+            }
         }
 
         do {
@@ -328,10 +386,9 @@ public final class MessagingViewModel {
                 fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
                 iconAppearance: icon,
                 replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
-            guard case .queued(let sentHashHex) = outcome, let sentHash = Data(hexString: sentHashHex) else {
-                throw SendError.notQueued
-            }
+            let sentHash = try Self.queuedHash(from: outcome)
             lxMessage.hash = sentHash
+            lxMessage.state = .sent
 
             // Replace optimistic message with real one (using actual hash from pack)
             let realId = lxMessage.hash.map { String(format: "%02x", $0) }.joined()
@@ -355,12 +412,17 @@ public final class MessagingViewModel {
             // Persist so a subsequent loadMessages() doesn't wipe it.
             do {
                 try await repository.saveMessage(lxMessage)
+                if let oldHash = replacedStorageHash ?? localRetryHash,
+                   oldHash != lxMessage.hash {
+                    try await repository.deleteMessage(oldHash)
+                }
             } catch {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
             }
 
             return true
         } catch {
+            var failure: Error = error
             // Retry via relay if enabled
             let retryViaRelay = await settingsRepository.getRetryViaRelay()
             if retryViaRelay {
@@ -392,10 +454,9 @@ public final class MessagingViewModel {
                         fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
                         iconAppearance: icon,
                         replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
-                    guard case .queued(let retryHashHex) = retryOutcome, let retryHash = Data(hexString: retryHashHex) else {
-                        throw SendError.notQueued
-                    }
+                    let retryHash = try Self.queuedHash(from: retryOutcome)
                     retryMessage.hash = retryHash
+                    retryMessage.state = .sent
                     let realId = retryMessage.hash.map { String(format: "%02x", $0) }.joined()
                     if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                         withAnimation(.easeInOut(duration: 0.2)) {
@@ -415,13 +476,33 @@ public final class MessagingViewModel {
                     }
                     do {
                         try await repository.saveMessage(retryMessage)
+                        if let oldHash = replacedStorageHash ?? localRetryHash,
+                           oldHash != retryMessage.hash {
+                            try await repository.deleteMessage(oldHash)
+                        }
                     } catch {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                     }
                     return true
                 } catch {
+                    failure = error
                     logger.error("[MSG_VM] Relay retry also failed: \(error.localizedDescription)")
                 }
+            }
+
+            // Failed outbound attempts are still conversation activity. Persist
+            // the failed row so it remains visible on Chats and can be retried.
+            lxMessage.state = .failed
+            var persisted = false
+            do {
+                try await repository.saveMessage(lxMessage)
+                if let oldHash = replacedStorageHash ?? localRetryHash,
+                   oldHash != lxMessage.hash {
+                    try await repository.deleteMessage(oldHash)
+                }
+                persisted = true
+            } catch {
+                logger.error("[MSG_VM] saveMessage(failed) failed: \(error.localizedDescription)")
             }
 
             // Update to failed status with real hash so retry can delete from DB
@@ -438,6 +519,9 @@ public final class MessagingViewModel {
                             timestamp: messages[index].timestamp,
                             isFromMe: true,
                             deliveryStatus: .failed,
+                            imageData: imageData,
+                            imageFormat: imageFormat,
+                            attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) },
                             replyToId: replyToId,
                             replyToPreview: replyPreview
                         )
@@ -445,7 +529,13 @@ public final class MessagingViewModel {
                     }
                 }
             }
-            errorMessage = "Failed to send: \(error.localizedDescription)"
+            let category = Self.failureCategory(failure)
+            DiagLog.log("[MSG_SEND] failed category=\(category) persisted=\(persisted)")
+            if persisted {
+                errorMessage = "Message failed: \(failure.localizedDescription) It was saved for retry."
+            } else {
+                errorMessage = "Message failed: \(failure.localizedDescription) It could not be saved locally."
+            }
             return false
         }
     }
@@ -459,19 +549,30 @@ public final class MessagingViewModel {
         }
 
         let failedMessage = messages[index]
-
-        // Delete from database if we have the hash
-        if let hash = failedMessage.messageHash {
-            try? await repository.deleteMessage(hash)
+        let storedHash = failedMessage.messageHash ?? Self.hexToData(failedMessage.id)
+        let retryHash: Data
+        if let storedHash, storedHash.count == 32 {
+            retryHash = storedHash
+        } else {
+            retryHash = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
         }
 
-        // Remove from UI
-        _ = withAnimation {
-            messages.remove(at: index)
+        // Reuse a canonical local ID and the complete payload. The send path
+        // replaces the failed row only after the replacement is safely saved,
+        // including migration of legacy non-32-byte temporary IDs.
+        _ = await sendMessage(
+            text: failedMessage.content,
+            imageData: failedMessage.imageData,
+            imageFormat: failedMessage.imageFormat,
+            attachments: failedMessage.attachments?.map { (name: $0.name, data: $0.data) },
+            replyToId: failedMessage.replyToId,
+            localRetryHash: retryHash,
+            replacedStorageHash: storedHash
+        )
+        let retryId = retryHash.map { String(format: "%02x", $0) }.joined()
+        if retryId != messageId, messages.contains(where: { $0.id == retryId }) {
+            messages.removeAll { $0.id == messageId }
         }
-
-        // Resend
-        _ = await sendMessage(text: failedMessage.content)
     }
 
     /// Delete a message from the conversation.
