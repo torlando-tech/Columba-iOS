@@ -478,6 +478,7 @@ public final class MessagingViewModel {
                     let retryHash = try Self.queuedHash(from: retryOutcome)
                     retryMessage.hash = retryHash
                     retryMessage.state = .sent
+                    retryMessage.method = .propagated
                     let realId = retryMessage.hash.map { String(format: "%02x", $0) }.joined()
                     if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                         withAnimation(.easeInOut(duration: 0.2)) {

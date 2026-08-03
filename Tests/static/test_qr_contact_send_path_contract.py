@@ -148,8 +148,9 @@ class QRContactSendPathContractTests(unittest.TestCase):
         wire_send = send.index("backend.lxmf.sendLxmfMessage")
         self.assertLess(stage, wire_send)
         self.assertIn("repository.replaceMessage(lxMessage, replacing: storedHash)", send)
-        self.assertIn('execute("BEGIN IMMEDIATE")', repository)
-        self.assertIn('execute("COMMIT")', repository)
+        self.assertIn("config.observesSuspensionNotifications = true", repository)
+        self.assertIn("try await replacementPool.write", repository)
+        self.assertIn("retryMessage.method = .propagated", send)
         self.assertIn("replacementSourceMissing", repository)
         self.assertNotIn("repository.deleteMessage(oldHash)", send)
 

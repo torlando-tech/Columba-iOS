@@ -324,6 +324,7 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         XCTAssertNil(oldRecord)
         XCTAssertEqual(canonicalRecord.content, Data("payload".utf8))
         XCTAssertEqual(canonicalRecord.state, LXMessageState.sent.rawValue)
+        XCTAssertEqual(canonicalRecord.method, LXDeliveryMethod.propagated.rawValue)
     }
 
     func testMissingRetrySourceDoesNotCreateCanonicalRow() async throws {
