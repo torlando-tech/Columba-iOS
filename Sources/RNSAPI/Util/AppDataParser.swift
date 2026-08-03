@@ -58,6 +58,25 @@ public enum AppDataParser {
         return ""
     }
 
+    /// Whether an announced name may replace a conversation's current name.
+    ///
+    /// Inbound messages can create a conversation before its peer announce is
+    /// observed. That row receives the generated `Peer <hash>` placeholder, so
+    /// treating every non-empty name as user-owned leaves the placeholder stuck
+    /// forever. Replace only an empty value or the exact generated placeholder;
+    /// preserve custom nicknames and unrelated peer-like names.
+    public static func shouldReplaceConversationName(
+        _ existingName: String?,
+        destinationHash: Data
+    ) -> Bool {
+        guard let existingName, !existingName.isEmpty else { return true }
+        let hashPrefix = destinationHash.prefix(4)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let generatedFallback = "Peer \(hashPrefix)"
+        return existingName.caseInsensitiveCompare(generatedFallback) == .orderedSame
+    }
+
     /// Pull a UTF-8 string out of a `.string` or `.binary` MessagePackValue.
     /// `.nil` / other cases → nil (so callers can fall back to "").
     private static func string(_ value: MessagePackValue?) -> String? {
