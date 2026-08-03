@@ -41,6 +41,8 @@ public final class MessagingViewModel {
 
     /// Page size for message fetching.
     private static let pageSize = 50
+    private static let interruptedRetryWarning =
+        "A message retry was interrupted before delivery confirmation. Verify whether it arrived before retrying."
 
     // MARK: - Dependencies
 
@@ -135,11 +137,9 @@ public final class MessagingViewModel {
             try await repository.markConversationRead(conversationHash)
 
             // Fetch most recent page
+            let hasInterruptedRetry = try await repository.hasUncertainRetry(for: conversationHash)
             let records = try await repository.fetchMessageRecords(
                 for: conversationHash, limit: Self.pageSize, offset: 0)
-            let hasInterruptedRetry = records.contains {
-                $0.receivingInterface == MessageRepository.uncertainRetryMarker
-            }
             let loaded = records.reversed()
                 .map { Message(from: $0, localHash: appServices.localIdentityHash) }
                 .filter { !$0.isEmpty }  // Hide telemetry-only messages (e.g. location sharing)
@@ -166,7 +166,7 @@ public final class MessagingViewModel {
             try await repository.markConversationRead(conversationHash)
 
             errorMessage = hasInterruptedRetry
-                ? "A message retry was interrupted before delivery confirmation. Verify whether it arrived before retrying."
+                ? Self.interruptedRetryWarning
                 : nil
         } catch {
             errorMessage = error.localizedDescription
@@ -182,8 +182,14 @@ public final class MessagingViewModel {
 
         do {
             let offset = messages.count
+            let hasInterruptedRetry = try await repository.hasUncertainRetry(for: conversationHash)
             let records = try await repository.fetchMessageRecords(
                 for: conversationHash, limit: Self.pageSize, offset: offset)
+            if hasInterruptedRetry {
+                errorMessage = Self.interruptedRetryWarning
+            } else if errorMessage == Self.interruptedRetryWarning {
+                errorMessage = nil
+            }
             if records.isEmpty {
                 allMessagesLoaded = true
                 return

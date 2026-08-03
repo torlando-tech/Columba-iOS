@@ -160,12 +160,15 @@ class QRContactSendPathContractTests(unittest.TestCase):
         app_services = self._read("Sources/ColumbaApp/Services/AppServices.swift")
         self.assertIn("messageRepository.recoverInterruptedRetries()", app_services)
         self.assertIn("Verify whether it arrived before retrying", view_model)
-        self.assertIn("MessageRepository.uncertainRetryMarker", view_model)
+        self.assertIn("repository.hasUncertainRetry(for: conversationHash)", view_model)
         self.assertIn("public func recoverInterruptedRetries", repository)
         self.assertIn("LXMFSwift.LXMessageState.sending.rawValue", repository)
         self.assertIn("receiving_interface = ?", repository)
         self.assertIn("Self.stagedRetryMarker", repository)
         self.assertIn("Self.uncertainRetryMarker", repository)
+        self.assertIn("message_id = ? AND incoming = 0 AND state = ?", repository)
+        self.assertIn("receiving_interface IS NULL OR receiving_interface = ?", repository)
+        self.assertIn("public func hasUncertainRetry", repository)
 
     def test_existing_qr_contact_can_refresh_peer_identity(self) -> None:
         add_sheet = self._read("Sources/ColumbaApp/Views/Contacts/AddContactSheet.swift")

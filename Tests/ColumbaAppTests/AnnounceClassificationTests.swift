@@ -369,6 +369,14 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
 
         retry.state = .sending
         try await repository.stageRetry(retry, replacing: retryHash)
+        do {
+            try await repository.stageRetry(retry, replacing: retryHash)
+            XCTFail("Expected a second retry owner to lose the compare-and-set")
+        } catch {
+            // Expected: the first stage changed the durable source state.
+        }
+        let uncertainBeforeRecovery = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertFalse(uncertainBeforeRecovery)
         let recoveredCount = try await repository.recoverInterruptedRetries()
         XCTAssertEqual(recoveredCount, 1)
 
@@ -376,6 +384,8 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         let recovered = try XCTUnwrap(storedRecovered)
         XCTAssertEqual(recovered.state, LXMessageState.failed.rawValue)
         XCTAssertEqual(recovered.receivingInterface, MessageRepository.uncertainRetryMarker)
+        let uncertainAfterRecovery = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertTrue(uncertainAfterRecovery)
         let secondRecoveryCount = try await repository.recoverInterruptedRetries()
         XCTAssertEqual(secondRecoveryCount, 0)
     }
@@ -399,6 +409,8 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         try await repository.replaceMessage(retry, replacing: retryHash)
         let recoveredCount = try await repository.recoverInterruptedRetries()
         XCTAssertEqual(recoveredCount, 0)
+        let hasUncertainRetry = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertFalse(hasUncertainRetry)
 
         let stored = try await repository.getMessageRecord(id: retryHash)
         let untouched = try XCTUnwrap(stored)

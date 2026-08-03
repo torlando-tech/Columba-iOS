@@ -233,12 +233,50 @@ public actor MessageRepository {
     }
 
     /// Stage one failed retry as app-owned `.sending` before network submission.
-    /// The durable marker lets startup recovery distinguish it from NE work.
+    /// The compare-and-set prevents concurrent taps from owning the same row.
     public func stageRetry(_ message: RNSAPI.LXMessage, replacing oldId: Data) async throws {
-        try await replaceMessageRecord(
-            message,
-            replacing: oldId,
-            retryMarker: Self.stagedRetryMarker
+        try await replacementPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE messages
+                    SET message_id = ?, state = ?, method = ?, timestamp = ?,
+                        receiving_interface = ?, updated_at = ?
+                    WHERE message_id = ? AND incoming = 0 AND state = ?
+                      AND (receiving_interface IS NULL OR receiving_interface = ?)
+                    """,
+                arguments: [
+                    message.hash,
+                    Self.mapStateToGRDB(message.state).rawValue,
+                    Self.mapMethodToGRDB(message.method).rawValue,
+                    message.timestamp,
+                    Self.stagedRetryMarker,
+                    Date().timeIntervalSince1970,
+                    oldId,
+                    LXMFSwift.LXMessageState.failed.rawValue,
+                    Self.uncertainRetryMarker,
+                ]
+            )
+            guard db.changesCount == 1 else {
+                throw MessageRepositoryError.replacementSourceMissing
+            }
+            try db.execute(
+                sql: """
+                    UPDATE conversations
+                    SET last_message_timestamp = ?, updated_at = ?
+                    WHERE destination_hash = ? AND last_message_timestamp <= ?
+                    """,
+                arguments: [
+                    message.timestamp,
+                    Date().timeIntervalSince1970,
+                    message.destinationHash,
+                    message.timestamp,
+                ]
+            )
+        }
+        NotificationCenter.default.post(
+            name: Self.conversationActivityNotification,
+            object: nil,
+            userInfo: [Self.conversationHashUserInfoKey: message.destinationHash]
         )
     }
 
@@ -310,6 +348,27 @@ public actor MessageRepository {
                 ]
             )
             return db.changesCount
+        }
+    }
+
+    /// Check the entire conversation, independently of message pagination, for
+    /// a recovered retry whose delivery outcome remains unknown.
+    public func hasUncertainRetry(for destinationHash: Data) async throws -> Bool {
+        try await replacementPool.read { db in
+            let count = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*) FROM messages
+                    WHERE destination_hash = ? AND incoming = 0 AND state = ?
+                      AND receiving_interface = ?
+                    """,
+                arguments: [
+                    destinationHash,
+                    LXMFSwift.LXMessageState.failed.rawValue,
+                    Self.uncertainRetryMarker,
+                ]
+            ) ?? 0
+            return count > 0
         }
     }
 
