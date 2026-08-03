@@ -1,6 +1,7 @@
 import XCTest
 @testable import ColumbaApp
 import RNSAPI
+import GRDB
 
 /// Tests for `Contact.init(from: PathEntry)` announce classification — the
 /// single backend-independent point where every networkAnnounces entry gets
@@ -290,10 +291,23 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: url.path + "-wal")
     }
 
+    private func rawMessageSnapshot(_ queue: DatabaseQueue, id: Data) throws -> [String: String] {
+        try queue.read { db in
+            let row = try XCTUnwrap(
+                Row.fetchOne(db, sql: "SELECT * FROM messages WHERE message_id = ?", arguments: [id])
+            )
+            return Dictionary(uniqueKeysWithValues: row.columnNames.map { name in
+                let value: DatabaseValue = row[name]
+                return (name, String(reflecting: value))
+            })
+        }
+    }
+
     func testRetryReplacementRekeysExactlyOneDurableRow() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }
         let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let queue = try DatabaseQueue(path: databaseURL.path)
         let destination = Data(repeating: 0x11, count: 16)
         let oldHash = Data(repeating: 0x22, count: 32)
         let canonicalHash = Data(repeating: 0x33, count: 32)
@@ -301,12 +315,27 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         let failed = RNSAPI.LXMessage(
             destinationHash: destination,
             sourceIdentity: nil,
-            content: Data("payload".utf8)
+            content: Data("payload".utf8),
+            title: Data("title".utf8),
+            fields: [
+                RNSAPI.LXMessage.FIELD_IMAGE: ["png", Data([0x01, 0x02])] as [Any],
+                RNSAPI.LXMessage.FIELD_FILE_ATTACHMENTS: [
+                    ["notes.txt", Data("attachment".utf8)] as [Any]
+                ] as [Any],
+                RNSAPI.LXMessage.FIELD_APP_DATA: ["reply_to": "parent-hash"],
+            ]
         )
         failed.hash = oldHash
         failed.state = .failed
         failed.method = .opportunistic
         try await repository.saveMessage(failed)
+        try await repository.updateReplyToId(oldHash, replyToId: "parent-hash")
+        let originalStored = try await repository.getMessageRecord(id: oldHash)
+        let original = try XCTUnwrap(originalStored)
+        let originalRaw = try rawMessageSnapshot(queue, id: oldHash)
+
+        failed.state = .sending
+        try await repository.stageRetry(failed, replacing: oldHash)
 
         let sent = RNSAPI.LXMessage(
             destinationHash: destination,
@@ -321,10 +350,16 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         let oldRecord = try await repository.getMessageRecord(id: oldHash)
         let storedCanonical = try await repository.getMessageRecord(id: canonicalHash)
         let canonicalRecord = try XCTUnwrap(storedCanonical)
+        let canonicalRaw = try rawMessageSnapshot(queue, id: canonicalHash)
         XCTAssertNil(oldRecord)
         XCTAssertEqual(canonicalRecord.content, Data("payload".utf8))
+        XCTAssertEqual(canonicalRaw["title"], originalRaw["title"])
+        XCTAssertEqual(canonicalRecord.packedLxmf, original.packedLxmf)
+        XCTAssertEqual(canonicalRecord.replyToId, "parent-hash")
         XCTAssertEqual(canonicalRecord.state, LXMessageState.sent.rawValue)
         XCTAssertEqual(canonicalRecord.method, LXDeliveryMethod.propagated.rawValue)
+        XCTAssertEqual(canonicalRecord.timestamp, sent.timestamp)
+        XCTAssertNil(canonicalRecord.receivingInterface)
     }
 
     func testMissingRetrySourceDoesNotCreateCanonicalRow() async throws {
@@ -349,6 +384,61 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         } catch {
             let canonicalRecord = try await repository.getMessageRecord(id: canonicalHash)
             XCTAssertNil(canonicalRecord)
+        }
+    }
+
+    func testReplacementRollsBackAfterPostUpdateFailure() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let queue = try DatabaseQueue(path: databaseURL.path)
+        let destination = Data(repeating: 0x81, count: 16)
+        let oldHash = Data(repeating: 0x82, count: 32)
+        let canonicalHash = Data(repeating: 0x83, count: 32)
+        let failed = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("rollback-payload".utf8),
+            title: Data("rollback-title".utf8),
+            fields: [
+                RNSAPI.LXMessage.FIELD_FILE_ATTACHMENTS: [
+                    ["rollback.bin", Data([0xaa, 0xbb, 0xcc])] as [Any]
+                ] as [Any]
+            ]
+        )
+        failed.hash = oldHash
+        failed.state = .failed
+        failed.method = .opportunistic
+        try await repository.saveMessage(failed)
+        try await repository.updateReplyToId(oldHash, replyToId: "rollback-parent")
+        let before = try rawMessageSnapshot(queue, id: oldHash)
+
+        try await queue.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER force_conversation_update_failure
+                BEFORE UPDATE ON conversations
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced post-message-update failure');
+                END
+                """)
+        }
+
+        let sent = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("ignored-new-content".utf8)
+        )
+        sent.hash = canonicalHash
+        sent.state = .sent
+        sent.method = .propagated
+        do {
+            try await repository.replaceMessage(sent, replacing: oldHash)
+            XCTFail("Expected the conversation trigger to abort replacement")
+        } catch {
+            let after = try rawMessageSnapshot(queue, id: oldHash)
+            XCTAssertEqual(after, before)
+            let canonical = try await repository.getMessageRecord(id: canonicalHash)
+            XCTAssertNil(canonical)
         }
     }
 

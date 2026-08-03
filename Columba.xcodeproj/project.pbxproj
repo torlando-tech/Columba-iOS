@@ -142,6 +142,7 @@
 		2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8222FC732AF00235991 /* LXMFSwift */; };
 		D4E5F60718293A4B5C6D7E8B /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = D4E5F60718293A4B5C6D7E8A /* GRDB */; };
 		D4E5F60718293A4B5C6D7E8D /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = D4E5F60718293A4B5C6D7E8C /* GRDB */; };
+		E5F60718293A4B5C6D7E8F91 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = E5F60718293A4B5C6D7E8F90 /* GRDB */; };
 		31F207DBD45E2CA682A3F830 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
 		33CCBDB91636352EFC4A7790 /* BLEConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F071 /* BLEConnectionsView.swift */; };
 		33E0E91CAEFB07F13C04637D /* SwiftRNSBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRB002 /* SwiftRNSBackend.swift */; };
@@ -632,6 +633,7 @@
 				9D9069A3F6302111A4727454 /* SwiftBLEBridge in Frameworks */,
 				35DF1F7406C71743BBE8C39B /* ReticulumSwift in Frameworks */,
 				98547ADE9B17DD692240E7F7 /* LXMFSwift in Frameworks */,
+				E5F60718293A4B5C6D7E8F91 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1213,6 +1215,7 @@
 				E049A7D4D6D58690C0B674CE /* RNSAPI */,
 				DD88CFE74E7E22427BC4D163 /* SwiftBLEBridge */,
 				DA31FE974552414C399D4949 /* ReticulumSwift */,
+				E5F60718293A4B5C6D7E8F90 /* GRDB */,
 				85B9530D8CAE0E16D5371319 /* LXMFSwift */,
 			);
 			productName = ColumbaAppTests;
@@ -2332,6 +2335,10 @@
 		F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RNSAPI;
+		};
+		E5F60718293A4B5C6D7E8F90 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = GRDB;
 		};
 		FE4D25F362FFD8A793C143FC /* LXSTSwift */ = {
 			isa = XCSwiftPackageProductDependency;
