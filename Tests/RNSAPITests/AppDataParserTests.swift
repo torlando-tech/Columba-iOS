@@ -68,6 +68,19 @@ final class AppDataParserTests: XCTestCase {
         XCTAssertEqual(AppDataParser.displayName(from: Data("LegacyName".utf8), aspect: "lxmf.delivery"), "LegacyName")
     }
 
+    func testAnnouncedNameReplacesOnlyEmptyOrGeneratedHashFallback() {
+        let destinationHash = Data([0x05, 0xc5, 0x7e, 0x42] + Array(repeating: 0xaa, count: 12))
+
+        XCTAssertTrue(AppDataParser.shouldReplaceConversationName(nil, destinationHash: destinationHash))
+        XCTAssertTrue(AppDataParser.shouldReplaceConversationName("", destinationHash: destinationHash))
+        XCTAssertTrue(AppDataParser.shouldReplaceConversationName("Peer 05c57e42", destinationHash: destinationHash))
+        XCTAssertTrue(AppDataParser.shouldReplaceConversationName("Peer 05C57E42", destinationHash: destinationHash))
+
+        XCTAssertFalse(AppDataParser.shouldReplaceConversationName("Hermes", destinationHash: destinationHash))
+        XCTAssertFalse(AppDataParser.shouldReplaceConversationName("Peer Alice", destinationHash: destinationHash))
+        XCTAssertFalse(AppDataParser.shouldReplaceConversationName("Peer deadbeef", destinationHash: destinationHash))
+    }
+
     // MARK: - Propagation (the regression)
 
     func testPropagationNoNameIsEmptyNotFalse() {
