@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import XCTest
+import RNSAPI
 @testable import ColumbaApp
 
 final class MessageLinkParserTests: XCTestCase {
