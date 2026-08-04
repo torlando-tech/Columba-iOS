@@ -947,6 +947,12 @@
     },
     "Not Allowed": {
       "comment": "Status indicating an iOS permission is not allowed."
+    },
+    "Text Size": {
+      "comment": "Conversation action and picker title for changing primary message-body text size."
+    },
+    "Preview message text": {
+      "comment": "Sample message shown in the conversation text-size picker."
     }
   },
   "version": "1.0"
