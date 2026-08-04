@@ -655,7 +655,7 @@ struct MessagingView: View {
 // MARK: - Text Size Picker Sheet
 
 @available(iOS 17.0, macOS 14.0, *)
-private struct TextSizePickerSheet: View {
+struct TextSizePickerSheet: View {
     let onSave: (Double) -> Void
 
     @State private var selectedScale: Double
