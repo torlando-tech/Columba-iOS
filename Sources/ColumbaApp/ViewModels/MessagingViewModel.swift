@@ -41,6 +41,7 @@ public final class MessagingViewModel {
 
     /// Page size for message fetching.
     private static let pageSize = 50
+    private var pageCursor = MessagePageCursor()
     private static let interruptedRetryWarning =
         "A message retry was interrupted before delivery confirmation. Verify whether it arrived before retrying."
 
@@ -136,10 +137,18 @@ public final class MessagingViewModel {
             try await repository.ensureConversation(conversationHash, displayName: displayName)
             try await repository.markConversationRead(conversationHash)
 
-            // Fetch most recent page
+            // Preserve the current history depth when a repository notification
+            // refreshes the newest records. One record of slack retains the
+            // previous oldest row when the refresh includes a newly arrived
+            // message.
+            let retainedRecordCount = pageCursor.nextOffset
+            let refreshSlack = retainedRecordCount > 0 && !messages.isEmpty ? 1 : 0
+            let fetchLimit = max(Self.pageSize, retainedRecordCount + refreshSlack)
+
+            // Fetch the newest retained history window.
             let hasInterruptedRetry = try await repository.hasUncertainRetry(for: conversationHash)
             let records = try await repository.fetchMessageRecords(
-                for: conversationHash, limit: Self.pageSize, offset: 0)
+                for: conversationHash, limit: fetchLimit, offset: 0)
             let loaded = records.reversed()
                 .map { Message(from: $0, localHash: appServices.localIdentityHash) }
                 .filter { !$0.isEmpty }  // Hide telemetry-only messages (e.g. location sharing)
@@ -159,7 +168,8 @@ public final class MessagingViewModel {
             }
 
             messages = resolvedMessages
-            allMessagesLoaded = records.count < Self.pageSize
+            pageCursor.reset(recordCount: records.count)
+            allMessagesLoaded = records.count < fetchLimit
 
             // Reconcile messages that arrived after the initial read reset but
             // were included in the page we just displayed.
@@ -181,7 +191,11 @@ public final class MessagingViewModel {
         defer { isLoadingMore = false }
 
         do {
-            let offset = messages.count
+            // Database pages can contain telemetry-only records that do not
+            // become visible bubbles. Offset by fetched records rather than
+            // `messages.count` so those hidden records cannot cause overlapping
+            // pages and duplicate IDs.
+            let offset = pageCursor.nextOffset
             let hasInterruptedRetry = try await repository.hasUncertainRetry(for: conversationHash)
             let records = try await repository.fetchMessageRecords(
                 for: conversationHash, limit: Self.pageSize, offset: offset)
@@ -194,6 +208,7 @@ public final class MessagingViewModel {
                 allMessagesLoaded = true
                 return
             }
+            pageCursor.recordFetchedPage(recordCount: records.count)
             let older = records.reversed()
                 .map { Message(from: $0, localHash: appServices.localIdentityHash) }
                 .filter { !$0.isEmpty }  // Hide telemetry-only messages

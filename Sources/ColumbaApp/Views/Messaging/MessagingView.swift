@@ -79,6 +79,85 @@ struct MessagingView: View {
     var body: some View {
         Group {
             if let vm = viewModel {
+                #if os(iOS)
+                MessageTimelineView(
+                    messages: vm.messages,
+                    isLoadingMore: vm.isLoadingMore,
+                    allMessagesLoaded: vm.allMessagesLoaded,
+                    onLoadOlder: {
+                        await vm.loadMoreMessages()
+                    },
+                    onReply: { message in
+                        guard message.messageHash != nil else { return }
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            vm.replyToMessage = message
+                        }
+                    },
+                    onToggleReaction: { message, emoji in
+                        Task {
+                            await vm.sendReaction(
+                                targetMessageId: message.id,
+                                targetMessageHash: message.messageHash,
+                                emoji: emoji
+                            )
+                        }
+                    },
+                    onLongPress: { message in
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            reactionModeMessage = message
+                        }
+                    }
+                )
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    MessageInputBar(
+                        text: $messageText,
+                        attachedImage: $attachedImage,
+                        attachedFiles: $attachedFiles,
+                        replyToMessage: vm.replyToMessage,
+                        onDismissReply: { withAnimation(.easeInOut(duration: 0.25)) { vm.replyToMessage = nil } },
+                        onSend: sendMessage,
+                        onImagePicker: { showPhotoPicker = true },
+                        onAttachment: { showFilePicker = true }
+                    )
+                    .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+                    .onChange(of: selectedPhotoItem) { _, newItem in
+                        guard let newItem else { return }
+                        Task {
+                            do {
+                                if let data = try await newItem.loadTransferable(type: Data.self),
+                                   let image = UIImage(data: data) {
+                                    await MainActor.run {
+                                        pendingRawImage = image
+                                        selectedImagePreset = UserDefaults.standard.string(forKey: "image_quality_preset")
+                                            .flatMap { SettingsViewModel.ImageQualityPreset(rawValue: $0) } ?? .high
+                                        showQualityPicker = true
+                                    }
+                                }
+                            } catch {
+                                logger.error("Failed to load image: \(error)")
+                            }
+                            await MainActor.run {
+                                selectedPhotoItem = nil
+                            }
+                        }
+                    }
+                    .fileImporter(
+                        isPresented: $showFilePicker,
+                        allowedContentTypes: [.data],
+                        allowsMultipleSelection: true
+                    ) { result in
+                        if case .success(let urls) = result {
+                            for url in urls {
+                                guard url.startAccessingSecurityScopedResource() else { continue }
+                                defer { url.stopAccessingSecurityScopedResource() }
+                                if let data = try? Data(contentsOf: url) {
+                                    attachedFiles.append(FileAttachment(name: url.lastPathComponent, data: data))
+                                }
+                            }
+                        }
+                    }
+                }
+                #else
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 12) {
@@ -253,6 +332,7 @@ struct MessagingView: View {
                     }
                     #endif
                 }
+                #endif
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -794,7 +874,7 @@ private class InteractivePopController: UIViewController, UIGestureRecognizerDel
 
 /// Wraps a message bubble to add swipe-right-to-reply gesture.
 @available(iOS 17.0, macOS 14.0, *)
-private struct SwipeToReplyContainer<Content: View>: View {
+struct SwipeToReplyContainer<Content: View>: View {
     let onReply: () -> Void
     @ViewBuilder let content: Content
 

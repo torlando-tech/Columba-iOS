@@ -22,6 +22,7 @@
 		012 /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012 /* NetworkAnnouncesTab.swift */; };
 		013 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013 /* MessagingView.swift */; };
 		TSP002 /* TextSizePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSP001 /* TextSizePickerSheet.swift */; };
+		A41F10000000000000000001 /* MessageTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A41F10000000000000000003 /* MessageTimelineView.swift */; };
 		014 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014 /* MessageBubble.swift */; };
 		015 /* MessageInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F015 /* MessageInputBar.swift */; };
 		016 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016 /* SettingsView.swift */; };
@@ -267,6 +268,7 @@
 		BE3C19C7804FA366826A5A7A /* OfflineMapsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F063 /* OfflineMapsScreen.swift */; platformFilter = ios; };
 		BED8754AAD30B1CB58755EF8 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013 /* MessagingView.swift */; };
 		TSP003 /* TextSizePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSP001 /* TextSizePickerSheet.swift */; };
+		A41F10000000000000000002 /* MessageTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A41F10000000000000000003 /* MessageTimelineView.swift */; };
 		BKF001 /* BackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKF002 /* BackendFactory.swift */; };
 		C0904C776958B1A10E0A8128 /* WelcomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04D /* WelcomePage.swift */; };
 		C126E88E13D9DB7CCE7AD8A0 /* MicronDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07D /* MicronDocument.swift */; };
@@ -467,6 +469,7 @@
 		F012 /* NetworkAnnouncesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkAnnouncesTab.swift; sourceTree = "<group>"; };
 		F013 /* MessagingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingView.swift; sourceTree = "<group>"; };
 		TSP001 /* TextSizePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSizePickerSheet.swift; sourceTree = "<group>"; };
+		A41F10000000000000000003 /* MessageTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageTimelineView.swift; sourceTree = "<group>"; };
 		F014 /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
 		F015 /* MessageInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageInputBar.swift; sourceTree = "<group>"; };
 		F016 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -842,6 +845,7 @@
 			children = (
 				F013 /* MessagingView.swift */,
 				TSP001 /* TextSizePickerSheet.swift */,
+				A41F10000000000000000003 /* MessageTimelineView.swift */,
 				F014 /* MessageBubble.swift */,
 				F015 /* MessageInputBar.swift */,
 				F073 /* MessageDetailView.swift */,
@@ -1366,7 +1370,11 @@
 				140E03C294121F7FA2D478A9 /* ContactCard.swift in Sources */,
 				C6816EEC9864A2903840C8AC /* NetworkAnnouncesTab.swift in Sources */,
 				BED8754AAD30B1CB58755EF8 /* MessagingView.swift in Sources */,
+<<<<<<< HEAD
 				TSP003 /* TextSizePickerSheet.swift in Sources */,
+=======
+				A41F10000000000000000002 /* MessageTimelineView.swift in Sources */,
+>>>>>>> b7867d04 (fix: use collection view for message timeline)
 				C204F5778ABB560C1FD4DC60 /* MessageBubble.swift in Sources */,
 				D93546FFCB0106CF3F68B2C5 /* MessageDetailView.swift in Sources */,
 				D709D8EDF36F85DEB5AABEC4 /* MessageInputBar.swift in Sources */,
@@ -1545,7 +1553,11 @@
 				011 /* ContactCard.swift in Sources */,
 				012 /* NetworkAnnouncesTab.swift in Sources */,
 				013 /* MessagingView.swift in Sources */,
+<<<<<<< HEAD
 				TSP002 /* TextSizePickerSheet.swift in Sources */,
+=======
+				A41F10000000000000000001 /* MessageTimelineView.swift in Sources */,
+>>>>>>> b7867d04 (fix: use collection view for message timeline)
 				014 /* MessageBubble.swift in Sources */,
 				073 /* MessageDetailView.swift in Sources */,
 				015 /* MessageInputBar.swift in Sources */,

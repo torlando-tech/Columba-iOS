@@ -230,3 +230,121 @@ final class MessageBubbleLayoutTests: XCTestCase {
         )
     }
 }
+
+final class MessageTimelinePolicyTests: XCTestCase {
+
+    func testPaginationStartsBeforeTopWithoutViewLifecycleSentinel() {
+        XCTAssertTrue(
+            MessageTimelinePaginationPolicy.shouldLoadOlder(
+                contentOffsetY: 1_499,
+                viewportHeight: 500,
+                isLoading: false,
+                allHistoryLoaded: false
+            )
+        )
+        XCTAssertFalse(
+            MessageTimelinePaginationPolicy.shouldLoadOlder(
+                contentOffsetY: 1_500,
+                viewportHeight: 500,
+                isLoading: false,
+                allHistoryLoaded: false
+            )
+        )
+    }
+
+    func testPaginationRejectsDuplicateAndExhaustedLoads() {
+        XCTAssertFalse(
+            MessageTimelinePaginationPolicy.shouldLoadOlder(
+                contentOffsetY: 0,
+                viewportHeight: 500,
+                isLoading: true,
+                allHistoryLoaded: false
+            )
+        )
+        XCTAssertFalse(
+            MessageTimelinePaginationPolicy.shouldLoadOlder(
+                contentOffsetY: 0,
+                viewportHeight: 500,
+                isLoading: false,
+                allHistoryLoaded: true
+            )
+        )
+    }
+
+    func testPrependingMessagesPreservesVisibleAnchorOffset() {
+        XCTAssertEqual(
+            MessageTimelineViewportAnchor.adjustedContentOffset(
+                previousContentOffset: 1_200,
+                previousAnchorMinY: 1_260,
+                updatedAnchorMinY: 2_010
+            ),
+            1_950,
+            accuracy: 0.001
+        )
+    }
+
+    func testPaginationCursorUsesFetchedRecordsRatherThanVisibleMessages() {
+        var cursor = MessagePageCursor()
+        cursor.recordFetchedPage(recordCount: 50)
+
+        // A page may contain telemetry records that are intentionally hidden
+        // from the timeline. The next database offset must still skip all 50
+        // records, not the smaller number of visible message bubbles.
+        XCTAssertEqual(cursor.nextOffset, 50)
+
+        cursor.recordFetchedPage(recordCount: 50)
+        XCTAssertEqual(cursor.nextOffset, 100)
+    }
+
+    @MainActor
+    func testCollectionTimelineKeepsRowsRenderedAcrossViewportChanges() {
+        let controller = MessageTimelineViewController()
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 700))
+
+        var messages: [Message] = []
+        for index in 0..<50 {
+            let replyID: String? = index == 0 ? nil : "message-\(index - 1)"
+            let replyPreview: String? = index == 0 ? nil : "Earlier message preview"
+            messages.append(
+                Message(
+                    id: "message-\(index)",
+                    content: String(repeating: "Long timeline content \(index). ", count: 8),
+                    timestamp: Date().addingTimeInterval(TimeInterval(index)),
+                    isFromMe: index.isMultiple(of: 2),
+                    deliveryStatus: .delivered,
+                    replyToId: replyID,
+                    replyToPreview: replyPreview
+                )
+            )
+        }
+
+        controller.update(messages: messages, isLoadingMore: false, allMessagesLoaded: true)
+        controller.setViewportForTesting(CGSize(width: 390, height: 380))
+        controller.setViewportForTesting(CGSize(width: 390, height: 700))
+
+        XCTAssertEqual(controller.renderedMessageCount, 50)
+        XCTAssertGreaterThan(controller.visibleMessageCellCount, 0)
+    }
+
+    @MainActor
+    func testCollectionTimelineRequestsHistoryFromScrollOffset() async {
+        let requested = expectation(description: "older page requested")
+        let controller = MessageTimelineViewController()
+        controller.onLoadOlder = {
+            requested.fulfill()
+        }
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 700))
+        controller.update(
+            messages: (0..<50).map {
+                Message(id: "message-\($0)", content: "Message \($0)", isFromMe: false)
+            },
+            isLoadingMore: false,
+            allMessagesLoaded: false
+        )
+
+        controller.setContentOffsetForTesting(y: 0)
+        await fulfillment(of: [requested], timeout: 1)
+    }
+}
