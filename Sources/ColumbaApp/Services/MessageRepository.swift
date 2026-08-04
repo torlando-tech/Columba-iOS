@@ -49,6 +49,9 @@ public actor MessageRepository {
     /// messages already use `IncomingMessageHandler.messageReceivedNotification`.
     public static let conversationActivityNotification =
         Notification.Name("network.columba.conversationActivity")
+    /// Posted after durable conversation metadata changes without a new message.
+    public static let conversationMetadataChangedNotification =
+        Notification.Name("network.columba.conversationMetadataChanged")
 
     public static let conversationHashUserInfoKey = "conversationHash"
     public static let stagedRetryMarker = "columba-app-retry-staged-v1"
@@ -163,7 +166,7 @@ public actor MessageRepository {
         let generatedFallback = AppDataParser.generatedConversationName(
             destinationHash: conversationHash
         )
-        return try await replacementPool.write { db in
+        let updated = try await replacementPool.write { db in
             try db.execute(
                 sql: """
                     UPDATE conversations
@@ -184,6 +187,14 @@ public actor MessageRepository {
             )
             return db.changesCount == 1
         }
+        if updated {
+            NotificationCenter.default.post(
+                name: Self.conversationMetadataChangedNotification,
+                object: nil,
+                userInfo: [Self.conversationHashUserInfoKey: conversationHash]
+            )
+        }
+        return updated
     }
 
     // MARK: - Icon Appearance
