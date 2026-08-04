@@ -322,6 +322,41 @@ final class MessageTimelinePolicyTests: XCTestCase {
                 pageSize: 50
             )
         )
+        XCTAssertEqual(
+            MessageRefreshWindowPolicy.retainedPrefixCount(
+                recordIDs: ["new", "prior-oldest", "speculative-older"],
+                priorOldestID: "prior-oldest"
+            ),
+            2
+        )
+        XCTAssertEqual(
+            MessageRefreshWindowPolicy.retainedPrefixCount(
+                recordIDs: ["newest", "middle", "prior-oldest"],
+                priorOldestID: "prior-oldest"
+            ),
+            3
+        )
+    }
+
+    func testDeleteIsUnavailableUntilOutboundPersistenceCompletes() {
+        XCTAssertFalse(
+            MessagingViewModel.canDeleteMessage(
+                isUnpersisted: true,
+                isUnsavedFailure: false
+            )
+        )
+        XCTAssertTrue(
+            MessagingViewModel.canDeleteMessage(
+                isUnpersisted: true,
+                isUnsavedFailure: true
+            )
+        )
+        XCTAssertTrue(
+            MessagingViewModel.canDeleteMessage(
+                isUnpersisted: false,
+                isUnsavedFailure: false
+            )
+        )
     }
 
     func testRefreshPreservesOnlyUnpersistedOutboundRowsInTimelineOrder() {
@@ -333,21 +368,28 @@ final class MessageTimelinePolicyTests: XCTestCase {
             timestamp: base.addingTimeInterval(1),
             isFromMe: true
         )
-        let persistedB = Message(
+        let loadedB = Message(
             id: "persisted-b",
-            content: "Persisted B",
+            content: "Staged database row",
+            timestamp: base.addingTimeInterval(2),
+            isFromMe: true
+        )
+        let pendingB = Message(
+            id: "persisted-b",
+            content: "Current pending row",
             timestamp: base.addingTimeInterval(2),
             isFromMe: true
         )
         let stale = Message(id: "stale", content: "Stale", timestamp: base, isFromMe: false)
 
         let merged = MessagingViewModel.mergingPendingOutbound(
-            loaded: [oldest, persistedB],
-            current: [stale, pendingA, persistedB],
+            loaded: [oldest, loadedB],
+            current: [stale, pendingA, pendingB],
             pendingIDs: ["pending-a", "persisted-b"]
         )
 
         XCTAssertEqual(merged.map(\.id), ["oldest", "pending-a", "persisted-b"])
+        XCTAssertEqual(merged.last?.content, "Current pending row")
     }
 
     @MainActor

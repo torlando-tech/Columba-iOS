@@ -370,9 +370,9 @@ struct MessagingView: View {
                     onDetails: {
                         detailMessage = msg
                     },
-                    onDelete: {
+                    onDelete: viewModel?.canDeleteMessage(messageId: msg.id) == true ? {
                         deleteConfirmMessage = msg
-                    },
+                    } : nil,
                     onRetry: msg.deliveryStatus == .failed ? {
                         Task { await viewModel?.retryMessage(messageId: msg.id) }
                     } : nil,
@@ -982,7 +982,7 @@ private struct ReactionOverlay: View {
     let onReply: () -> Void
     let onCopy: () -> Void
     let onDetails: () -> Void
-    let onDelete: () -> Void
+    let onDelete: (() -> Void)?
     var onRetry: (() -> Void)?
     let onMoreEmoji: () -> Void
     let onDismiss: () -> Void
@@ -1085,9 +1085,11 @@ private struct ReactionOverlay: View {
                         }
                     }
 
-                    actionButton(icon: "trash", label: "Delete", isDestructive: true) {
-                        onDismiss()
-                        onDelete()
+                    if let onDelete {
+                        actionButton(icon: "trash", label: "Delete", isDestructive: true) {
+                            self.onDismiss()
+                            onDelete()
+                        }
                     }
                 }
                 .padding(.horizontal, 8)

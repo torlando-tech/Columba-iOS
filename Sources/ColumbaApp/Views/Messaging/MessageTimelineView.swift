@@ -56,6 +56,17 @@ struct MessageRefreshWindowPolicy {
         guard fetchedCount == currentLimit, !containsPriorOldest else { return nil }
         return currentLimit + pageSize
     }
+
+    static func retainedPrefixCount(
+        recordIDs: [String],
+        priorOldestID: String?
+    ) -> Int {
+        guard let priorOldestID,
+              let index = recordIDs.firstIndex(of: priorOldestID) else {
+            return recordIDs.count
+        }
+        return index + 1
+    }
 }
 
 #if os(iOS)

@@ -60,6 +60,7 @@ public final class MessagingViewModel {
     private var pendingRefresh = false
     private var paginationGeneration: UInt64 = 0
     private var unpersistedOutboundIDs: Set<String> = []
+    private var unsavedFailedOutboundIDs: Set<String> = []
 
     // MARK: - Initialization
 
@@ -152,7 +153,7 @@ public final class MessagingViewModel {
             let priorOldestID = messages.first {
                 !unpersistedOutboundIDs.contains($0.id)
             }?.id
-            var fetchLimit = max(Self.pageSize, retainedRecordCount + 1)
+            var fetchLimit = max(Self.pageSize, retainedRecordCount)
 
             let hasInterruptedRetry = try await repository.hasUncertainRetry(for: conversationHash)
             var records = try await repository.fetchMessageRecords(
@@ -172,6 +173,13 @@ public final class MessagingViewModel {
                     for: conversationHash, limit: fetchLimit, offset: 0
                 )
             }
+            let reachedDatabaseEnd = records.count < fetchLimit
+            let retainedCount = MessageRefreshWindowPolicy.retainedPrefixCount(
+                recordIDs: records.map(Self.recordID),
+                priorOldestID: priorOldestID
+            )
+            let trimmedToPriorWindow = retainedCount < records.count
+            records = Array(records.prefix(retainedCount))
             let loaded = records.reversed()
                 .map { Message(from: $0, localHash: appServices.localIdentityHash) }
                 .filter { !$0.isEmpty }  // Hide telemetry-only messages (e.g. location sharing)
@@ -203,7 +211,7 @@ public final class MessagingViewModel {
                 pendingIDs: unpersistedOutboundIDs
             )
             pageCursor.reset(recordCount: records.count)
-            allMessagesLoaded = records.count < fetchLimit
+            allMessagesLoaded = reachedDatabaseEnd && !trimmedToPriorWindow
 
             // Reconcile messages that arrived after the initial read reset but
             // were included in the page we just displayed.
@@ -290,16 +298,26 @@ public final class MessagingViewModel {
         await runPendingRefreshIfNeeded()
     }
 
+    @MainActor
+    private func removeStagedRetryAfterPersistenceFailure(_ hash: Data?) async {
+        guard let hash else { return }
+        do {
+            try await repository.deleteMessage(hash)
+            await invalidatePaginationAndRefresh()
+        } catch {
+            logger.error("[MSG_VM] failed to remove staged retry: \(error.localizedDescription)")
+        }
+    }
+
     static func mergingPendingOutbound(
         loaded: [Message],
         current: [Message],
         pendingIDs: Set<String>
     ) -> [Message] {
-        let loadedIDs = Set(loaded.map(\.id))
-        let pending = current.filter {
-            pendingIDs.contains($0.id) && !loadedIDs.contains($0.id)
-        }
-        return (loaded + pending)
+        let pending = current.filter { pendingIDs.contains($0.id) }
+        let pendingMessageIDs = Set(pending.map(\.id))
+        let durable = loaded.filter { !pendingMessageIDs.contains($0.id) }
+        return (durable + pending)
             .enumerated()
             .sorted { lhs, rhs in
                 if lhs.element.timestamp == rhs.element.timestamp {
@@ -512,9 +530,7 @@ public final class MessagingViewModel {
                 messages[messages.count - 1].messageHash = optimisticHash
             }
         }
-        if localRetryHash == nil {
-            unpersistedOutboundIDs.insert(optimisticId)
-        }
+        unpersistedOutboundIDs.insert(optimisticId)
 
         do {
             // Send through the neutral LXMF facet with TYPED fields (image /
@@ -534,40 +550,17 @@ public final class MessagingViewModel {
             lxMessage.hash = sentHash
             lxMessage.state = .sent
 
-            // Replace optimistic message with real one (using actual hash from pack)
-            let realId = lxMessage.hash.map { String(format: "%02x", $0) }.joined()
-            if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    messages[index] = Message(
-                        id: realId,
-                        content: trimmedText,
-                        timestamp: Date(timeIntervalSince1970: lxMessage.timestamp),
-                        isFromMe: true,
-                        deliveryStatus: .sent,
-                        imageData: imageData,
-                        imageFormat: imageFormat,
-                        attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) },
-                        replyToId: replyToId,
-                        replyToPreview: replyPreview
-                    )
-                }
-            }
-            if localRetryHash == nil {
-                unpersistedOutboundIDs.remove(optimisticId)
-                unpersistedOutboundIDs.insert(realId)
-            }
-
             // Persist so a subsequent loadMessages() doesn't wipe it.
             do {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
-                if localRetryHash == nil {
-                    unpersistedOutboundIDs.remove(realId)
-                    await invalidatePaginationAndRefresh()
-                }
+                unpersistedOutboundIDs.remove(optimisticId)
+                unsavedFailedOutboundIDs.remove(optimisticId)
+                await invalidatePaginationAndRefresh()
             } catch {
-                unpersistedOutboundIDs.remove(realId)
+                unsavedFailedOutboundIDs.insert(optimisticId)
+                await removeStagedRetryAfterPersistenceFailure(localRetryHash)
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
-                if let index = messages.firstIndex(where: { $0.id == realId }) {
+                if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                     messages[index].deliveryStatus = .failed
                 }
                 errorMessage = "Message was sent, but local confirmation could not be saved. Verify whether it arrived before retrying."
@@ -611,37 +604,16 @@ public final class MessagingViewModel {
                     retryMessage.hash = retryHash
                     retryMessage.state = .sent
                     retryMessage.method = .propagated
-                    let realId = retryMessage.hash.map { String(format: "%02x", $0) }.joined()
-                    if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            messages[index] = Message(
-                                id: realId,
-                                content: trimmedText,
-                                timestamp: Date(timeIntervalSince1970: retryMessage.timestamp),
-                                isFromMe: true,
-                                deliveryStatus: .sent,
-                                imageData: imageData,
-                                imageFormat: imageFormat,
-                                attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) },
-                                replyToId: replyToId,
-                                replyToPreview: replyPreview
-                            )
-                        }
-                    }
-                    if localRetryHash == nil {
-                        unpersistedOutboundIDs.remove(optimisticId)
-                        unpersistedOutboundIDs.insert(realId)
-                    }
                     do {
                         try await persistMessage(retryMessage, replacing: localRetryHash)
-                        if localRetryHash == nil {
-                            unpersistedOutboundIDs.remove(realId)
-                            await invalidatePaginationAndRefresh()
-                        }
+                        unpersistedOutboundIDs.remove(optimisticId)
+                        unsavedFailedOutboundIDs.remove(optimisticId)
+                        await invalidatePaginationAndRefresh()
                     } catch {
-                        unpersistedOutboundIDs.remove(realId)
+                        unsavedFailedOutboundIDs.insert(optimisticId)
+                        await removeStagedRetryAfterPersistenceFailure(localRetryHash)
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
-                        if let index = messages.firstIndex(where: { $0.id == realId }) {
+                        if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                             messages[index].deliveryStatus = .failed
                         }
                         errorMessage = "Message was relayed, but local confirmation could not be saved. Verify whether it arrived before retrying."
@@ -660,12 +632,12 @@ public final class MessagingViewModel {
             do {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
                 persisted = true
-                if localRetryHash == nil {
-                    unpersistedOutboundIDs.remove(optimisticId)
-                    await invalidatePaginationAndRefresh()
-                }
-            } catch {
                 unpersistedOutboundIDs.remove(optimisticId)
+                unsavedFailedOutboundIDs.remove(optimisticId)
+                await invalidatePaginationAndRefresh()
+            } catch {
+                unsavedFailedOutboundIDs.insert(optimisticId)
+                await removeStagedRetryAfterPersistenceFailure(localRetryHash)
                 logger.error("[MSG_VM] saveMessage(failed) failed: \(error.localizedDescription)")
             }
 
@@ -713,6 +685,19 @@ public final class MessagingViewModel {
         }
 
         let failedMessage = messages[index]
+        if unsavedFailedOutboundIDs.remove(messageId) != nil {
+            unpersistedOutboundIDs.remove(messageId)
+            messages.removeAll { $0.id == messageId }
+            _ = await sendMessage(
+                text: failedMessage.content,
+                imageData: failedMessage.imageData,
+                imageFormat: failedMessage.imageFormat,
+                attachments: failedMessage.attachments?.map { (name: $0.name, data: $0.data) },
+                replyToId: failedMessage.replyToId
+            )
+            return
+        }
+
         let storedHash = failedMessage.messageHash ?? Self.hexToData(failedMessage.id)
         let retryHash: Data
         if let storedHash, storedHash.count == 32 {
@@ -739,13 +724,35 @@ public final class MessagingViewModel {
         }
     }
 
+    /// Whether a message has reached durable storage and can be deleted safely.
+    public func canDeleteMessage(messageId: String) -> Bool {
+        Self.canDeleteMessage(
+            isUnpersisted: unpersistedOutboundIDs.contains(messageId),
+            isUnsavedFailure: unsavedFailedOutboundIDs.contains(messageId)
+        )
+    }
+
+    static func canDeleteMessage(
+        isUnpersisted: Bool,
+        isUnsavedFailure: Bool
+    ) -> Bool {
+        !isUnpersisted || isUnsavedFailure
+    }
+
     /// Delete a message from the conversation.
     @MainActor
     public func deleteMessage(messageId: String, messageHash: Data?) async {
+        guard canDeleteMessage(messageId: messageId) else { return }
+
+        let wasUnsavedFailure = unsavedFailedOutboundIDs.remove(messageId) != nil
+        unpersistedOutboundIDs.remove(messageId)
+
         // Remove from UI immediately
         withAnimation {
             messages.removeAll { $0.id == messageId }
         }
+
+        guard !wasUnsavedFailure else { return }
 
         // Delete from database if we have the hash
         if let hash = messageHash {
