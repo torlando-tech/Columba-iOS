@@ -1370,11 +1370,8 @@
 				140E03C294121F7FA2D478A9 /* ContactCard.swift in Sources */,
 				C6816EEC9864A2903840C8AC /* NetworkAnnouncesTab.swift in Sources */,
 				BED8754AAD30B1CB58755EF8 /* MessagingView.swift in Sources */,
-<<<<<<< HEAD
 				TSP003 /* TextSizePickerSheet.swift in Sources */,
-=======
 				A41F10000000000000000002 /* MessageTimelineView.swift in Sources */,
->>>>>>> b7867d04 (fix: use collection view for message timeline)
 				C204F5778ABB560C1FD4DC60 /* MessageBubble.swift in Sources */,
 				D93546FFCB0106CF3F68B2C5 /* MessageDetailView.swift in Sources */,
 				D709D8EDF36F85DEB5AABEC4 /* MessageInputBar.swift in Sources */,
@@ -1553,11 +1550,8 @@
 				011 /* ContactCard.swift in Sources */,
 				012 /* NetworkAnnouncesTab.swift in Sources */,
 				013 /* MessagingView.swift in Sources */,
-<<<<<<< HEAD
 				TSP002 /* TextSizePickerSheet.swift in Sources */,
-=======
 				A41F10000000000000000001 /* MessageTimelineView.swift in Sources */,
->>>>>>> b7867d04 (fix: use collection view for message timeline)
 				014 /* MessageBubble.swift in Sources */,
 				073 /* MessageDetailView.swift in Sources */,
 				015 /* MessageInputBar.swift in Sources */,

@@ -320,11 +320,17 @@ final class MessageTimelinePolicyTests: XCTestCase {
             )
         }
 
-        controller.update(messages: messages, isLoadingMore: false, allMessagesLoaded: true)
+        controller.update(
+            messages: messages,
+            messageTextScale: 1.3,
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
         controller.setViewportForTesting(CGSize(width: 390, height: 380))
         controller.setViewportForTesting(CGSize(width: 390, height: 700))
 
         XCTAssertEqual(controller.renderedMessageCount, 50)
+        XCTAssertEqual(controller.configuredMessageTextScale, 1.3)
         XCTAssertGreaterThan(controller.visibleMessageCellCount, 0)
     }
 

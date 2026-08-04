@@ -82,6 +82,7 @@ struct MessagingView: View {
                 #if os(iOS)
                 MessageTimelineView(
                     messages: vm.messages,
+                    messageTextScale: messageTextScale,
                     isLoadingMore: vm.isLoadingMore,
                     allMessagesLoaded: vm.allMessagesLoaded,
                     onLoadOlder: {

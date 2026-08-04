@@ -51,6 +51,7 @@ struct MessagePageCursor {
 @available(iOS 17.0, *)
 struct MessageTimelineView: UIViewControllerRepresentable {
     let messages: [Message]
+    let messageTextScale: Double
     let isLoadingMore: Bool
     let allMessagesLoaded: Bool
     let onLoadOlder: @MainActor () async -> Bool
@@ -60,6 +61,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> MessageTimelineViewController {
         let controller = MessageTimelineViewController()
+        controller.messageTextScale = messageTextScale
         controller.onLoadOlder = onLoadOlder
         controller.onReply = onReply
         controller.onToggleReaction = onToggleReaction
@@ -74,6 +76,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onLongPress = onLongPress
         controller.update(
             messages: messages,
+            messageTextScale: messageTextScale,
             isLoadingMore: isLoadingMore,
             allMessagesLoaded: allMessagesLoaded
         )
@@ -88,6 +91,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     var onLongPress: ((Message) -> Void)?
 
     private var messages: [Message] = []
+    fileprivate var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     private var isLoadingMore = false
     private var allMessagesLoaded = false
     private var loadTask: Task<Void, Never>?
@@ -183,13 +187,21 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
         loadTask?.cancel()
     }
 
-    func update(messages newMessages: [Message], isLoadingMore: Bool, allMessagesLoaded: Bool) {
+    func update(
+        messages newMessages: [Message],
+        messageTextScale: Double? = nil,
+        isLoadingMore: Bool,
+        allMessagesLoaded: Bool
+    ) {
         let oldMessages = messages
         let anchor = visibleAnchor()
         let wasNearBottom = self.isNearBottom
         let oldLastID = oldMessages.last?.id
 
         messages = deduplicated(newMessages)
+        if let messageTextScale {
+            self.messageTextScale = messageTextScale
+        }
         self.isLoadingMore = isLoadingMore || loadTask != nil
         self.allMessagesLoaded = allMessagesLoaded
         updateLoadingIndicator()
@@ -233,6 +245,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
             }) {
                 MessageBubble(
                     message: message,
+                    messageTextScale: messageTextScale,
                     onToggleReaction: { [weak self] emoji in
                         self?.onToggleReaction?(message, emoji)
                     },
@@ -376,6 +389,10 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
 
     var renderedMessageCount: Int {
         collectionView.numberOfItems(inSection: 0)
+    }
+
+    var configuredMessageTextScale: Double {
+        messageTextScale
     }
 
     var visibleMessageCellCount: Int {
