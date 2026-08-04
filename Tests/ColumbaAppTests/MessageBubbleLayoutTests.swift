@@ -294,6 +294,9 @@ final class MessageTimelinePolicyTests: XCTestCase {
 
         cursor.recordFetchedPage(recordCount: 50)
         XCTAssertEqual(cursor.nextOffset, 100)
+
+        cursor.recordInsertedAtNewest()
+        XCTAssertEqual(cursor.nextOffset, 101)
     }
 
     @MainActor
@@ -332,6 +335,7 @@ final class MessageTimelinePolicyTests: XCTestCase {
         let requested = expectation(description: "older page requested")
         let controller = MessageTimelineViewController()
         controller.onLoadOlder = {
+            controller.update(messages: [], isLoadingMore: false, allMessagesLoaded: true)
             requested.fulfill()
         }
         controller.loadViewIfNeeded()

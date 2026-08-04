@@ -44,6 +44,10 @@ struct MessagePageCursor {
     mutating func recordFetchedPage(recordCount: Int) {
         nextOffset += recordCount
     }
+
+    mutating func recordInsertedAtNewest() {
+        nextOffset += 1
+    }
 }
 
 #if os(iOS)
@@ -283,6 +287,12 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
             self.loadTask = nil
             self.isLoadingMore = false
             self.updateLoadingIndicator()
+            // SwiftUI applies the new message page and exhaustion state on the
+            // next main-loop turn. Re-check after that update so telemetry-only
+            // pages cannot strand the user inside the preload threshold.
+            DispatchQueue.main.async { [weak self] in
+                self?.requestOlderMessagesIfNecessary()
+            }
         }
     }
 

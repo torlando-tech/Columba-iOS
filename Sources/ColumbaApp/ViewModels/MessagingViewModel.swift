@@ -57,6 +57,7 @@ public final class MessagingViewModel {
     /// Observation token for incoming message notifications.
     private var notificationTask: Any?
     private var deliveryTask: Any?
+    private var pendingRefresh = false
 
     // MARK: - Initialization
 
@@ -127,8 +128,11 @@ public final class MessagingViewModel {
     /// Load the most recent page of messages for this conversation.
     @MainActor
     public func loadMessages() async {
+        guard !isLoading, !isLoadingMore else {
+            pendingRefresh = true
+            return
+        }
         isLoading = true
-        defer { isLoading = false }
 
         do {
             // Ensure conversation exists, then clear unread state as soon as the
@@ -181,14 +185,16 @@ public final class MessagingViewModel {
         } catch {
             errorMessage = error.localizedDescription
         }
+
+        isLoading = false
+        await runPendingRefreshIfNeeded()
     }
 
     /// Load older messages when scrolling up.
     @MainActor
     public func loadMoreMessages() async {
-        guard !isLoadingMore, !allMessagesLoaded else { return }
+        guard !isLoading, !isLoadingMore, !allMessagesLoaded else { return }
         isLoadingMore = true
-        defer { isLoadingMore = false }
 
         do {
             // Database pages can contain telemetry-only records that do not
@@ -206,20 +212,32 @@ public final class MessagingViewModel {
             }
             if records.isEmpty {
                 allMessagesLoaded = true
-                return
-            }
-            pageCursor.recordFetchedPage(recordCount: records.count)
-            let older = records.reversed()
-                .map { Message(from: $0, localHash: appServices.localIdentityHash) }
-                .filter { !$0.isEmpty }  // Hide telemetry-only messages
+            } else {
+                pageCursor.recordFetchedPage(recordCount: records.count)
+                let older = records.reversed()
+                    .map { Message(from: $0, localHash: appServices.localIdentityHash) }
+                    .filter { !$0.isEmpty }  // Hide telemetry-only messages
+                var knownIDs = Set(messages.map(\.id))
+                let uniqueOlder = older.filter { knownIDs.insert($0.id).inserted }
 
-            messages.insert(contentsOf: older, at: 0)
-            if records.count < Self.pageSize {
-                allMessagesLoaded = true
+                messages.insert(contentsOf: uniqueOlder, at: 0)
+                if records.count < Self.pageSize {
+                    allMessagesLoaded = true
+                }
             }
         } catch {
             logger.error("Failed to load more messages: \(error.localizedDescription)")
         }
+
+        isLoadingMore = false
+        await runPendingRefreshIfNeeded()
+    }
+
+    @MainActor
+    private func runPendingRefreshIfNeeded() async {
+        guard pendingRefresh, !isLoading, !isLoadingMore else { return }
+        pendingRefresh = false
+        await loadMessages()
     }
 
     /// Actionable failure returned when a backend does not accept a send.
@@ -461,6 +479,9 @@ public final class MessagingViewModel {
             // Persist so a subsequent loadMessages() doesn't wipe it.
             do {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
+                if localRetryHash == nil {
+                    pageCursor.recordInsertedAtNewest()
+                }
             } catch {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
                 if let index = messages.firstIndex(where: { $0.id == realId }) {
@@ -526,6 +547,9 @@ public final class MessagingViewModel {
                     }
                     do {
                         try await persistMessage(retryMessage, replacing: localRetryHash)
+                        if localRetryHash == nil {
+                            pageCursor.recordInsertedAtNewest()
+                        }
                     } catch {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                         if let index = messages.firstIndex(where: { $0.id == realId }) {
