@@ -61,9 +61,10 @@ public final class MessagingViewModel {
     private var paginationGeneration: UInt64 = 0
     private var unpersistedOutboundIDs: Set<String> = []
     private var unsavedFailedOutboundIDs: Set<String> = []
-    private var stagedRetryCleanupHashes: [String: Data] = [:]
+    private var stagedRetryRecoveryHashes: [String: Data] = [:]
     private var pendingOutboundAliases: [String: String] = [:]
     private var pendingDeliveryProofs: [String: LXMessageState] = [:]
+    private var unsafeTargetMessageIDs: Set<String> = []
 
     // MARK: - Initialization
 
@@ -155,6 +156,7 @@ public final class MessagingViewModel {
             // leave a stale badge behind after the conversation was viewed.
             try await repository.ensureConversation(conversationHash, displayName: displayName)
             try await repository.markConversationRead(conversationHash)
+            await retryPendingDeliveryProofs()
 
             // Preserve the current history depth when repository notifications
             // refresh the newest records. If a burst arrived, expand the fetch
@@ -206,6 +208,9 @@ public final class MessagingViewModel {
                         // DB fallback for messages not in current page
                         resolvedMessages[i].replyToPreview = await resolveReplyPreview(replyId)
                     }
+                }
+                if let proof = pendingDeliveryProofs[resolvedMessages[i].id] {
+                    resolvedMessages[i].deliveryStatus = (proof == .delivered) ? .delivered : .failed
                 }
             }
 
@@ -310,14 +315,14 @@ public final class MessagingViewModel {
     }
 
     @MainActor
-    private func removeStagedRetryAfterPersistenceFailure(_ hash: Data?) async -> Bool {
+    private func recoverStagedRetryAfterPersistenceFailure(_ hash: Data?) async -> Bool {
         guard let hash else { return true }
         do {
-            try await repository.deleteMessage(hash)
+            try await repository.recoverStagedRetry(hash)
             await invalidatePaginationAndRefresh()
             return true
         } catch {
-            logger.error("[MSG_VM] failed to remove staged retry: \(error.localizedDescription)")
+            logger.error("[MSG_VM] failed to recover staged retry: \(error.localizedDescription)")
             return false
         }
     }
@@ -326,19 +331,46 @@ public final class MessagingViewModel {
     private func reconcilePendingDeliveryProof(for hash: Data) async {
         let hashHex = Self.hexString(hash)
         pendingOutboundAliases.removeValue(forKey: hashHex)
-        guard let proof = pendingDeliveryProofs.removeValue(forKey: hashHex) else { return }
+        guard let proof = pendingDeliveryProofs[hashHex] else { return }
         do {
             try await repository.updateMessageState(id: hash, state: proof)
+            pendingDeliveryProofs.removeValue(forKey: hashHex)
         } catch {
             logger.error("[MSG_VM] failed to persist delivery proof: \(error.localizedDescription)")
         }
     }
 
     @MainActor
-    private func takePendingDeliveryProof(for hash: Data) -> LXMessageState? {
+    private func retryPendingDeliveryProofs() async {
+        for (hashHex, proof) in Array(pendingDeliveryProofs) {
+            guard pendingOutboundAliases[hashHex] == nil,
+                  let hash = Self.hexToData(hashHex) else { continue }
+            do {
+                try await repository.updateMessageState(id: hash, state: proof)
+                if pendingDeliveryProofs[hashHex] == proof {
+                    pendingDeliveryProofs.removeValue(forKey: hashHex)
+                }
+            } catch {
+                logger.error("[MSG_VM] delivery proof retry failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @MainActor
+    private func pendingDeliveryProof(for hash: Data) -> LXMessageState? {
         let hashHex = Self.hexString(hash)
-        pendingOutboundAliases.removeValue(forKey: hashHex)
-        return pendingDeliveryProofs.removeValue(forKey: hashHex)
+        return pendingDeliveryProofs[hashHex]
+    }
+
+    @MainActor
+    private func clearPendingAliases(for visibleID: String) {
+        let hashes = pendingOutboundAliases.compactMap { key, value in
+            value == visibleID ? key : nil
+        }
+        for hash in hashes {
+            pendingOutboundAliases.removeValue(forKey: hash)
+            pendingDeliveryProofs.removeValue(forKey: hash)
+        }
     }
 
     private static func hexString(_ data: Data) -> String {
@@ -567,10 +599,10 @@ public final class MessagingViewModel {
         withAnimation(.easeOut(duration: 0.25)) {
             if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                 messages[index] = optimisticMessage
-                messages[index].messageHash = optimisticHash
+                messages[index].messageHash = nil
             } else {
                 messages.append(optimisticMessage)
-                messages[messages.count - 1].messageHash = optimisticHash
+                messages[messages.count - 1].messageHash = nil
             }
         }
         unpersistedOutboundIDs.insert(optimisticId)
@@ -600,17 +632,25 @@ public final class MessagingViewModel {
                 await reconcilePendingDeliveryProof(for: sentHash)
                 unpersistedOutboundIDs.remove(optimisticId)
                 unsavedFailedOutboundIDs.remove(optimisticId)
-                stagedRetryCleanupHashes.removeValue(forKey: optimisticId)
+                stagedRetryRecoveryHashes.removeValue(forKey: optimisticId)
+                unsafeTargetMessageIDs.remove(optimisticId)
                 await invalidatePaginationAndRefresh()
             } catch {
-                unsavedFailedOutboundIDs.insert(optimisticId)
-                let proof = takePendingDeliveryProof(for: sentHash)
-                let cleaned = await removeStagedRetryAfterPersistenceFailure(localRetryHash)
-                if !cleaned, let localRetryHash {
-                    stagedRetryCleanupHashes[optimisticId] = localRetryHash
+                let proof = pendingDeliveryProof(for: sentHash)
+                unsafeTargetMessageIDs.insert(optimisticId)
+                let recovered = await recoverStagedRetryAfterPersistenceFailure(localRetryHash)
+                if localRetryHash != nil && recovered {
+                    unpersistedOutboundIDs.remove(optimisticId)
+                    unsavedFailedOutboundIDs.remove(optimisticId)
+                } else {
+                    unsavedFailedOutboundIDs.insert(optimisticId)
+                    if let localRetryHash {
+                        stagedRetryRecoveryHashes[optimisticId] = localRetryHash
+                    }
                 }
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
                 if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
+                    messages[index].messageHash = sentHash
                     messages[index].deliveryStatus = (proof == .delivered) ? .delivered : .failed
                 }
                 errorMessage = "Message was sent, but local confirmation could not be saved. Verify whether it arrived before retrying."
@@ -660,17 +700,25 @@ public final class MessagingViewModel {
                         await reconcilePendingDeliveryProof(for: retryHash)
                         unpersistedOutboundIDs.remove(optimisticId)
                         unsavedFailedOutboundIDs.remove(optimisticId)
-                        stagedRetryCleanupHashes.removeValue(forKey: optimisticId)
+                        stagedRetryRecoveryHashes.removeValue(forKey: optimisticId)
+                        unsafeTargetMessageIDs.remove(optimisticId)
                         await invalidatePaginationAndRefresh()
                     } catch {
-                        unsavedFailedOutboundIDs.insert(optimisticId)
-                        let proof = takePendingDeliveryProof(for: retryHash)
-                        let cleaned = await removeStagedRetryAfterPersistenceFailure(localRetryHash)
-                        if !cleaned, let localRetryHash {
-                            stagedRetryCleanupHashes[optimisticId] = localRetryHash
+                        let proof = pendingDeliveryProof(for: retryHash)
+                        unsafeTargetMessageIDs.insert(optimisticId)
+                        let recovered = await recoverStagedRetryAfterPersistenceFailure(localRetryHash)
+                        if localRetryHash != nil && recovered {
+                            unpersistedOutboundIDs.remove(optimisticId)
+                            unsavedFailedOutboundIDs.remove(optimisticId)
+                        } else {
+                            unsavedFailedOutboundIDs.insert(optimisticId)
+                            if let localRetryHash {
+                                stagedRetryRecoveryHashes[optimisticId] = localRetryHash
+                            }
                         }
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                         if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
+                            messages[index].messageHash = retryHash
                             messages[index].deliveryStatus = (proof == .delivered) ? .delivered : .failed
                         }
                         errorMessage = "Message was relayed, but local confirmation could not be saved. Verify whether it arrived before retrying."
@@ -691,13 +739,21 @@ public final class MessagingViewModel {
                 persisted = true
                 unpersistedOutboundIDs.remove(optimisticId)
                 unsavedFailedOutboundIDs.remove(optimisticId)
-                stagedRetryCleanupHashes.removeValue(forKey: optimisticId)
+                stagedRetryRecoveryHashes.removeValue(forKey: optimisticId)
+                unsafeTargetMessageIDs.remove(optimisticId)
                 await invalidatePaginationAndRefresh()
             } catch {
-                unsavedFailedOutboundIDs.insert(optimisticId)
-                let cleaned = await removeStagedRetryAfterPersistenceFailure(localRetryHash)
-                if !cleaned, let localRetryHash {
-                    stagedRetryCleanupHashes[optimisticId] = localRetryHash
+                unsafeTargetMessageIDs.insert(optimisticId)
+                let recovered = await recoverStagedRetryAfterPersistenceFailure(localRetryHash)
+                persisted = localRetryHash != nil && recovered
+                if localRetryHash != nil && recovered {
+                    unpersistedOutboundIDs.remove(optimisticId)
+                    unsavedFailedOutboundIDs.remove(optimisticId)
+                } else {
+                    unsavedFailedOutboundIDs.insert(optimisticId)
+                    if let localRetryHash {
+                        stagedRetryRecoveryHashes[optimisticId] = localRetryHash
+                    }
                 }
                 logger.error("[MSG_VM] saveMessage(failed) failed: \(error.localizedDescription)")
             }
@@ -746,17 +802,21 @@ public final class MessagingViewModel {
         }
 
         let failedMessage = messages[index]
-        if unsavedFailedOutboundIDs.contains(messageId) {
-            if let stagedHash = stagedRetryCleanupHashes[messageId] {
-                do {
-                    try await repository.deleteMessage(stagedHash)
-                    stagedRetryCleanupHashes.removeValue(forKey: messageId)
-                    await invalidatePaginationAndRefresh()
-                } catch {
-                    errorMessage = "The staged retry could not be cleaned up. Please try again."
-                    return
-                }
+        if unsavedFailedOutboundIDs.contains(messageId),
+           let stagedHash = stagedRetryRecoveryHashes[messageId] {
+            do {
+                try await repository.recoverStagedRetry(stagedHash)
+                stagedRetryRecoveryHashes.removeValue(forKey: messageId)
+                unsavedFailedOutboundIDs.remove(messageId)
+                unpersistedOutboundIDs.remove(messageId)
+                await invalidatePaginationAndRefresh()
+            } catch {
+                errorMessage = "The staged retry could not be recovered. Please try again."
+                return
             }
+        } else if unsavedFailedOutboundIDs.contains(messageId) {
+            clearPendingAliases(for: messageId)
+            unsafeTargetMessageIDs.remove(messageId)
             unsavedFailedOutboundIDs.remove(messageId)
             unpersistedOutboundIDs.remove(messageId)
             messages.removeAll { $0.id == messageId }
@@ -781,6 +841,8 @@ public final class MessagingViewModel {
         // Reuse a canonical local ID and the complete payload. The send path
         // replaces the failed row only after the replacement is safely saved,
         // including migration of legacy non-32-byte temporary IDs.
+        clearPendingAliases(for: messageId)
+        unsafeTargetMessageIDs.remove(messageId)
         _ = await sendMessage(
             text: failedMessage.content,
             imageData: failedMessage.imageData,
@@ -804,6 +866,11 @@ public final class MessagingViewModel {
         )
     }
 
+    public func canTargetMessage(messageId: String) -> Bool {
+        !unpersistedOutboundIDs.contains(messageId)
+            && !unsafeTargetMessageIDs.contains(messageId)
+    }
+
     static func canDeleteMessage(
         isUnpersisted: Bool,
         isUnsavedFailure: Bool
@@ -816,19 +883,22 @@ public final class MessagingViewModel {
     public func deleteMessage(messageId: String, messageHash: Data?) async {
         guard canDeleteMessage(messageId: messageId) else { return }
 
-        let wasUnsavedFailure = unsavedFailedOutboundIDs.contains(messageId)
-        if wasUnsavedFailure, let stagedHash = stagedRetryCleanupHashes[messageId] {
+        var wasUnsavedFailure = unsavedFailedOutboundIDs.contains(messageId)
+        if wasUnsavedFailure, let stagedHash = stagedRetryRecoveryHashes[messageId] {
             do {
-                try await repository.deleteMessage(stagedHash)
+                try await repository.recoverStagedRetry(stagedHash)
+                wasUnsavedFailure = false
             } catch {
-                errorMessage = "The staged retry could not be deleted. Please try again."
+                errorMessage = "The staged retry could not be recovered for deletion. Please try again."
                 return
             }
         }
 
         unsavedFailedOutboundIDs.remove(messageId)
         unpersistedOutboundIDs.remove(messageId)
-        stagedRetryCleanupHashes.removeValue(forKey: messageId)
+        stagedRetryRecoveryHashes.removeValue(forKey: messageId)
+        clearPendingAliases(for: messageId)
+        unsafeTargetMessageIDs.remove(messageId)
 
         // Remove from UI immediately
         withAnimation {

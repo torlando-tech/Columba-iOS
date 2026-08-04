@@ -327,6 +327,31 @@ public actor MessageRepository {
         )
     }
 
+    /// Return an interrupted staged retry to a durable, explicitly uncertain
+    /// failed state without deleting its only database row.
+    public func recoverStagedRetry(_ messageId: Data) async throws {
+        try await replacementPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE messages
+                    SET state = ?, receiving_interface = ?, updated_at = ?
+                    WHERE message_id = ? AND incoming = 0
+                      AND receiving_interface = ?
+                    """,
+                arguments: [
+                    LXMFSwift.LXMessageState.failed.rawValue,
+                    Self.uncertainRetryMarker,
+                    Date().timeIntervalSince1970,
+                    messageId,
+                    Self.stagedRetryMarker,
+                ]
+            )
+            guard db.changesCount == 1 else {
+                throw MessageRepositoryError.replacementSourceMissing
+            }
+        }
+    }
+
     private func replaceMessageRecord(
         _ message: RNSAPI.LXMessage,
         replacing oldId: Data,

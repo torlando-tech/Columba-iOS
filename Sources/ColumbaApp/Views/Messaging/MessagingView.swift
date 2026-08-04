@@ -89,12 +89,14 @@ struct MessagingView: View {
                         await vm.loadMoreMessages()
                     },
                     onReply: { message in
-                        guard message.messageHash != nil else { return }
+                        guard message.messageHash != nil,
+                              vm.canTargetMessage(messageId: message.id) else { return }
                         withAnimation(.easeInOut(duration: 0.25)) {
                             vm.replyToMessage = message
                         }
                     },
                     onToggleReaction: { message, emoji in
+                        guard vm.canTargetMessage(messageId: message.id) else { return }
                         Task {
                             await vm.sendReaction(
                                 targetMessageId: message.id,
@@ -176,7 +178,8 @@ struct MessagingView: View {
 
                             ForEach(vm.messages) { message in
                                 SwipeToReplyContainer(onReply: {
-                                    guard message.messageHash != nil else { return }
+                                    guard message.messageHash != nil,
+                                          vm.canTargetMessage(messageId: message.id) else { return }
                                     withAnimation(.easeInOut(duration: 0.25)) {
                                         vm.replyToMessage = message
                                     }
@@ -354,7 +357,8 @@ struct MessagingView: View {
                         }
                     },
                     onReply: {
-                        guard msg.messageHash != nil else { return }
+                        guard msg.messageHash != nil,
+                              viewModel?.canTargetMessage(messageId: msg.id) == true else { return }
                         withAnimation(.easeInOut(duration: 0.25)) {
                             viewModel?.replyToMessage = msg
                         }
@@ -373,6 +377,7 @@ struct MessagingView: View {
                     onDelete: viewModel?.canDeleteMessage(messageId: msg.id) == true ? {
                         deleteConfirmMessage = msg
                     } : nil,
+                    canTarget: viewModel?.canTargetMessage(messageId: msg.id) == true,
                     onRetry: msg.deliveryStatus == .failed ? {
                         Task { await viewModel?.retryMessage(messageId: msg.id) }
                     } : nil,
@@ -983,6 +988,7 @@ private struct ReactionOverlay: View {
     let onCopy: () -> Void
     let onDetails: () -> Void
     let onDelete: (() -> Void)?
+    let canTarget: Bool
     var onRetry: (() -> Void)?
     let onMoreEmoji: () -> Void
     let onDismiss: () -> Void
@@ -998,7 +1004,8 @@ private struct ReactionOverlay: View {
 
             VStack(spacing: 12) {
                 // Inline emoji bar
-                HStack(spacing: 12) {
+                if canTarget {
+                    HStack(spacing: 12) {
                     ForEach(Self.quickEmojis, id: \.self) { emoji in
                         Button {
                             onReact(emoji)
@@ -1023,10 +1030,11 @@ private struct ReactionOverlay: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial)
-                .clipShape(Capsule())
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                }
 
                 // Message preview
                 HStack {
@@ -1061,9 +1069,11 @@ private struct ReactionOverlay: View {
 
                 // Action buttons
                 HStack(spacing: 0) {
-                    actionButton(icon: "arrowshape.turn.up.left", label: "Reply") {
-                        onDismiss()
-                        onReply()
+                    if canTarget {
+                        actionButton(icon: "arrowshape.turn.up.left", label: "Reply") {
+                            onDismiss()
+                            onReply()
+                        }
                     }
 
                     if !message.content.isEmpty {

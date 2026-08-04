@@ -164,8 +164,16 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         )
 
         messaging = MESSAGING_VIEW.read_text()
-        self.assertIn("guard message.messageHash != nil else { return }", messaging)
-        self.assertIn("guard msg.messageHash != nil else { return }", messaging)
+        self.assertIsNotNone(re.search(
+            r"guard message\.messageHash != nil,\s+"
+            r"vm\.canTargetMessage\(messageId: message\.id\) else \{ return \}",
+            messaging,
+        ))
+        self.assertIsNotNone(re.search(
+            r"guard msg\.messageHash != nil,\s+"
+            r"viewModel\?\.canTargetMessage\(messageId: msg\.id\) == true else \{ return \}",
+            messaging,
+        ))
         self.assertIn(
             "let replyToId = replyTarget?.messageHash != nil ? replyTarget?.id : nil",
             messaging,
