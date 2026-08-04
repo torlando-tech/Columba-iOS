@@ -26,14 +26,78 @@ private let logger = Logger(subsystem: "network.columba.Columba", category: "Mes
 enum MessagingDraftBootstrap {
     static func prepare(
         loadMessages: () async -> Void,
-        restoreDraft: () async -> String?,
+        restoreDraft: () async throws -> String?,
         applyRestoredText: (String) -> Void,
+        handleRestoreFailure: () -> Void,
         publishConversation: () -> Void
-    ) async {
+    ) async throws {
         await loadMessages()
-        let restoredText = await restoreDraft() ?? ""
-        applyRestoredText(restoredText)
+        try Task.checkCancellation()
+
+        do {
+            let restoredText = try await restoreDraft()
+            try Task.checkCancellation()
+            applyRestoredText(restoredText ?? "")
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            try Task.checkCancellation()
+            logger.error("Draft restore failed; persistence remains gated")
+            handleRestoreFailure()
+        }
+
+        try Task.checkCancellation()
         publishConversation()
+    }
+}
+
+/// Production boundary between SwiftUI composer lifecycle events and draft persistence.
+/// Persistence remains gated after a failed restore so an empty lifecycle event cannot
+/// destroy durable text that the screen was unable to read. The first explicit user edit
+/// deliberately supersedes that unknown durable value and opens the gate.
+@MainActor
+final class MessagingComposerLifecycle {
+    private let autosave: any DraftAutosaving
+    private(set) var draftPersistenceReady = false
+
+    init(autosave: any DraftAutosaving) {
+        self.autosave = autosave
+    }
+
+    func restore() async throws -> String? {
+        try await autosave.restore()
+    }
+
+    func applyProgrammaticRestore(_ text: String, applyText: (String) -> Void) {
+        applyText(text)
+        draftPersistenceReady = true
+    }
+
+    func restoreFailed() {
+        draftPersistenceReady = false
+    }
+
+    func userEdited(_ text: String, applyText: (String) -> Void) {
+        applyText(text)
+        draftPersistenceReady = true
+        autosave.textChanged(text)
+    }
+
+    func clearForSend(applyText: () -> Void) {
+        if draftPersistenceReady {
+            autosave.clearImmediately()
+        }
+        applyText()
+    }
+
+    func navigationFlush(_ text: String) async {
+        guard draftPersistenceReady else { return }
+        await autosave.flush(text)
+    }
+
+    func backgroundFlush(_ text: String) async {
+        guard draftPersistenceReady else { return }
+        await autosave.flush(text)
     }
 }
 
@@ -60,7 +124,7 @@ struct MessagingView: View {
     // MARK: - State
 
     @State private var viewModel: MessagingViewModel?
-    @State private var draftController: DraftAutosaveController?
+    @State private var composerLifecycle: MessagingComposerLifecycle?
     @State private var messageText = ""
     @State private var showPhotoPicker = false
     @State private var showFilePicker = false
@@ -552,12 +616,12 @@ struct MessagingView: View {
             .presentationDragIndicator(.visible)
         }
         .onDisappear {
-            flushDraft()
+            flushDraft(for: .navigation)
             NotificationService.activeConversationThreadId = nil
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             guard oldPhase == .active, newPhase != .active else { return }
-            flushDraft()
+            flushDraft(for: .background)
         }
         .task {
             messageTextScale = await settingsRepository.getMessageTextScale()
@@ -584,23 +648,35 @@ struct MessagingView: View {
                     repository: messageRepository,
                     conversationHash: conversation.destinationHash
                 )
-                await MessagingDraftBootstrap.prepare(
-                    loadMessages: {
-                        await vm.loadMessages()
-                    },
-                    restoreDraft: {
-                        try? await controller.restore()
-                    },
-                    applyRestoredText: { restoredText in
-                        // Programmatic restore intentionally bypasses messageTextBinding.
-                        messageText = restoredText
-                        draftController = controller
-                    },
-                    publishConversation: {
-                        // Publish last so the composer is interactive only after restore.
-                        viewModel = vm
-                    }
-                )
+                let lifecycle = MessagingComposerLifecycle(autosave: controller)
+                do {
+                    try await MessagingDraftBootstrap.prepare(
+                        loadMessages: {
+                            await vm.loadMessages()
+                        },
+                        restoreDraft: {
+                            try await lifecycle.restore()
+                        },
+                        applyRestoredText: { restoredText in
+                            lifecycle.applyProgrammaticRestore(restoredText) {
+                                messageText = $0
+                            }
+                            composerLifecycle = lifecycle
+                        },
+                        handleRestoreFailure: {
+                            lifecycle.restoreFailed()
+                            composerLifecycle = lifecycle
+                        },
+                        publishConversation: {
+                            // Publish last so the composer is interactive only after restore.
+                            viewModel = vm
+                        }
+                    )
+                } catch is CancellationError {
+                    // A later appearance retries bootstrap because no state was published.
+                } catch {
+                    logger.error("Messaging bootstrap failed")
+                }
             } else {
                 await viewModel?.loadMessages()
             }
@@ -737,17 +813,30 @@ struct MessagingView: View {
         Binding(
             get: { messageText },
             set: { newValue in
-                messageText = newValue
-                draftController?.textChanged(newValue)
+                if let composerLifecycle {
+                    composerLifecycle.userEdited(newValue) { messageText = $0 }
+                } else {
+                    messageText = newValue
+                }
             }
         )
     }
 
-    private func flushDraft() {
+    private enum DraftFlushBoundary {
+        case navigation
+        case background
+    }
+
+    private func flushDraft(for boundary: DraftFlushBoundary) {
         let text = messageText
-        let controller = draftController
+        let lifecycle = composerLifecycle
         Task {
-            await controller?.flush(text)
+            switch boundary {
+            case .navigation:
+                await lifecycle?.navigationFlush(text)
+            case .background:
+                await lifecycle?.backgroundFlush(text)
+            }
         }
     }
 
@@ -800,9 +889,14 @@ struct MessagingView: View {
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 
-        draftController?.clearImmediately()
-        // Programmatic send clear intentionally bypasses messageTextBinding.
-        messageText = ""
+        if let composerLifecycle {
+            composerLifecycle.clearForSend {
+                // Programmatic send clear intentionally bypasses the user-edit path.
+                messageText = ""
+            }
+        } else {
+            messageText = ""
+        }
         attachedImage = nil
         attachedFiles = []
         withAnimation(.easeInOut(duration: 0.25)) {

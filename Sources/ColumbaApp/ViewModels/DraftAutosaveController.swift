@@ -104,7 +104,15 @@ private final class DraftMutationPipeline {
 }
 
 @MainActor
-final class DraftAutosaveController {
+protocol DraftAutosaving: AnyObject {
+    func restore() async throws -> String?
+    func textChanged(_ text: String)
+    func flush(_ text: String) async
+    func clearImmediately()
+}
+
+@MainActor
+final class DraftAutosaveController: DraftAutosaving {
     typealias Sleeper = @Sendable (Duration) async throws -> Void
 
     private static let logger = Logger(

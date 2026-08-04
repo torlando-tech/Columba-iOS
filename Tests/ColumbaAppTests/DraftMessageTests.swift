@@ -401,12 +401,17 @@ private final class ControlledDraftSleeper: @unchecked Sendable {
 }
 
 private actor ControlledDraftPersistence: DraftPersistence {
+    enum TestError: Error {
+        case restoreFailed
+    }
+
     enum Mutation: Equatable {
         case save(String)
         case clear
     }
 
     private var draftText: String?
+    private let restoreFails: Bool
     private var mutationsStorage: [Mutation] = []
     private var completedMutationCount = 0
     private var blockNextMutation = false
@@ -414,11 +419,19 @@ private actor ControlledDraftPersistence: DraftPersistence {
     private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
     private var mutationCountWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
-    init(draftText: String? = nil) {
+    init(draftText: String? = nil, restoreFails: Bool = false) {
         self.draftText = draftText
+        self.restoreFails = restoreFails
     }
 
     func fetchDraftText(for conversationHash: Data) async throws -> String? {
+        if restoreFails {
+            throw TestError.restoreFailed
+        }
+        return draftText
+    }
+
+    func currentDraftText() -> String? {
         draftText
     }
 
@@ -496,6 +509,40 @@ private final class LockedCancellationResult: @unchecked Sendable {
         lock.lock()
         valueStorage = value
         lock.unlock()
+    }
+}
+
+@MainActor
+private final class RecordingDraftAutosave: DraftAutosaving {
+    enum Event: Equatable {
+        case restore
+        case textChanged(String)
+        case clear
+        case flush(String)
+    }
+
+    private(set) var events: [Event] = []
+    let restoredText: String?
+
+    init(restoredText: String?) {
+        self.restoredText = restoredText
+    }
+
+    func restore() async throws -> String? {
+        events.append(.restore)
+        return restoredText
+    }
+
+    func textChanged(_ text: String) {
+        events.append(.textChanged(text))
+    }
+
+    func flush(_ text: String) async {
+        events.append(.flush(text))
+    }
+
+    func clearImmediately() {
+        events.append(.clear)
     }
 }
 
@@ -797,12 +844,12 @@ final class DraftAutosaveControllerTests: XCTestCase {
         XCTAssertEqual(sleeper.invocationCount, 0)
     }
 
-    func testInitialDraftIsAppliedBeforeConversationBecomesInteractive() async {
+    func testInitialDraftIsAppliedBeforeConversationBecomesInteractive() async throws {
         var events: [String] = []
         var composerText = ""
         var isInteractive = false
 
-        await MessagingDraftBootstrap.prepare(
+        try await MessagingDraftBootstrap.prepare(
             loadMessages: {
                 events.append("messages loaded")
             },
@@ -813,6 +860,9 @@ final class DraftAutosaveControllerTests: XCTestCase {
             applyRestoredText: { restoredText in
                 composerText = restoredText
                 events.append("draft applied")
+            },
+            handleRestoreFailure: {
+                XCTFail("Restore should succeed")
             },
             publishConversation: {
                 isInteractive = true
@@ -828,7 +878,7 @@ final class DraftAutosaveControllerTests: XCTestCase {
         )
     }
 
-    func testProgrammaticRestoreDoesNotScheduleRedundantAutosave() async {
+    func testProgrammaticRestoreDoesNotScheduleRedundantAutosave() async throws {
         let conversationHash = Data(repeating: 0xA9, count: 16)
         let persistence = ControlledDraftPersistence(draftText: "restored without a write")
         let sleeper = ControlledDraftSleeper()
@@ -837,19 +887,60 @@ final class DraftAutosaveControllerTests: XCTestCase {
             conversationHash: conversationHash,
             sleeper: sleeper
         )
+        let lifecycle = MessagingComposerLifecycle(autosave: controller)
         var composerText = ""
 
-        await MessagingDraftBootstrap.prepare(
+        try await MessagingDraftBootstrap.prepare(
             loadMessages: {},
-            restoreDraft: { try? await controller.restore() },
-            applyRestoredText: { composerText = $0 },
+            restoreDraft: { try await lifecycle.restore() },
+            applyRestoredText: {
+                lifecycle.applyProgrammaticRestore($0) { composerText = $0 }
+            },
+            handleRestoreFailure: {
+                XCTFail("Restore should succeed")
+            },
             publishConversation: {}
         )
 
         XCTAssertEqual(composerText, "restored without a write")
+        XCTAssertTrue(lifecycle.draftPersistenceReady)
         XCTAssertEqual(sleeper.invocationCount, 0)
         let mutations = await persistence.mutations()
         XCTAssertTrue(mutations.isEmpty)
+    }
+
+    func testProductionComposerLifecycleRoutesEveryComposerBoundaryInOrder() async throws {
+        let autosave = RecordingDraftAutosave(restoredText: "restored")
+        let lifecycle = MessagingComposerLifecycle(autosave: autosave)
+        var composerText = ""
+
+        let restored = try await lifecycle.restore()
+        lifecycle.applyProgrammaticRestore(restored ?? "") { composerText = $0 }
+        XCTAssertEqual(composerText, "restored")
+        XCTAssertEqual(autosave.events, [.restore])
+
+        lifecycle.userEdited("binding edit") { composerText = $0 }
+        XCTAssertEqual(composerText, "binding edit")
+        XCTAssertEqual(autosave.events, [.restore, .textChanged("binding edit")])
+
+        lifecycle.clearForSend {
+            XCTAssertEqual(autosave.events.last, .clear, "Persistence invalidation must precede UI clear")
+            composerText = ""
+        }
+        XCTAssertEqual(composerText, "")
+
+        await lifecycle.navigationFlush("navigation value")
+        await lifecycle.backgroundFlush("background value")
+        XCTAssertEqual(
+            autosave.events,
+            [
+                .restore,
+                .textChanged("binding edit"),
+                .clear,
+                .flush("navigation value"),
+                .flush("background value")
+            ]
+        )
     }
 
     func testSendClearInvalidatesPendingTypedSave() async {
@@ -863,10 +954,15 @@ final class DraftAutosaveControllerTests: XCTestCase {
             conversationHash: conversationHash,
             sleeper: sleeper
         )
+        let lifecycle = MessagingComposerLifecycle(autosave: controller)
+        lifecycle.applyProgrammaticRestore("previous draft") { _ in }
 
-        controller.textChanged("message being sent")
+        lifecycle.userEdited("message being sent") { _ in }
         await fulfillment(of: [debounceStarted], timeout: 1)
-        controller.clearImmediately()
+        var composerWasCleared = false
+        lifecycle.clearForSend {
+            composerWasCleared = true
+        }
         await persistence.waitForMutationCount(1)
         sleeper.resumeAll()
 
@@ -874,6 +970,7 @@ final class DraftAutosaveControllerTests: XCTestCase {
         let stored = try? await persistence.fetchDraftText(for: conversationHash)
         XCTAssertEqual(mutations, [.clear])
         XCTAssertNil(stored)
+        XCTAssertTrue(composerWasCleared)
     }
 
     func testNavigationFlushUsesLatestComposerValue() async {
@@ -887,10 +984,12 @@ final class DraftAutosaveControllerTests: XCTestCase {
             conversationHash: conversationHash,
             sleeper: sleeper
         )
+        let lifecycle = MessagingComposerLifecycle(autosave: controller)
+        lifecycle.applyProgrammaticRestore("") { _ in }
 
-        controller.textChanged("older value")
+        lifecycle.userEdited("older value") { _ in }
         await fulfillment(of: [debounceStarted], timeout: 1)
-        await controller.flush("latest value at navigation")
+        await lifecycle.navigationFlush("latest value at navigation")
         sleeper.resumeAll()
 
         let mutations = await persistence.mutations()
@@ -910,15 +1009,116 @@ final class DraftAutosaveControllerTests: XCTestCase {
             conversationHash: conversationHash,
             sleeper: sleeper
         )
+        let lifecycle = MessagingComposerLifecycle(autosave: controller)
+        lifecycle.applyProgrammaticRestore("") { _ in }
 
-        controller.textChanged("value before backgrounding")
+        lifecycle.userEdited("value before backgrounding") { _ in }
         await fulfillment(of: [debounceStarted], timeout: 1)
-        await controller.flush("latest value at background")
+        await lifecycle.backgroundFlush("latest value at background")
         sleeper.resumeAll()
 
         let mutations = await persistence.mutations()
         let stored = try? await persistence.fetchDraftText(for: conversationHash)
         XCTAssertEqual(mutations, [.save("latest value at background")])
         XCTAssertEqual(stored, "latest value at background")
+    }
+
+    func testCancelledBootstrapDoesNotApplyOrPublishAndCanRetry() async throws {
+        let conversationHash = Data(repeating: 0xAD, count: 16)
+        let persistence = ControlledDraftPersistence(draftText: "durable draft")
+        let sleeper = ControlledDraftSleeper()
+        let controller = makeController(
+            persistence: persistence,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        let lifecycle = MessagingComposerLifecycle(autosave: controller)
+        var composerText = "unchanged"
+        var publishCount = 0
+        var failureCount = 0
+
+        let cancelledAttempt = Task { @MainActor in
+            try await MessagingDraftBootstrap.prepare(
+                loadMessages: {},
+                restoreDraft: {
+                    let restored = try await lifecycle.restore()
+                    withUnsafeCurrentTask { $0?.cancel() }
+                    return restored
+                },
+                applyRestoredText: { composerText = $0 },
+                handleRestoreFailure: { failureCount += 1 },
+                publishConversation: { publishCount += 1 }
+            )
+        }
+
+        do {
+            try await cancelledAttempt.value
+            XCTFail("Cancelled bootstrap should throw CancellationError")
+        } catch is CancellationError {
+            // Expected.
+        }
+        XCTAssertEqual(composerText, "unchanged")
+        XCTAssertEqual(publishCount, 0)
+        XCTAssertEqual(failureCount, 0)
+        XCTAssertFalse(lifecycle.draftPersistenceReady)
+
+        try await MessagingDraftBootstrap.prepare(
+            loadMessages: {},
+            restoreDraft: { try await lifecycle.restore() },
+            applyRestoredText: {
+                lifecycle.applyProgrammaticRestore($0) { composerText = $0 }
+            },
+            handleRestoreFailure: { failureCount += 1 },
+            publishConversation: { publishCount += 1 }
+        )
+
+        XCTAssertEqual(composerText, "durable draft")
+        XCTAssertEqual(publishCount, 1)
+        XCTAssertEqual(failureCount, 0)
+        XCTAssertTrue(lifecycle.draftPersistenceReady)
+    }
+
+    func testRestoreFailureGatesLifecycleClearAndFlushUntilExplicitEdit() async throws {
+        let conversationHash = Data(repeating: 0xAE, count: 16)
+        let persistence = ControlledDraftPersistence(
+            draftText: "unread durable draft",
+            restoreFails: true
+        )
+        let sleeper = ControlledDraftSleeper()
+        let controller = makeController(
+            persistence: persistence,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        let lifecycle = MessagingComposerLifecycle(autosave: controller)
+        var composerText = ""
+        var published = false
+
+        try await MessagingDraftBootstrap.prepare(
+            loadMessages: {},
+            restoreDraft: { try await lifecycle.restore() },
+            applyRestoredText: { _ in XCTFail("Failed restore must not apply empty text") },
+            handleRestoreFailure: { lifecycle.restoreFailed() },
+            publishConversation: { published = true }
+        )
+
+        XCTAssertTrue(published)
+        XCTAssertFalse(lifecycle.draftPersistenceReady)
+        await lifecycle.navigationFlush(composerText)
+        await lifecycle.backgroundFlush(composerText)
+        lifecycle.clearForSend { composerText = "" }
+        let gatedMutations = await persistence.mutations()
+        let preservedDraft = await persistence.currentDraftText()
+        XCTAssertEqual(gatedMutations, [])
+        XCTAssertEqual(preservedDraft, "unread durable draft")
+
+        lifecycle.userEdited("explicit replacement") { composerText = $0 }
+        XCTAssertTrue(lifecycle.draftPersistenceReady)
+        await lifecycle.navigationFlush(composerText)
+
+        let replacementMutations = await persistence.mutations()
+        let replacementDraft = await persistence.currentDraftText()
+        XCTAssertEqual(replacementMutations, [.save("explicit replacement")])
+        XCTAssertEqual(replacementDraft, "explicit replacement")
     }
 }
