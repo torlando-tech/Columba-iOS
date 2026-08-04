@@ -254,6 +254,7 @@ private struct MarkdownMessageText: View {
                         FontFamilyVariant(.monospaced)
                         FontSize(fontSize * 0.82)
                     }
+                    .fixedSize(horizontal: true, vertical: true)
                     .padding(10)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
