@@ -50,12 +50,15 @@ final class MessageBubbleLayoutTests: XCTestCase {
 
     @MainActor
     func testTextSizePickerRendersCompleteControls() throws {
-        let renderer = ImageRenderer(
-            content: TextSizePickerSheet(currentScale: 1.0, onSave: { _ in })
-                .frame(width: 390, height: 340)
+        let size = CGSize(width: 390, height: 340)
+        let host = UIHostingController(
+            rootView: TextSizePickerSheet(currentScale: 1.0, onSave: { _ in })
         )
-        renderer.scale = 3
-        let image = try XCTUnwrap(renderer.uiImage)
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
 
         XCTAssertEqual(image.size.width, 390, accuracy: 1)
         XCTAssertEqual(image.size.height, 340, accuracy: 1)
