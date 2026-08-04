@@ -3,6 +3,45 @@ import UIKit
 import XCTest
 @testable import ColumbaApp
 
+final class MessageLinkParserTests: XCTestCase {
+    private let nodeHash = "9ce92808be498e9e05590ff27cbfdfe4"
+
+    func testPlaintextDetectsWebAndBareNomadNetLinksWithoutTrailingPunctuation() {
+        let text = "Open https://example.com/docs, then \(nodeHash):/page/index.mu."
+        let matches = MessageLinkParser.matches(in: text)
+
+        XCTAssertEqual(matches.map(\.text), [
+            "https://example.com/docs",
+            "\(nodeHash):/page/index.mu",
+        ])
+        XCTAssertEqual(matches.map(\.target), [
+            .web(URL(string: "https://example.com/docs")!),
+            .nomadNet(nodeHash: Data(hexString: nodeHash)!, path: "/page/index.mu"),
+        ])
+    }
+
+    func testMarkdownLinkTargetsAllowOnlySupportedSchemes() {
+        XCTAssertEqual(
+            MessageLinkParser.target(for: URL(string: "https://example.com")!),
+            .web(URL(string: "https://example.com")!)
+        )
+        XCTAssertEqual(
+            MessageLinkParser.target(for: URL(string: "nomadnetwork://\(nodeHash):/page/index.mu")!),
+            .nomadNet(nodeHash: Data(hexString: nodeHash)!, path: "/page/index.mu")
+        )
+        XCTAssertNotNil(
+            MessageLinkParser.target(for: URL(string: "lxma://contact?destination=abc")!)
+        )
+        XCTAssertNil(MessageLinkParser.target(for: URL(string: "file:///tmp/private")!))
+        XCTAssertNil(MessageLinkParser.target(for: URL(string: "javascript:alert(1)")!))
+        XCTAssertNil(MessageLinkParser.target(for: URL(string: "data:text/plain,secret")!))
+    }
+
+    func testBareHashWithoutNomadNetPathIsNotLinkified() {
+        XCTAssertTrue(MessageLinkParser.matches(in: "identity \(nodeHash)").isEmpty)
+    }
+}
+
 final class MessageBubbleLayoutTests: XCTestCase {
 
     private func visibleContentBounds(in image: UIImage) throws -> CGRect {
