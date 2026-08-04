@@ -190,10 +190,11 @@ public actor MessageRepository {
             return
         }
 
-        // Keep the commit and its notification in one actor-isolated synchronous
-        // operation. Awaiting GRDB here would allow another draft mutation to
-        // commit before this mutation posts its notification.
-        try replacementPool.write { db in
+        // Keep the mutation and its notification in one actor-isolated
+        // synchronous operation. This is a single atomic SQLite statement;
+        // awaiting GRDB here would allow another draft mutation to commit before
+        // this mutation posts its notification.
+        try replacementPool.writeWithoutTransaction { db in
             try db.execute(
                 sql: """
                     INSERT INTO columba_drafts (conversation_hash, content, updated_at)
@@ -243,7 +244,7 @@ public actor MessageRepository {
     }
 
     private func clearDraftAndNotify(for conversationHash: Data) throws {
-        let deleted = try replacementPool.write { db in
+        let deleted = try replacementPool.writeWithoutTransaction { db in
             try db.execute(
                 sql: "DELETE FROM columba_drafts WHERE conversation_hash = ?",
                 arguments: [conversationHash]
