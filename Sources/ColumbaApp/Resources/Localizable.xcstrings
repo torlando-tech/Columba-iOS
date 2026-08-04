@@ -953,6 +953,18 @@
     },
     "Preview message text": {
       "comment": "Sample message shown in the conversation text-size picker."
+    },
+    "Message text size": {
+      "comment": "VoiceOver label for the conversation message text-size slider."
+    },
+    "Minimum text size": {
+      "comment": "VoiceOver label for the small endpoint in the message text-size range."
+    },
+    "Maximum text size": {
+      "comment": "VoiceOver label for the large endpoint in the message text-size range."
+    },
+    "%lld percent": {
+      "comment": "VoiceOver value announcing the selected message text-size percentage."
     }
   },
   "version": "1.0"

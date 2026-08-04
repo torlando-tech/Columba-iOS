@@ -374,8 +374,33 @@ actor MigrationImporter {
         onProgress(0.8)
 
         // 4. Import settings
+        settingsImported = await importSettings(bundle.settings.preferences)
+        onProgress(1.0)
+
+        let preferredIdentityHash = Self.preferredIdentityHash(from: validatedIdentities)
+        let result = ImportResult(
+            preferredIdentityHash: preferredIdentityHash,
+            identitiesImported: identitiesImported,
+            identitiesSkipped: identitiesSkipped,
+            conversationsImported: conversationsImported,
+            messagesImported: messagesImported,
+            messagesSkipped: messagesSkipped,
+            interfacesImported: interfacesImported,
+            settingsImported: settingsImported
+        )
+
+        logger.info("Import complete: \(identitiesImported) identities, \(messagesImported) messages, \(interfacesImported) interfaces")
+        return result
+    }
+
+    /// Apply backed-up preferences and return the number of accepted values.
+    /// Kept separate from the destructive identity/history restore so preference
+    /// compatibility and normalization can be exercised directly.
+    func importSettings(_ preferences: [PreferenceEntry]) async -> Int {
+        var settingsImported = 0
         var importedIncomingMessageSizeLimit = false
-        for pref in bundle.settings.preferences {
+
+        for pref in preferences {
             switch pref.key {
             case "displayName":
                 let current = await settingsRepository.getDisplayName()
@@ -435,25 +460,11 @@ actor MigrationImporter {
                 break
             }
         }
+
         if importedIncomingMessageSizeLimit {
             await appServices?.applyIncomingMessageSizeLimitFromSettings()
         }
-        onProgress(1.0)
-
-        let preferredIdentityHash = Self.preferredIdentityHash(from: validatedIdentities)
-        let result = ImportResult(
-            preferredIdentityHash: preferredIdentityHash,
-            identitiesImported: identitiesImported,
-            identitiesSkipped: identitiesSkipped,
-            conversationsImported: conversationsImported,
-            messagesImported: messagesImported,
-            messagesSkipped: messagesSkipped,
-            interfacesImported: interfacesImported,
-            settingsImported: settingsImported
-        )
-
-        logger.info("Import complete: \(identitiesImported) identities, \(messagesImported) messages, \(interfacesImported) interfaces")
-        return result
+        return settingsImported
     }
 
     // MARK: - Private Helpers

@@ -18,6 +18,7 @@ SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
 MAIN_TAB_VIEW = ROOT / "Sources/ColumbaApp/Views/MainTabView.swift"
 MESSAGE_BUBBLE = ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
 MESSAGING_VIEW = ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift"
+TEXT_SIZE_PICKER = ROOT / "Sources/ColumbaApp/Views/Messaging/TextSizePickerSheet.swift"
 INCOMING_MESSAGE_HANDLER = ROOT / "Sources/ColumbaApp/Services/IncomingMessageHandler.swift"
 LOCATION_SHARING_MANAGER = ROOT / "Sources/ColumbaApp/Services/LocationSharingManager.swift"
 
@@ -28,6 +29,7 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             ROOT / "Sources/ColumbaApp/Services/SettingsRepository.swift"
         ).read_text()
         messaging_view = MESSAGING_VIEW.read_text()
+        text_size_picker = TEXT_SIZE_PICKER.read_text()
         message_bubble = MESSAGE_BUBBLE.read_text()
         migration_exporter = (
             ROOT / "Sources/ColumbaApp/Services/MigrationExporter.swift"
@@ -42,6 +44,8 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         )
         self.assertIn('TextSizePickerSheet(', messaging_view)
         self.assertIn('messageTextScale: messageTextScale', messaging_view)
+        self.assertIn('@ScaledMetric(relativeTo: .body)', text_size_picker)
+        self.assertIn('.accessibilityLabel("Message text size")', text_size_picker)
         self.assertIn('@ScaledMetric(relativeTo: .body)', message_bubble)
         self.assertIn('bodyFontSize * CGFloat(messageTextScale)', message_bubble)
         self.assertIn('.double("message_text_scale"', migration_exporter)

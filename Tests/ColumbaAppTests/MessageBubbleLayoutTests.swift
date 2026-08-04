@@ -5,6 +5,33 @@ import XCTest
 
 final class MessageBubbleLayoutTests: XCTestCase {
 
+    private func accessibilityIdentifiers(in root: UIView) -> Set<String> {
+        var identifiers = Set<String>()
+        var visited = Set<ObjectIdentifier>()
+
+        func visit(_ object: AnyObject) {
+            let identifier = ObjectIdentifier(object)
+            guard visited.insert(identifier).inserted else { return }
+
+            if let identifiable = object as? UIAccessibilityIdentification,
+               let value = identifiable.accessibilityIdentifier,
+               !value.isEmpty {
+                identifiers.insert(value)
+            }
+            if let view = object as? UIView {
+                for child in view.subviews {
+                    visit(child)
+                }
+                for child in view.accessibilityElements ?? [] {
+                    visit(child as AnyObject)
+                }
+            }
+        }
+
+        visit(root)
+        return identifiers
+    }
+
     @MainActor
     func testMessageTextScaleChangesRenderedBodyHeight() throws {
         let message = Message(
@@ -54,8 +81,28 @@ final class MessageBubbleLayoutTests: XCTestCase {
         let host = UIHostingController(
             rootView: TextSizePickerSheet(currentScale: 1.0, onSave: { _ in })
         )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
         host.view.frame = CGRect(origin: .zero, size: size)
         host.view.layoutIfNeeded()
+
+        let identifiers = accessibilityIdentifiers(in: host.view)
+        let expectedIdentifiers: Set<String> = [
+            "text_size_preview",
+            "text_size_percent",
+            "text_size_slider",
+            "text_size_range_labels",
+            "text_size_cancel",
+            "text_size_confirm"
+        ]
+        XCTAssertTrue(
+            expectedIdentifiers.isSubset(of: identifiers),
+            "Missing picker controls: \(expectedIdentifiers.subtracting(identifiers).sorted())"
+        )
+
         let image = UIGraphicsImageRenderer(size: size).image { _ in
             host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
         }
@@ -112,17 +159,34 @@ final class MessageBubbleLayoutTests: XCTestCase {
             "The reply indicator must not greedily expand to the parent's proposed height"
         )
 
-        let renderer = ImageRenderer(
-            content: MessageBubble(message: message)
-                .frame(width: 390)
-                .padding()
-                .background(Color.black)
+        var scaledHeights: [Double: CGFloat] = [:]
+        for (name, scale) in [("70-percent", 0.7), ("100-percent", 1.0), ("200-percent", 2.0)] {
+            let scaledHost = UIHostingController(
+                rootView: MessageBubble(message: message, messageTextScale: scale)
+                    .frame(width: 390)
+            )
+            scaledHeights[scale] = scaledHost.sizeThatFits(
+                in: CGSize(width: 390, height: 2_000)
+            ).height
+
+            let renderer = ImageRenderer(
+                content: MessageBubble(message: message, messageTextScale: scale)
+                    .frame(width: 390)
+                    .padding()
+                    .background(Color.black)
+            )
+            renderer.scale = 3
+            let image = try XCTUnwrap(renderer.uiImage)
+            let screenshot = XCTAttachment(image: image)
+            screenshot.name = "reply-bubble-message-text-size-\(name)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+
+        XCTAssertGreaterThan(
+            try XCTUnwrap(scaledHeights[2.0]),
+            try XCTUnwrap(scaledHeights[0.7]) + 60,
+            "Reply bubbles must retain the visibly scaled primary body at both extremes"
         )
-        renderer.scale = 3
-        let image = try XCTUnwrap(renderer.uiImage)
-        let screenshot = XCTAttachment(image: image)
-        screenshot.name = "reply-bubble-long-message"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
     }
 }
