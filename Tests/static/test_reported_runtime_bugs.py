@@ -42,7 +42,8 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         )
         self.assertIn('TextSizePickerSheet(', messaging_view)
         self.assertIn('messageTextScale: messageTextScale', messaging_view)
-        self.assertIn('size: 17 * messageTextScale', message_bubble)
+        self.assertIn('@ScaledMetric(relativeTo: .body)', message_bubble)
+        self.assertIn('bodyFontSize * CGFloat(messageTextScale)', message_bubble)
         self.assertIn('.double("message_text_scale"', migration_exporter)
         self.assertIn('case "message_text_scale":', migration_importer)
 

@@ -27,6 +27,7 @@ struct MessageBubble: View {
 
     let message: Message
     var messageTextScale: Double = SettingsRepository.MessageTextScale.defaultValue
+    @ScaledMetric(relativeTo: .body) private var bodyFontSize: CGFloat = 17
 
     /// Callback for tapping a reaction chip to toggle own reaction.
     var onToggleReaction: ((String) -> Void)?
@@ -91,7 +92,7 @@ struct MessageBubble: View {
                     // Text content (show if non-empty)
                     if !message.content.isEmpty {
                         Text(message.content)
-                            .font(.system(size: 17 * messageTextScale))
+                            .font(.system(size: bodyFontSize * CGFloat(messageTextScale)))
                             .foregroundStyle(message.isFromMe ? .white : Theme.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
                             // The text is already findable via Maestro's
