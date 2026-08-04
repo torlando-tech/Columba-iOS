@@ -788,7 +788,6 @@ final class MessageRepositoryAdapterTests: XCTestCase {
             notificationObserver: NotificationObserver()
         )
         let destination = Data([0x05, 0xc5, 0x7e, 0x42] + Array(repeating: 0xaa, count: 12))
-        try await repository.ensureConversation(destination, displayName: "Peer 05c57e42")
         let message = RNSAPI.LXMessage(
             destinationHash: destination,
             sourceIdentity: nil,
@@ -799,6 +798,7 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         message.state = .sent
         message.method = .opportunistic
         try await repository.saveMessage(message)
+        try await repository.ensureConversation(destination, displayName: "Peer 05c57e42")
         await viewModel.loadConversations()
         for _ in 0..<100 where viewModel.conversations.first?.displayName != "Peer 05c57e42" {
             try await Task.sleep(for: .milliseconds(10))
