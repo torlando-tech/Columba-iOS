@@ -789,6 +789,16 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         )
         let destination = Data([0x05, 0xc5, 0x7e, 0x42] + Array(repeating: 0xaa, count: 12))
         try await repository.ensureConversation(destination, displayName: "Peer 05c57e42")
+        let message = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("hello".utf8)
+        )
+        message.hash = Data(repeating: 0xbb, count: 32)
+        message.timestamp = 100
+        message.state = .sent
+        message.method = .opportunistic
+        try await repository.saveMessage(message)
         await viewModel.loadConversations()
         XCTAssertEqual(viewModel.conversations.first?.displayName, "Peer 05c57e42")
 
