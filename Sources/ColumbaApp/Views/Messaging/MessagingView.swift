@@ -659,6 +659,7 @@ struct TextSizePickerSheet: View {
     let onSave: (Double) -> Void
 
     @State private var selectedScale: Double
+    @ScaledMetric(relativeTo: .body) private var previewBodyFontSize: CGFloat = 17
     @Environment(\.dismiss) private var dismiss
 
     init(currentScale: Double, onSave: @escaping (Double) -> Void) {
@@ -670,7 +671,7 @@ struct TextSizePickerSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Preview message text")
-                    .font(.system(size: 17 * selectedScale))
+                    .font(.system(size: previewBodyFontSize * CGFloat(selectedScale)))
                     .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                     .padding(14)
                     .background(Theme.receivedBubbleColor)
