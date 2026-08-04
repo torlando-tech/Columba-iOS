@@ -360,11 +360,49 @@ final class ChatsDraftProjectionTests: XCTestCase {
         let storedDraft = try await repository.fetchDraft(for: hash)
         let record = try XCTUnwrap(storedRecord)
         let draft = try XCTUnwrap(storedDraft)
+        let messageHashes = try await repository.fetchConversationHashesWithMessages(for: [hash])
         let projected = ChatsViewModel.prepareConversations(
             records: [record],
-            drafts: [hash: draft]
+            drafts: [hash: draft],
+            conversationHashesWithMessages: messageHashes
         )
         return (record, draft, projected)
+    }
+
+    private func repositoryBackedAttachmentOnlyDraft(
+        at databaseURL: URL
+    ) async throws -> (RNSAPI.ConversationRecord, DraftRecord, Set<Data>, [Conversation]) {
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let hash = conversationHash(0xDA)
+        let messageTimestamp = Date(timeIntervalSince1970: 400)
+        let message = RNSAPI.LXMessage(
+            destinationHash: hash,
+            sourceIdentity: nil,
+            content: Data(),
+            fields: [
+                RNSAPI.LXMessage.FIELD_IMAGE: ["png", Data([0x89, 0x50, 0x4E, 0x47])]
+            ]
+        )
+        message.hash = Data(repeating: 0xDA, count: 32)
+        message.timestamp = messageTimestamp.timeIntervalSince1970
+        message.state = .sent
+        message.method = .opportunistic
+        try await repository.saveMessage(message)
+        try await repository.saveDraft("attachment follow-up", for: hash)
+
+        let storedRecord = try await repository.fetchConversation(hash)
+        let storedDraft = try await repository.fetchDraft(for: hash)
+        let record = try XCTUnwrap(storedRecord)
+        let draft = try XCTUnwrap(storedDraft)
+        let messageHashes = try await repository.fetchConversationHashesWithMessages(
+            for: [hash, hash, conversationHash(0xDB)]
+        )
+        let projected = ChatsViewModel.prepareConversations(
+            records: [record],
+            drafts: [hash: draft],
+            conversationHashesWithMessages: messageHashes
+        )
+        return (record, draft, messageHashes, projected)
     }
 
     private func loadDraftParentBeyondFirstPage(
@@ -404,7 +442,8 @@ final class ChatsDraftProjectionTests: XCTestCase {
         let source = record(hashByte: 0xD1, unreadCount: 4)
         let projected = ChatsViewModel.prepareConversations(
             records: [source],
-            drafts: [source.destinationHash: draft(for: source, content: "unfinished reply")]
+            drafts: [source.destinationHash: draft(for: source, content: "unfinished reply")],
+            conversationHashesWithMessages: [source.destinationHash]
         )
 
         XCTAssertEqual(projected.first?.lastMessagePreview, "unfinished reply")
@@ -418,7 +457,8 @@ final class ChatsDraftProjectionTests: XCTestCase {
 
         let projected = ChatsViewModel.prepareConversations(
             records: [source],
-            drafts: [source.destinationHash: draft(for: source, content: "first message draft")]
+            drafts: [source.destinationHash: draft(for: source, content: "first message draft")],
+            conversationHashesWithMessages: []
         )
 
         XCTAssertEqual(projected.map(\.destinationHash), [source.destinationHash])
@@ -437,7 +477,8 @@ final class ChatsDraftProjectionTests: XCTestCase {
                     content: "timestamped draft",
                     updatedAt: draftTimestamp
                 )
-            ]
+            ],
+            conversationHashesWithMessages: []
         )
 
         XCTAssertEqual(projected.first?.lastMessageTimestamp, draftTimestamp)
@@ -457,9 +498,44 @@ final class ChatsDraftProjectionTests: XCTestCase {
 
         let (record, draft, projected) = snapshot
         XCTAssertNotNil(record.lastMessageAt, "real mapping supplies the conversation creation timestamp")
-        XCTAssertTrue(record.lastMessagePreview.isEmpty, "empty preview is the persisted no-message signal")
+        XCTAssertTrue(record.lastMessagePreview.isEmpty, "new conversation records have no preview")
         XCTAssertEqual(projected.first?.lastMessageTimestamp, draft.updatedAt)
         XCTAssertEqual(projected.first?.draftUpdatedAt, draft.updatedAt)
+    }
+
+    func testAttachmentOnlyMessageWithDraftKeepsMessageTimestamp() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        let snapshot: (RNSAPI.ConversationRecord, DraftRecord, Set<Data>, [Conversation])
+        do {
+            snapshot = try await repositoryBackedAttachmentOnlyDraft(at: databaseURL)
+        } catch {
+            removeDatabase(at: databaseURL)
+            throw error
+        }
+        removeDatabase(at: databaseURL)
+
+        let (record, draft, messageHashes, projected) = snapshot
+        XCTAssertTrue(record.lastMessagePreview.isEmpty, "attachment-only messages have empty text previews")
+        XCTAssertEqual(messageHashes, [record.destinationHash])
+        XCTAssertEqual(projected.first?.lastMessagePreview, draft.content)
+        XCTAssertEqual(projected.first?.lastMessageTimestamp, record.lastMessageAt)
+        XCTAssertNotEqual(projected.first?.lastMessageTimestamp, draft.updatedAt)
+
+        let newerMessage = self.record(
+            hashByte: 0xDC,
+            timestamp: Date(timeIntervalSince1970: 450),
+            preview: "newer message"
+        )
+        let ordered = ChatsViewModel.prepareConversations(
+            records: [record, newerMessage],
+            drafts: [record.destinationHash: draft],
+            conversationHashesWithMessages: messageHashes.union([newerMessage.destinationHash])
+        )
+        XCTAssertEqual(
+            ordered.map(\.destinationHash),
+            [newerMessage.destinationHash, record.destinationHash],
+            "a newer draft must not move an attachment-only conversation ahead of newer messages"
+        )
     }
 
     func testLoadIncludesDraftParentBeyondFirstConversationPage() async throws {
@@ -502,7 +578,8 @@ final class ChatsDraftProjectionTests: XCTestCase {
                     content: "newer draft",
                     updatedAt: Date(timeIntervalSince1970: 500)
                 )
-            ]
+            ],
+            conversationHashesWithMessages: [source.destinationHash]
         )
 
         XCTAssertEqual(projected.first?.lastMessageTimestamp, messageTimestamp)
@@ -523,7 +600,8 @@ final class ChatsDraftProjectionTests: XCTestCase {
             drafts: [
                 blank.destinationHash: draft(for: blank, content: " \t\n "),
                 blankWithoutMessage.destinationHash: malformedBlankDraft
-            ]
+            ],
+            conversationHashesWithMessages: [blank.destinationHash, missing.destinationHash]
         )
 
         XCTAssertEqual(projected.map(\.lastMessagePreview), ["blank draft fallback", "missing draft fallback"])

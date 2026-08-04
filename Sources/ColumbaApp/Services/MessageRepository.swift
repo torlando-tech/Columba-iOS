@@ -51,6 +51,10 @@ public struct DraftRecord: Equatable, Sendable {
 /// types so the existing ViewModels compile unchanged. All operations are
 /// serialized through the underlying GRDB actor.
 public actor MessageRepository {
+    /// Keep set queries comfortably below SQLite's commonly configured bind
+    /// variable limit while still avoiding one read per conversation.
+    private static let conversationQueryChunkSize = 500
+
     /// Posted after a conversation's unread count has been cleared in the
     /// canonical store. The chats list uses this to clear its in-memory badge
     /// while a conversation is open.
@@ -148,20 +152,68 @@ public actor MessageRepository {
     /// Fetch conversations by their exact destination hashes without applying
     /// the paginated conversation-list limit.
     public func fetchConversations(for conversationHashes: [Data]) async throws -> [RNSAPI.ConversationRecord] {
-        var records: [RNSAPI.ConversationRecord] = []
-        var fetchedHashes = Set<Data>()
+        let hashes = Self.sortedUniqueHashes(conversationHashes)
+        guard !hashes.isEmpty else { return [] }
 
-        for conversationHash in conversationHashes where fetchedHashes.insert(conversationHash).inserted {
-            if let record = try await database.getConversation(hash: conversationHash) {
-                records.append(Self.mapConversation(record))
+        return try await replacementPool.read { db in
+            var records: [LXMFSwift.ConversationRecord] = []
+            for start in stride(from: 0, to: hashes.count, by: Self.conversationQueryChunkSize) {
+                let end = min(start + Self.conversationQueryChunkSize, hashes.count)
+                let chunk = Array(hashes[start..<end])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+                records += try LXMFSwift.ConversationRecord.fetchAll(
+                    db,
+                    sql: """
+                        SELECT *
+                        FROM conversations
+                        WHERE destination_hash IN (\(placeholders))
+                        ORDER BY destination_hash
+                        """,
+                    arguments: StatementArguments(chunk)
+                )
             }
+            return records.map(Self.mapConversation)
         }
-        return records
+    }
+
+    /// Return the requested conversation hashes that have at least one row in
+    /// the canonical messages table. Message preview text cannot provide this
+    /// signal because attachment-only messages legitimately have empty content.
+    public func fetchConversationHashesWithMessages(for conversationHashes: [Data]) async throws -> Set<Data> {
+        let hashes = Self.sortedUniqueHashes(conversationHashes)
+        guard !hashes.isEmpty else { return [] }
+
+        return try await replacementPool.read { db in
+            var result = Set<Data>()
+            for start in stride(from: 0, to: hashes.count, by: Self.conversationQueryChunkSize) {
+                let end = min(start + Self.conversationQueryChunkSize, hashes.count)
+                let chunk = Array(hashes[start..<end])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT DISTINCT conversation_hash
+                        FROM messages
+                        WHERE conversation_hash IN (\(placeholders))
+                        """,
+                    arguments: StatementArguments(chunk)
+                )
+                for row in rows {
+                    let conversationHash: Data = row["conversation_hash"]
+                    result.insert(conversationHash)
+                }
+            }
+            return result
+        }
     }
 
     /// Fetch a single conversation by destination hash.
     public func fetchConversation(_ conversationHash: Data) async throws -> RNSAPI.ConversationRecord? {
         try await database.getConversation(hash: conversationHash).map(Self.mapConversation)
+    }
+
+    private static func sortedUniqueHashes(_ hashes: [Data]) -> [Data] {
+        Array(Set(hashes)).sorted { $0.lexicographicallyPrecedes($1) }
     }
 
     /// Mark conversation as read (reset unread count).

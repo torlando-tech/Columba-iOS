@@ -318,10 +318,14 @@ public final class ChatsViewModel {
         for record in visible + missingDraftParents where recordsByHash[record.destinationHash] == nil {
             recordsByHash[record.destinationHash] = record
         }
+        let messageHashes = try await repository.fetchConversationHashesWithMessages(
+            for: Array(recordsByHash.keys)
+        )
 
         var conversations = Self.prepareConversations(
             records: Array(recordsByHash.values),
-            drafts: committedDrafts
+            drafts: committedDrafts,
+            conversationHashesWithMessages: messageHashes
         )
 
         // Backfill display names from path table for conversations that have none.
@@ -370,11 +374,12 @@ public final class ChatsViewModel {
     /// newest activity first at the UI boundary, independent of database ordering.
     static func prepareConversations(
         records: [ConversationRecord],
-        drafts: [Data: DraftRecord]
+        drafts: [Data: DraftRecord],
+        conversationHashesWithMessages: Set<Data>
     ) -> [Conversation] {
         records
             .compactMap { record in
-                let hasMessage = !record.lastMessagePreview.isEmpty
+                let hasMessage = conversationHashesWithMessages.contains(record.destinationHash)
                 let draft = drafts[record.destinationHash].flatMap { draft in
                     draft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : draft
                 }
@@ -401,9 +406,20 @@ public final class ChatsViewModel {
     }
 
     /// Preserve the original projection call for existing clients while routing
-    /// all list preparation through the draft-aware implementation.
+    /// all list preparation through the draft-aware implementation. This legacy
+    /// no-draft entry point retains preview-based filtering only for callers that
+    /// do not project drafts; production draft projection always supplies the
+    /// canonical persisted-message set.
     static func prepareConversations(_ records: [ConversationRecord]) -> [Conversation] {
-        prepareConversations(records: records, drafts: [:])
+        prepareConversations(
+            records: records,
+            drafts: [:],
+            conversationHashesWithMessages: Set(
+                records.lazy
+                    .filter { !$0.lastMessagePreview.isEmpty }
+                    .map(\.destinationHash)
+            )
+        )
     }
 
     /// Start a list refresh. Only the latest generation may replace the
