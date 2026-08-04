@@ -441,6 +441,7 @@ public struct Message: Identifiable, Equatable {
             self.messageHash = record.messageId.count == 32 ? record.messageId : nil
             self.isTargetSafe = record.messageId.count == 32
                 && !MessageRepository.isUncertainRetryMarker(record.receivingInterface)
+                && record.receivingInterface != MessageRepository.optimisticOutboundMarker
         }
 
         // Map raw state value to DeliveryStatus

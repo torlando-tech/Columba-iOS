@@ -2898,7 +2898,7 @@ public final class AppServices {
             // persisted and the UI reads from), via the shared repository's
             // RNSAPI-typed method — not the Compat `database`.
             if let repo = self.messageRepository {
-                try? await repo.updateMessageState(id: hashData, state: newState)
+                try? await repo.applyDeliveryProof(canonicalHash: hashData, state: newState)
             }
             // Notify the open chat so it can flip the bubble's indicator
             // (double-check for delivered / failed) without a full reload.

@@ -381,6 +381,40 @@ final class MessageTimelinePolicyTests: XCTestCase {
         )
     }
 
+    func testRecoveredRetryRechecksRefreshedDeliveryStateBeforeSending() {
+        let stagedHash = Data(repeating: 0x42, count: 32)
+        let delivered = Message(
+            id: "refreshed-id",
+            content: "already delivered",
+            isFromMe: true,
+            deliveryStatus: .delivered,
+            storageHash: stagedHash
+        )
+        XCTAssertNil(
+            MessagingViewModel.retryableRefreshedMessage(
+                messageId: "stale-id",
+                stagedHash: stagedHash,
+                messages: [delivered]
+            )
+        )
+
+        let failed = Message(
+            id: "refreshed-id",
+            content: "still failed",
+            isFromMe: true,
+            deliveryStatus: .failed,
+            storageHash: stagedHash
+        )
+        XCTAssertEqual(
+            MessagingViewModel.retryableRefreshedMessage(
+                messageId: "stale-id",
+                stagedHash: stagedHash,
+                messages: [failed]
+            )?.content,
+            "still failed"
+        )
+    }
+
     func testRefreshPreservesOnlyUnpersistedOutboundRowsInTimelineOrder() {
         let base = Date(timeIntervalSince1970: 1_000)
         let oldest = Message(id: "oldest", content: "Oldest", timestamp: base, isFromMe: false)

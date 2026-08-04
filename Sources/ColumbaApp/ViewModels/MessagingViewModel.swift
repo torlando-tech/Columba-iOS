@@ -427,6 +427,16 @@ public final class MessagingViewModel {
         return proofs[canonicalID]
     }
 
+    static func retryableRefreshedMessage(
+        messageId: String,
+        stagedHash: Data,
+        messages: [Message]
+    ) -> Message? {
+        messages.first(where: {
+            $0.id == messageId || $0.storageHash == stagedHash
+        }).flatMap { $0.deliveryStatus == .failed ? $0 : nil }
+    }
+
     static func mergingPendingOutbound(
         loaded: [Message],
         current: [Message],
@@ -780,6 +790,10 @@ public final class MessagingViewModel {
             // Failed outbound attempts are still conversation activity. Persist
             // the failed row so it remains visible on Chats and can be retried.
             lxMessage.state = .failed
+            // This hash was generated locally and was never accepted by a
+            // backend. Persist that provenance explicitly: 32-byte width alone
+            // must not make a reloaded row safe for replies or reactions.
+            lxMessage.receivingInterface = MessageRepository.optimisticOutboundMarker
             var persisted = false
             do {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
@@ -849,7 +863,7 @@ public final class MessagingViewModel {
             return
         }
 
-        let failedMessage = messages[index]
+        var failedMessage = messages[index]
         if unsavedFailedOutboundIDs.contains(messageId),
            let stagedHash = stagedRetryRecoveryHashes[messageId] {
             do {
@@ -861,6 +875,14 @@ public final class MessagingViewModel {
                 unsavedFailedOutboundIDs.remove(messageId)
                 unpersistedOutboundIDs.remove(messageId)
                 await invalidatePaginationAndRefresh()
+                guard let refreshed = Self.retryableRefreshedMessage(
+                    messageId: messageId,
+                    stagedHash: stagedHash,
+                    messages: messages
+                ) else {
+                    return
+                }
+                failedMessage = refreshed
             } catch {
                 errorMessage = "The staged retry could not be recovered. Please try again."
                 return

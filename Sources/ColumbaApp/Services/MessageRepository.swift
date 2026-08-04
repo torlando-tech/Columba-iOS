@@ -56,6 +56,7 @@ public actor MessageRepository {
     public static let conversationHashUserInfoKey = "conversationHash"
     public static let stagedRetryMarker = "columba-app-retry-staged-v1"
     public static let uncertainRetryMarker = "columba-app-retry-uncertain-v1"
+    public static let optimisticOutboundMarker = "columba-app-outbound-optimistic-v1"
 
     public static func uncertainRetryMarker(canonicalHash: Data?) -> String {
         guard let canonicalHash else { return uncertainRetryMarker }
@@ -314,7 +315,8 @@ public actor MessageRepository {
                     SET message_id = ?, state = ?, method = ?, timestamp = ?,
                         receiving_interface = ?, updated_at = ?
                     WHERE message_id = ? AND incoming = 0 AND state = ?
-                      AND (receiving_interface IS NULL OR receiving_interface LIKE ?)
+                      AND (receiving_interface IS NULL OR receiving_interface LIKE ?
+                           OR receiving_interface = ?)
                     """,
                 arguments: [
                     message.hash,
@@ -326,6 +328,7 @@ public actor MessageRepository {
                     oldId,
                     LXMFSwift.LXMessageState.failed.rawValue,
                     Self.uncertainRetryMarker + "%",
+                    Self.optimisticOutboundMarker,
                 ]
             )
             guard db.changesCount == 1 else {
@@ -457,12 +460,12 @@ public actor MessageRepository {
                 sql: """
                     SELECT COUNT(*) FROM messages
                     WHERE destination_hash = ? AND incoming = 0 AND state = ?
-                      AND receiving_interface = ?
+                      AND receiving_interface LIKE ?
                     """,
                 arguments: [
                     destinationHash,
                     LXMFSwift.LXMessageState.failed.rawValue,
-                    Self.uncertainRetryMarker,
+                    Self.uncertainRetryMarker + "%",
                 ]
             ) ?? 0
             return count > 0
@@ -482,6 +485,45 @@ public actor MessageRepository {
     /// Update message delivery state.
     public func updateMessageState(id: Data, state: RNSAPI.LXMessageState) async throws {
         try await database.updateMessageState(id: id, state: Self.mapStateToGRDB(state))
+    }
+
+    /// Persist an authoritative backend delivery proof. If canonical message
+    /// persistence previously failed during a retry, atomically resolve the
+    /// durable storage-key row through its canonical uncertainty marker and
+    /// rekey it to the wire hash. This path works without an open chat view.
+    @discardableResult
+    public func applyDeliveryProof(
+        canonicalHash: Data,
+        state: RNSAPI.LXMessageState
+    ) async throws -> Bool {
+        try await replacementPool.write { db in
+            let mappedState = Self.mapStateToGRDB(state).rawValue
+            let now = Date().timeIntervalSince1970
+            try db.execute(
+                sql: """
+                    UPDATE messages SET state = ?, updated_at = ?
+                    WHERE message_id = ?
+                    """,
+                arguments: [mappedState, now, canonicalHash]
+            )
+            if db.changesCount == 1 { return true }
+
+            try db.execute(
+                sql: """
+                    UPDATE messages
+                    SET message_id = ?, state = ?, receiving_interface = NULL,
+                        updated_at = ?
+                    WHERE incoming = 0 AND receiving_interface = ?
+                    """,
+                arguments: [
+                    canonicalHash,
+                    mappedState,
+                    now,
+                    Self.uncertainRetryMarker(canonicalHash: canonicalHash),
+                ]
+            )
+            return db.changesCount == 1
+        }
     }
 
     /// Load pending outbound messages (state == .outbound).
