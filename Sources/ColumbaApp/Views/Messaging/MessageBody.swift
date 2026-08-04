@@ -1,5 +1,6 @@
 import Foundation
 import MarkdownUI
+import RNSAPI
 import SwiftUI
 
 /// A message link after scheme validation and NomadNet address parsing.
