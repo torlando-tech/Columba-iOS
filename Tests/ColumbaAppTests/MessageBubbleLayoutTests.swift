@@ -165,7 +165,7 @@ final class MessageBubbleLayoutTests: XCTestCase {
 
         let peer = Peer(name: "Columba", isReachable: true)
         print(peer.name)
-        let routeDescription = peers.filter { $0.isReachable }.map { "\($0.name):authenticated-reticulum-route" }.joined(separator: " -> ")
+        let routeDescription = peers.filter { $0.isReachable }.map { "\\($0.name):authenticated-reticulum-route" }.joined(separator: " -> ")
         ```
 
         - First item
