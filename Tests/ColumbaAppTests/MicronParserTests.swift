@@ -800,6 +800,9 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         message.method = .opportunistic
         try await repository.saveMessage(message)
         await viewModel.loadConversations()
+        for _ in 0..<100 where viewModel.conversations.first?.displayName != "Peer 05c57e42" {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         XCTAssertEqual(viewModel.conversations.first?.displayName, "Peer 05c57e42")
 
         let applied = try await repository.applyAnnouncedDisplayName(
