@@ -849,14 +849,17 @@ final class DraftAutosaveControllerTests: XCTestCase {
         var composerText = ""
         var isInteractive = false
 
-        try await MessagingDraftBootstrap.prepare(
+        let outcome = try await MessagingDraftBootstrap.prepare(
             loadMessages: {
                 events.append("messages loaded")
             },
             restoreDraft: {
                 events.append("draft restored")
                 return "unfinished message"
-            },
+            }
+        )
+        try MessagingDraftBootstrap.commit(
+            outcome,
             applyRestoredText: { restoredText in
                 composerText = restoredText
                 events.append("draft applied")
@@ -890,9 +893,12 @@ final class DraftAutosaveControllerTests: XCTestCase {
         let lifecycle = MessagingComposerLifecycle(autosave: controller)
         var composerText = ""
 
-        try await MessagingDraftBootstrap.prepare(
+        let outcome = try await MessagingDraftBootstrap.prepare(
             loadMessages: {},
-            restoreDraft: { try await lifecycle.restore() },
+            restoreDraft: { try await lifecycle.restore() }
+        )
+        try MessagingDraftBootstrap.commit(
+            outcome,
             applyRestoredText: {
                 lifecycle.applyProgrammaticRestore($0) { composerText = $0 }
             },
@@ -1023,7 +1029,7 @@ final class DraftAutosaveControllerTests: XCTestCase {
         XCTAssertEqual(stored, "latest value at background")
     }
 
-    func testCancelledBootstrapDoesNotApplyOrPublishAndCanRetry() async throws {
+    func testCancellationBeforeBootstrapCommitDoesNotApplyHandleFailureOrPublishAndCanRetry() async throws {
         let conversationHash = Data(repeating: 0xAD, count: 16)
         let persistence = ControlledDraftPersistence(draftText: "durable draft")
         let sleeper = ControlledDraftSleeper()
@@ -1038,13 +1044,13 @@ final class DraftAutosaveControllerTests: XCTestCase {
         var failureCount = 0
 
         let cancelledAttempt = Task { @MainActor in
-            try await MessagingDraftBootstrap.prepare(
+            let outcome = try await MessagingDraftBootstrap.prepare(
                 loadMessages: {},
-                restoreDraft: {
-                    let restored = try await lifecycle.restore()
-                    withUnsafeCurrentTask { $0?.cancel() }
-                    return restored
-                },
+                restoreDraft: { try await lifecycle.restore() }
+            )
+            withUnsafeCurrentTask { $0?.cancel() }
+            try MessagingDraftBootstrap.commit(
+                outcome,
                 applyRestoredText: { composerText = $0 },
                 handleRestoreFailure: { failureCount += 1 },
                 publishConversation: { publishCount += 1 }
@@ -1062,9 +1068,12 @@ final class DraftAutosaveControllerTests: XCTestCase {
         XCTAssertEqual(failureCount, 0)
         XCTAssertFalse(lifecycle.draftPersistenceReady)
 
-        try await MessagingDraftBootstrap.prepare(
+        let retryOutcome = try await MessagingDraftBootstrap.prepare(
             loadMessages: {},
-            restoreDraft: { try await lifecycle.restore() },
+            restoreDraft: { try await lifecycle.restore() }
+        )
+        try MessagingDraftBootstrap.commit(
+            retryOutcome,
             applyRestoredText: {
                 lifecycle.applyProgrammaticRestore($0) { composerText = $0 }
             },
@@ -1076,6 +1085,62 @@ final class DraftAutosaveControllerTests: XCTestCase {
         XCTAssertEqual(publishCount, 1)
         XCTAssertEqual(failureCount, 0)
         XCTAssertTrue(lifecycle.draftPersistenceReady)
+    }
+
+    func testCancellationInsideBootstrapSuccessApplyStillPublishesWholeCommit() async throws {
+        var composerText = "unchanged"
+        var failureCount = 0
+        var publishCount = 0
+        var wasCancelledWhenPublished = false
+
+        let attempt = Task { @MainActor in
+            try MessagingDraftBootstrap.commit(
+                .restored("restored draft"),
+                applyRestoredText: {
+                    composerText = $0
+                    withUnsafeCurrentTask { $0?.cancel() }
+                },
+                handleRestoreFailure: { failureCount += 1 },
+                publishConversation: {
+                    wasCancelledWhenPublished = Task.isCancelled
+                    publishCount += 1
+                }
+            )
+        }
+
+        try await attempt.value
+        XCTAssertEqual(composerText, "restored draft")
+        XCTAssertEqual(failureCount, 0)
+        XCTAssertEqual(publishCount, 1)
+        XCTAssertTrue(wasCancelledWhenPublished)
+    }
+
+    func testCancellationInsideBootstrapFailureHandlerStillPublishesWholeCommit() async throws {
+        var applyCount = 0
+        var failureCount = 0
+        var publishCount = 0
+        var wasCancelledWhenPublished = false
+
+        let attempt = Task { @MainActor in
+            try MessagingDraftBootstrap.commit(
+                .restoreFailed,
+                applyRestoredText: { _ in applyCount += 1 },
+                handleRestoreFailure: {
+                    failureCount += 1
+                    withUnsafeCurrentTask { $0?.cancel() }
+                },
+                publishConversation: {
+                    wasCancelledWhenPublished = Task.isCancelled
+                    publishCount += 1
+                }
+            )
+        }
+
+        try await attempt.value
+        XCTAssertEqual(applyCount, 0)
+        XCTAssertEqual(failureCount, 1)
+        XCTAssertEqual(publishCount, 1)
+        XCTAssertTrue(wasCancelledWhenPublished)
     }
 
     func testRestoreFailureGatesLifecycleClearAndFlushUntilExplicitEdit() async throws {
@@ -1094,9 +1159,12 @@ final class DraftAutosaveControllerTests: XCTestCase {
         var composerText = ""
         var published = false
 
-        try await MessagingDraftBootstrap.prepare(
+        let outcome = try await MessagingDraftBootstrap.prepare(
             loadMessages: {},
-            restoreDraft: { try await lifecycle.restore() },
+            restoreDraft: { try await lifecycle.restore() }
+        )
+        try MessagingDraftBootstrap.commit(
+            outcome,
             applyRestoredText: { _ in XCTFail("Failed restore must not apply empty text") },
             handleRestoreFailure: { lifecycle.restoreFailed() },
             publishConversation: { published = true }

@@ -24,29 +24,47 @@ private let logger = Logger(subsystem: "network.columba.Columba", category: "Mes
 
 @MainActor
 enum MessagingDraftBootstrap {
+    enum Outcome {
+        case restored(String)
+        case restoreFailed
+    }
+
     static func prepare(
         loadMessages: () async -> Void,
-        restoreDraft: () async throws -> String?,
-        applyRestoredText: (String) -> Void,
-        handleRestoreFailure: () -> Void,
-        publishConversation: () -> Void
-    ) async throws {
+        restoreDraft: () async throws -> String?
+    ) async throws -> Outcome {
         await loadMessages()
         try Task.checkCancellation()
 
+        let outcome: Outcome
         do {
-            let restoredText = try await restoreDraft()
-            try Task.checkCancellation()
-            applyRestoredText(restoredText ?? "")
+            outcome = .restored(try await restoreDraft() ?? "")
         } catch let error as CancellationError {
             throw error
         } catch {
-            try Task.checkCancellation()
             logger.error("Draft restore failed; persistence remains gated")
-            handleRestoreFailure()
+            outcome = .restoreFailed
         }
 
         try Task.checkCancellation()
+        return outcome
+    }
+
+    static func commit(
+        _ outcome: Outcome,
+        applyRestoredText: (String) -> Void,
+        handleRestoreFailure: () -> Void,
+        publishConversation: () -> Void
+    ) throws {
+        try Task.checkCancellation()
+
+        switch outcome {
+        case .restored(let restoredText):
+            applyRestoredText(restoredText)
+        case .restoreFailed:
+            handleRestoreFailure()
+        }
+
         publishConversation()
     }
 }
@@ -650,13 +668,16 @@ struct MessagingView: View {
                 )
                 let lifecycle = MessagingComposerLifecycle(autosave: controller)
                 do {
-                    try await MessagingDraftBootstrap.prepare(
+                    let outcome = try await MessagingDraftBootstrap.prepare(
                         loadMessages: {
                             await vm.loadMessages()
                         },
                         restoreDraft: {
                             try await lifecycle.restore()
-                        },
+                        }
+                    )
+                    try MessagingDraftBootstrap.commit(
+                        outcome,
                         applyRestoredText: { restoredText in
                             lifecycle.applyProgrammaticRestore(restoredText) {
                                 messageText = $0
