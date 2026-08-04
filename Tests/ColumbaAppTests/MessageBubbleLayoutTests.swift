@@ -42,6 +42,44 @@ final class MessageLinkParserTests: XCTestCase {
     }
 }
 
+final class MessageRendererMappingTests: XCTestCase {
+    func testLiveMessageCarriesAuthenticatedMarkdownRenderer() {
+        let lxMessage = LXMessage(
+            destinationHash: Data(repeating: 0x01, count: 16),
+            sourceIdentity: nil,
+            content: Data("**rendered**".utf8),
+            fields: [LxmfFields.FIELD_RENDERER: LxmfFields.RENDERER_MARKDOWN]
+        )
+        lxMessage.hash = Data(repeating: 0x02, count: 32)
+
+        XCTAssertEqual(
+            Message(from: lxMessage, localHash: Data()).renderer,
+            .markdown
+        )
+    }
+
+    func testPersistedMessageRestoresMarkdownRenderer() {
+        let fields: [UInt8: Any] = [
+            LxmfFields.FIELD_RENDERER: LxmfFields.RENDERER_MARKDOWN,
+        ]
+        let record = MessageRecord(
+            id: Data(repeating: 0x03, count: 32),
+            conversationHash: Data(repeating: 0x04, count: 16),
+            content: Data("# Restored".utf8),
+            timestamp: 1,
+            direction: .inbound,
+            state: LXMessageState.received.rawValue,
+            messageId: Data(repeating: 0x03, count: 32),
+            packedLxmf: LxmfFieldCodec.pack(fields)
+        )
+
+        XCTAssertEqual(
+            Message(from: record, localHash: Data()).renderer,
+            .markdown
+        )
+    }
+}
+
 final class MessageBubbleLayoutTests: XCTestCase {
 
     private func visibleContentBounds(in image: UIImage) throws -> CGRect {
