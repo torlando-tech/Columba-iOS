@@ -1,5 +1,6 @@
 import XCTest
 import GRDB
+import RNSAPI
 @testable import ColumbaApp
 
 final class DraftMessageTests: XCTestCase {
@@ -297,6 +298,160 @@ final class DraftMessageTests: XCTestCase {
 
         NotificationCenter.default.removeObserver(observer)
         await reads.cancelAndWaitForTasks()
+    }
+}
+
+@MainActor
+final class ChatsDraftProjectionTests: XCTestCase {
+    private func record(
+        hashByte: UInt8,
+        timestamp: Date? = Date(timeIntervalSince1970: 100),
+        preview: String? = "last message",
+        unreadCount: Int = 0
+    ) -> RNSAPI.ConversationRecord {
+        RNSAPI.ConversationRecord(
+            hash: Data(repeating: hashByte, count: 16),
+            displayName: "Peer",
+            lastMessageAt: timestamp,
+            lastMessage: preview,
+            unreadCount: unreadCount
+        )
+    }
+
+    private func draft(
+        for record: RNSAPI.ConversationRecord,
+        content: String,
+        updatedAt: Date = Date(timeIntervalSince1970: 200)
+    ) -> DraftRecord {
+        DraftRecord(
+            conversationHash: record.destinationHash,
+            content: content,
+            updatedAt: updatedAt
+        )
+    }
+
+    private func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-chat-drafts-\(UUID().uuidString).sqlite")
+    }
+
+    private func removeDatabase(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(atPath: url.path + "-shm")
+        try? FileManager.default.removeItem(atPath: url.path + "-wal")
+    }
+
+    func testDraftOverridesLastMessagePreviewWithoutChangingUnreadCount() {
+        let source = record(hashByte: 0xD1, unreadCount: 4)
+        let projected = ChatsViewModel.prepareConversations(
+            records: [source],
+            drafts: [source.destinationHash: draft(for: source, content: "unfinished reply")]
+        )
+
+        XCTAssertEqual(projected.first?.lastMessagePreview, "unfinished reply")
+        XCTAssertEqual(projected.first?.draftText, "unfinished reply")
+        XCTAssertEqual(projected.first?.previewKind, .draft)
+        XCTAssertEqual(projected.first?.unreadCount, 4)
+    }
+
+    func testConversationWithoutMessageRemainsVisibleWhenDraftExists() {
+        let source = record(hashByte: 0xD2, timestamp: nil, preview: nil)
+
+        let projected = ChatsViewModel.prepareConversations(
+            records: [source],
+            drafts: [source.destinationHash: draft(for: source, content: "first message draft")]
+        )
+
+        XCTAssertEqual(projected.map(\.destinationHash), [source.destinationHash])
+        XCTAssertEqual(projected.first?.previewKind, .draft)
+    }
+
+    func testConversationWithoutMessageUsesDraftTimestampAsFallback() {
+        let source = record(hashByte: 0xD3, timestamp: nil, preview: nil)
+        let draftTimestamp = Date(timeIntervalSince1970: 300)
+
+        let projected = ChatsViewModel.prepareConversations(
+            records: [source],
+            drafts: [
+                source.destinationHash: draft(
+                    for: source,
+                    content: "timestamped draft",
+                    updatedAt: draftTimestamp
+                )
+            ]
+        )
+
+        XCTAssertEqual(projected.first?.lastMessageTimestamp, draftTimestamp)
+        XCTAssertEqual(projected.first?.draftUpdatedAt, draftTimestamp)
+    }
+
+    func testExistingConversationKeepsMessageTimestampWhenDraftExists() {
+        let messageTimestamp = Date(timeIntervalSince1970: 400)
+        let source = record(hashByte: 0xD4, timestamp: messageTimestamp)
+
+        let projected = ChatsViewModel.prepareConversations(
+            records: [source],
+            drafts: [
+                source.destinationHash: draft(
+                    for: source,
+                    content: "newer draft",
+                    updatedAt: Date(timeIntervalSince1970: 500)
+                )
+            ]
+        )
+
+        XCTAssertEqual(projected.first?.lastMessageTimestamp, messageTimestamp)
+    }
+
+    func testBlankOrMissingDraftUsesNormalMessagePreview() {
+        let blank = record(hashByte: 0xD5, preview: "blank draft fallback")
+        let missing = record(hashByte: 0xD6, preview: "missing draft fallback")
+        let blankWithoutMessage = record(hashByte: 0xD7, timestamp: nil, preview: nil)
+        let malformedBlankDraft = DraftRecord(
+            conversationHash: blankWithoutMessage.destinationHash,
+            content: "   ",
+            updatedAt: Date(timeIntervalSince1970: 600)
+        )
+
+        let projected = ChatsViewModel.prepareConversations(
+            records: [blank, missing, blankWithoutMessage],
+            drafts: [
+                blank.destinationHash: draft(for: blank, content: " \t\n "),
+                blankWithoutMessage.destinationHash: malformedBlankDraft
+            ]
+        )
+
+        XCTAssertEqual(projected.map(\.lastMessagePreview), ["blank draft fallback", "missing draft fallback"])
+        XCTAssertTrue(projected.allSatisfy { $0.previewKind == .message })
+        XCTAssertTrue(projected.allSatisfy { $0.draftText == nil && $0.draftUpdatedAt == nil })
+    }
+
+    func testDraftNotificationInvalidatesOlderConversationSnapshot() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let viewModel = ChatsViewModel(
+            repository: repository,
+            notificationObserver: NotificationObserver()
+        )
+        let hash = Data(repeating: 0xD8, count: 16)
+        try await repository.ensureConversation(hash, displayName: "Peer")
+        let staleSnapshot = Conversation(
+            destinationHash: hash,
+            displayName: "Peer",
+            lastMessageTimestamp: Date(timeIntervalSince1970: 100),
+            lastMessagePreview: "stale preview"
+        )
+        let staleGeneration = viewModel.beginConversationLoad()
+
+        try await repository.saveDraft("committed draft", for: hash)
+        for _ in 0..<100 where viewModel.conversations.first?.draftText != "committed draft" {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        viewModel.applyLoadedConversations([staleSnapshot], generation: staleGeneration)
+
+        XCTAssertEqual(viewModel.conversations.first?.lastMessagePreview, "committed draft")
+        XCTAssertEqual(viewModel.conversations.first?.previewKind, .draft)
     }
 }
 
