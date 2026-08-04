@@ -262,7 +262,8 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
         cell.contentConfiguration = UIHostingConfiguration {
             SwipeToReplyContainer(onReply: { [weak self] in
-                guard message.messageHash != nil else { return }
+                guard message.messageHash != nil,
+                      message.isTargetSafe else { return }
                 self?.onReply?(message)
             }) {
                 MessageBubble(
