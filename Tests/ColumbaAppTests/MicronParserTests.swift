@@ -795,7 +795,9 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         )
         message.hash = Data(repeating: 0xbb, count: 32)
         message.timestamp = 100
-        message.state = .sent
+        message.incoming = true
+        message.sourceHash = destination
+        message.state = .received
         message.method = .opportunistic
         try await repository.saveMessage(message)
         try await repository.ensureConversation(destination, displayName: "Peer 05c57e42")
