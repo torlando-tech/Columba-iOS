@@ -227,6 +227,15 @@ private struct MarkdownMessageText: View {
             .markdownBlockStyle(\.codeBlock) { configuration in
                 codeBlock(configuration)
             }
+            .markdownBlockStyle(\.heading1) { configuration in
+                configuration.label
+                    .markdownMargin(top: .zero, bottom: .em(0.45))
+                    .markdownTextStyle {
+                        FontWeight(.bold)
+                        FontSize(fontSize * 1.35)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             .markdownTheme(.basic)
             .onChange(of: content) { _, newContent in
                 parsedContent = MarkdownContent(newContent)
