@@ -31,6 +31,21 @@ final class MessageBubbleLayoutTests: XCTestCase {
             small.height + 60,
             "The 200% setting must visibly enlarge the message body relative to 70%"
         )
+
+        for (name, scale) in [("70-percent", 0.7), ("100-percent", 1.0), ("200-percent", 2.0)] {
+            let renderer = ImageRenderer(
+                content: MessageBubble(message: message, messageTextScale: scale)
+                    .frame(width: 320)
+                    .padding()
+                    .background(Color.black)
+            )
+            renderer.scale = 3
+            let image = try XCTUnwrap(renderer.uiImage)
+            let screenshot = XCTAttachment(image: image)
+            screenshot.name = "message-text-size-\(name)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
     }
 
     @MainActor
