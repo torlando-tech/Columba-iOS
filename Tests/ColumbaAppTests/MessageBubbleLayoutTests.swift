@@ -202,9 +202,17 @@ final class MessageBubbleLayoutTests: XCTestCase {
         XCTAssertGreaterThan(fitted.height, 300)
         XCTAssertLessThan(fitted.height, 1_500)
 
-        let renderer = ImageRenderer(content: view)
-        renderer.scale = 3
-        let image = try XCTUnwrap(renderer.uiImage)
+        let size = CGSize(width: 390, height: ceil(fitted.height))
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
         let screenshot = XCTAttachment(image: image)
         screenshot.name = "markdown-and-plaintext-message-bubbles"
         screenshot.lifetime = .keepAlways
