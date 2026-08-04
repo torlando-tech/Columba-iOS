@@ -194,7 +194,7 @@ public actor MessageRepository {
         // synchronous operation. This is a single atomic SQLite statement;
         // awaiting GRDB here would allow another draft mutation to commit before
         // this mutation posts its notification.
-        try replacementPool.writeWithoutTransaction { db in
+        try Self.writeDraftSynchronously(to: replacementPool) { db in
             try db.execute(
                 sql: """
                     INSERT INTO columba_drafts (conversation_hash, content, updated_at)
@@ -244,7 +244,7 @@ public actor MessageRepository {
     }
 
     private func clearDraftAndNotify(for conversationHash: Data) throws {
-        let deleted = try replacementPool.writeWithoutTransaction { db in
+        let deleted = try Self.writeDraftSynchronously(to: replacementPool) { db in
             try db.execute(
                 sql: "DELETE FROM columba_drafts WHERE conversation_hash = ?",
                 arguments: [conversationHash]
@@ -254,6 +254,15 @@ public actor MessageRepository {
         if deleted {
             postDraftChanged(for: conversationHash)
         }
+    }
+
+    /// Resolves GRDB's sync/async overload in a synchronous context so draft
+    /// mutations cannot suspend and re-enter this actor before notification.
+    private static func writeDraftSynchronously<T>(
+        to pool: DatabasePool,
+        _ updates: (Database) throws -> T
+    ) rethrows -> T {
+        try pool.writeWithoutTransaction(updates)
     }
 
     private static func mapDraft(_ row: Row) -> DraftRecord {
