@@ -129,7 +129,7 @@ public actor MessageRepository {
         try self.replacementPool.write { db in
             try db.execute(sql: """
                 CREATE TABLE IF NOT EXISTS columba_drafts (
-                    conversation_hash BLOB PRIMARY KEY
+                    conversation_hash BLOB PRIMARY KEY NOT NULL
                         REFERENCES conversations(destination_hash) ON DELETE CASCADE,
                     content TEXT NOT NULL,
                     updated_at DOUBLE NOT NULL
@@ -220,17 +220,17 @@ public actor MessageRepository {
         }
     }
 
-    /// Fetch all drafts in most-recently-updated order.
-    public func fetchDrafts() async throws -> [DraftRecord] {
+    /// Fetch all drafts keyed by conversation hash.
+    public func fetchDrafts() async throws -> [Data: DraftRecord] {
         try await replacementPool.read { db in
-            try Row.fetchAll(
+            let drafts = try Row.fetchAll(
                 db,
                 sql: """
                     SELECT conversation_hash, content, updated_at
                     FROM columba_drafts
-                    ORDER BY updated_at DESC
                     """
             ).map(Self.mapDraft)
+            return Dictionary(uniqueKeysWithValues: drafts.map { ($0.conversationHash, $0) })
         }
     }
 

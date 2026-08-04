@@ -1,4 +1,5 @@
 import XCTest
+import GRDB
 @testable import ColumbaApp
 
 final class DraftMessageTests: XCTestCase {
@@ -66,7 +67,8 @@ final class DraftMessageTests: XCTestCase {
 
         XCTAssertEqual(replacement.content, "second")
         XCTAssertGreaterThan(replacement.updatedAt, first.updatedAt)
-        XCTAssertEqual(drafts.count, 1)
+        XCTAssertEqual(drafts[conversationHash], replacement)
+        XCTAssertEqual(Set(drafts.keys), Set([conversationHash]))
     }
 
     func testDraftsAreIsolatedByConversation() async throws {
@@ -86,7 +88,27 @@ final class DraftMessageTests: XCTestCase {
         let drafts = try await repository.fetchDrafts()
         XCTAssertEqual(firstDraft?.content, "first conversation")
         XCTAssertEqual(secondDraft?.content, "second conversation")
-        XCTAssertEqual(Set(drafts.map(\.conversationHash)), Set([firstHash, secondHash]))
+        XCTAssertEqual(drafts[firstHash]?.content, "first conversation")
+        XCTAssertEqual(drafts[secondHash]?.content, "second conversation")
+        XCTAssertEqual(Set(drafts.keys), Set([firstHash, secondHash]))
+    }
+
+    func testDraftConversationHashRejectsNull() throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        _ = try MessageRepository(grdbPath: databaseURL.path)
+        let database = try DatabaseQueue(path: databaseURL.path)
+
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO columba_drafts (conversation_hash, content, updated_at)
+                        VALUES (NULL, 'invalid', 0)
+                        """
+                )
+            }
+        )
     }
 
     func testDraftsAreIsolatedByDatabasePath() async throws {
