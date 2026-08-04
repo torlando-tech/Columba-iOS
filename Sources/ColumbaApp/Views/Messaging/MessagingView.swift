@@ -72,6 +72,7 @@ struct MessagingView: View {
     @State private var callUnavailableMessage: String?
     @State private var showTextSizePicker = false
     @State private var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
+    @State private var nomadNetLinkTarget: MessageLinkTarget?
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -109,7 +110,8 @@ struct MessagingView: View {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             reactionModeMessage = message
                         }
-                    }
+                    },
+                    onOpenLink: openMessageLink
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     MessageInputBar(
@@ -205,7 +207,8 @@ struct MessagingView: View {
                                             withAnimation(.easeInOut(duration: 0.2)) {
                                                 reactionModeMessage = message
                                             }
-                                        }
+                                        },
+                                        onOpenLink: openMessageLink
                                     )
                                 }
                                 .id(message.id)
@@ -419,6 +422,9 @@ struct MessagingView: View {
             }
         }
         #endif
+        .navigationDestination(item: $nomadNetLinkTarget) { target in
+            nomadNetDestination(for: target)
+        }
         .sheet(isPresented: $showQualityPicker) {
             ImageQualityPickerSheet(
                 selectedPreset: $selectedImagePreset,
@@ -685,6 +691,41 @@ struct MessagingView: View {
     }
 
     // MARK: - Actions
+
+    private func openMessageLink(_ target: MessageLinkTarget) {
+        guard case .nomadNet = target else { return }
+        nomadNetLinkTarget = target
+    }
+
+    @ViewBuilder
+    private func nomadNetDestination(for target: MessageLinkTarget) -> some View {
+        if case .nomadNet(let nodeHash, let path) = target {
+            #if COLUMBA_NOMADNET_ENABLED
+            if let backend = appServices.backend,
+               let identity = appServices.identity {
+                NomadNetBrowserView(
+                    nodeHash: nodeHash,
+                    nodeName: nil,
+                    initialPath: path,
+                    backend: backend,
+                    identity: identity
+                )
+            } else {
+                ContentUnavailableView(
+                    "Browser Unavailable",
+                    systemImage: "globe",
+                    description: Text("The Reticulum backend is not ready.")
+                )
+            }
+            #else
+            ContentUnavailableView(
+                "Browser Unavailable",
+                systemImage: "globe",
+                description: Text("NomadNet support is not enabled in this build.")
+            )
+            #endif
+        }
+    }
 
     private func sendMessage() {
         let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)

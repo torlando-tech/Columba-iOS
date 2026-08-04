@@ -80,6 +80,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
     let onReply: (Message) -> Void
     let onToggleReaction: (Message, String) -> Void
     let onLongPress: (Message) -> Void
+    let onOpenLink: (MessageLinkTarget) -> Void
 
     func makeUIViewController(context: Context) -> MessageTimelineViewController {
         let controller = MessageTimelineViewController()
@@ -88,6 +89,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onReply = onReply
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
+        controller.onOpenLink = onOpenLink
         return controller
     }
 
@@ -96,6 +98,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onReply = onReply
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
+        controller.onOpenLink = onOpenLink
         controller.update(
             messages: messages,
             messageTextScale: messageTextScale,
@@ -111,6 +114,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     var onReply: ((Message) -> Void)?
     var onToggleReaction: ((Message, String) -> Void)?
     var onLongPress: ((Message) -> Void)?
+    var onOpenLink: ((MessageLinkTarget) -> Void)?
 
     private var messages: [Message] = []
     fileprivate var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
@@ -277,6 +281,9 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
                     },
                     onLongPress: { [weak self] in
                         self?.onLongPress?(message)
+                    },
+                    onOpenLink: { [weak self] target in
+                        self?.onOpenLink?(target)
                     }
                 )
             }

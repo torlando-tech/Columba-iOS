@@ -7,10 +7,17 @@ import RNSAPI
 struct NomadNetBrowserView: View {
     @State private var viewModel: NomadNetBrowserViewModel
 
-    init(nodeHash: Data, nodeName: String?, backend: any RnsBackend, identity: Identity) {
+    init(
+        nodeHash: Data,
+        nodeName: String?,
+        initialPath: String = "/page/index.mu",
+        backend: any RnsBackend,
+        identity: Identity
+    ) {
         _viewModel = State(initialValue: NomadNetBrowserViewModel(
             nodeHash: nodeHash,
             nodeName: nodeName,
+            initialPath: initialPath,
             backend: backend,
             identity: identity
         ))

@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownUI
 import SwiftUI
 
 /// A message link after scheme validation and NomadNet address parsing.
@@ -127,5 +128,107 @@ struct PlainMessageText: View {
             output += AttributedString(content[cursor...])
         }
         return output
+    }
+}
+
+struct MessageBody: View {
+    let content: String
+    let renderer: MessageRenderer
+    let color: Color
+    let fontSize: CGFloat
+    var onOpenLink: ((MessageLinkTarget) -> Void)?
+
+    var body: some View {
+        Group {
+            switch renderer {
+            case .markdown:
+                MarkdownMessageText(
+                    content: content,
+                    color: color,
+                    fontSize: fontSize
+                )
+                .accessibilityIdentifier("bubble_markdown")
+            case .plain:
+                PlainMessageText(
+                    content: content,
+                    color: color,
+                    fontSize: fontSize
+                )
+            }
+        }
+        .accessibilityIdentifier("bubble_text")
+        .environment(\.openURL, OpenURLAction { url in
+            guard let target = MessageLinkParser.target(for: url) else {
+                return .discarded
+            }
+            switch target {
+            case .web, .external:
+                return .systemAction(url)
+            case .nomadNet:
+                guard let onOpenLink else { return .discarded }
+                onOpenLink(target)
+                return .handled
+            }
+        })
+    }
+}
+
+private struct MarkdownMessageText: View {
+    let content: String
+    let color: Color
+    let fontSize: CGFloat
+    @State private var parsedContent: MarkdownContent
+
+    init(content: String, color: Color, fontSize: CGFloat) {
+        self.content = content
+        self.color = color
+        self.fontSize = fontSize
+        _parsedContent = State(initialValue: MarkdownContent(content))
+    }
+
+    var body: some View {
+        Markdown(parsedContent)
+            .markdownTheme(.basic)
+            .markdownTextStyle {
+                FontSize(fontSize)
+                ForegroundColor(color)
+            }
+            .markdownTextStyle(\.link) {
+                ForegroundColor(color)
+                UnderlineStyle(.single)
+            }
+            .markdownImageProvider(BlockedMarkdownImageProvider())
+            .markdownInlineImageProvider(BlockedMarkdownInlineImageProvider())
+            .fixedSize(horizontal: false, vertical: true)
+            .onChange(of: content) { _, newContent in
+                parsedContent = MarkdownContent(newContent)
+            }
+    }
+}
+
+struct BlockedMarkdownImageProvider: ImageProvider {
+    func makeImage(url: URL?) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "photo.badge.exclamationmark")
+            if let source = url?.host ?? url?.lastPathComponent,
+               !source.isEmpty {
+                Text(source)
+                    .lineLimit(1)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(6)
+        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+struct BlockedMarkdownInlineImageProvider: InlineImageProvider {
+    enum Blocked: Error {
+        case remoteImage
+    }
+
+    func image(with url: URL, label: String) async throws -> Image {
+        throw Blocked.remoteImage
     }
 }

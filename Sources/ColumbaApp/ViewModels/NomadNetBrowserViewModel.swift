@@ -110,11 +110,13 @@ public final class NomadNetBrowserViewModel {
     public init(
         nodeHash: Data,
         nodeName: String?,
+        initialPath: String = "/page/index.mu",
         backend: any RnsBackend,
         identity: Identity
     ) {
         self.currentNodeHash = nodeHash
         self.currentNodeName = nodeName
+        self.currentPath = initialPath
         self.browserService = NomadNetBrowserService(
             backend: backend,
             identity: identity

@@ -41,6 +41,22 @@ final class MessageLinkParserTests: XCTestCase {
     func testBareHashWithoutNomadNetPathIsNotLinkified() {
         XCTAssertTrue(MessageLinkParser.matches(in: "identity \(nodeHash)").isEmpty)
     }
+
+    func testInlineMarkdownImagesAreRejectedWithoutLoading() async {
+        let provider = BlockedMarkdownInlineImageProvider()
+
+        do {
+            _ = try await provider.image(
+                with: URL(string: "https://tracking.example/pixel.png")!,
+                label: "tracking pixel"
+            )
+            XCTFail("Expected remote Markdown image to be blocked")
+        } catch is BlockedMarkdownInlineImageProvider.Blocked {
+            // Expected: the provider performs no network operation.
+        } catch {
+            XCTFail("Unexpected image-provider error: \(error)")
+        }
+    }
 }
 
 final class MessageRendererMappingTests: XCTestCase {

@@ -35,6 +35,8 @@ struct MessageBubble: View {
     var onTapReplyPreview: ((String) -> Void)?
     /// Callback for long-press to enter reaction mode.
     var onLongPress: (() -> Void)?
+    /// Callback for validated in-app message links such as NomadNet pages.
+    var onOpenLink: ((MessageLinkTarget) -> Void)?
 
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
@@ -91,10 +93,13 @@ struct MessageBubble: View {
 
                     // Text content (show if non-empty)
                     if !message.content.isEmpty {
-                        Text(message.content)
-                            .font(.system(size: bodyFontSize * CGFloat(messageTextScale)))
-                            .foregroundStyle(message.isFromMe ? .white : Theme.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        MessageBody(
+                            content: message.content,
+                            renderer: message.renderer,
+                            color: message.isFromMe ? .white : Theme.textPrimary,
+                            fontSize: bodyFontSize * CGFloat(messageTextScale),
+                            onOpenLink: onOpenLink
+                        )
                             // The text is already findable via Maestro's
                             // `text:` matcher; the identifier just lets the
                             // harness disambiguate the bubble's text from
