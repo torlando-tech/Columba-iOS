@@ -593,21 +593,68 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         XCTAssertFalse(stillHasUncertainRetry)
     }
 
+    func testDeliveryProofRemovesCanonicalCollisionAliasAndWarning() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x7c, count: 16)
+        let storageHash = Data(repeating: 0x7d, count: 32)
+        let canonicalHash = Data(repeating: 0x7e, count: 32)
+
+        let alias = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("uncertain alias".utf8)
+        )
+        alias.hash = storageHash
+        alias.state = .failed
+        alias.receivingInterface = MessageRepository.uncertainRetryMarker(
+            canonicalHash: canonicalHash
+        )
+        try await repository.saveMessage(alias)
+
+        let canonical = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("canonical row".utf8)
+        )
+        canonical.hash = canonicalHash
+        canonical.state = .sent
+        try await repository.saveMessage(canonical)
+
+        let applied = try await repository.applyDeliveryProof(
+            canonicalHash: canonicalHash,
+            state: .delivered
+        )
+
+        XCTAssertTrue(applied)
+        let staleAlias = try await repository.getMessageRecord(id: storageHash)
+        XCTAssertNil(staleAlias)
+        let storedCanonical = try await repository.getMessageRecord(id: canonicalHash)
+        XCTAssertEqual(storedCanonical?.state, LXMessageState.delivered.rawValue)
+        let hasWarning = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertFalse(hasWarning)
+    }
+
     func testReloadedOptimisticFailureIsNotTargetSafeAndCanBeStaged() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }
         let repository = try MessageRepository(grdbPath: databaseURL.path)
         let destination = Data(repeating: 0x79, count: 16)
-        let optimisticHash = Data(repeating: 0x7a, count: 32)
+        let oldHash = Data(repeating: 0x7a, count: 32)
+        let optimisticHash = Data(repeating: 0x7b, count: 32)
         let failed = RNSAPI.LXMessage(
             destinationHash: destination,
             sourceIdentity: nil,
             content: Data("never accepted".utf8)
         )
-        failed.hash = optimisticHash
+        failed.hash = oldHash
         failed.state = .failed
-        failed.receivingInterface = MessageRepository.optimisticOutboundMarker
         try await repository.saveMessage(failed)
+
+        failed.hash = optimisticHash
+        failed.receivingInterface = MessageRepository.optimisticOutboundMarker
+        try await repository.replaceMessage(failed, replacing: oldHash)
 
         let storedRecord = try await repository.getMessageRecord(id: optimisticHash)
         let record = try XCTUnwrap(storedRecord)

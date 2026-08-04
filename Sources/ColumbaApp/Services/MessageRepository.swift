@@ -302,7 +302,10 @@ public actor MessageRepository {
     /// hash accepted by the network backend. Payload columns stay on the same
     /// row, so a crash cannot expose both a stale retry and a sent duplicate.
     public func replaceMessage(_ message: RNSAPI.LXMessage, replacing oldId: Data) async throws {
-        try await replaceMessageRecord(message, replacing: oldId, retryMarker: nil)
+        let marker = message.receivingInterface == Self.optimisticOutboundMarker
+            ? Self.optimisticOutboundMarker
+            : nil
+        try await replaceMessageRecord(message, replacing: oldId, retryMarker: marker)
     }
 
     /// Stage one failed retry as app-owned `.sending` before network submission.
@@ -506,7 +509,20 @@ public actor MessageRepository {
                     """,
                 arguments: [mappedState, now, canonicalHash]
             )
-            if db.changesCount == 1 { return true }
+            if db.changesCount == 1 {
+                try db.execute(
+                    sql: """
+                        DELETE FROM messages
+                        WHERE message_id != ? AND incoming = 0
+                          AND receiving_interface = ?
+                        """,
+                    arguments: [
+                        canonicalHash,
+                        Self.uncertainRetryMarker(canonicalHash: canonicalHash),
+                    ]
+                )
+                return true
+            }
 
             try db.execute(
                 sql: """

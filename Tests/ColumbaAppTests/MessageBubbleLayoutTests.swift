@@ -381,37 +381,36 @@ final class MessageTimelinePolicyTests: XCTestCase {
         )
     }
 
-    func testRecoveredRetryRechecksRefreshedDeliveryStateBeforeSending() {
-        let stagedHash = Data(repeating: 0x42, count: 32)
-        let delivered = Message(
-            id: "refreshed-id",
-            content: "already delivered",
-            isFromMe: true,
-            deliveryStatus: .delivered,
-            storageHash: stagedHash
-        )
-        XCTAssertNil(
-            MessagingViewModel.retryableRefreshedMessage(
-                messageId: "stale-id",
-                stagedHash: stagedHash,
-                messages: [delivered]
-            )
-        )
-
-        let failed = Message(
-            id: "refreshed-id",
-            content: "still failed",
+    func testPersistedAliasedProofCanonicalizesVisibleIdentityAndActions() {
+        let storageHash = Data(repeating: 0x41, count: 32)
+        let canonicalHash = Data(repeating: 0x42, count: 32)
+        var uncertain = Message(
+            id: storageHash.map { String(format: "%02x", $0) }.joined(),
+            content: "delivered after recovery",
             isFromMe: true,
             deliveryStatus: .failed,
-            storageHash: stagedHash
+            storageHash: storageHash,
+            isTargetSafe: false
         )
-        XCTAssertEqual(
-            MessagingViewModel.retryableRefreshedMessage(
-                messageId: "stale-id",
-                stagedHash: stagedHash,
-                messages: [failed]
-            )?.content,
-            "still failed"
+        uncertain.messageHash = canonicalHash
+
+        let canonical = MessagingViewModel.canonicalizedMessage(
+            uncertain,
+            canonicalHash: canonicalHash,
+            proofState: .delivered
+        )
+
+        let canonicalID = canonicalHash.map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(canonical.id, canonicalID)
+        XCTAssertEqual(canonical.storageHash, canonicalHash)
+        XCTAssertEqual(canonical.messageHash, canonicalHash)
+        XCTAssertEqual(canonical.deliveryStatus, .delivered)
+        XCTAssertTrue(canonical.isTargetSafe)
+        XCTAssertTrue(
+            MessagingViewModel.canDeleteMessage(
+                isUnpersisted: false,
+                isUnsavedFailure: false
+            )
         )
     }
 

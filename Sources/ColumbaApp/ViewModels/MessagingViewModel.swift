@@ -112,18 +112,31 @@ public final class MessagingViewModel {
             guard let self,
                   let hashData = notification.userInfo?["messageHash"] as? Data,
                   let state = notification.userInfo?["state"] as? String else { return }
+            let proofPersisted = notification.userInfo?["persisted"] as? Bool ?? false
             let hashHex = hashData.map { String(format: "%02x", $0) }.joined()
             Task { @MainActor in
                 let proofState: LXMessageState = (state == "delivered") ? .delivered : .failed
+                let wasAliased = self.pendingOutboundAliases[hashHex] != nil
                 let visibleID = Self.visibleMessageID(
                     for: hashHex,
                     aliases: self.pendingOutboundAliases
                 )
-                if self.pendingOutboundAliases[hashHex] != nil {
+                if wasAliased && !proofPersisted {
                     self.pendingDeliveryProofs[hashHex] = proofState
                 }
                 guard let index = self.messages.firstIndex(where: { $0.id == visibleID }) else { return }
-                self.messages[index].deliveryStatus = (proofState == .delivered) ? .delivered : .failed
+                if wasAliased && proofPersisted {
+                    self.messages[index] = Self.canonicalizedMessage(
+                        self.messages[index],
+                        canonicalHash: hashData,
+                        proofState: proofState
+                    )
+                    self.pendingOutboundAliases.removeValue(forKey: hashHex)
+                    self.pendingDeliveryProofs.removeValue(forKey: hashHex)
+                    await self.invalidatePaginationAndRefresh()
+                } else {
+                    self.messages[index].deliveryStatus = (proofState == .delivered) ? .delivered : .failed
+                }
             }
         }
     }
@@ -427,14 +440,32 @@ public final class MessagingViewModel {
         return proofs[canonicalID]
     }
 
-    static func retryableRefreshedMessage(
-        messageId: String,
-        stagedHash: Data,
-        messages: [Message]
-    ) -> Message? {
-        messages.first(where: {
-            $0.id == messageId || $0.storageHash == stagedHash
-        }).flatMap { $0.deliveryStatus == .failed ? $0 : nil }
+    static func canonicalizedMessage(
+        _ message: Message,
+        canonicalHash: Data,
+        proofState: LXMessageState
+    ) -> Message {
+        var canonical = Message(
+            id: hexString(canonicalHash),
+            content: message.content,
+            timestamp: message.timestamp,
+            isFromMe: message.isFromMe,
+            deliveryStatus: proofState == .delivered ? .delivered : .failed,
+            imageData: message.imageData,
+            imageFormat: message.imageFormat,
+            attachments: message.attachments,
+            replyToId: message.replyToId,
+            replyToPreview: message.replyToPreview,
+            reactions: message.reactions,
+            storageHash: canonicalHash,
+            isTargetSafe: true
+        )
+        canonical.messageHash = canonicalHash
+        canonical.deliveryMethod = message.deliveryMethod
+        canonical.rssi = message.rssi
+        canonical.snr = message.snr
+        canonical.receivedInterface = nil
+        return canonical
     }
 
     static func mergingPendingOutbound(
@@ -874,15 +905,20 @@ public final class MessagingViewModel {
                 stagedRetryRecoveryHashes.removeValue(forKey: messageId)
                 unsavedFailedOutboundIDs.remove(messageId)
                 unpersistedOutboundIDs.remove(messageId)
-                await invalidatePaginationAndRefresh()
-                guard let refreshed = Self.retryableRefreshedMessage(
-                    messageId: messageId,
-                    stagedHash: stagedHash,
-                    messages: messages
-                ) else {
+                let storedRecovered = try await repository.getMessageRecord(id: stagedHash)
+                guard let recoveredRecord = storedRecovered,
+                      recoveredRecord.state == LXMessageState.failed.rawValue,
+                      MessageRepository.isUncertainRetryMarker(
+                        recoveredRecord.receivingInterface
+                      ) else {
+                    await invalidatePaginationAndRefresh()
                     return
                 }
-                failedMessage = refreshed
+                failedMessage = Message(
+                    from: recoveredRecord,
+                    localHash: appServices.localIdentityHash
+                )
+                await invalidatePaginationAndRefresh()
             } catch {
                 errorMessage = "The staged retry could not be recovered. Please try again."
                 return
