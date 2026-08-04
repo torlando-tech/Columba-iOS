@@ -247,17 +247,15 @@ private struct MarkdownMessageText: View {
                     .padding(.vertical, 6)
             }
 
-            ScrollView(.horizontal) {
-                configuration.label
-                    .relativeLineSpacing(.em(0.2))
-                    .markdownTextStyle {
-                        FontFamilyVariant(.monospaced)
-                        FontSize(fontSize * 0.82)
-                    }
-                    .fixedSize(horizontal: true, vertical: true)
-                    .padding(10)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            configuration.label
+                .relativeLineSpacing(.em(0.2))
+                .markdownTextStyle {
+                    FontFamilyVariant(.monospaced)
+                    FontSize(fontSize * 0.82)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(blockCodeBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
