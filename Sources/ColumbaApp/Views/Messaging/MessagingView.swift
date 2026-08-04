@@ -40,6 +40,7 @@ struct MessagingView: View {
     let conversation: Conversation
     let appServices: AppServices
     let messageRepository: MessageRepository
+    private let settingsRepository = SettingsRepository()
 
     // MARK: - State
 
@@ -69,6 +70,8 @@ struct MessagingView: View {
     /// Set when a voice call can't be placed (no telephony path to the peer)
     /// so the user gets feedback instead of the codec sheet silently dismissing.
     @State private var callUnavailableMessage: String?
+    @State private var showTextSizePicker = false
+    @State private var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -100,6 +103,7 @@ struct MessagingView: View {
                                 }) {
                                     MessageBubble(
                                         message: message,
+                                        messageTextScale: messageTextScale,
                                         onToggleReaction: { emoji in
                                             Task {
                                                 await vm.sendReaction(
@@ -427,10 +431,21 @@ struct MessagingView: View {
             .presentationDetents([.height(340)])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showTextSizePicker) {
+            TextSizePickerSheet(currentScale: messageTextScale) { selectedScale in
+                Task {
+                    await settingsRepository.setMessageTextScale(selectedScale)
+                    messageTextScale = await settingsRepository.getMessageTextScale()
+                }
+            }
+            .presentationDetents([.height(340)])
+            .presentationDragIndicator(.visible)
+        }
         .onDisappear {
             NotificationService.activeConversationThreadId = nil
         }
         .task {
+            messageTextScale = await settingsRepository.getMessageTextScale()
             let threadId = conversation.destinationHash.map { String(format: "%02x", $0) }.joined()
             NotificationService.activeConversationThreadId = threadId
             if let record = try? await messageRepository.fetchConversation(conversation.destinationHash) {
@@ -531,6 +546,15 @@ struct MessagingView: View {
             // More options menu
             Menu {
                 Button {
+                    showTextSizePicker = true
+                } label: {
+                    Label("Text Size", systemImage: "textformat.size")
+                }
+                .accessibilityIdentifier("text_size_menu_item")
+
+                Divider()
+
+                Button {
                     Task {
                         isSyncing = true
                         defer { isSyncing = false }
@@ -624,6 +648,70 @@ struct MessagingView: View {
             }
         } else {
             proxy.scrollTo("bottom-anchor", anchor: .bottom)
+        }
+    }
+}
+
+// MARK: - Text Size Picker Sheet
+
+@available(iOS 17.0, macOS 14.0, *)
+private struct TextSizePickerSheet: View {
+    let onSave: (Double) -> Void
+
+    @State private var selectedScale: Double
+    @Environment(\.dismiss) private var dismiss
+
+    init(currentScale: Double, onSave: @escaping (Double) -> Void) {
+        self.onSave = onSave
+        _selectedScale = State(initialValue: SettingsRepository.MessageTextScale.normalize(currentScale))
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Preview message text")
+                    .font(.system(size: 17 * selectedScale))
+                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                    .padding(14)
+                    .background(Theme.receivedBubbleColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                Text("\(Int((selectedScale * 100).rounded()))%")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
+                    .accessibilityIdentifier("text_size_percent")
+
+                Slider(
+                    value: $selectedScale,
+                    in: SettingsRepository.MessageTextScale.minimum...SettingsRepository.MessageTextScale.maximum,
+                    step: SettingsRepository.MessageTextScale.step
+                )
+                .accessibilityIdentifier("text_size_slider")
+                .accessibilityValue("\(Int((selectedScale * 100).rounded())) percent")
+
+                HStack {
+                    Text("A")
+                        .font(.system(size: 17 * SettingsRepository.MessageTextScale.minimum))
+                    Spacer()
+                    Text("A")
+                        .font(.system(size: 17 * SettingsRepository.MessageTextScale.maximum))
+                }
+                .foregroundStyle(Theme.textSecondary)
+            }
+            .padding()
+            .navigationTitle("Text Size")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("OK") {
+                        onSave(selectedScale)
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }

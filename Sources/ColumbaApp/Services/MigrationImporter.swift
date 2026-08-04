@@ -406,6 +406,11 @@ actor MigrationImporter {
                     importedIncomingMessageSizeLimit = true
                     settingsImported += 1
                 }
+            case "message_text_scale":
+                if let value = Double(pref.value) {
+                    await settingsRepository.setMessageTextScale(value)
+                    settingsImported += 1
+                }
             case "auto_announce_enabled":
                 UserDefaults.standard.set(pref.value == "true", forKey: "auto_announce_enabled")
                 settingsImported += 1

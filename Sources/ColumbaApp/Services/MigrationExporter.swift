@@ -195,6 +195,7 @@ actor MigrationExporter {
         let periodicSync = await settingsRepository.getPeriodicSyncEnabled()
         let syncInterval = await settingsRepository.getSyncInterval()
         let incomingLimitKB = await settingsRepository.getIncomingMessageSizeLimitKB()
+        let messageTextScale = await settingsRepository.getMessageTextScale()
 
         var prefs: [PreferenceEntry] = []
         prefs.append(.string("displayName", displayName))
@@ -204,6 +205,7 @@ actor MigrationExporter {
         prefs.append(.bool("periodicSyncEnabled", periodicSync))
         prefs.append(.double("syncIntervalSeconds", syncInterval))
         prefs.append(.int("incoming_message_size_limit_kb", incomingLimitKB))
+        prefs.append(.double("message_text_scale", messageTextScale))
 
         // Auto-announce settings
         let autoAnnounce = UserDefaults.standard.bool(forKey: "auto_announce_enabled")

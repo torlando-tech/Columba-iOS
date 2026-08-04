@@ -14,6 +14,19 @@ import RNSAPI
 /// Uses App Group UserDefaults for data sharing between main app
 /// and Network Extension. Stores server configuration and identity info.
 public actor SettingsRepository {
+    public enum MessageTextScale {
+        public static let minimum = 0.7
+        public static let defaultValue = 1.0
+        public static let maximum = 2.0
+        public static let step = 0.1
+
+        public static func normalize(_ value: Double?) -> Double {
+            guard let value, value.isFinite else { return defaultValue }
+            let clamped = min(max(value, minimum), maximum)
+            return (clamped / step).rounded() * step
+        }
+    }
+
     public enum IncomingMessageSizeLimit {
         public static let minimumKB = 512
         public static let defaultKB = 1_024
@@ -41,6 +54,7 @@ public actor SettingsRepository {
         static let syncIntervalSeconds = "syncIntervalSeconds"
         static let lastSyncTimestamp = "lastSyncTimestamp"
         static let incomingMessageSizeLimitKB = "incoming_message_size_limit_kb"
+        static let messageTextScale = "message_text_scale"
         static let iconName = "profileIconName"
         static let iconFgColor = "profileIconFgColor"
         static let iconBgColor = "profileIconBgColor"
@@ -250,6 +264,32 @@ public actor SettingsRepository {
     /// Clear the stored cap so the default is used next read.
     public func clearIncomingMessageSizeLimitKB() {
         defaults.removeObject(forKey: Keys.incomingMessageSizeLimitKB)
+    }
+
+    // MARK: - Message Text Scale
+
+    /// Get the global conversation message-body scale using Android-compatible bounds.
+    public func getMessageTextScale() -> Double {
+        let raw = defaults.object(forKey: Keys.messageTextScale)
+        let stored: Double?
+        switch raw {
+        case let value as NSNumber:
+            stored = value.doubleValue
+        case let value as String:
+            stored = Double(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            stored = nil
+        }
+        let normalized = MessageTextScale.normalize(stored)
+        if raw == nil || stored == nil || normalized != stored {
+            defaults.set(normalized, forKey: Keys.messageTextScale)
+        }
+        return normalized
+    }
+
+    /// Persist the global conversation message-body scale in 10% increments.
+    public func setMessageTextScale(_ value: Double) {
+        defaults.set(MessageTextScale.normalize(value), forKey: Keys.messageTextScale)
     }
 
     /// Get last sync timestamp.
