@@ -230,3 +230,304 @@ final class MessageBubbleLayoutTests: XCTestCase {
         )
     }
 }
+
+final class MessageTimelinePolicyTests: XCTestCase {
+
+    func testPaginationStartsBeforeTopWithoutViewLifecycleSentinel() {
+        XCTAssertTrue(
+            MessageTimelinePaginationPolicy.shouldLoadOlder(
+                contentOffsetY: 1_499,
+                viewportHeight: 500,
+                isLoading: false,
+                allHistoryLoaded: false
+            )
+        )
+        XCTAssertFalse(
+            MessageTimelinePaginationPolicy.shouldLoadOlder(
+                contentOffsetY: 1_500,
+                viewportHeight: 500,
+                isLoading: false,
+                allHistoryLoaded: false
+            )
+        )
+    }
+
+    func testPaginationRejectsDuplicateAndExhaustedLoads() {
+        XCTAssertFalse(
+            MessageTimelinePaginationPolicy.shouldLoadOlder(
+                contentOffsetY: 0,
+                viewportHeight: 500,
+                isLoading: true,
+                allHistoryLoaded: false
+            )
+        )
+        XCTAssertFalse(
+            MessageTimelinePaginationPolicy.shouldLoadOlder(
+                contentOffsetY: 0,
+                viewportHeight: 500,
+                isLoading: false,
+                allHistoryLoaded: true
+            )
+        )
+    }
+
+    func testPrependingMessagesPreservesVisibleAnchorOffset() {
+        XCTAssertEqual(
+            MessageTimelineViewportAnchor.adjustedContentOffset(
+                previousContentOffset: 1_200,
+                previousAnchorMinY: 1_260,
+                updatedAnchorMinY: 2_010
+            ),
+            1_950,
+            accuracy: 0.001
+        )
+    }
+
+    func testPaginationCursorUsesFetchedRecordsRatherThanVisibleMessages() {
+        var cursor = MessagePageCursor()
+        cursor.recordFetchedPage(recordCount: 50)
+
+        // A page may contain telemetry records that are intentionally hidden
+        // from the timeline. The next database offset must still skip all 50
+        // records, not the smaller number of visible message bubbles.
+        XCTAssertEqual(cursor.nextOffset, 50)
+
+        cursor.recordFetchedPage(recordCount: 50)
+        XCTAssertEqual(cursor.nextOffset, 100)
+    }
+
+    func testRefreshWindowExpandsUntilPriorOldestRecordIsRetained() {
+        XCTAssertEqual(
+            MessageRefreshWindowPolicy.expandedLimit(
+                currentLimit: 51,
+                fetchedCount: 51,
+                containsPriorOldest: false,
+                pageSize: 50
+            ),
+            101
+        )
+        XCTAssertNil(
+            MessageRefreshWindowPolicy.expandedLimit(
+                currentLimit: 101,
+                fetchedCount: 101,
+                containsPriorOldest: true,
+                pageSize: 50
+            )
+        )
+        XCTAssertNil(
+            MessageRefreshWindowPolicy.expandedLimit(
+                currentLimit: 101,
+                fetchedCount: 75,
+                containsPriorOldest: false,
+                pageSize: 50
+            )
+        )
+        XCTAssertEqual(
+            MessageRefreshWindowPolicy.retainedPrefixCount(
+                recordIDs: ["new", "prior-oldest", "speculative-older"],
+                priorOldestID: "prior-oldest"
+            ),
+            2
+        )
+        XCTAssertEqual(
+            MessageRefreshWindowPolicy.retainedPrefixCount(
+                recordIDs: ["newest", "middle", "prior-oldest"],
+                priorOldestID: "prior-oldest"
+            ),
+            3
+        )
+    }
+
+    func testDeleteIsUnavailableUntilOutboundPersistenceCompletes() {
+        XCTAssertFalse(
+            MessagingViewModel.canDeleteMessage(
+                isUnpersisted: true,
+                isUnsavedFailure: false
+            )
+        )
+        XCTAssertTrue(
+            MessagingViewModel.canDeleteMessage(
+                isUnpersisted: true,
+                isUnsavedFailure: true
+            )
+        )
+        XCTAssertTrue(
+            MessagingViewModel.canDeleteMessage(
+                isUnpersisted: false,
+                isUnsavedFailure: false
+            )
+        )
+    }
+
+    func testDeliveryProofUsesOptimisticAliasDuringPersistence() {
+        XCTAssertEqual(
+            MessagingViewModel.visibleMessageID(
+                for: "real-hash",
+                aliases: ["real-hash": "optimistic-id"]
+            ),
+            "optimistic-id"
+        )
+        XCTAssertEqual(
+            MessagingViewModel.visibleMessageID(for: "persisted-hash", aliases: [:]),
+            "persisted-hash"
+        )
+        XCTAssertEqual(
+            MessagingViewModel.pendingProof(
+                forVisibleID: "optimistic-id",
+                aliases: ["real-hash": "optimistic-id"],
+                proofs: ["real-hash": .delivered]
+            ),
+            .delivered
+        )
+    }
+
+    func testPersistedAliasedProofCanonicalizesVisibleIdentityAndActions() {
+        let storageHash = Data(repeating: 0x41, count: 32)
+        let canonicalHash = Data(repeating: 0x42, count: 32)
+        var uncertain = Message(
+            id: storageHash.map { String(format: "%02x", $0) }.joined(),
+            content: "delivered after recovery",
+            isFromMe: true,
+            deliveryStatus: .failed,
+            storageHash: storageHash,
+            isTargetSafe: false
+        )
+        uncertain.messageHash = canonicalHash
+
+        let canonical = MessagingViewModel.canonicalizedMessage(
+            uncertain,
+            canonicalHash: canonicalHash,
+            proofState: .delivered
+        )
+
+        let canonicalID = canonicalHash.map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(canonical.id, canonicalID)
+        XCTAssertEqual(canonical.storageHash, canonicalHash)
+        XCTAssertEqual(canonical.messageHash, canonicalHash)
+        XCTAssertEqual(canonical.deliveryStatus, .delivered)
+        XCTAssertTrue(canonical.isTargetSafe)
+        XCTAssertTrue(
+            MessagingViewModel.canDeleteMessage(
+                isUnpersisted: false,
+                isUnsavedFailure: false
+            )
+        )
+    }
+
+    func testRefreshPreservesOnlyUnpersistedOutboundRowsInTimelineOrder() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let oldest = Message(id: "oldest", content: "Oldest", timestamp: base, isFromMe: false)
+        let pendingA = Message(
+            id: "pending-a",
+            content: "Pending A",
+            timestamp: base.addingTimeInterval(1),
+            isFromMe: true
+        )
+        let loadedB = Message(
+            id: "persisted-b",
+            content: "Staged database row",
+            timestamp: base.addingTimeInterval(2),
+            isFromMe: true
+        )
+        let pendingB = Message(
+            id: "persisted-b",
+            content: "Current pending row",
+            timestamp: base.addingTimeInterval(2),
+            isFromMe: true
+        )
+        let stale = Message(id: "stale", content: "Stale", timestamp: base, isFromMe: false)
+
+        let merged = MessagingViewModel.mergingPendingOutbound(
+            loaded: [oldest, loadedB],
+            current: [stale, pendingA, pendingB],
+            pendingIDs: ["pending-a", "persisted-b"]
+        )
+
+        XCTAssertEqual(merged.map(\.id), ["oldest", "pending-a", "persisted-b"])
+        XCTAssertEqual(merged.last?.content, "Current pending row")
+    }
+
+    @MainActor
+    func testCollectionTimelineKeepsRowsRenderedAcrossViewportChanges() {
+        let controller = MessageTimelineViewController()
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 700))
+
+        var messages: [Message] = []
+        for index in 0..<50 {
+            let replyID: String? = index == 0 ? nil : "message-\(index - 1)"
+            let replyPreview: String? = index == 0 ? nil : "Earlier message preview"
+            messages.append(
+                Message(
+                    id: "message-\(index)",
+                    content: String(repeating: "Long timeline content \(index). ", count: 8),
+                    timestamp: Date().addingTimeInterval(TimeInterval(index)),
+                    isFromMe: index.isMultiple(of: 2),
+                    deliveryStatus: .delivered,
+                    replyToId: replyID,
+                    replyToPreview: replyPreview
+                )
+            )
+        }
+
+        controller.update(
+            messages: messages,
+            messageTextScale: 1.3,
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+        controller.setViewportForTesting(CGSize(width: 390, height: 380))
+        controller.setViewportForTesting(CGSize(width: 390, height: 700))
+
+        XCTAssertEqual(controller.renderedMessageCount, 50)
+        XCTAssertEqual(controller.configuredMessageTextScale, 1.3)
+        XCTAssertGreaterThan(controller.visibleMessageCellCount, 0)
+    }
+
+    @MainActor
+    func testCollectionTimelineRequestsHistoryFromScrollOffset() async {
+        let requested = expectation(description: "older page requested")
+        let controller = MessageTimelineViewController()
+        controller.onLoadOlder = {
+            controller.update(messages: [], isLoadingMore: false, allMessagesLoaded: true)
+            requested.fulfill()
+            return true
+        }
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 700))
+        controller.update(
+            messages: (0..<50).map {
+                Message(id: "message-\($0)", content: "Message \($0)", isFromMe: false)
+            },
+            isLoadingMore: false,
+            allMessagesLoaded: false
+        )
+
+        controller.setContentOffsetForTesting(y: 0)
+        await fulfillment(of: [requested], timeout: 1)
+    }
+
+    @MainActor
+    func testCollectionTimelineDoesNotRetryRejectedHistoryLoad() async {
+        var requestCount = 0
+        let controller = MessageTimelineViewController()
+        controller.onLoadOlder = {
+            requestCount += 1
+            return false
+        }
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 700))
+        controller.update(
+            messages: (0..<50).map {
+                Message(id: "message-\($0)", content: "Message \($0)", isFromMe: false)
+            },
+            isLoadingMore: false,
+            allMessagesLoaded: false
+        )
+
+        controller.setContentOffsetForTesting(y: 0)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(requestCount, 1)
+    }
+}

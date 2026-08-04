@@ -18,6 +18,7 @@ SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
 MAIN_TAB_VIEW = ROOT / "Sources/ColumbaApp/Views/MainTabView.swift"
 MESSAGE_BUBBLE = ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
 MESSAGING_VIEW = ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift"
+MESSAGE_TIMELINE_VIEW = ROOT / "Sources/ColumbaApp/Views/Messaging/MessageTimelineView.swift"
 TEXT_SIZE_PICKER = ROOT / "Sources/ColumbaApp/Views/Messaging/TextSizePickerSheet.swift"
 INCOMING_MESSAGE_HANDLER = ROOT / "Sources/ColumbaApp/Services/IncomingMessageHandler.swift"
 LOCATION_SHARING_MANAGER = ROOT / "Sources/ColumbaApp/Services/LocationSharingManager.swift"
@@ -164,12 +165,28 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         )
 
         messaging = MESSAGING_VIEW.read_text()
-        self.assertIn("guard message.messageHash != nil else { return }", messaging)
-        self.assertIn("guard msg.messageHash != nil else { return }", messaging)
+        self.assertIsNotNone(re.search(
+            r"guard message\.messageHash != nil,\s+"
+            r"vm\.canTargetMessage\(messageId: message\.id\) else \{ return \}",
+            messaging,
+        ))
+        self.assertIsNotNone(re.search(
+            r"guard msg\.messageHash != nil,\s+"
+            r"viewModel\?\.canTargetMessage\(messageId: msg\.id\) == true else \{ return \}",
+            messaging,
+        ))
+        self.assertIn("target.isTargetSafe", messaging)
         self.assertIn(
-            "let replyToId = replyTarget?.messageHash != nil ? replyTarget?.id : nil",
+            'return hash.map { String(format: "%02x", $0) }.joined()',
             messaging,
         )
+
+        timeline = MESSAGE_TIMELINE_VIEW.read_text()
+        self.assertIsNotNone(re.search(
+            r"guard message\.messageHash != nil,\s+"
+            r"message\.isTargetSafe else \{ return \}",
+            timeline,
+        ))
 
     def test_rnode_cover_dismissal_clears_editing_state(self) -> None:
         settings = SETTINGS_VIEW.read_text()

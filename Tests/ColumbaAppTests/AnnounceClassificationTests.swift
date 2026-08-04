@@ -517,6 +517,157 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         XCTAssertEqual(secondRecoveryCount, 0)
     }
 
+    func testRecoveredCanonicalRetryKeepsStorageIdentityForRetryAndDelete() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x73, count: 16)
+        let storageHash = Data(repeating: 0x74, count: 32)
+        let canonicalHash = Data(repeating: 0x75, count: 32)
+        let retry = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("uncertain retry".utf8)
+        )
+        retry.hash = storageHash
+        retry.state = .failed
+        try await repository.saveMessage(retry)
+
+        retry.state = .sending
+        try await repository.stageRetry(retry, replacing: storageHash)
+        try await repository.recoverStagedRetry(storageHash, canonicalHash: canonicalHash)
+
+        let storedRecovered = try await repository.getMessageRecord(id: storageHash)
+        let recoveredRecord = try XCTUnwrap(storedRecovered)
+        let visible = Message(from: recoveredRecord, localHash: Data())
+        XCTAssertEqual(visible.storageHash, storageHash)
+        XCTAssertEqual(visible.messageHash, canonicalHash)
+        XCTAssertFalse(visible.isTargetSafe)
+        XCTAssertEqual(
+            MessageRepository.canonicalHashFromUncertainRetryMarker(recoveredRecord.receivingInterface),
+            canonicalHash
+        )
+        let hasCanonicalUncertainRetry = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertTrue(hasCanonicalUncertainRetry)
+
+        retry.state = .sending
+        try await repository.stageRetry(retry, replacing: storageHash)
+        try await repository.recoverStagedRetry(storageHash, canonicalHash: canonicalHash)
+        try await repository.deleteMessage(storageHash)
+        let deleted = try await repository.getMessageRecord(id: storageHash)
+        XCTAssertNil(deleted)
+    }
+
+    func testDeliveryProofRekeysCanonicalUncertainRetryWithoutOpenViewModel() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x76, count: 16)
+        let storageHash = Data(repeating: 0x77, count: 32)
+        let canonicalHash = Data(repeating: 0x78, count: 32)
+        let retry = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("late proof".utf8)
+        )
+        retry.hash = storageHash
+        retry.state = .failed
+        try await repository.saveMessage(retry)
+        retry.state = .sending
+        try await repository.stageRetry(retry, replacing: storageHash)
+        try await repository.recoverStagedRetry(storageHash, canonicalHash: canonicalHash)
+
+        let applied = try await repository.applyDeliveryProof(
+            canonicalHash: canonicalHash,
+            state: .delivered
+        )
+
+        XCTAssertTrue(applied)
+        let oldRecord = try await repository.getMessageRecord(id: storageHash)
+        XCTAssertNil(oldRecord)
+        let storedDelivered = try await repository.getMessageRecord(id: canonicalHash)
+        let delivered = try XCTUnwrap(storedDelivered)
+        XCTAssertEqual(delivered.state, LXMessageState.delivered.rawValue)
+        XCTAssertNil(delivered.receivingInterface)
+        let stillHasUncertainRetry = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertFalse(stillHasUncertainRetry)
+    }
+
+    func testDeliveryProofRemovesCanonicalCollisionAliasAndWarning() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x7c, count: 16)
+        let storageHash = Data(repeating: 0x7d, count: 32)
+        let canonicalHash = Data(repeating: 0x7e, count: 32)
+
+        let alias = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("uncertain alias".utf8)
+        )
+        alias.hash = storageHash
+        alias.state = .failed
+        alias.receivingInterface = MessageRepository.uncertainRetryMarker(
+            canonicalHash: canonicalHash
+        )
+        try await repository.saveMessage(alias)
+
+        let canonical = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("canonical row".utf8)
+        )
+        canonical.hash = canonicalHash
+        canonical.state = .sent
+        try await repository.saveMessage(canonical)
+
+        let applied = try await repository.applyDeliveryProof(
+            canonicalHash: canonicalHash,
+            state: .delivered
+        )
+
+        XCTAssertTrue(applied)
+        let staleAlias = try await repository.getMessageRecord(id: storageHash)
+        XCTAssertNil(staleAlias)
+        let storedCanonical = try await repository.getMessageRecord(id: canonicalHash)
+        XCTAssertEqual(storedCanonical?.state, LXMessageState.delivered.rawValue)
+        let hasWarning = try await repository.hasUncertainRetry(for: destination)
+        XCTAssertFalse(hasWarning)
+    }
+
+    func testReloadedOptimisticFailureIsNotTargetSafeAndCanBeStaged() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x79, count: 16)
+        let oldHash = Data(repeating: 0x7a, count: 32)
+        let optimisticHash = Data(repeating: 0x7b, count: 32)
+        let failed = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("never accepted".utf8)
+        )
+        failed.hash = oldHash
+        failed.state = .failed
+        try await repository.saveMessage(failed)
+
+        failed.hash = optimisticHash
+        failed.receivingInterface = MessageRepository.optimisticOutboundMarker
+        try await repository.replaceMessage(failed, replacing: oldHash)
+
+        let storedRecord = try await repository.getMessageRecord(id: optimisticHash)
+        let record = try XCTUnwrap(storedRecord)
+        let visible = Message(from: record, localHash: Data())
+        XCTAssertFalse(visible.isTargetSafe)
+
+        failed.state = .sending
+        try await repository.stageRetry(failed, replacing: optimisticHash)
+        let stagedRecord = try await repository.getMessageRecord(id: optimisticHash)
+        XCTAssertEqual(stagedRecord?.state, LXMessageState.sending.rawValue)
+        XCTAssertEqual(stagedRecord?.receivingInterface, MessageRepository.stagedRetryMarker)
+    }
+
     func testNonAppSendingRowIsNotRecovered() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }

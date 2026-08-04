@@ -294,6 +294,11 @@ public struct Message: Identifiable, Equatable {
     public var rssi: Double?
     public var snr: Double?
     public var messageHash: Data?
+    /// Durable database key. This differs from `messageHash` when a staged
+    /// retry was accepted on the wire but canonical replacement failed.
+    public var storageHash: Data?
+    /// Whether reply/reaction protocols may safely target `messageHash`.
+    public var isTargetSafe: Bool = false
     public var receivedInterface: String?
 
     // Reply & reactions
@@ -335,7 +340,9 @@ public struct Message: Identifiable, Equatable {
         attachments: [FileAttachment]? = nil,
         replyToId: String? = nil,
         replyToPreview: String? = nil,
-        reactions: [ReactionDisplay] = []
+        reactions: [ReactionDisplay] = [],
+        storageHash: Data? = nil,
+        isTargetSafe: Bool = false
     ) {
         self.id = id
         self.content = content
@@ -348,6 +355,8 @@ public struct Message: Identifiable, Equatable {
         self.replyToId = replyToId
         self.replyToPreview = replyToPreview
         self.reactions = reactions
+        self.storageHash = storageHash
+        self.isTargetSafe = isTargetSafe
     }
 
     /// Create from LXMessage.
@@ -357,6 +366,8 @@ public struct Message: Identifiable, Equatable {
         // targets. A 33-byte ID is the local persistence namespace used when an
         // abnormal delivered message arrives without a recoverable wire hash.
         self.messageHash = lxMessage.hash.count == 32 ? lxMessage.hash : nil
+        self.storageHash = lxMessage.hash
+        self.isTargetSafe = lxMessage.hash.count == 32
         self.content = String(data: lxMessage.content, encoding: .utf8) ?? ""
         self.timestamp = Date(timeIntervalSince1970: lxMessage.timestamp)
         self.isFromMe = lxMessage.sourceHash == localHash
@@ -422,7 +433,16 @@ public struct Message: Identifiable, Equatable {
         // message rendered as received. (localHash is still used below for
         // reaction `includesMe`.)
         self.isFromMe = record.direction == .outbound
-        self.messageHash = record.messageId.count == 32 ? record.messageId : nil
+        self.storageHash = record.messageId
+        if let wireHash = MessageRepository.canonicalHashFromUncertainRetryMarker(record.receivingInterface) {
+            self.messageHash = wireHash
+            self.isTargetSafe = false
+        } else {
+            self.messageHash = record.messageId.count == 32 ? record.messageId : nil
+            self.isTargetSafe = record.messageId.count == 32
+                && !MessageRepository.isUncertainRetryMarker(record.receivingInterface)
+                && record.receivingInterface != MessageRepository.optimisticOutboundMarker
+        }
 
         // Map raw state value to DeliveryStatus
         switch record.state {

@@ -79,6 +79,88 @@ struct MessagingView: View {
     var body: some View {
         Group {
             if let vm = viewModel {
+                #if os(iOS)
+                MessageTimelineView(
+                    messages: vm.messages,
+                    messageTextScale: messageTextScale,
+                    isLoadingMore: vm.isLoadingMore,
+                    allMessagesLoaded: vm.allMessagesLoaded,
+                    onLoadOlder: {
+                        await vm.loadMoreMessages()
+                    },
+                    onReply: { message in
+                        guard message.messageHash != nil,
+                              vm.canTargetMessage(messageId: message.id) else { return }
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            vm.replyToMessage = message
+                        }
+                    },
+                    onToggleReaction: { message, emoji in
+                        guard vm.canTargetMessage(messageId: message.id) else { return }
+                        Task {
+                            await vm.sendReaction(
+                                targetMessageId: message.id,
+                                targetMessageHash: message.messageHash,
+                                emoji: emoji
+                            )
+                        }
+                    },
+                    onLongPress: { message in
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            reactionModeMessage = message
+                        }
+                    }
+                )
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    MessageInputBar(
+                        text: $messageText,
+                        attachedImage: $attachedImage,
+                        attachedFiles: $attachedFiles,
+                        replyToMessage: vm.replyToMessage,
+                        onDismissReply: { withAnimation(.easeInOut(duration: 0.25)) { vm.replyToMessage = nil } },
+                        onSend: sendMessage,
+                        onImagePicker: { showPhotoPicker = true },
+                        onAttachment: { showFilePicker = true }
+                    )
+                    .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+                    .onChange(of: selectedPhotoItem) { _, newItem in
+                        guard let newItem else { return }
+                        Task {
+                            do {
+                                if let data = try await newItem.loadTransferable(type: Data.self),
+                                   let image = UIImage(data: data) {
+                                    await MainActor.run {
+                                        pendingRawImage = image
+                                        selectedImagePreset = UserDefaults.standard.string(forKey: "image_quality_preset")
+                                            .flatMap { SettingsViewModel.ImageQualityPreset(rawValue: $0) } ?? .high
+                                        showQualityPicker = true
+                                    }
+                                }
+                            } catch {
+                                logger.error("Failed to load image: \(error)")
+                            }
+                            await MainActor.run {
+                                selectedPhotoItem = nil
+                            }
+                        }
+                    }
+                    .fileImporter(
+                        isPresented: $showFilePicker,
+                        allowedContentTypes: [.data],
+                        allowsMultipleSelection: true
+                    ) { result in
+                        if case .success(let urls) = result {
+                            for url in urls {
+                                guard url.startAccessingSecurityScopedResource() else { continue }
+                                defer { url.stopAccessingSecurityScopedResource() }
+                                if let data = try? Data(contentsOf: url) {
+                                    attachedFiles.append(FileAttachment(name: url.lastPathComponent, data: data))
+                                }
+                            }
+                        }
+                    }
+                }
+                #else
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 12) {
@@ -96,7 +178,8 @@ struct MessagingView: View {
 
                             ForEach(vm.messages) { message in
                                 SwipeToReplyContainer(onReply: {
-                                    guard message.messageHash != nil else { return }
+                                    guard message.messageHash != nil,
+                                          vm.canTargetMessage(messageId: message.id) else { return }
                                     withAnimation(.easeInOut(duration: 0.25)) {
                                         vm.replyToMessage = message
                                     }
@@ -253,6 +336,7 @@ struct MessagingView: View {
                     }
                     #endif
                 }
+                #endif
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -273,7 +357,8 @@ struct MessagingView: View {
                         }
                     },
                     onReply: {
-                        guard msg.messageHash != nil else { return }
+                        guard msg.messageHash != nil,
+                              viewModel?.canTargetMessage(messageId: msg.id) == true else { return }
                         withAnimation(.easeInOut(duration: 0.25)) {
                             viewModel?.replyToMessage = msg
                         }
@@ -289,9 +374,10 @@ struct MessagingView: View {
                     onDetails: {
                         detailMessage = msg
                     },
-                    onDelete: {
+                    onDelete: viewModel?.canDeleteMessage(messageId: msg.id) == true ? {
                         deleteConfirmMessage = msg
-                    },
+                    } : nil,
+                    canTarget: viewModel?.canTargetMessage(messageId: msg.id) == true,
                     onRetry: msg.deliveryStatus == .failed ? {
                         Task { await viewModel?.retryMessage(messageId: msg.id) }
                     } : nil,
@@ -308,6 +394,7 @@ struct MessagingView: View {
         }
         #if os(iOS)
         .navigationBarBackButtonHidden(true)
+        .navigationBarTitleDisplayMode(.inline)
         .background(InteractivePopGestureEnabler())
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -604,7 +691,12 @@ struct MessagingView: View {
         let image = attachedImage
         let files = attachedFiles
         let replyTarget = viewModel?.replyToMessage
-        let replyToId = replyTarget?.messageHash != nil ? replyTarget?.id : nil
+        let replyToId: String? = {
+            guard let target = replyTarget,
+                  target.isTargetSafe,
+                  let hash = target.messageHash else { return nil }
+            return hash.map { String(format: "%02x", $0) }.joined()
+        }()
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 
@@ -794,7 +886,7 @@ private class InteractivePopController: UIViewController, UIGestureRecognizerDel
 
 /// Wraps a message bubble to add swipe-right-to-reply gesture.
 @available(iOS 17.0, macOS 14.0, *)
-private struct SwipeToReplyContainer<Content: View>: View {
+struct SwipeToReplyContainer<Content: View>: View {
     let onReply: () -> Void
     @ViewBuilder let content: Content
 
@@ -900,7 +992,8 @@ private struct ReactionOverlay: View {
     let onReply: () -> Void
     let onCopy: () -> Void
     let onDetails: () -> Void
-    let onDelete: () -> Void
+    let onDelete: (() -> Void)?
+    let canTarget: Bool
     var onRetry: (() -> Void)?
     let onMoreEmoji: () -> Void
     let onDismiss: () -> Void
@@ -916,7 +1009,8 @@ private struct ReactionOverlay: View {
 
             VStack(spacing: 12) {
                 // Inline emoji bar
-                HStack(spacing: 12) {
+                if canTarget {
+                    HStack(spacing: 12) {
                     ForEach(Self.quickEmojis, id: \.self) { emoji in
                         Button {
                             onReact(emoji)
@@ -941,10 +1035,11 @@ private struct ReactionOverlay: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial)
-                .clipShape(Capsule())
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                }
 
                 // Message preview
                 HStack {
@@ -979,9 +1074,11 @@ private struct ReactionOverlay: View {
 
                 // Action buttons
                 HStack(spacing: 0) {
-                    actionButton(icon: "arrowshape.turn.up.left", label: "Reply") {
-                        onDismiss()
-                        onReply()
+                    if canTarget {
+                        actionButton(icon: "arrowshape.turn.up.left", label: "Reply") {
+                            onDismiss()
+                            onReply()
+                        }
                     }
 
                     if !message.content.isEmpty {
@@ -1003,9 +1100,11 @@ private struct ReactionOverlay: View {
                         }
                     }
 
-                    actionButton(icon: "trash", label: "Delete", isDestructive: true) {
-                        onDismiss()
-                        onDelete()
+                    if let onDelete {
+                        actionButton(icon: "trash", label: "Delete", isDestructive: true) {
+                            self.onDismiss()
+                            onDelete()
+                        }
                     }
                 }
                 .padding(.horizontal, 8)

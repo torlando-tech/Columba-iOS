@@ -2897,8 +2897,12 @@ public final class AppServices {
             // Update the GRDB canonical store (where outbound messages are
             // persisted and the UI reads from), via the shared repository's
             // RNSAPI-typed method — not the Compat `database`.
+            var proofPersisted = false
             if let repo = self.messageRepository {
-                try? await repo.updateMessageState(id: hashData, state: newState)
+                proofPersisted = (try? await repo.applyDeliveryProof(
+                    canonicalHash: hashData,
+                    state: newState
+                )) ?? false
             }
             // Notify the open chat so it can flip the bubble's indicator
             // (double-check for delivered / failed) without a full reload.
@@ -2908,6 +2912,7 @@ public final class AppServices {
                 userInfo: [
                     "messageHash": hashData,
                     "state": state,
+                    "persisted": proofPersisted,
                 ]
             )
         case .linkState(let linkId, let state, let reason, let inbound, _):
