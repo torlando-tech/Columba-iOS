@@ -41,6 +41,12 @@ public enum LxmfFields {
     public static let FIELD_AUDIO: UInt8 = 0x07
     /// Command structures (Sideband telemetry-request RPCs).
     public static let FIELD_COMMANDS: UInt8 = 0x09
+    /// Optional content renderer indication from upstream LXMF.
+    public static let FIELD_RENDERER: UInt8 = 0x0F
+    public static let RENDERER_PLAIN = 0x00
+    public static let RENDERER_MICRON = 0x01
+    public static let RENDERER_MARKDOWN = 0x02
+    public static let RENDERER_BBCODE = 0x03
 
     /// Canonical tap-back reaction — `fields[0x40] = {0x00: targetHashBytes,
     /// 0x01: emojiUTF8Bytes}` (standardised upstream in LXMF.py). The reacting
@@ -67,4 +73,50 @@ public enum LxmfFields {
     /// Sideband-compatible `FIELD_TELEMETRY` location share here. (Replaces the
     /// previously-invented 0x70, matching Android's migration.)
     public static let FIELD_CUSTOM_META: UInt8 = 0xFD
+}
+
+/// The message-body presentation Columba currently supports.
+///
+/// Unsupported, absent, and malformed renderer indications deliberately fail
+/// closed to plaintext. Markdown is selected only by an integer wire value 2.
+public enum MessageRenderer: Equatable, Sendable {
+    case plain
+    case markdown
+
+    public init(fields: [UInt8: Any]?) {
+        guard let rawValue = fields?[LxmfFields.FIELD_RENDERER] else {
+            self = .plain
+            return
+        }
+
+        let rendererValue: UInt64?
+        switch rawValue {
+        case let value as Int where value >= 0:
+            rendererValue = UInt64(value)
+        case let value as Int8 where value >= 0:
+            rendererValue = UInt64(value)
+        case let value as Int16 where value >= 0:
+            rendererValue = UInt64(value)
+        case let value as Int32 where value >= 0:
+            rendererValue = UInt64(value)
+        case let value as Int64 where value >= 0:
+            rendererValue = UInt64(value)
+        case let value as UInt:
+            rendererValue = UInt64(value)
+        case let value as UInt8:
+            rendererValue = UInt64(value)
+        case let value as UInt16:
+            rendererValue = UInt64(value)
+        case let value as UInt32:
+            rendererValue = UInt64(value)
+        case let value as UInt64:
+            rendererValue = value
+        default:
+            rendererValue = nil
+        }
+
+        self = rendererValue == UInt64(LxmfFields.RENDERER_MARKDOWN)
+            ? .markdown
+            : .plain
+    }
 }

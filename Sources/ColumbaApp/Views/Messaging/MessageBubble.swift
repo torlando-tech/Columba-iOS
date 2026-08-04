@@ -35,6 +35,8 @@ struct MessageBubble: View {
     var onTapReplyPreview: ((String) -> Void)?
     /// Callback for long-press to enter reaction mode.
     var onLongPress: (() -> Void)?
+    /// Callback for validated in-app message links such as NomadNet pages.
+    var onOpenLink: ((MessageLinkTarget) -> Void)?
 
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
@@ -91,10 +93,14 @@ struct MessageBubble: View {
 
                     // Text content (show if non-empty)
                     if !message.content.isEmpty {
-                        Text(message.content)
-                            .font(.system(size: bodyFontSize * CGFloat(messageTextScale)))
-                            .foregroundStyle(message.isFromMe ? .white : Theme.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        MessageBody(
+                            content: message.content,
+                            renderer: message.renderer,
+                            color: message.isFromMe ? .white : Theme.textPrimary,
+                            isOutgoing: message.isFromMe,
+                            fontSize: bodyFontSize * CGFloat(messageTextScale),
+                            onOpenLink: onOpenLink
+                        )
                             // The text is already findable via Maestro's
                             // `text:` matcher; the identifier just lets the
                             // harness disambiguate the bubble's text from
@@ -285,6 +291,7 @@ public struct Message: Identifiable, Equatable {
     public let timestamp: Date
     public let isFromMe: Bool
     public var deliveryStatus: DeliveryStatus
+    public var renderer: MessageRenderer
     public var imageData: Data?
     public var imageFormat: String?
     public var attachments: [FileAttachment]?
@@ -335,6 +342,7 @@ public struct Message: Identifiable, Equatable {
         timestamp: Date = Date(),
         isFromMe: Bool,
         deliveryStatus: DeliveryStatus = .sent,
+        renderer: MessageRenderer = .plain,
         imageData: Data? = nil,
         imageFormat: String? = nil,
         attachments: [FileAttachment]? = nil,
@@ -349,6 +357,7 @@ public struct Message: Identifiable, Equatable {
         self.timestamp = timestamp
         self.isFromMe = isFromMe
         self.deliveryStatus = deliveryStatus
+        self.renderer = renderer
         self.imageData = imageData
         self.imageFormat = imageFormat
         self.attachments = attachments
@@ -371,6 +380,7 @@ public struct Message: Identifiable, Equatable {
         self.content = String(data: lxMessage.content, encoding: .utf8) ?? ""
         self.timestamp = Date(timeIntervalSince1970: lxMessage.timestamp)
         self.isFromMe = lxMessage.sourceHash == localHash
+        self.renderer = MessageRenderer(fields: lxMessage.fields)
 
         // Map LXMessage state to DeliveryStatus
         switch lxMessage.state {
@@ -433,6 +443,7 @@ public struct Message: Identifiable, Equatable {
         // message rendered as received. (localHash is still used below for
         // reaction `includesMe`.)
         self.isFromMe = record.direction == .outbound
+        self.renderer = .plain
         self.storageHash = record.messageId
         if let wireHash = MessageRepository.canonicalHashFromUncertainRetryMarker(record.receivingInterface) {
             self.messageHash = wireHash
@@ -506,6 +517,7 @@ public struct Message: Identifiable, Equatable {
         // they were on the wire. See `MessageRecord.packedLxmf` for the
         // codec contract.
         if let fields = LxmfFieldCodec.unpack(record.packedLxmf) {
+            self.renderer = MessageRenderer(fields: fields)
             // FIELD_IMAGE (0x06) = [format_string, image_bytes]
             if let imageField = fields[LXMessage.FIELD_IMAGE] as? [Any],
                imageField.count >= 2,

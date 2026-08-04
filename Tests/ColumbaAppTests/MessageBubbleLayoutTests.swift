@@ -1,9 +1,109 @@
 import SwiftUI
 import UIKit
 import XCTest
+import RNSAPI
 @testable import ColumbaApp
 
+final class MessageLinkParserTests: XCTestCase {
+    private let nodeHash = "9ce92808be498e9e05590ff27cbfdfe4"
+
+    func testPlaintextDetectsWebAndBareNomadNetLinksWithoutTrailingPunctuation() {
+        let text = "Open https://example.com/docs, then \(nodeHash):/page/index.mu."
+        let matches = MessageLinkParser.matches(in: text)
+
+        XCTAssertEqual(matches.map(\.text), [
+            "https://example.com/docs",
+            "\(nodeHash):/page/index.mu",
+        ])
+        XCTAssertEqual(matches.map(\.target), [
+            .web(URL(string: "https://example.com/docs")!),
+            .nomadNet(nodeHash: Data(hexString: nodeHash)!, path: "/page/index.mu"),
+        ])
+    }
+
+    func testMarkdownLinkTargetsAllowOnlySupportedSchemes() {
+        XCTAssertEqual(
+            MessageLinkParser.target(for: URL(string: "https://example.com")!),
+            .web(URL(string: "https://example.com")!)
+        )
+        XCTAssertEqual(
+            MessageLinkParser.target(for: URL(string: "nomadnetwork://\(nodeHash):/page/index.mu")!),
+            .nomadNet(nodeHash: Data(hexString: nodeHash)!, path: "/page/index.mu")
+        )
+        XCTAssertNotNil(
+            MessageLinkParser.target(for: URL(string: "lxma://contact?destination=abc")!)
+        )
+        XCTAssertNil(MessageLinkParser.target(for: URL(string: "file:///tmp/private")!))
+        XCTAssertNil(MessageLinkParser.target(for: URL(string: "javascript:alert(1)")!))
+        XCTAssertNil(MessageLinkParser.target(for: URL(string: "data:text/plain,secret")!))
+    }
+
+    func testBareHashWithoutNomadNetPathIsNotLinkified() {
+        XCTAssertTrue(MessageLinkParser.matches(in: "identity \(nodeHash)").isEmpty)
+    }
+
+    func testInlineMarkdownImagesAreRejectedWithoutLoading() async {
+        let provider = BlockedMarkdownInlineImageProvider()
+
+        do {
+            _ = try await provider.image(
+                with: URL(string: "https://tracking.example/pixel.png")!,
+                label: "tracking pixel"
+            )
+            XCTFail("Expected remote Markdown image to be blocked")
+        } catch is BlockedMarkdownInlineImageProvider.Blocked {
+            // Expected: the provider performs no network operation.
+        } catch {
+            XCTFail("Unexpected image-provider error: \(error)")
+        }
+    }
+}
+
+final class MessageRendererMappingTests: XCTestCase {
+    func testLiveMessageCarriesAuthenticatedMarkdownRenderer() {
+        let lxMessage = LXMessage(
+            destinationHash: Data(repeating: 0x01, count: 16),
+            sourceIdentity: nil,
+            content: Data("**rendered**".utf8),
+            fields: [LxmfFields.FIELD_RENDERER: LxmfFields.RENDERER_MARKDOWN]
+        )
+        lxMessage.hash = Data(repeating: 0x02, count: 32)
+
+        XCTAssertEqual(
+            Message(from: lxMessage, localHash: Data()).renderer,
+            .markdown
+        )
+    }
+
+    func testPersistedMessageRestoresMarkdownRenderer() {
+        let fields: [UInt8: Any] = [
+            LxmfFields.FIELD_RENDERER: LxmfFields.RENDERER_MARKDOWN,
+        ]
+        let record = MessageRecord(
+            id: Data(repeating: 0x03, count: 32),
+            conversationHash: Data(repeating: 0x04, count: 16),
+            content: Data("# Restored".utf8),
+            timestamp: 1,
+            direction: .inbound,
+            state: LXMessageState.received.rawValue,
+            messageId: Data(repeating: 0x03, count: 32),
+            packedLxmf: LxmfFieldCodec.pack(fields)
+        )
+
+        XCTAssertEqual(
+            Message(from: record, localHash: Data()).renderer,
+            .markdown
+        )
+    }
+}
+
 final class MessageBubbleLayoutTests: XCTestCase {
+
+    private func descendants<T: UIView>(of type: T.Type, in root: UIView) -> [T] {
+        root.subviews.flatMap { subview in
+            (subview as? T).map { [$0] } ?? [] + descendants(of: type, in: subview)
+        }
+    }
 
     private func visibleContentBounds(in image: UIImage) throws -> CGRect {
         let cgImage = try XCTUnwrap(image.cgImage)
@@ -48,6 +148,94 @@ final class MessageBubbleLayoutTests: XCTestCase {
             width: CGFloat(maxX - minX + 1) / scale,
             height: CGFloat(maxY - minY + 1) / scale
         )
+    }
+
+    @MainActor
+    func testMarkdownAndPlaintextMessageRenderingProducesVisualEvidence() throws {
+        let markdown = """
+        # Markdown message
+
+        This is **bold**, *emphasized*, and ~~removed~~ text with `inline code`.
+
+        ```swift
+        struct Peer {
+            let name: String
+            let isReachable: Bool
+        }
+
+        let peer = Peer(name: "Columba", isReachable: true)
+        print(peer.name)
+        let routeDescription = peers.filter { $0.isReachable }.map { "\\($0.name):authenticated-reticulum-route" }.joined(separator: " -> ")
+        ```
+
+        - First item
+        - Second item
+
+        > Authenticated Markdown renderer field
+
+        [HTTPS link](https://example.com/docs) and [NomadNet page](nomadnetwork://9ce92808be498e9e05590ff27cbfdfe4:/page/index.mu)
+
+        ![remote tracking image](https://tracking.example/pixel.png)
+
+        <script>alert('inert')</script>
+        """
+        let messages = [
+            Message(
+                content: markdown,
+                timestamp: Date(),
+                isFromMe: false,
+                deliveryStatus: .delivered,
+                renderer: .markdown
+            ),
+            Message(
+                content: "Plaintext gate: **not bold** https://example.com/docs",
+                timestamp: Date(),
+                isFromMe: true,
+                deliveryStatus: .delivered,
+                renderer: .plain
+            ),
+        ]
+        let view = VStack(spacing: 16) {
+            ForEach(messages) { message in
+                MessageBubble(message: message, onOpenLink: { _ in })
+            }
+        }
+        .frame(width: 390)
+        .padding(.vertical, 20)
+        .background(Color.black)
+        let host = UIHostingController(rootView: view)
+        let initialSize = CGSize(width: 390, height: 2_000)
+        let window = UIWindow(frame: CGRect(origin: .zero, size: initialSize))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.frame = CGRect(origin: .zero, size: initialSize)
+        host.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+
+        let fitted = host.sizeThatFits(in: initialSize)
+        XCTAssertGreaterThan(fitted.height, 300)
+        XCTAssertLessThan(fitted.height, 1_500)
+
+        let size = CGSize(width: 390, height: ceil(fitted.height))
+        window.frame = CGRect(origin: .zero, size: size)
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+
+        let horizontallyScrollableCodeBlocks = descendants(of: UIScrollView.self, in: host.view)
+            .filter { $0.contentSize.width > $0.bounds.width + 1 }
+        XCTAssertFalse(
+            horizontallyScrollableCodeBlocks.isEmpty,
+            "A code block with one long line must have horizontal scrollable overflow"
+        )
+
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        let screenshot = XCTAttachment(image: image)
+        screenshot.name = "markdown-and-plaintext-message-bubbles"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor
