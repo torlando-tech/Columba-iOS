@@ -145,6 +145,20 @@ public actor MessageRepository {
         try await database.getConversations(limit: limit, offset: offset).map(Self.mapConversation)
     }
 
+    /// Fetch conversations by their exact destination hashes without applying
+    /// the paginated conversation-list limit.
+    public func fetchConversations(for conversationHashes: [Data]) async throws -> [RNSAPI.ConversationRecord] {
+        var records: [RNSAPI.ConversationRecord] = []
+        var fetchedHashes = Set<Data>()
+
+        for conversationHash in conversationHashes where fetchedHashes.insert(conversationHash).inserted {
+            if let record = try await database.getConversation(hash: conversationHash) {
+                records.append(Self.mapConversation(record))
+            }
+        }
+        return records
+    }
+
     /// Fetch a single conversation by destination hash.
     public func fetchConversation(_ conversationHash: Data) async throws -> RNSAPI.ConversationRecord? {
         try await database.getConversation(hash: conversationHash).map(Self.mapConversation)

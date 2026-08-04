@@ -341,6 +341,65 @@ final class ChatsDraftProjectionTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: url.path + "-wal")
     }
 
+    private func conversationHash(_ index: Int) -> Data {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        bytes[14] = UInt8((index >> 8) & 0xff)
+        bytes[15] = UInt8(index & 0xff)
+        return Data(bytes)
+    }
+
+    private func repositoryBackedNoMessageDraft(
+        at databaseURL: URL
+    ) async throws -> (RNSAPI.ConversationRecord, DraftRecord, [Conversation]) {
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let hash = conversationHash(0xD9)
+        try await repository.ensureConversation(hash, displayName: "Draft parent")
+        try await repository.saveDraft("repository-backed draft", for: hash)
+
+        let storedRecord = try await repository.fetchConversation(hash)
+        let storedDraft = try await repository.fetchDraft(for: hash)
+        let record = try XCTUnwrap(storedRecord)
+        let draft = try XCTUnwrap(storedDraft)
+        let projected = ChatsViewModel.prepareConversations(
+            records: [record],
+            drafts: [hash: draft]
+        )
+        return (record, draft, projected)
+    }
+
+    private func loadDraftParentBeyondFirstPage(
+        at databaseURL: URL
+    ) async throws -> (draftParent: Data, firstPage: [Data], loaded: [Conversation]) {
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let draftParent = conversationHash(0)
+
+        for index in 0...100 {
+            let destinationHash = conversationHash(index)
+            let message = RNSAPI.LXMessage(
+                destinationHash: destinationHash,
+                sourceIdentity: nil,
+                content: Data("message-\(index)".utf8)
+            )
+            var messageID = [UInt8](repeating: 0, count: 32)
+            messageID[30] = UInt8((index >> 8) & 0xff)
+            messageID[31] = UInt8(index & 0xff)
+            message.hash = Data(messageID)
+            message.timestamp = Double(index + 1)
+            message.state = .sent
+            message.method = .opportunistic
+            try await repository.saveMessage(message)
+        }
+        try await repository.saveDraft("old conversation draft", for: draftParent)
+
+        let firstPage = try await repository.fetchConversations().map(\.destinationHash)
+        let viewModel = ChatsViewModel(
+            repository: repository,
+            notificationObserver: NotificationObserver()
+        )
+        await viewModel.loadConversations()
+        return (draftParent, firstPage, viewModel.conversations)
+    }
+
     func testDraftOverridesLastMessagePreviewWithoutChangingUnreadCount() {
         let source = record(hashByte: 0xD1, unreadCount: 4)
         let projected = ChatsViewModel.prepareConversations(
@@ -383,6 +442,52 @@ final class ChatsDraftProjectionTests: XCTestCase {
 
         XCTAssertEqual(projected.first?.lastMessageTimestamp, draftTimestamp)
         XCTAssertEqual(projected.first?.draftUpdatedAt, draftTimestamp)
+    }
+
+    func testRepositoryCreatedConversationWithoutMessageUsesDraftTimestamp() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        let snapshot: (RNSAPI.ConversationRecord, DraftRecord, [Conversation])
+        do {
+            snapshot = try await repositoryBackedNoMessageDraft(at: databaseURL)
+        } catch {
+            removeDatabase(at: databaseURL)
+            throw error
+        }
+        removeDatabase(at: databaseURL)
+
+        let (record, draft, projected) = snapshot
+        XCTAssertNotNil(record.lastMessageAt, "real mapping supplies the conversation creation timestamp")
+        XCTAssertTrue(record.lastMessagePreview.isEmpty, "empty preview is the persisted no-message signal")
+        XCTAssertEqual(projected.first?.lastMessageTimestamp, draft.updatedAt)
+        XCTAssertEqual(projected.first?.draftUpdatedAt, draft.updatedAt)
+    }
+
+    func testLoadIncludesDraftParentBeyondFirstConversationPage() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        let snapshot: (draftParent: Data, firstPage: [Data], loaded: [Conversation])
+        do {
+            snapshot = try await loadDraftParentBeyondFirstPage(at: databaseURL)
+        } catch {
+            removeDatabase(at: databaseURL)
+            throw error
+        }
+        removeDatabase(at: databaseURL)
+
+        XCTAssertEqual(snapshot.firstPage.count, 100)
+        XCTAssertFalse(snapshot.firstPage.contains(snapshot.draftParent))
+        XCTAssertEqual(snapshot.loaded.count, 101)
+        let draftedConversation = try XCTUnwrap(
+            snapshot.loaded.first { $0.destinationHash == snapshot.draftParent }
+        )
+        XCTAssertEqual(draftedConversation.previewKind, .draft)
+        XCTAssertEqual(draftedConversation.draftText, "old conversation draft")
+        XCTAssertEqual(
+            Set(snapshot.loaded.lazy
+                .filter { $0.destinationHash != snapshot.draftParent }
+                .map(\.destinationHash)),
+            Set(snapshot.firstPage),
+            "the existing visible page must remain unchanged for nondraft records"
+        )
     }
 
     func testExistingConversationKeepsMessageTimestampWhenDraftExists() {

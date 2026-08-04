@@ -275,22 +275,7 @@ public final class ChatsViewModel {
         defer { endLoadingConversations() }
 
         do {
-            async let records = repository.fetchConversations()
-            async let drafts = repository.fetchDrafts()
-            var convos = try await Self.prepareConversations(records: records, drafts: drafts)
-
-            // Backfill display names from path table for conversations that have none
-            if let pathTable {
-                for i in convos.indices where convos[i].displayName == nil {
-                    if let entry = await pathTable.lookup(destinationHash: convos[i].destinationHash),
-                       !entry.displayName.isEmpty {
-                        convos[i].displayName = entry.displayName
-                        // Persist so we don't need to look up again
-                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: entry.displayName)
-                    }
-                }
-            }
-
+            let convos = try await loadConversationSnapshot()
             applyLoadedConversations(convos, generation: generation)
         } catch {
             if generation == conversationLoadGeneration {
@@ -306,27 +291,54 @@ public final class ChatsViewModel {
         defer { endRefreshingConversations() }
 
         do {
-            async let records = repository.fetchConversations()
-            async let drafts = repository.fetchDrafts()
-            var convos = try await Self.prepareConversations(records: records, drafts: drafts)
-
-            // Backfill display names from path table for conversations that have none
-            if let pathTable {
-                for i in convos.indices where convos[i].displayName == nil {
-                    if let entry = await pathTable.lookup(destinationHash: convos[i].destinationHash),
-                       !entry.displayName.isEmpty {
-                        convos[i].displayName = entry.displayName
-                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: entry.displayName)
-                    }
-                }
-            }
-
+            let convos = try await loadConversationSnapshot()
             applyLoadedConversations(convos, generation: generation)
         } catch {
             if generation == conversationLoadGeneration {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    /// Capture the visible page together with every committed draft and any
+    /// draft parent omitted by that page before projecting one coherent list.
+    @MainActor
+    private func loadConversationSnapshot() async throws -> [Conversation] {
+        async let visibleRecords = repository.fetchConversations()
+        async let drafts = repository.fetchDrafts()
+        let (visible, committedDrafts) = try await (visibleRecords, drafts)
+
+        let visibleHashes = Set(visible.map(\.destinationHash))
+        let missingDraftParentHashes = committedDrafts.keys
+            .filter { !visibleHashes.contains($0) }
+            .sorted { $0.lexicographicallyPrecedes($1) }
+        let missingDraftParents = try await repository.fetchConversations(for: missingDraftParentHashes)
+
+        var recordsByHash: [Data: ConversationRecord] = [:]
+        for record in visible + missingDraftParents where recordsByHash[record.destinationHash] == nil {
+            recordsByHash[record.destinationHash] = record
+        }
+
+        var conversations = Self.prepareConversations(
+            records: Array(recordsByHash.values),
+            drafts: committedDrafts
+        )
+
+        // Backfill display names from path table for conversations that have none.
+        if let pathTable {
+            for i in conversations.indices where conversations[i].displayName == nil {
+                if let entry = await pathTable.lookup(destinationHash: conversations[i].destinationHash),
+                   !entry.displayName.isEmpty {
+                    conversations[i].displayName = entry.displayName
+                    try? await repository.ensureConversation(
+                        conversations[i].destinationHash,
+                        displayName: entry.displayName
+                    )
+                }
+            }
+        }
+
+        return conversations
     }
 
     /// Toggle favorite status for a conversation and persist to database.
@@ -362,10 +374,11 @@ public final class ChatsViewModel {
     ) -> [Conversation] {
         records
             .compactMap { record in
+                let hasMessage = !record.lastMessagePreview.isEmpty
                 let draft = drafts[record.destinationHash].flatMap { draft in
                     draft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : draft
                 }
-                guard !record.lastMessagePreview.isEmpty || draft != nil else { return nil }
+                guard hasMessage || draft != nil else { return nil }
 
                 var conversation = Conversation(from: record)
                 if let draft {
@@ -373,7 +386,7 @@ public final class ChatsViewModel {
                     conversation.draftUpdatedAt = draft.updatedAt
                     conversation.lastMessagePreview = draft.content
                     conversation.previewKind = .draft
-                    if record.lastMessageAt == nil {
+                    if !hasMessage {
                         conversation.lastMessageTimestamp = draft.updatedAt
                     }
                 }
