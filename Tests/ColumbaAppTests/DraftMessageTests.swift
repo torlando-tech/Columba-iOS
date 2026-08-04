@@ -299,3 +299,253 @@ final class DraftMessageTests: XCTestCase {
         await reads.cancelAndWaitForTasks()
     }
 }
+
+private final class ControlledDraftSleeper: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [UUID: CheckedContinuation<Void, Error>] = [:]
+    private var invocationCountStorage = 0
+    var onSleep: (() -> Void)?
+
+    var invocationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return invocationCountStorage
+    }
+
+    func sleep(for duration: Duration) async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                register(continuation, id: id)
+            }
+        } onCancel: {
+            cancel(id: id)
+        }
+    }
+
+    func resumeAll() {
+        let pending: [CheckedContinuation<Void, Error>]
+        lock.lock()
+        pending = Array(continuations.values)
+        continuations.removeAll()
+        lock.unlock()
+        pending.forEach { $0.resume() }
+    }
+
+    private func register(_ continuation: CheckedContinuation<Void, Error>, id: UUID) {
+        let isCancelled = Task.isCancelled
+        lock.lock()
+        invocationCountStorage += 1
+        if !isCancelled {
+            continuations[id] = continuation
+        }
+        let onSleep = onSleep
+        lock.unlock()
+
+        onSleep?()
+        if isCancelled {
+            continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    private func cancel(id: UUID) {
+        let continuation: CheckedContinuation<Void, Error>?
+        lock.lock()
+        continuation = continuations.removeValue(forKey: id)
+        lock.unlock()
+        continuation?.resume(throwing: CancellationError())
+    }
+}
+
+@MainActor
+final class DraftAutosaveControllerTests: XCTestCase {
+    private func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-autosave-\(UUID().uuidString).sqlite")
+    }
+
+    private func removeDatabase(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(atPath: url.path + "-shm")
+        try? FileManager.default.removeItem(atPath: url.path + "-wal")
+    }
+
+    private func makeController(
+        repository: MessageRepository,
+        conversationHash: Data,
+        sleeper: ControlledDraftSleeper
+    ) -> DraftAutosaveController {
+        DraftAutosaveController(
+            repository: repository,
+            conversationHash: conversationHash,
+            debounceDuration: .seconds(30),
+            sleeper: sleeper.sleep(for:)
+        )
+    }
+
+    private func draftChangeExpectation(for conversationHash: Data) -> (XCTestExpectation, NSObjectProtocol) {
+        let changed = expectation(description: "Draft mutation committed")
+        changed.assertForOverFulfill = true
+        let observer = NotificationCenter.default.addObserver(
+            forName: MessageRepository.draftChangedNotification,
+            object: nil,
+            queue: nil
+        ) { notification in
+            guard notification.userInfo?[MessageRepository.conversationHashUserInfoKey] as? Data == conversationHash else {
+                return
+            }
+            changed.fulfill()
+        }
+        return (changed, observer)
+    }
+
+    func testRapidEditsPersistOnlyLatestText() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let conversationHash = Data(repeating: 0xA1, count: 16)
+        let sleeper = ControlledDraftSleeper()
+        let firstSleepStarted = expectation(description: "First debounce started")
+        let secondSleepStarted = expectation(description: "Replacement debounce started")
+        sleeper.onSleep = {
+            if sleeper.invocationCount == 1 {
+                firstSleepStarted.fulfill()
+            } else if sleeper.invocationCount == 2 {
+                secondSleepStarted.fulfill()
+            }
+        }
+        let controller = makeController(
+            repository: repository,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        try await repository.ensureConversation(conversationHash, displayName: nil)
+        let (changed, observer) = draftChangeExpectation(for: conversationHash)
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        controller.textChanged("older")
+        await fulfillment(of: [firstSleepStarted], timeout: 1)
+        controller.textChanged("latest")
+        await fulfillment(of: [secondSleepStarted], timeout: 1)
+        sleeper.resumeAll()
+        await fulfillment(of: [changed], timeout: 1)
+
+        let stored = try await repository.fetchDraft(for: conversationHash)
+        XCTAssertEqual(stored?.content, "latest")
+    }
+
+    func testFlushPersistsImmediatelyWithoutWaitingForDebounce() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let conversationHash = Data(repeating: 0xA2, count: 16)
+        let sleeper = ControlledDraftSleeper()
+        let sleepStarted = expectation(description: "Debounce started")
+        sleeper.onSleep = { sleepStarted.fulfill() }
+        let controller = makeController(
+            repository: repository,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        try await repository.ensureConversation(conversationHash, displayName: nil)
+
+        controller.textChanged("pending")
+        await fulfillment(of: [sleepStarted], timeout: 1)
+        await controller.flush("flushed now")
+
+        let stored = try await repository.fetchDraft(for: conversationHash)
+        XCTAssertEqual(stored?.content, "flushed now")
+    }
+
+    func testFlushOfBlankTextDeletesDraft() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let conversationHash = Data(repeating: 0xA3, count: 16)
+        let sleeper = ControlledDraftSleeper()
+        let controller = makeController(
+            repository: repository,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        try await repository.ensureConversation(conversationHash, displayName: nil)
+        try await repository.saveDraft("existing", for: conversationHash)
+
+        await controller.flush(" \t\n ")
+
+        let stored = try await repository.fetchDraft(for: conversationHash)
+        XCTAssertNil(stored)
+    }
+
+    func testClearCancelsPendingSaveAndDraftStaysAbsent() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let conversationHash = Data(repeating: 0xA4, count: 16)
+        let sleeper = ControlledDraftSleeper()
+        let sleepStarted = expectation(description: "Debounce started")
+        sleeper.onSleep = { sleepStarted.fulfill() }
+        let controller = makeController(
+            repository: repository,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        try await repository.ensureConversation(conversationHash, displayName: nil)
+        try await repository.saveDraft("existing", for: conversationHash)
+        let (cleared, observer) = draftChangeExpectation(for: conversationHash)
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        controller.textChanged("must not survive")
+        await fulfillment(of: [sleepStarted], timeout: 1)
+        controller.clearImmediately()
+        await fulfillment(of: [cleared], timeout: 1)
+        sleeper.resumeAll()
+
+        let stored = try await repository.fetchDraft(for: conversationHash)
+        XCTAssertNil(stored)
+    }
+
+    func testOldDelayedSaveCannotOverwriteNewerText() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let conversationHash = Data(repeating: 0xA5, count: 16)
+        let sleeper = ControlledDraftSleeper()
+        let sleepStarted = expectation(description: "Old debounce started")
+        sleeper.onSleep = { sleepStarted.fulfill() }
+        let controller = makeController(
+            repository: repository,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        try await repository.ensureConversation(conversationHash, displayName: nil)
+
+        controller.textChanged("stale delayed text")
+        await fulfillment(of: [sleepStarted], timeout: 1)
+        await controller.flush("newer text")
+        sleeper.resumeAll()
+
+        let stored = try await repository.fetchDraft(for: conversationHash)
+        XCTAssertEqual(stored?.content, "newer text")
+    }
+
+    func testRestoreReturnsStoredTextWithoutSchedulingAnotherWrite() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let conversationHash = Data(repeating: 0xA6, count: 16)
+        let sleeper = ControlledDraftSleeper()
+        let controller = makeController(
+            repository: repository,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        try await repository.ensureConversation(conversationHash, displayName: nil)
+        try await repository.saveDraft("restored exactly", for: conversationHash)
+
+        let restored = try await controller.restore()
+
+        XCTAssertEqual(restored, "restored exactly")
+        XCTAssertEqual(sleeper.invocationCount, 0)
+    }
+}

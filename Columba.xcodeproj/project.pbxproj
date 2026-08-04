@@ -251,6 +251,8 @@
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		ACT02 /* AnnounceClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACT01 /* AnnounceClassificationTests.swift */; };
 		DRAFT002 /* DraftMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DRAFT001 /* DraftMessageTests.swift */; };
+		DA143A000000000000000002 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
+		DA143A000000000000000003 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
 		ADABD423CE22B9E00BC5D7F3 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
 		AF0B30F4F05BB35FCC50D99F /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* ChatsView.swift */; };
 		AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
@@ -440,6 +442,7 @@
 		ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
 		ACT01 /* AnnounceClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnounceClassificationTests.swift; sourceTree = "<group>"; };
 		DRAFT001 /* DraftMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftMessageTests.swift; sourceTree = "<group>"; };
+		DA143A000000000000000001 /* DraftAutosaveController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftAutosaveController.swift; sourceTree = "<group>"; };
 		AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
 		AGBF /* AppGroupBridgeInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBridgeInterface.swift; sourceTree = "<group>"; };
 		AGPF /* AppGroupPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupPaths.swift; sourceTree = "<group>"; };
@@ -1065,6 +1068,7 @@
 				F003 /* ChatsViewModel.swift */,
 				F004 /* ContactsViewModel.swift */,
 				F005 /* MessagingViewModel.swift */,
+				DA143A000000000000000001 /* DraftAutosaveController.swift */,
 				F006 /* SettingsViewModel.swift */,
 				F030 /* InterfaceManagementViewModel.swift */,
 				F034 /* NetworkStatusViewModel.swift */,
@@ -1383,6 +1387,7 @@
 				89551A07A2FB8693E6C465FC /* ChatsViewModel.swift in Sources */,
 				35AAE3A0AE037F5B9305CFC1 /* ContactsViewModel.swift in Sources */,
 				3B33F02402537B1825B64EEC /* MessagingViewModel.swift in Sources */,
+				DA143A000000000000000003 /* DraftAutosaveController.swift in Sources */,
 				9673457897893BF9DE512A0F /* SettingsViewModel.swift in Sources */,
 				B71F90BE936BAF660BA0821B /* MainTabView.swift in Sources */,
 				AF0B30F4F05BB35FCC50D99F /* ChatsView.swift in Sources */,
@@ -1564,6 +1569,7 @@
 				003 /* ChatsViewModel.swift in Sources */,
 				004 /* ContactsViewModel.swift in Sources */,
 				005 /* MessagingViewModel.swift in Sources */,
+				DA143A000000000000000002 /* DraftAutosaveController.swift in Sources */,
 				006 /* SettingsViewModel.swift in Sources */,
 				007 /* MainTabView.swift in Sources */,
 				008 /* ChatsView.swift in Sources */,
