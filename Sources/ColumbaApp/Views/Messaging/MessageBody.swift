@@ -243,31 +243,18 @@ private struct MarkdownMessageText: View {
     }
 
     private func codeBlock(_ configuration: CodeBlockConfiguration) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let language = configuration.language, !language.isEmpty {
-                Text(language.uppercased())
-                    .font(.system(
-                        size: max(10, fontSize * 0.65),
-                        weight: .semibold,
-                        design: .monospaced
-                    ))
-                    .foregroundStyle(SwiftUI.Color.white.opacity(0.65))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-            }
-
+        ScrollableMarkdownCodeBlock(
+            language: configuration.language,
+            fontSize: fontSize,
+            background: blockCodeBackground
+        ) {
             configuration.label
                 .relativeLineSpacing(.em(0.2))
                 .markdownTextStyle {
                     FontFamilyVariant(.monospaced)
                     FontSize(fontSize * 0.82)
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(blockCodeBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
         .markdownMargin(top: .em(0.25), bottom: .em(0.6))
     }
 
@@ -285,6 +272,79 @@ private struct MarkdownMessageText: View {
 
     private var blockCodeBackground: SwiftUI.Color {
         SwiftUI.Color(red: 0.19, green: 0.20, blue: 0.23)
+    }
+}
+
+private struct ScrollableMarkdownCodeBlock<Content: View>: View {
+    let language: String?
+    let fontSize: CGFloat
+    let backgroundColor: SwiftUI.Color
+    let content: Content
+    @State private var measuredContentHeight: CGFloat = 0
+
+    init(
+        language: String?,
+        fontSize: CGFloat,
+        background: SwiftUI.Color,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.language = language
+        self.fontSize = fontSize
+        self.backgroundColor = background
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let language, !language.isEmpty {
+                Text(language.uppercased())
+                    .font(.system(
+                        size: max(10, fontSize * 0.65),
+                        weight: .semibold,
+                        design: .monospaced
+                    ))
+                    .foregroundStyle(SwiftUI.Color.white.opacity(0.65))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
+
+            GeometryReader { proxy in
+                ScrollView(.horizontal) {
+                    content
+                        .fixedSize(horizontal: true, vertical: true)
+                        .padding(10)
+                        .background {
+                            GeometryReader { contentProxy in
+                                SwiftUI.Color.clear.preference(
+                                    key: CodeContentHeightKey.self,
+                                    value: contentProxy.size.height
+                                )
+                            }
+                        }
+                }
+                .frame(width: proxy.size.width, height: resolvedContentHeight)
+                .accessibilityIdentifier("markdown_code_scroll")
+            }
+            .frame(height: resolvedContentHeight)
+        }
+        .background(backgroundColor)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onPreferenceChange(CodeContentHeightKey.self) { height in
+            guard height > 0, abs(height - measuredContentHeight) > 0.5 else { return }
+            measuredContentHeight = height
+        }
+    }
+
+    private var resolvedContentHeight: CGFloat {
+        max(measuredContentHeight, fontSize + 20)
+    }
+}
+
+private struct CodeContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 

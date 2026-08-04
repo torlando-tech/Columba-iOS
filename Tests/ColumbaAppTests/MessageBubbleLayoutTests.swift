@@ -99,6 +99,12 @@ final class MessageRendererMappingTests: XCTestCase {
 
 final class MessageBubbleLayoutTests: XCTestCase {
 
+    private func descendants<T: UIView>(of type: T.Type, in root: UIView) -> [T] {
+        root.subviews.flatMap { subview in
+            (subview as? T).map { [$0] } ?? [] + descendants(of: type, in: subview)
+        }
+    }
+
     private func visibleContentBounds(in image: UIImage) throws -> CGRect {
         let cgImage = try XCTUnwrap(image.cgImage)
         let width = cgImage.width
@@ -159,6 +165,7 @@ final class MessageBubbleLayoutTests: XCTestCase {
 
         let peer = Peer(name: "Columba", isReachable: true)
         print(peer.name)
+        let routeDescription = peers.filter { $0.isReachable }.map { "\($0.name):authenticated-reticulum-route" }.joined(separator: " -> ")
         ```
 
         - First item
@@ -197,18 +204,30 @@ final class MessageBubbleLayoutTests: XCTestCase {
         .padding(.vertical, 20)
         .background(Color.black)
         let host = UIHostingController(rootView: view)
-        let fitted = host.sizeThatFits(in: CGSize(width: 390, height: 2_000))
+        let initialSize = CGSize(width: 390, height: 2_000)
+        let window = UIWindow(frame: CGRect(origin: .zero, size: initialSize))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.frame = CGRect(origin: .zero, size: initialSize)
+        host.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
 
+        let fitted = host.sizeThatFits(in: initialSize)
         XCTAssertGreaterThan(fitted.height, 300)
         XCTAssertLessThan(fitted.height, 1_500)
 
         let size = CGSize(width: 390, height: ceil(fitted.height))
-        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        window.frame = CGRect(origin: .zero, size: size)
         host.view.frame = CGRect(origin: .zero, size: size)
         host.view.layoutIfNeeded()
+
+        let horizontallyScrollableCodeBlocks = descendants(of: UIScrollView.self, in: host.view)
+            .filter { $0.contentSize.width > $0.bounds.width + 1 }
+        XCTAssertFalse(
+            horizontallyScrollableCodeBlocks.isEmpty,
+            "A code block with one long line must have horizontal scrollable overflow"
+        )
 
         let image = UIGraphicsImageRenderer(size: size).image { _ in
             host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
