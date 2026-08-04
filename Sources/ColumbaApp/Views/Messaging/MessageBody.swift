@@ -209,7 +209,6 @@ private struct MarkdownMessageText: View {
             .markdownBlockStyle(\.codeBlock) { configuration in
                 codeBlock(configuration)
             }
-            .fixedSize(horizontal: false, vertical: true)
             .onChange(of: content) { _, newContent in
                 parsedContent = MarkdownContent(newContent)
             }
@@ -238,6 +237,7 @@ private struct MarkdownMessageText: View {
                     }
                     .padding(10)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(SwiftUI.Color(red: 0.08, green: 0.09, blue: 0.12))
         .clipShape(RoundedRectangle(cornerRadius: 8))
