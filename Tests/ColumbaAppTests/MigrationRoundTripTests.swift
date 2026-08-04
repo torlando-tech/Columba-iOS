@@ -94,7 +94,8 @@ final class MigrationRoundTripTests: XCTestCase {
             .bool("notifications_enabled", true),
             .int("announce_interval_hours", 6),
             .double("syncIntervalSeconds", 43_200),
-            .int("incoming_message_size_limit_kb", 5_120)
+            .int("incoming_message_size_limit_kb", 5_120),
+            .double("message_text_scale", 1.6)
         ])
 
         return MigrationBundle(
@@ -104,6 +105,73 @@ final class MigrationRoundTripTests: XCTestCase {
             interfaces: [interface],
             settings: settings
         )
+    }
+
+    private func makeSettingsImporter() throws -> (
+        importer: MigrationImporter,
+        repository: SettingsRepository,
+        defaults: UserDefaults
+    ) {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: appGroupIdentifier))
+        defaults.removeObject(forKey: "message_text_scale")
+        let repository = SettingsRepository()
+        return (
+            MigrationImporter(identityManager: IdentityManager(), settingsRepository: repository),
+            repository,
+            defaults
+        )
+    }
+
+    func testMessageTextScaleMigrationImportsValidValue() async throws {
+        let context = try makeSettingsImporter()
+        defer { context.defaults.removeObject(forKey: "message_text_scale") }
+
+        let imported = await context.importer.importSettings([
+            .double("message_text_scale", 1.6)
+        ])
+
+        XCTAssertEqual(imported, 1)
+        let value = await context.repository.getMessageTextScale()
+        XCTAssertEqual(value, 1.6, accuracy: 0.001)
+    }
+
+    func testMessageTextScaleMigrationKeepsExistingValueWhenAbsent() async throws {
+        let context = try makeSettingsImporter()
+        defer { context.defaults.removeObject(forKey: "message_text_scale") }
+        await context.repository.setMessageTextScale(1.4)
+
+        let imported = await context.importer.importSettings([])
+
+        XCTAssertEqual(imported, 0)
+        let value = await context.repository.getMessageTextScale()
+        XCTAssertEqual(value, 1.4, accuracy: 0.001)
+    }
+
+    func testMessageTextScaleMigrationRejectsMalformedValue() async throws {
+        let context = try makeSettingsImporter()
+        defer { context.defaults.removeObject(forKey: "message_text_scale") }
+        await context.repository.setMessageTextScale(1.4)
+
+        let imported = await context.importer.importSettings([
+            .string("message_text_scale", "not-a-number")
+        ])
+
+        XCTAssertEqual(imported, 0)
+        let value = await context.repository.getMessageTextScale()
+        XCTAssertEqual(value, 1.4, accuracy: 0.001)
+    }
+
+    func testMessageTextScaleMigrationClampsOutOfRangeValue() async throws {
+        let context = try makeSettingsImporter()
+        defer { context.defaults.removeObject(forKey: "message_text_scale") }
+
+        let imported = await context.importer.importSettings([
+            .double("message_text_scale", 9.0)
+        ])
+
+        XCTAssertEqual(imported, 1)
+        let value = await context.repository.getMessageTextScale()
+        XCTAssertEqual(value, 2.0, accuracy: 0.001)
     }
 
     private func makeValidatedIdentityExport(
@@ -305,8 +373,13 @@ final class MigrationRoundTripTests: XCTestCase {
         XCTAssertEqual(outgoing.method, "propagated")
         XCTAssertEqual(Data(base64Encoded: outgoing.content), Data("reply".utf8))
 
-        // Settings preferences survive.
-        XCTAssertEqual(restored.settings.preferences.count, 5)
+        // Settings preferences survive with the expected serialized type/value.
+        XCTAssertEqual(restored.settings.preferences.count, 6)
+        let messageTextScale = try XCTUnwrap(
+            restored.settings.preferences.first(where: { $0.key == "message_text_scale" })
+        )
+        XCTAssertEqual(messageTextScale.type, "double")
+        XCTAssertEqual(messageTextScale.value, "1.6")
     }
 
     /// The real importer's decrypt+parse path (previewMigration → decryptAndParse)
@@ -330,7 +403,7 @@ final class MigrationRoundTripTests: XCTestCase {
         XCTAssertEqual(preview.conversationCount, 1)
         XCTAssertEqual(preview.messageCount, 2)
         XCTAssertEqual(preview.interfaceCount, 1)
-        XCTAssertEqual(preview.settingsCount, 5)
+        XCTAssertEqual(preview.settingsCount, 6)
     }
 
     /// The message persistence path (the fix): a restored MessageRecord must

@@ -52,3 +52,56 @@ final class IncomingMessageSizeLimitTests: XCTestCase {
         XCTAssertEqual(repaired, SettingsRepository.IncomingMessageSizeLimit.defaultKB)
     }
 }
+
+final class MessageTextScaleTests: XCTestCase {
+    private let key = "message_text_scale"
+
+    func testMessageTextScaleDefaultsToAndroidParityValue() async {
+        guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return XCTFail("Could not create app-group UserDefaults")
+        }
+        defaults.removeObject(forKey: key)
+        defer { defaults.removeObject(forKey: key) }
+
+        let repository = SettingsRepository()
+        let value = await repository.getMessageTextScale()
+
+        XCTAssertEqual(value, 1.0, accuracy: 0.001)
+    }
+
+    func testMessageTextScalePersistsRoundsAndClamps() async {
+        guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return XCTFail("Could not create app-group UserDefaults")
+        }
+        defaults.removeObject(forKey: key)
+        defer { defaults.removeObject(forKey: key) }
+
+        let repository = SettingsRepository()
+        await repository.setMessageTextScale(1.26)
+        let rounded = await repository.getMessageTextScale()
+        XCTAssertEqual(rounded, 1.3, accuracy: 0.001)
+
+        await repository.setMessageTextScale(0.1)
+        let minimum = await repository.getMessageTextScale()
+        XCTAssertEqual(minimum, 0.7, accuracy: 0.001)
+
+        await repository.setMessageTextScale(9.0)
+        let maximum = await repository.getMessageTextScale()
+        XCTAssertEqual(maximum, 2.0, accuracy: 0.001)
+    }
+
+    func testMessageTextScaleRepairsMalformedStoredValues() async {
+        guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return XCTFail("Could not create app-group UserDefaults")
+        }
+        defaults.removeObject(forKey: key)
+        defer { defaults.removeObject(forKey: key) }
+
+        defaults.set("not-a-number", forKey: key)
+        let repository = SettingsRepository()
+        let repaired = await repository.getMessageTextScale()
+
+        XCTAssertEqual(repaired, 1.0, accuracy: 0.001)
+        XCTAssertEqual(defaults.double(forKey: key), 1.0, accuracy: 0.001)
+    }
+}

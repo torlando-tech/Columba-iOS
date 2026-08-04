@@ -18,11 +18,48 @@ SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
 MAIN_TAB_VIEW = ROOT / "Sources/ColumbaApp/Views/MainTabView.swift"
 MESSAGE_BUBBLE = ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
 MESSAGING_VIEW = ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift"
+TEXT_SIZE_PICKER = ROOT / "Sources/ColumbaApp/Views/Messaging/TextSizePickerSheet.swift"
 INCOMING_MESSAGE_HANDLER = ROOT / "Sources/ColumbaApp/Services/IncomingMessageHandler.swift"
 LOCATION_SHARING_MANAGER = ROOT / "Sources/ColumbaApp/Services/LocationSharingManager.swift"
 
 
 class ReportedRuntimeBugContracts(unittest.TestCase):
+    def test_ios_conversation_message_text_scale_parity_contract(self) -> None:
+        settings_repository = (
+            ROOT / "Sources/ColumbaApp/Services/SettingsRepository.swift"
+        ).read_text()
+        messaging_view = MESSAGING_VIEW.read_text()
+        text_size_picker = TEXT_SIZE_PICKER.read_text()
+        message_bubble = MESSAGE_BUBBLE.read_text()
+        migration_exporter = (
+            ROOT / "Sources/ColumbaApp/Services/MigrationExporter.swift"
+        ).read_text()
+        migration_importer = (
+            ROOT / "Sources/ColumbaApp/Services/MigrationImporter.swift"
+        ).read_text()
+
+        self.assertIn('message_text_scale', settings_repository)
+        self.assertIn(
+            'Label("Text Size", systemImage: "textformat.size")', messaging_view
+        )
+        self.assertIn('TextSizePickerSheet(', messaging_view)
+        self.assertIn('messageTextScale: messageTextScale', messaging_view)
+        self.assertIn('@ScaledMetric(relativeTo: .body)', text_size_picker)
+        self.assertIn('.accessibilityLabel("Message text size")', text_size_picker)
+        for identifier in (
+            "text_size_preview",
+            "text_size_percent",
+            "text_size_slider",
+            "text_size_range_labels",
+            "text_size_cancel",
+            "text_size_confirm",
+        ):
+            self.assertIn(f'.accessibilityIdentifier("{identifier}")', text_size_picker)
+        self.assertIn('@ScaledMetric(relativeTo: .body)', message_bubble)
+        self.assertIn('bodyFontSize * CGFloat(messageTextScale)', message_bubble)
+        self.assertIn('.double("message_text_scale"', migration_exporter)
+        self.assertIn('case "message_text_scale":', migration_importer)
+
     def test_inbound_telemetry_retains_lxmf_display_name(self) -> None:
         handler = INCOMING_MESSAGE_HANDLER.read_text()
         telemetry_dispatch = re.search(

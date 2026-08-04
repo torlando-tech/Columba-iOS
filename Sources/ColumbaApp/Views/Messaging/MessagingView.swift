@@ -40,6 +40,7 @@ struct MessagingView: View {
     let conversation: Conversation
     let appServices: AppServices
     let messageRepository: MessageRepository
+    private let settingsRepository = SettingsRepository()
 
     // MARK: - State
 
@@ -69,6 +70,8 @@ struct MessagingView: View {
     /// Set when a voice call can't be placed (no telephony path to the peer)
     /// so the user gets feedback instead of the codec sheet silently dismissing.
     @State private var callUnavailableMessage: String?
+    @State private var showTextSizePicker = false
+    @State private var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -100,6 +103,7 @@ struct MessagingView: View {
                                 }) {
                                     MessageBubble(
                                         message: message,
+                                        messageTextScale: messageTextScale,
                                         onToggleReaction: { emoji in
                                             Task {
                                                 await vm.sendReaction(
@@ -427,10 +431,21 @@ struct MessagingView: View {
             .presentationDetents([.height(340)])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showTextSizePicker) {
+            TextSizePickerSheet(currentScale: messageTextScale) { selectedScale in
+                Task {
+                    await settingsRepository.setMessageTextScale(selectedScale)
+                    messageTextScale = await settingsRepository.getMessageTextScale()
+                }
+            }
+            .presentationDetents([.height(460), .large])
+            .presentationDragIndicator(.visible)
+        }
         .onDisappear {
             NotificationService.activeConversationThreadId = nil
         }
         .task {
+            messageTextScale = await settingsRepository.getMessageTextScale()
             let threadId = conversation.destinationHash.map { String(format: "%02x", $0) }.joined()
             NotificationService.activeConversationThreadId = threadId
             if let record = try? await messageRepository.fetchConversation(conversation.destinationHash) {
@@ -530,6 +545,15 @@ struct MessagingView: View {
 
             // More options menu
             Menu {
+                Button {
+                    showTextSizePicker = true
+                } label: {
+                    Label("Text Size", systemImage: "textformat.size")
+                }
+                .accessibilityIdentifier("text_size_menu_item")
+
+                Divider()
+
                 Button {
                     Task {
                         isSyncing = true
