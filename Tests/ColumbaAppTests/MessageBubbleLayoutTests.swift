@@ -49,6 +49,24 @@ final class MessageBubbleLayoutTests: XCTestCase {
     }
 
     @MainActor
+    func testTextSizePickerRendersCompleteControls() throws {
+        let renderer = ImageRenderer(
+            content: TextSizePickerSheet(currentScale: 1.0, onSave: { _ in })
+                .frame(width: 390, height: 340)
+        )
+        renderer.scale = 3
+        let image = try XCTUnwrap(renderer.uiImage)
+
+        XCTAssertEqual(image.size.width, 390, accuracy: 1)
+        XCTAssertEqual(image.size.height, 340, accuracy: 1)
+
+        let screenshot = XCTAttachment(image: image)
+        screenshot.name = "message-text-size-picker"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testReplyBubbleUsesContentHeightAndPreservesLongMessageBody() throws {
         let message = Message(
             content: "Test response: this sentence is intentionally long enough to wrap across several lines. The complete sent message must remain visible below its reply preview without truncation.",
