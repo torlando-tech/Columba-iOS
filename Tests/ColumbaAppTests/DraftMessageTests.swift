@@ -301,10 +301,17 @@ final class DraftMessageTests: XCTestCase {
 }
 
 private final class ControlledDraftSleeper: @unchecked Sendable {
+    private enum Registration {
+        case cancelledBeforeRegistration
+        case waiting(CheckedContinuation<Void, Error>)
+        case completed
+    }
+
     private let lock = NSLock()
-    private var continuations: [UUID: CheckedContinuation<Void, Error>] = [:]
+    private var registrations: [UUID: Registration] = [:]
     private var invocationCountStorage = 0
     var onSleep: (() -> Void)?
+    var onBeforeRegistrationLock: (() -> Void)?
 
     var invocationCount: Int {
         lock.lock()
@@ -312,8 +319,15 @@ private final class ControlledDraftSleeper: @unchecked Sendable {
         return invocationCountStorage
     }
 
+    var pendingRegistrationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return registrations.count
+    }
+
     func sleep(for duration: Duration) async throws {
         let id = UUID()
+        defer { finish(id: id) }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 register(continuation, id: id)
@@ -326,24 +340,38 @@ private final class ControlledDraftSleeper: @unchecked Sendable {
     func resumeAll() {
         let pending: [CheckedContinuation<Void, Error>]
         lock.lock()
-        pending = Array(continuations.values)
-        continuations.removeAll()
+        let waitingIDs = registrations.compactMap { id, registration in
+            if case .waiting = registration { return id }
+            return nil
+        }
+        pending = waitingIDs.compactMap { id in
+            guard case let .some(.waiting(continuation)) = registrations[id] else { return nil }
+            registrations[id] = .completed
+            return continuation
+        }
         lock.unlock()
         pending.forEach { $0.resume() }
     }
 
     private func register(_ continuation: CheckedContinuation<Void, Error>, id: UUID) {
-        let isCancelled = Task.isCancelled
+        onBeforeRegistrationLock?()
+
+        let wasCancelled: Bool
+        let onSleep: (() -> Void)?
         lock.lock()
         invocationCountStorage += 1
-        if !isCancelled {
-            continuations[id] = continuation
+        if case .some(.cancelledBeforeRegistration) = registrations[id] {
+            registrations[id] = .completed
+            wasCancelled = true
+        } else {
+            registrations[id] = .waiting(continuation)
+            wasCancelled = false
         }
-        let onSleep = onSleep
+        onSleep = self.onSleep
         lock.unlock()
 
         onSleep?()
-        if isCancelled {
+        if wasCancelled {
             continuation.resume(throwing: CancellationError())
         }
     }
@@ -351,9 +379,123 @@ private final class ControlledDraftSleeper: @unchecked Sendable {
     private func cancel(id: UUID) {
         let continuation: CheckedContinuation<Void, Error>?
         lock.lock()
-        continuation = continuations.removeValue(forKey: id)
+        switch registrations[id] {
+        case let .some(.waiting(waiting)):
+            registrations[id] = .completed
+            continuation = waiting
+        case .some(.completed), .some(.cancelledBeforeRegistration):
+            continuation = nil
+        case .none:
+            registrations[id] = .cancelledBeforeRegistration
+            continuation = nil
+        }
         lock.unlock()
         continuation?.resume(throwing: CancellationError())
+    }
+
+    private func finish(id: UUID) {
+        lock.lock()
+        registrations.removeValue(forKey: id)
+        lock.unlock()
+    }
+}
+
+private actor ControlledDraftPersistence: DraftPersistence {
+    enum Mutation: Equatable {
+        case save(String)
+        case clear
+    }
+
+    private var draftText: String?
+    private var mutationsStorage: [Mutation] = []
+    private var completedMutationCount = 0
+    private var blockNextMutation = false
+    private var blockedMutationContinuation: CheckedContinuation<Void, Never>?
+    private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var mutationCountWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    init(draftText: String? = nil) {
+        self.draftText = draftText
+    }
+
+    func fetchDraftText(for conversationHash: Data) async throws -> String? {
+        draftText
+    }
+
+    func saveDraft(_ content: String, for conversationHash: Data) async throws {
+        mutationsStorage.append(.save(content))
+        await blockIfRequested()
+        draftText = content
+        notifyMutationCompleted()
+    }
+
+    func clearDraft(for conversationHash: Data) async throws {
+        mutationsStorage.append(.clear)
+        await blockIfRequested()
+        draftText = nil
+        notifyMutationCompleted()
+    }
+
+    func arrangeToBlockNextMutation() {
+        blockNextMutation = true
+    }
+
+    func waitUntilMutationIsBlocked() async {
+        if blockedMutationContinuation != nil { return }
+        await withCheckedContinuation { blockedWaiters.append($0) }
+    }
+
+    func unblockMutation() {
+        let continuation = blockedMutationContinuation
+        blockedMutationContinuation = nil
+        continuation?.resume()
+    }
+
+    func waitForMutationCount(_ count: Int) async {
+        if completedMutationCount >= count { return }
+        await withCheckedContinuation { mutationCountWaiters.append((count, $0)) }
+    }
+
+    func mutations() -> [Mutation] {
+        mutationsStorage
+    }
+
+    private func blockIfRequested() async {
+        guard blockNextMutation else { return }
+        blockNextMutation = false
+        blockedWaiters.forEach { $0.resume() }
+        blockedWaiters.removeAll()
+        await withCheckedContinuation { blockedMutationContinuation = $0 }
+    }
+
+    private func notifyMutationCompleted() {
+        completedMutationCount += 1
+        var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
+        for (count, continuation) in mutationCountWaiters {
+            if completedMutationCount >= count {
+                continuation.resume()
+            } else {
+                remaining.append((count, continuation))
+            }
+        }
+        mutationCountWaiters = remaining
+    }
+}
+
+private final class LockedCancellationResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var valueStorage: Bool?
+
+    var value: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return valueStorage
+    }
+
+    func store(_ value: Bool) {
+        lock.lock()
+        valueStorage = value
+        lock.unlock()
     }
 }
 
@@ -377,6 +519,19 @@ final class DraftAutosaveControllerTests: XCTestCase {
     ) -> DraftAutosaveController {
         DraftAutosaveController(
             repository: repository,
+            conversationHash: conversationHash,
+            debounceDuration: .seconds(30),
+            sleeper: sleeper.sleep(for:)
+        )
+    }
+
+    private func makeController(
+        persistence: any DraftPersistence,
+        conversationHash: Data,
+        sleeper: ControlledDraftSleeper
+    ) -> DraftAutosaveController {
+        DraftAutosaveController(
+            persistence: persistence,
             conversationHash: conversationHash,
             debounceDuration: .seconds(30),
             sleeper: sleeper.sleep(for:)
@@ -527,6 +682,99 @@ final class DraftAutosaveControllerTests: XCTestCase {
 
         let stored = try await repository.fetchDraft(for: conversationHash)
         XCTAssertEqual(stored?.content, "newer text")
+    }
+
+    func testEnqueuedDelayedSaveCompletesBeforeLaterClear() async throws {
+        let conversationHash = Data(repeating: 0xA7, count: 16)
+        let persistence = ControlledDraftPersistence()
+        let sleeper = ControlledDraftSleeper()
+        let sleepStarted = expectation(description: "Debounce started")
+        sleeper.onSleep = { sleepStarted.fulfill() }
+        let controller = makeController(
+            persistence: persistence,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        await persistence.arrangeToBlockNextMutation()
+
+        controller.textChanged("stale but already enqueued")
+        await fulfillment(of: [sleepStarted], timeout: 1)
+        sleeper.resumeAll()
+        await persistence.waitUntilMutationIsBlocked()
+        let mutationsBeforeClear = await persistence.mutations()
+        XCTAssertEqual(mutationsBeforeClear, [.save("stale but already enqueued")])
+
+        controller.clearImmediately()
+        await persistence.unblockMutation()
+        await persistence.waitForMutationCount(2)
+
+        let mutationsAfterClear = await persistence.mutations()
+        let finalDraft = try await persistence.fetchDraftText(for: conversationHash)
+        XCTAssertEqual(mutationsAfterClear, [.save("stale but already enqueued"), .clear])
+        XCTAssertNil(finalDraft)
+    }
+
+    func testClearCompletesBeforeImmediatelyFollowingFlush() async throws {
+        let conversationHash = Data(repeating: 0xA8, count: 16)
+        let persistence = ControlledDraftPersistence(draftText: "existing")
+        let sleeper = ControlledDraftSleeper()
+        let controller = makeController(
+            persistence: persistence,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        await persistence.arrangeToBlockNextMutation()
+        let flushed = expectation(description: "Flush completed durably")
+
+        controller.clearImmediately()
+        Task { @MainActor in
+            await controller.flush("newer edit")
+            flushed.fulfill()
+        }
+
+        await persistence.waitUntilMutationIsBlocked()
+        let mutationsWhileClearBlocked = await persistence.mutations()
+        XCTAssertEqual(mutationsWhileClearBlocked, [.clear])
+        await persistence.unblockMutation()
+        await fulfillment(of: [flushed], timeout: 1)
+
+        let finalMutations = await persistence.mutations()
+        let finalDraft = try await persistence.fetchDraftText(for: conversationHash)
+        XCTAssertEqual(finalMutations, [.clear, .save("newer edit")])
+        XCTAssertEqual(finalDraft, "newer edit")
+    }
+
+    func testSleeperCancellationBeforeRegistrationDoesNotHangOrLeak() async {
+        let sleeper = ControlledDraftSleeper()
+        let registrationReached = expectation(description: "Registration race window reached")
+        let sleepFinished = expectation(description: "Cancelled sleep finished")
+        let allowRegistration = DispatchSemaphore(value: 0)
+        let result = LockedCancellationResult()
+        sleeper.onBeforeRegistrationLock = {
+            registrationReached.fulfill()
+            allowRegistration.wait()
+        }
+
+        let task = Task.detached {
+            do {
+                try await sleeper.sleep(for: .seconds(30))
+                result.store(false)
+            } catch is CancellationError {
+                result.store(true)
+            } catch {
+                result.store(false)
+            }
+            sleepFinished.fulfill()
+        }
+
+        await fulfillment(of: [registrationReached], timeout: 1)
+        task.cancel()
+        allowRegistration.signal()
+        await fulfillment(of: [sleepFinished], timeout: 1)
+
+        XCTAssertEqual(result.value, true)
+        XCTAssertEqual(sleeper.invocationCount, 1)
+        XCTAssertEqual(sleeper.pendingRegistrationCount, 0)
     }
 
     func testRestoreReturnsStoredTextWithoutSchedulingAnotherWrite() async throws {
