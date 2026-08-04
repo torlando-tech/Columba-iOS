@@ -144,18 +144,34 @@ public final class MessagingViewModel {
             try await repository.ensureConversation(conversationHash, displayName: displayName)
             try await repository.markConversationRead(conversationHash)
 
-            // Preserve the current history depth when a repository notification
-            // refreshes the newest records. One record of slack retains the
-            // previous oldest row when the refresh includes a newly arrived
-            // message.
+            // Preserve the current history depth when repository notifications
+            // refresh the newest records. If a burst arrived, expand the fetch
+            // until it still contains the prior oldest persisted row; a fixed
+            // one-record allowance can evict the visible anchor.
             let retainedRecordCount = pageCursor.nextOffset
-            let refreshSlack = retainedRecordCount > 0 && !messages.isEmpty ? 1 : 0
-            let fetchLimit = max(Self.pageSize, retainedRecordCount + refreshSlack)
+            let priorOldestID = messages.first {
+                !unpersistedOutboundIDs.contains($0.id)
+            }?.id
+            var fetchLimit = max(Self.pageSize, retainedRecordCount + 1)
 
-            // Fetch the newest retained history window.
             let hasInterruptedRetry = try await repository.hasUncertainRetry(for: conversationHash)
-            let records = try await repository.fetchMessageRecords(
+            var records = try await repository.fetchMessageRecords(
                 for: conversationHash, limit: fetchLimit, offset: 0)
+            while loadGeneration == paginationGeneration,
+                  let priorOldestID,
+                  let expandedLimit = MessageRefreshWindowPolicy.expandedLimit(
+                    currentLimit: fetchLimit,
+                    fetchedCount: records.count,
+                    containsPriorOldest: records.contains {
+                        Self.recordID($0) == priorOldestID
+                    },
+                    pageSize: Self.pageSize
+                  ) {
+                fetchLimit = expandedLimit
+                records = try await repository.fetchMessageRecords(
+                    for: conversationHash, limit: fetchLimit, offset: 0
+                )
+            }
             let loaded = records.reversed()
                 .map { Message(from: $0, localHash: appServices.localIdentityHash) }
                 .filter { !$0.isEmpty }  // Hide telemetry-only messages (e.g. location sharing)
@@ -268,7 +284,7 @@ public final class MessagingViewModel {
     }
 
     @MainActor
-    private func recordNewestPersistence() async {
+    private func invalidatePaginationAndRefresh() async {
         paginationGeneration &+= 1
         pendingRefresh = true
         await runPendingRefreshIfNeeded()
@@ -283,7 +299,19 @@ public final class MessagingViewModel {
         let pending = current.filter {
             pendingIDs.contains($0.id) && !loadedIDs.contains($0.id)
         }
-        return loaded + pending
+        return (loaded + pending)
+            .enumerated()
+            .sorted { lhs, rhs in
+                if lhs.element.timestamp == rhs.element.timestamp {
+                    return lhs.offset < rhs.offset
+                }
+                return lhs.element.timestamp < rhs.element.timestamp
+            }
+            .map(\.element)
+    }
+
+    private static func recordID(_ record: MessageRecord) -> String {
+        record.messageId.map { String(format: "%02x", $0) }.joined()
     }
 
     /// Actionable failure returned when a backend does not accept a send.
@@ -534,7 +562,7 @@ public final class MessagingViewModel {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
                 if localRetryHash == nil {
                     unpersistedOutboundIDs.remove(realId)
-                    await recordNewestPersistence()
+                    await invalidatePaginationAndRefresh()
                 }
             } catch {
                 unpersistedOutboundIDs.remove(realId)
@@ -608,7 +636,7 @@ public final class MessagingViewModel {
                         try await persistMessage(retryMessage, replacing: localRetryHash)
                         if localRetryHash == nil {
                             unpersistedOutboundIDs.remove(realId)
-                            await recordNewestPersistence()
+                            await invalidatePaginationAndRefresh()
                         }
                     } catch {
                         unpersistedOutboundIDs.remove(realId)
@@ -634,7 +662,7 @@ public final class MessagingViewModel {
                 persisted = true
                 if localRetryHash == nil {
                     unpersistedOutboundIDs.remove(optimisticId)
-                    await recordNewestPersistence()
+                    await invalidatePaginationAndRefresh()
                 }
             } catch {
                 unpersistedOutboundIDs.remove(optimisticId)
@@ -723,6 +751,7 @@ public final class MessagingViewModel {
         if let hash = messageHash {
             do {
                 try await repository.deleteMessage(hash)
+                await invalidatePaginationAndRefresh()
             } catch {
                 logger.error("Failed to delete message: \(error.localizedDescription)")
             }

@@ -44,7 +44,18 @@ struct MessagePageCursor {
     mutating func recordFetchedPage(recordCount: Int) {
         nextOffset += recordCount
     }
+}
 
+struct MessageRefreshWindowPolicy {
+    static func expandedLimit(
+        currentLimit: Int,
+        fetchedCount: Int,
+        containsPriorOldest: Bool,
+        pageSize: Int
+    ) -> Int? {
+        guard fetchedCount == currentLimit, !containsPriorOldest else { return nil }
+        return currentLimit + pageSize
+    }
 }
 
 #if os(iOS)
