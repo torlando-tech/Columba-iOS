@@ -58,6 +58,7 @@ public final class MessagingViewModel {
     private var notificationTask: Any?
     private var deliveryTask: Any?
     private var pendingRefresh = false
+    private var paginationGeneration: UInt64 = 0
 
     // MARK: - Initialization
 
@@ -133,6 +134,7 @@ public final class MessagingViewModel {
             return
         }
         isLoading = true
+        let loadGeneration = paginationGeneration
 
         do {
             // Ensure conversation exists, then clear unread state as soon as the
@@ -171,6 +173,13 @@ public final class MessagingViewModel {
                 }
             }
 
+            guard loadGeneration == paginationGeneration else {
+                pendingRefresh = true
+                isLoading = false
+                await runPendingRefreshIfNeeded()
+                return
+            }
+
             messages = resolvedMessages
             pageCursor.reset(recordCount: records.count)
             allMessagesLoaded = records.count < fetchLimit
@@ -192,9 +201,12 @@ public final class MessagingViewModel {
 
     /// Load older messages when scrolling up.
     @MainActor
-    public func loadMoreMessages() async {
-        guard !isLoading, !isLoadingMore, !allMessagesLoaded else { return }
+    @discardableResult
+    public func loadMoreMessages() async -> Bool {
+        guard !isLoading, !isLoadingMore, !allMessagesLoaded else { return false }
         isLoadingMore = true
+        let loadGeneration = paginationGeneration
+        var consumedPage = false
 
         do {
             // Database pages can contain telemetry-only records that do not
@@ -205,24 +217,33 @@ public final class MessagingViewModel {
             let hasInterruptedRetry = try await repository.hasUncertainRetry(for: conversationHash)
             let records = try await repository.fetchMessageRecords(
                 for: conversationHash, limit: Self.pageSize, offset: offset)
-            if hasInterruptedRetry {
-                errorMessage = Self.interruptedRetryWarning
-            } else if errorMessage == Self.interruptedRetryWarning {
-                errorMessage = nil
-            }
-            if records.isEmpty {
-                allMessagesLoaded = true
-            } else {
-                pageCursor.recordFetchedPage(recordCount: records.count)
-                let older = records.reversed()
-                    .map { Message(from: $0, localHash: appServices.localIdentityHash) }
-                    .filter { !$0.isEmpty }  // Hide telemetry-only messages
-                var knownIDs = Set(messages.map(\.id))
-                let uniqueOlder = older.filter { knownIDs.insert($0.id).inserted }
 
-                messages.insert(contentsOf: uniqueOlder, at: 0)
-                if records.count < Self.pageSize {
+            if loadGeneration != paginationGeneration {
+                // A new record was persisted at the head while this offset page
+                // was in flight. Discard the stale page and rebuild from offset
+                // zero so an overlap cannot advance the cursor past a record.
+                pendingRefresh = true
+            } else {
+                consumedPage = true
+                if hasInterruptedRetry {
+                    errorMessage = Self.interruptedRetryWarning
+                } else if errorMessage == Self.interruptedRetryWarning {
+                    errorMessage = nil
+                }
+                if records.isEmpty {
                     allMessagesLoaded = true
+                } else {
+                    pageCursor.recordFetchedPage(recordCount: records.count)
+                    let older = records.reversed()
+                        .map { Message(from: $0, localHash: appServices.localIdentityHash) }
+                        .filter { !$0.isEmpty }  // Hide telemetry-only messages
+                    var knownIDs = Set(messages.map(\.id))
+                    let uniqueOlder = older.filter { knownIDs.insert($0.id).inserted }
+
+                    messages.insert(contentsOf: uniqueOlder, at: 0)
+                    if records.count < Self.pageSize {
+                        allMessagesLoaded = true
+                    }
                 }
             }
         } catch {
@@ -231,6 +252,7 @@ public final class MessagingViewModel {
 
         isLoadingMore = false
         await runPendingRefreshIfNeeded()
+        return consumedPage
     }
 
     @MainActor
@@ -238,6 +260,16 @@ public final class MessagingViewModel {
         guard pendingRefresh, !isLoading, !isLoadingMore else { return }
         pendingRefresh = false
         await loadMessages()
+    }
+
+    @MainActor
+    private func recordNewestPersistence() {
+        paginationGeneration &+= 1
+        if isLoading || isLoadingMore {
+            pendingRefresh = true
+        } else {
+            pageCursor.recordInsertedAtNewest()
+        }
     }
 
     /// Actionable failure returned when a backend does not accept a send.
@@ -480,7 +512,7 @@ public final class MessagingViewModel {
             do {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
                 if localRetryHash == nil {
-                    pageCursor.recordInsertedAtNewest()
+                    recordNewestPersistence()
                 }
             } catch {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
@@ -548,7 +580,7 @@ public final class MessagingViewModel {
                     do {
                         try await persistMessage(retryMessage, replacing: localRetryHash)
                         if localRetryHash == nil {
-                            pageCursor.recordInsertedAtNewest()
+                            recordNewestPersistence()
                         }
                     } catch {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")

@@ -337,6 +337,7 @@ final class MessageTimelinePolicyTests: XCTestCase {
         controller.onLoadOlder = {
             controller.update(messages: [], isLoadingMore: false, allMessagesLoaded: true)
             requested.fulfill()
+            return true
         }
         controller.loadViewIfNeeded()
         controller.setViewportForTesting(CGSize(width: 390, height: 700))
@@ -350,5 +351,29 @@ final class MessageTimelinePolicyTests: XCTestCase {
 
         controller.setContentOffsetForTesting(y: 0)
         await fulfillment(of: [requested], timeout: 1)
+    }
+
+    @MainActor
+    func testCollectionTimelineDoesNotRetryRejectedHistoryLoad() async {
+        var requestCount = 0
+        let controller = MessageTimelineViewController()
+        controller.onLoadOlder = {
+            requestCount += 1
+            return false
+        }
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 700))
+        controller.update(
+            messages: (0..<50).map {
+                Message(id: "message-\($0)", content: "Message \($0)", isFromMe: false)
+            },
+            isLoadingMore: false,
+            allMessagesLoaded: false
+        )
+
+        controller.setContentOffsetForTesting(y: 0)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(requestCount, 1)
     }
 }

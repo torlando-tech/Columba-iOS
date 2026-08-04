@@ -56,7 +56,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
     let messages: [Message]
     let isLoadingMore: Bool
     let allMessagesLoaded: Bool
-    let onLoadOlder: @MainActor () async -> Void
+    let onLoadOlder: @MainActor () async -> Bool
     let onReply: (Message) -> Void
     let onToggleReaction: (Message, String) -> Void
     let onLongPress: (Message) -> Void
@@ -85,7 +85,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
 
 @available(iOS 17.0, *)
 final class MessageTimelineViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate {
-    var onLoadOlder: (@MainActor () async -> Void)?
+    var onLoadOlder: (@MainActor () async -> Bool)?
     var onReply: ((Message) -> Void)?
     var onToggleReaction: ((Message, String) -> Void)?
     var onLongPress: ((Message) -> Void)?
@@ -282,7 +282,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
         isLoadingMore = true
         updateLoadingIndicator()
         loadTask = Task { @MainActor [weak self] in
-            await onLoadOlder()
+            let consumedPage = await onLoadOlder()
             guard let self, !Task.isCancelled else { return }
             self.loadTask = nil
             self.isLoadingMore = false
@@ -290,8 +290,10 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
             // SwiftUI applies the new message page and exhaustion state on the
             // next main-loop turn. Re-check after that update so telemetry-only
             // pages cannot strand the user inside the preload threshold.
-            DispatchQueue.main.async { [weak self] in
-                self?.requestOlderMessagesIfNecessary()
+            if consumedPage {
+                DispatchQueue.main.async { [weak self] in
+                    self?.requestOlderMessagesIfNecessary()
+                }
             }
         }
     }
