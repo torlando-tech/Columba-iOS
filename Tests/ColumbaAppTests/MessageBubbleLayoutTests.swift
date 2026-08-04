@@ -151,6 +151,16 @@ final class MessageBubbleLayoutTests: XCTestCase {
 
         This is **bold**, *emphasized*, and ~~removed~~ text with `inline code`.
 
+        ```swift
+        struct Peer {
+            let name: String
+            let isReachable: Bool
+        }
+
+        let peer = Peer(name: "Columba", isReachable: true)
+        print(peer.name)
+        ```
+
         - First item
         - Second item
 

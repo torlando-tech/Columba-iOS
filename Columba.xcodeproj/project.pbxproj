@@ -278,6 +278,8 @@
 		MDB002 /* MessageBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDB003 /* MessageBody.swift */; };
 		MDUIBLD1 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = MDUIPROD1 /* MarkdownUI */; };
 		MDUIBLD2 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = MDUIPROD2 /* MarkdownUI */; };
+		SPLASHBLD1 /* Splash in Frameworks */ = {isa = PBXBuildFile; productRef = SPLASHPROD1 /* Splash */; };
+		SPLASHBLD2 /* Splash in Frameworks */ = {isa = PBXBuildFile; productRef = SPLASHPROD2 /* Splash */; };
 		C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
 		C4F369EC98C2B903701CE74A /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
 		C60C9313A6AFB95FCFB8969A /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
@@ -600,6 +602,7 @@
 				E34B504A6DCC8F5E7F44E491 /* LXMFSwift in Frameworks */,
 				D4E5F60718293A4B5C6D7E8D /* GRDB in Frameworks */,
 				MDUIBLD2 /* MarkdownUI in Frameworks */,
+				SPLASHBLD2 /* Splash in Frameworks */,
 				73B2FC9ECC25BA7B4AFF3D96 /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -634,6 +637,7 @@
 				2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */,
 				D4E5F60718293A4B5C6D7E8B /* GRDB in Frameworks */,
 				MDUIBLD1 /* MarkdownUI in Frameworks */,
+				SPLASHBLD1 /* Splash in Frameworks */,
 				83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1142,6 +1146,7 @@
 				D4E5F60718293A4B5C6D7E8C /* GRDB */,
 				030380C51B178354F4D4E88F /* ReticulumSwift */,
 				MDUIPROD2 /* MarkdownUI */,
+				SPLASHPROD2 /* Splash */,
 			);
 			productName = ColumbaModelBApp;
 			productReference = E59ED1029D4A906764BC582F /* ColumbaModelBApp.app */;
@@ -1212,6 +1217,7 @@
 				D4E5F60718293A4B5C6D7E8A /* GRDB */,
 				A1380C075A9F67E1B173EA94 /* ReticulumSwift */,
 				MDUIPROD1 /* MarkdownUI */,
+				SPLASHPROD1 /* Splash */,
 			);
 			productName = ColumbaApp;
 			productReference = PROD /* ColumbaApp.app */;
@@ -1288,6 +1294,7 @@
 				2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */,
 				2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */,
 				MDUIREF /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+				SPLASHREF /* XCRemoteSwiftPackageReference "Splash" */,
 			);
 			productRefGroup = PRODS /* Products */;
 			projectDirPath = "";
@@ -2273,6 +2280,14 @@
 				version = 2.4.1;
 			};
 		};
+		SPLASHREF /* XCRemoteSwiftPackageReference "Splash" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/JohnSundell/Splash";
+			requirement = {
+				kind = exactVersion;
+				version = 0.16.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -2396,6 +2411,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = MDUIREF /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
 			productName = MarkdownUI;
+		};
+		SPLASHPROD1 /* Splash */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = SPLASHREF /* XCRemoteSwiftPackageReference "Splash" */;
+			productName = Splash;
+		};
+		SPLASHPROD2 /* Splash */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = SPLASHREF /* XCRemoteSwiftPackageReference "Splash" */;
+			productName = Splash;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,6 +1,7 @@
 import Foundation
 import MarkdownUI
 import RNSAPI
+import Splash
 import SwiftUI
 
 /// A message link after scheme validation and NomadNet address parsing.
@@ -200,10 +201,47 @@ private struct MarkdownMessageText: View {
             }
             .markdownImageProvider(BlockedMarkdownImageProvider())
             .markdownInlineImageProvider(BlockedMarkdownInlineImageProvider())
+            .markdownCodeSyntaxHighlighter(
+                SplashCodeSyntaxHighlighter(
+                    theme: .wwdc17(withFont: .init(size: fontSize * 0.85))
+                )
+            )
+            .markdownBlockStyle(\.codeBlock) { configuration in
+                codeBlock(configuration)
+            }
             .fixedSize(horizontal: false, vertical: true)
             .onChange(of: content) { _, newContent in
                 parsedContent = MarkdownContent(newContent)
             }
+    }
+
+    private func codeBlock(_ configuration: CodeBlockConfiguration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let language = configuration.language, !language.isEmpty {
+                Text(language.uppercased())
+                    .font(.system(
+                        size: max(10, fontSize * 0.65),
+                        weight: .semibold,
+                        design: .monospaced
+                    ))
+                    .foregroundStyle(Color.white.opacity(0.65))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
+
+            ScrollView(.horizontal) {
+                configuration.label
+                    .relativeLineSpacing(.em(0.2))
+                    .markdownTextStyle {
+                        FontFamilyVariant(.monospaced)
+                        FontSize(fontSize * 0.82)
+                    }
+                    .padding(10)
+            }
+        }
+        .background(Color(red: 0.08, green: 0.09, blue: 0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .markdownMargin(top: .em(0.25), bottom: .em(0.6))
     }
 }
 
@@ -231,5 +269,50 @@ struct BlockedMarkdownInlineImageProvider: InlineImageProvider {
 
     func image(with url: URL, label: String) async throws -> Image {
         throw Blocked.remoteImage
+    }
+}
+
+private struct SplashCodeSyntaxHighlighter: CodeSyntaxHighlighter {
+    private let syntaxHighlighter: SyntaxHighlighter<SplashTextOutputFormat>
+
+    init(theme: Splash.Theme) {
+        syntaxHighlighter = SyntaxHighlighter(format: SplashTextOutputFormat(theme: theme))
+    }
+
+    func highlightCode(_ content: String, language: String?) -> Text {
+        guard language?.lowercased() == "swift" else {
+            return Text(content)
+        }
+        return syntaxHighlighter.highlight(content)
+    }
+}
+
+private struct SplashTextOutputFormat: OutputFormat {
+    let theme: Splash.Theme
+
+    func makeBuilder() -> Builder {
+        Builder(theme: theme)
+    }
+
+    struct Builder: OutputBuilder {
+        let theme: Splash.Theme
+        private var fragments: [Text] = []
+
+        mutating func addToken(_ token: String, ofType type: TokenType) {
+            let tokenColor = theme.tokenColors[type] ?? theme.plainTextColor
+            fragments.append(Text(token).foregroundColor(Color(uiColor: tokenColor)))
+        }
+
+        mutating func addPlainText(_ text: String) {
+            fragments.append(Text(text).foregroundColor(Color(uiColor: theme.plainTextColor)))
+        }
+
+        mutating func addWhitespace(_ whitespace: String) {
+            fragments.append(Text(whitespace))
+        }
+
+        func build() -> Text {
+            fragments.reduce(Text(""), +)
+        }
     }
 }
