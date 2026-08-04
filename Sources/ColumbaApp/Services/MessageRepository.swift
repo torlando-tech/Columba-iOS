@@ -33,6 +33,18 @@ import RNSAPI
 import LXMFSwift
 import GRDB
 
+public struct DraftRecord: Equatable, Sendable {
+    public let conversationHash: Data
+    public let content: String
+    public let updatedAt: Date
+
+    public init(conversationHash: Data, content: String, updatedAt: Date) {
+        self.conversationHash = conversationHash
+        self.content = content
+        self.updatedAt = updatedAt
+    }
+}
+
 /// Actor for thread-safe message database operations.
 ///
 /// Wraps the GRDB-backed `LXMFSwift.LXMFDatabase` and exposes RNSAPI Compat
@@ -52,6 +64,9 @@ public actor MessageRepository {
     /// Posted after durable conversation metadata changes without a new message.
     public static let conversationMetadataChangedNotification =
         Notification.Name("network.columba.conversationMetadataChanged")
+    /// Posted after an app-owned conversation draft has committed to storage.
+    public static let draftChangedNotification =
+        Notification.Name("network.columba.draftChanged")
 
     public static let conversationHashUserInfoKey = "conversationHash"
     public static let stagedRetryMarker = "columba-app-retry-staged-v1"
@@ -111,6 +126,16 @@ public actor MessageRepository {
             try db.execute(sql: "PRAGMA busy_timeout=5000")
         }
         self.replacementPool = try DatabasePool(path: grdbPath, configuration: config)
+        try self.replacementPool.write { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS columba_drafts (
+                    conversation_hash BLOB PRIMARY KEY
+                        REFERENCES conversations(destination_hash) ON DELETE CASCADE,
+                    content TEXT NOT NULL,
+                    updated_at DOUBLE NOT NULL
+                )
+                """)
+        }
     }
 
     // MARK: - Conversation Operations
@@ -153,6 +178,93 @@ public actor MessageRepository {
     /// Ensure a conversation exists for a destination.
     public func ensureConversation(_ conversationHash: Data, displayName: String?) async throws {
         try await database.ensureConversation(hash: conversationHash, displayName: displayName)
+    }
+
+    // MARK: - Draft Operations
+
+    /// Atomically save a draft, or clear it when the content is only whitespace.
+    /// Nonblank content is persisted exactly as provided.
+    public func saveDraft(_ content: String, for conversationHash: Data) async throws {
+        if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            try await clearDraft(for: conversationHash)
+            return
+        }
+
+        try await replacementPool.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO columba_drafts (conversation_hash, content, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(conversation_hash) DO UPDATE SET
+                        content = excluded.content,
+                        updated_at = excluded.updated_at
+                    """,
+                arguments: [conversationHash, content, Date().timeIntervalSince1970]
+            )
+        }
+        postDraftChanged(for: conversationHash)
+    }
+
+    /// Fetch the draft for one conversation.
+    public func fetchDraft(for conversationHash: Data) async throws -> DraftRecord? {
+        try await replacementPool.read { db in
+            try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT conversation_hash, content, updated_at
+                    FROM columba_drafts
+                    WHERE conversation_hash = ?
+                    """,
+                arguments: [conversationHash]
+            ).map(Self.mapDraft)
+        }
+    }
+
+    /// Fetch all drafts in most-recently-updated order.
+    public func fetchDrafts() async throws -> [DraftRecord] {
+        try await replacementPool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT conversation_hash, content, updated_at
+                    FROM columba_drafts
+                    ORDER BY updated_at DESC
+                    """
+            ).map(Self.mapDraft)
+        }
+    }
+
+    /// Clear the draft for one conversation.
+    public func clearDraft(for conversationHash: Data) async throws {
+        let deleted = try await replacementPool.write { db in
+            try db.execute(
+                sql: "DELETE FROM columba_drafts WHERE conversation_hash = ?",
+                arguments: [conversationHash]
+            )
+            return db.changesCount > 0
+        }
+        if deleted {
+            postDraftChanged(for: conversationHash)
+        }
+    }
+
+    private static func mapDraft(_ row: Row) -> DraftRecord {
+        let conversationHash: Data = row["conversation_hash"]
+        let content: String = row["content"]
+        let updatedAt: Double = row["updated_at"]
+        return DraftRecord(
+            conversationHash: conversationHash,
+            content: content,
+            updatedAt: Date(timeIntervalSince1970: updatedAt)
+        )
+    }
+
+    private func postDraftChanged(for conversationHash: Data) {
+        NotificationCenter.default.post(
+            name: Self.draftChangedNotification,
+            object: nil,
+            userInfo: [Self.conversationHashUserInfoKey: conversationHash]
+        )
     }
 
     /// Posted after persisted favorite/contact membership changes.
