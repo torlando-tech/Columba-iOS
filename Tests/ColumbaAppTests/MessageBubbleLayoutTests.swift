@@ -295,8 +295,6 @@ final class MessageTimelinePolicyTests: XCTestCase {
         cursor.recordFetchedPage(recordCount: 50)
         XCTAssertEqual(cursor.nextOffset, 100)
 
-        cursor.recordInsertedAtNewest()
-        XCTAssertEqual(cursor.nextOffset, 101)
     }
 
     @MainActor

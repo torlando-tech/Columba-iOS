@@ -45,9 +45,6 @@ struct MessagePageCursor {
         nextOffset += recordCount
     }
 
-    mutating func recordInsertedAtNewest() {
-        nextOffset += 1
-    }
 }
 
 #if os(iOS)

@@ -263,13 +263,10 @@ public final class MessagingViewModel {
     }
 
     @MainActor
-    private func recordNewestPersistence() {
+    private func recordNewestPersistence() async {
         paginationGeneration &+= 1
-        if isLoading || isLoadingMore {
-            pendingRefresh = true
-        } else {
-            pageCursor.recordInsertedAtNewest()
-        }
+        pendingRefresh = true
+        await runPendingRefreshIfNeeded()
     }
 
     /// Actionable failure returned when a backend does not accept a send.
@@ -512,7 +509,7 @@ public final class MessagingViewModel {
             do {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
                 if localRetryHash == nil {
-                    recordNewestPersistence()
+                    await recordNewestPersistence()
                 }
             } catch {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
@@ -580,7 +577,7 @@ public final class MessagingViewModel {
                     do {
                         try await persistMessage(retryMessage, replacing: localRetryHash)
                         if localRetryHash == nil {
-                            recordNewestPersistence()
+                            await recordNewestPersistence()
                         }
                     } catch {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
@@ -603,6 +600,9 @@ public final class MessagingViewModel {
             do {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
                 persisted = true
+                if localRetryHash == nil {
+                    await recordNewestPersistence()
+                }
             } catch {
                 logger.error("[MSG_VM] saveMessage(failed) failed: \(error.localizedDescription)")
             }
