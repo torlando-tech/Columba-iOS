@@ -388,6 +388,7 @@ struct MessagingView: View {
         }
         #if os(iOS)
         .navigationBarBackButtonHidden(true)
+        .navigationBarTitleDisplayMode(.inline)
         .background(InteractivePopGestureEnabler())
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
