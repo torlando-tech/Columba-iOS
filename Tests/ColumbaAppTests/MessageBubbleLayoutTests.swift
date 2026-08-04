@@ -6,6 +6,34 @@ import XCTest
 final class MessageBubbleLayoutTests: XCTestCase {
 
     @MainActor
+    func testMessageTextScaleChangesRenderedBodyHeight() throws {
+        let message = Message(
+            content: "A longer message body that wraps across multiple lines so the selected conversation text size has a measurable effect on the rendered bubble height.",
+            timestamp: Date(),
+            isFromMe: false,
+            deliveryStatus: .delivered
+        )
+        let smallHost = UIHostingController(
+            rootView: MessageBubble(message: message, messageTextScale: 0.7)
+                .frame(width: 320)
+        )
+        let largeHost = UIHostingController(
+            rootView: MessageBubble(message: message, messageTextScale: 2.0)
+                .frame(width: 320)
+        )
+
+        let proposal = CGSize(width: 320, height: 1_000)
+        let small = smallHost.sizeThatFits(in: proposal)
+        let large = largeHost.sizeThatFits(in: proposal)
+
+        XCTAssertGreaterThan(
+            large.height,
+            small.height + 60,
+            "The 200% setting must visibly enlarge the message body relative to 70%"
+        )
+    }
+
+    @MainActor
     func testReplyBubbleUsesContentHeightAndPreservesLongMessageBody() throws {
         let message = Message(
             content: "Test response: this sentence is intentionally long enough to wrap across several lines. The complete sent message must remain visible below its reply preview without truncation.",

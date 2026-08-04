@@ -23,6 +23,29 @@ LOCATION_SHARING_MANAGER = ROOT / "Sources/ColumbaApp/Services/LocationSharingMa
 
 
 class ReportedRuntimeBugContracts(unittest.TestCase):
+    def test_ios_conversation_message_text_scale_parity_contract(self) -> None:
+        settings_repository = (
+            ROOT / "Sources/ColumbaApp/Services/SettingsRepository.swift"
+        ).read_text()
+        messaging_view = MESSAGING_VIEW.read_text()
+        message_bubble = MESSAGE_BUBBLE.read_text()
+        migration_exporter = (
+            ROOT / "Sources/ColumbaApp/Services/MigrationExporter.swift"
+        ).read_text()
+        migration_importer = (
+            ROOT / "Sources/ColumbaApp/Services/MigrationImporter.swift"
+        ).read_text()
+
+        self.assertIn('message_text_scale', settings_repository)
+        self.assertIn(
+            'Label("Text Size", systemImage: "textformat.size")', messaging_view
+        )
+        self.assertIn('TextSizePickerSheet(', messaging_view)
+        self.assertIn('messageTextScale: messageTextScale', messaging_view)
+        self.assertIn('size: 17 * messageTextScale', message_bubble)
+        self.assertIn('.double("message_text_scale"', migration_exporter)
+        self.assertIn('case "message_text_scale":', migration_importer)
+
     def test_inbound_telemetry_retains_lxmf_display_name(self) -> None:
         handler = INCOMING_MESSAGE_HANDLER.read_text()
         telemetry_dispatch = re.search(
