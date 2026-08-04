@@ -23,11 +23,24 @@ final class MessageBubbleLayoutTests: XCTestCase {
         let fitted = host.sizeThatFits(
             in: CGSize(width: 390, height: 1_000)
         )
+        let bodyOnlyMessage = Message(
+            content: message.content,
+            timestamp: message.timestamp,
+            isFromMe: message.isFromMe,
+            deliveryStatus: message.deliveryStatus
+        )
+        let bodyOnlyHost = UIHostingController(
+            rootView: MessageBubble(message: bodyOnlyMessage)
+                .frame(width: 390)
+        )
+        let bodyOnlyFitted = bodyOnlyHost.sizeThatFits(
+            in: CGSize(width: 390, height: 1_000)
+        )
 
         XCTAssertGreaterThan(
             fitted.height,
-            150,
-            "The reply preview and wrapped body must both contribute to bubble height"
+            bodyOnlyFitted.height + 25,
+            "The reply bubble must retain the full body height plus visible reply context"
         )
         XCTAssertLessThan(
             fitted.height,
