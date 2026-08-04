@@ -517,6 +517,45 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         XCTAssertEqual(secondRecoveryCount, 0)
     }
 
+    func testRecoveredCanonicalRetryKeepsStorageIdentityForRetryAndDelete() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x73, count: 16)
+        let storageHash = Data(repeating: 0x74, count: 32)
+        let canonicalHash = Data(repeating: 0x75, count: 32)
+        let retry = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("uncertain retry".utf8)
+        )
+        retry.hash = storageHash
+        retry.state = .failed
+        try await repository.saveMessage(retry)
+
+        retry.state = .sending
+        try await repository.stageRetry(retry, replacing: storageHash)
+        try await repository.recoverStagedRetry(storageHash, canonicalHash: canonicalHash)
+
+        let storedRecovered = try await repository.getMessageRecord(id: storageHash)
+        let recoveredRecord = try XCTUnwrap(storedRecovered)
+        let visible = Message(from: recoveredRecord, localHash: Data())
+        XCTAssertEqual(visible.storageHash, storageHash)
+        XCTAssertEqual(visible.messageHash, canonicalHash)
+        XCTAssertFalse(visible.isTargetSafe)
+        XCTAssertEqual(
+            MessageRepository.canonicalHashFromUncertainRetryMarker(recoveredRecord.receivingInterface),
+            canonicalHash
+        )
+
+        retry.state = .sending
+        try await repository.stageRetry(retry, replacing: storageHash)
+        try await repository.recoverStagedRetry(storageHash, canonicalHash: canonicalHash)
+        try await repository.deleteMessage(storageHash)
+        let deleted = try await repository.getMessageRecord(id: storageHash)
+        XCTAssertNil(deleted)
+    }
+
     func testNonAppSendingRowIsNotRecovered() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }

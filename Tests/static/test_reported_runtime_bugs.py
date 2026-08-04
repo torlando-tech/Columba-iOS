@@ -174,8 +174,9 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             r"viewModel\?\.canTargetMessage\(messageId: msg\.id\) == true else \{ return \}",
             messaging,
         ))
+        self.assertIn("target.isTargetSafe", messaging)
         self.assertIn(
-            "let replyToId = replyTarget?.messageHash != nil ? replyTarget?.id : nil",
+            'return hash.map { String(format: "%02x", $0) }.joined()',
             messaging,
         )
 

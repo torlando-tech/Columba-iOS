@@ -64,7 +64,6 @@ public final class MessagingViewModel {
     private var stagedRetryRecoveryHashes: [String: Data] = [:]
     private var pendingOutboundAliases: [String: String] = [:]
     private var pendingDeliveryProofs: [String: LXMessageState] = [:]
-    private var unsafeTargetMessageIDs: Set<String> = []
 
     // MARK: - Initialization
 
@@ -209,10 +208,20 @@ public final class MessagingViewModel {
                         resolvedMessages[i].replyToPreview = await resolveReplyPreview(replyId)
                     }
                 }
-                if let proof = pendingDeliveryProofs[resolvedMessages[i].id] {
+                if !resolvedMessages[i].isTargetSafe,
+                   let canonicalHash = resolvedMessages[i].messageHash,
+                   canonicalHash != resolvedMessages[i].storageHash {
+                    pendingOutboundAliases[Self.hexString(canonicalHash)] = resolvedMessages[i].id
+                }
+                if let proof = Self.pendingProof(
+                    forVisibleID: resolvedMessages[i].id,
+                    aliases: pendingOutboundAliases,
+                    proofs: pendingDeliveryProofs
+                ) {
                     resolvedMessages[i].deliveryStatus = (proof == .delivered) ? .delivered : .failed
                 }
             }
+            await reconcileAliasedDeliveryProofs(in: resolvedMessages)
 
             guard loadGeneration == paginationGeneration else {
                 pendingRefresh = true
@@ -315,10 +324,13 @@ public final class MessagingViewModel {
     }
 
     @MainActor
-    private func recoverStagedRetryAfterPersistenceFailure(_ hash: Data?) async -> Bool {
+    private func recoverStagedRetryAfterPersistenceFailure(
+        _ hash: Data?,
+        canonicalHash: Data?
+    ) async -> Bool {
         guard let hash else { return true }
         do {
-            try await repository.recoverStagedRetry(hash)
+            try await repository.recoverStagedRetry(hash, canonicalHash: canonicalHash)
             await invalidatePaginationAndRefresh()
             return true
         } catch {
@@ -357,6 +369,23 @@ public final class MessagingViewModel {
     }
 
     @MainActor
+    private func reconcileAliasedDeliveryProofs(in loaded: [Message]) async {
+        for message in loaded where !message.isTargetSafe {
+            guard let canonicalHash = message.messageHash,
+                  let storageHash = message.storageHash,
+                  let proof = pendingDeliveryProofs[Self.hexString(canonicalHash)] else { continue }
+            do {
+                try await repository.updateMessageState(id: storageHash, state: proof)
+                if pendingDeliveryProofs[Self.hexString(canonicalHash)] == proof {
+                    pendingDeliveryProofs.removeValue(forKey: Self.hexString(canonicalHash))
+                }
+            } catch {
+                logger.error("[MSG_VM] aliased delivery proof reconciliation failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @MainActor
     private func pendingDeliveryProof(for hash: Data) -> LXMessageState? {
         let hashHex = Self.hexString(hash)
         return pendingDeliveryProofs[hashHex]
@@ -382,6 +411,20 @@ public final class MessagingViewModel {
         aliases: [String: String]
     ) -> String {
         aliases[realID] ?? realID
+    }
+
+    static func pendingProof(
+        forVisibleID visibleID: String,
+        aliases: [String: String],
+        proofs: [String: LXMessageState]
+    ) -> LXMessageState? {
+        if let direct = proofs[visibleID] { return direct }
+        guard let canonicalID = aliases.first(where: {
+            $0.value == visibleID && proofs[$0.key] != nil
+        })?.key else {
+            return nil
+        }
+        return proofs[canonicalID]
     }
 
     static func mergingPendingOutbound(
@@ -592,7 +635,9 @@ public final class MessagingViewModel {
             imageFormat: imageFormat,
             attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) },
             replyToId: replyToId,
-            replyToPreview: replyPreview
+            replyToPreview: replyPreview,
+            storageHash: localRetryHash,
+            isTargetSafe: false
         )
 
         // Add to UI immediately, or replace the existing failed row in place.
@@ -633,12 +678,13 @@ public final class MessagingViewModel {
                 unpersistedOutboundIDs.remove(optimisticId)
                 unsavedFailedOutboundIDs.remove(optimisticId)
                 stagedRetryRecoveryHashes.removeValue(forKey: optimisticId)
-                unsafeTargetMessageIDs.remove(optimisticId)
                 await invalidatePaginationAndRefresh()
             } catch {
                 let proof = pendingDeliveryProof(for: sentHash)
-                unsafeTargetMessageIDs.insert(optimisticId)
-                let recovered = await recoverStagedRetryAfterPersistenceFailure(localRetryHash)
+                let recovered = await recoverStagedRetryAfterPersistenceFailure(
+                    localRetryHash,
+                    canonicalHash: sentHash
+                )
                 if localRetryHash != nil && recovered {
                     unpersistedOutboundIDs.remove(optimisticId)
                     unsavedFailedOutboundIDs.remove(optimisticId)
@@ -701,12 +747,13 @@ public final class MessagingViewModel {
                         unpersistedOutboundIDs.remove(optimisticId)
                         unsavedFailedOutboundIDs.remove(optimisticId)
                         stagedRetryRecoveryHashes.removeValue(forKey: optimisticId)
-                        unsafeTargetMessageIDs.remove(optimisticId)
                         await invalidatePaginationAndRefresh()
                     } catch {
                         let proof = pendingDeliveryProof(for: retryHash)
-                        unsafeTargetMessageIDs.insert(optimisticId)
-                        let recovered = await recoverStagedRetryAfterPersistenceFailure(localRetryHash)
+                        let recovered = await recoverStagedRetryAfterPersistenceFailure(
+                            localRetryHash,
+                            canonicalHash: retryHash
+                        )
                         if localRetryHash != nil && recovered {
                             unpersistedOutboundIDs.remove(optimisticId)
                             unsavedFailedOutboundIDs.remove(optimisticId)
@@ -740,11 +787,12 @@ public final class MessagingViewModel {
                 unpersistedOutboundIDs.remove(optimisticId)
                 unsavedFailedOutboundIDs.remove(optimisticId)
                 stagedRetryRecoveryHashes.removeValue(forKey: optimisticId)
-                unsafeTargetMessageIDs.remove(optimisticId)
                 await invalidatePaginationAndRefresh()
             } catch {
-                unsafeTargetMessageIDs.insert(optimisticId)
-                let recovered = await recoverStagedRetryAfterPersistenceFailure(localRetryHash)
+                let recovered = await recoverStagedRetryAfterPersistenceFailure(
+                    localRetryHash,
+                    canonicalHash: nil
+                )
                 persisted = localRetryHash != nil && recovered
                 if localRetryHash != nil && recovered {
                     unpersistedOutboundIDs.remove(optimisticId)
@@ -805,7 +853,10 @@ public final class MessagingViewModel {
         if unsavedFailedOutboundIDs.contains(messageId),
            let stagedHash = stagedRetryRecoveryHashes[messageId] {
             do {
-                try await repository.recoverStagedRetry(stagedHash)
+                try await repository.recoverStagedRetry(
+                    stagedHash,
+                    canonicalHash: failedMessage.messageHash
+                )
                 stagedRetryRecoveryHashes.removeValue(forKey: messageId)
                 unsavedFailedOutboundIDs.remove(messageId)
                 unpersistedOutboundIDs.remove(messageId)
@@ -816,7 +867,6 @@ public final class MessagingViewModel {
             }
         } else if unsavedFailedOutboundIDs.contains(messageId) {
             clearPendingAliases(for: messageId)
-            unsafeTargetMessageIDs.remove(messageId)
             unsavedFailedOutboundIDs.remove(messageId)
             unpersistedOutboundIDs.remove(messageId)
             messages.removeAll { $0.id == messageId }
@@ -830,7 +880,9 @@ public final class MessagingViewModel {
             return
         }
 
-        let storedHash = failedMessage.messageHash ?? Self.hexToData(failedMessage.id)
+        let storedHash = failedMessage.storageHash
+            ?? failedMessage.messageHash
+            ?? Self.hexToData(failedMessage.id)
         let retryHash: Data
         if let storedHash, storedHash.count == 32 {
             retryHash = storedHash
@@ -842,7 +894,6 @@ public final class MessagingViewModel {
         // replaces the failed row only after the replacement is safely saved,
         // including migration of legacy non-32-byte temporary IDs.
         clearPendingAliases(for: messageId)
-        unsafeTargetMessageIDs.remove(messageId)
         _ = await sendMessage(
             text: failedMessage.content,
             imageData: failedMessage.imageData,
@@ -867,8 +918,9 @@ public final class MessagingViewModel {
     }
 
     public func canTargetMessage(messageId: String) -> Bool {
-        !unpersistedOutboundIDs.contains(messageId)
-            && !unsafeTargetMessageIDs.contains(messageId)
+        guard !unpersistedOutboundIDs.contains(messageId),
+              let message = messages.first(where: { $0.id == messageId }) else { return false }
+        return message.isTargetSafe
     }
 
     static func canDeleteMessage(
@@ -882,11 +934,16 @@ public final class MessagingViewModel {
     @MainActor
     public func deleteMessage(messageId: String, messageHash: Data?) async {
         guard canDeleteMessage(messageId: messageId) else { return }
+        let visibleMessage = messages.first(where: { $0.id == messageId })
+        let durableHash = visibleMessage?.storageHash ?? messageHash
 
         var wasUnsavedFailure = unsavedFailedOutboundIDs.contains(messageId)
         if wasUnsavedFailure, let stagedHash = stagedRetryRecoveryHashes[messageId] {
             do {
-                try await repository.recoverStagedRetry(stagedHash)
+                try await repository.recoverStagedRetry(
+                    stagedHash,
+                    canonicalHash: visibleMessage?.messageHash
+                )
                 wasUnsavedFailure = false
             } catch {
                 errorMessage = "The staged retry could not be recovered for deletion. Please try again."
@@ -898,7 +955,6 @@ public final class MessagingViewModel {
         unpersistedOutboundIDs.remove(messageId)
         stagedRetryRecoveryHashes.removeValue(forKey: messageId)
         clearPendingAliases(for: messageId)
-        unsafeTargetMessageIDs.remove(messageId)
 
         // Remove from UI immediately
         withAnimation {
@@ -910,8 +966,8 @@ public final class MessagingViewModel {
             return
         }
 
-        // Delete from database if we have the hash
-        if let hash = messageHash {
+        // Delete from database if we have the durable storage key.
+        if let hash = durableHash {
             do {
                 try await repository.deleteMessage(hash)
                 await invalidatePaginationAndRefresh()
@@ -931,7 +987,11 @@ public final class MessagingViewModel {
     /// Send an emoji reaction to a message (toggle: adds if not present, removes if present).
     @MainActor
     public func sendReaction(targetMessageId: String, targetMessageHash: Data?, emoji: String) async {
-        guard let hash = targetMessageHash else { return }
+        guard let target = messages.first(where: { $0.id == targetMessageId }),
+              target.isTargetSafe,
+              let canonicalHash = target.messageHash,
+              canonicalHash == targetMessageHash else { return }
+        let storageHash = target.storageHash ?? canonicalHash
         guard let backend = appServices.backend else { return }
 
         let localHashHex = appServices.localIdentityHash.map { String(format: "%02x", $0) }.joined()
@@ -943,7 +1003,7 @@ public final class MessagingViewModel {
         do {
             committedReactions = try await ReactionMutationGate.shared.withLock {
                 var reactionsDict: [String: [String]] = [:]
-                if let json = try await repository.getReactionsJson(hash),
+                if let json = try await repository.getReactionsJson(storageHash),
                    let data = json.data(using: .utf8),
                    let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] {
                     reactionsDict = dict
@@ -963,7 +1023,7 @@ public final class MessagingViewModel {
 
                 let jsonData = try JSONSerialization.data(withJSONObject: reactionsDict)
                 let jsonStr = String(decoding: jsonData, as: UTF8.self)
-                try await repository.updateReactions(hash, reactionsJson: jsonStr)
+                try await repository.updateReactions(storageHash, reactionsJson: jsonStr)
                 return reactionsDict
             }
         } catch {
@@ -991,7 +1051,7 @@ public final class MessagingViewModel {
         do {
             try await backend.lxmf.sendReaction(
                 destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
-                targetMessageHashHex: targetMessageId,
+                targetMessageHashHex: Self.hexString(canonicalHash),
                 emoji: emoji)
         } catch {
             logger.error("Failed to send reaction: \(error.localizedDescription)")

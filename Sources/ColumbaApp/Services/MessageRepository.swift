@@ -57,6 +57,31 @@ public actor MessageRepository {
     public static let stagedRetryMarker = "columba-app-retry-staged-v1"
     public static let uncertainRetryMarker = "columba-app-retry-uncertain-v1"
 
+    public static func uncertainRetryMarker(canonicalHash: Data?) -> String {
+        guard let canonicalHash else { return uncertainRetryMarker }
+        return uncertainRetryMarker + ":" + canonicalHash.map { String(format: "%02x", $0) }.joined()
+    }
+
+    public static func isUncertainRetryMarker(_ marker: String?) -> Bool {
+        marker?.hasPrefix(uncertainRetryMarker) == true
+    }
+
+    public static func canonicalHashFromUncertainRetryMarker(_ marker: String?) -> Data? {
+        guard let marker,
+              marker.hasPrefix(uncertainRetryMarker + ":") else { return nil }
+        let hex = String(marker.dropFirst(uncertainRetryMarker.count + 1))
+        guard hex.count == 64 else { return nil }
+        var data = Data()
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let end = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<end], radix: 16) else { return nil }
+            data.append(byte)
+            index = end
+        }
+        return data
+    }
+
     // MARK: - Properties
 
     /// The GRDB-backed canonical store written by the Swift / NE backend.
@@ -289,7 +314,7 @@ public actor MessageRepository {
                     SET message_id = ?, state = ?, method = ?, timestamp = ?,
                         receiving_interface = ?, updated_at = ?
                     WHERE message_id = ? AND incoming = 0 AND state = ?
-                      AND (receiving_interface IS NULL OR receiving_interface = ?)
+                      AND (receiving_interface IS NULL OR receiving_interface LIKE ?)
                     """,
                 arguments: [
                     message.hash,
@@ -300,7 +325,7 @@ public actor MessageRepository {
                     Date().timeIntervalSince1970,
                     oldId,
                     LXMFSwift.LXMessageState.failed.rawValue,
-                    Self.uncertainRetryMarker,
+                    Self.uncertainRetryMarker + "%",
                 ]
             )
             guard db.changesCount == 1 else {
@@ -329,7 +354,7 @@ public actor MessageRepository {
 
     /// Return an interrupted staged retry to a durable, explicitly uncertain
     /// failed state without deleting its only database row.
-    public func recoverStagedRetry(_ messageId: Data) async throws {
+    public func recoverStagedRetry(_ messageId: Data, canonicalHash: Data? = nil) async throws {
         try await replacementPool.write { db in
             try db.execute(
                 sql: """
@@ -340,7 +365,7 @@ public actor MessageRepository {
                     """,
                 arguments: [
                     LXMFSwift.LXMessageState.failed.rawValue,
-                    Self.uncertainRetryMarker,
+                    Self.uncertainRetryMarker(canonicalHash: canonicalHash),
                     Date().timeIntervalSince1970,
                     messageId,
                     Self.stagedRetryMarker,

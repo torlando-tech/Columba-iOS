@@ -168,7 +168,8 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertIn("Self.stagedRetryMarker", repository)
         self.assertIn("Self.uncertainRetryMarker", repository)
         self.assertIn("message_id = ? AND incoming = 0 AND state = ?", repository)
-        self.assertIn("receiving_interface IS NULL OR receiving_interface = ?", repository)
+        self.assertIn("receiving_interface IS NULL OR receiving_interface LIKE ?", repository)
+        self.assertIn('Self.uncertainRetryMarker + "%"', repository)
         self.assertIn("public func hasUncertainRetry", repository)
 
     def test_existing_qr_contact_can_refresh_peer_identity(self) -> None:

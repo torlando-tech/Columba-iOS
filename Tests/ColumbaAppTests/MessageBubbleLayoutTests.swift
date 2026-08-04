@@ -371,6 +371,14 @@ final class MessageTimelinePolicyTests: XCTestCase {
             MessagingViewModel.visibleMessageID(for: "persisted-hash", aliases: [:]),
             "persisted-hash"
         )
+        XCTAssertEqual(
+            MessagingViewModel.pendingProof(
+                forVisibleID: "optimistic-id",
+                aliases: ["real-hash": "optimistic-id"],
+                proofs: ["real-hash": .delivered]
+            ),
+            .delivered
+        )
     }
 
     func testRefreshPreservesOnlyUnpersistedOutboundRowsInTimelineOrder() {

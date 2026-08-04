@@ -691,7 +691,12 @@ struct MessagingView: View {
         let image = attachedImage
         let files = attachedFiles
         let replyTarget = viewModel?.replyToMessage
-        let replyToId = replyTarget?.messageHash != nil ? replyTarget?.id : nil
+        let replyToId: String? = {
+            guard let target = replyTarget,
+                  target.isTargetSafe,
+                  let hash = target.messageHash else { return nil }
+            return hash.map { String(format: "%02x", $0) }.joined()
+        }()
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 
