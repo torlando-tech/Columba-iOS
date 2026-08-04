@@ -59,6 +59,7 @@ public final class MessagingViewModel {
     private var deliveryTask: Any?
     private var pendingRefresh = false
     private var paginationGeneration: UInt64 = 0
+    private var unpersistedOutboundIDs: Set<String> = []
 
     // MARK: - Initialization
 
@@ -180,7 +181,11 @@ public final class MessagingViewModel {
                 return
             }
 
-            messages = resolvedMessages
+            messages = Self.mergingPendingOutbound(
+                loaded: resolvedMessages,
+                current: messages,
+                pendingIDs: unpersistedOutboundIDs
+            )
             pageCursor.reset(recordCount: records.count)
             allMessagesLoaded = records.count < fetchLimit
 
@@ -267,6 +272,18 @@ public final class MessagingViewModel {
         paginationGeneration &+= 1
         pendingRefresh = true
         await runPendingRefreshIfNeeded()
+    }
+
+    static func mergingPendingOutbound(
+        loaded: [Message],
+        current: [Message],
+        pendingIDs: Set<String>
+    ) -> [Message] {
+        let loadedIDs = Set(loaded.map(\.id))
+        let pending = current.filter {
+            pendingIDs.contains($0.id) && !loadedIDs.contains($0.id)
+        }
+        return loaded + pending
     }
 
     /// Actionable failure returned when a backend does not accept a send.
@@ -467,6 +484,9 @@ public final class MessagingViewModel {
                 messages[messages.count - 1].messageHash = optimisticHash
             }
         }
+        if localRetryHash == nil {
+            unpersistedOutboundIDs.insert(optimisticId)
+        }
 
         do {
             // Send through the neutral LXMF facet with TYPED fields (image /
@@ -504,14 +524,20 @@ public final class MessagingViewModel {
                     )
                 }
             }
+            if localRetryHash == nil {
+                unpersistedOutboundIDs.remove(optimisticId)
+                unpersistedOutboundIDs.insert(realId)
+            }
 
             // Persist so a subsequent loadMessages() doesn't wipe it.
             do {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
                 if localRetryHash == nil {
+                    unpersistedOutboundIDs.remove(realId)
                     await recordNewestPersistence()
                 }
             } catch {
+                unpersistedOutboundIDs.remove(realId)
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
                 if let index = messages.firstIndex(where: { $0.id == realId }) {
                     messages[index].deliveryStatus = .failed
@@ -574,12 +600,18 @@ public final class MessagingViewModel {
                             )
                         }
                     }
+                    if localRetryHash == nil {
+                        unpersistedOutboundIDs.remove(optimisticId)
+                        unpersistedOutboundIDs.insert(realId)
+                    }
                     do {
                         try await persistMessage(retryMessage, replacing: localRetryHash)
                         if localRetryHash == nil {
+                            unpersistedOutboundIDs.remove(realId)
                             await recordNewestPersistence()
                         }
                     } catch {
+                        unpersistedOutboundIDs.remove(realId)
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                         if let index = messages.firstIndex(where: { $0.id == realId }) {
                             messages[index].deliveryStatus = .failed
@@ -601,9 +633,11 @@ public final class MessagingViewModel {
                 try await persistMessage(lxMessage, replacing: localRetryHash)
                 persisted = true
                 if localRetryHash == nil {
+                    unpersistedOutboundIDs.remove(optimisticId)
                     await recordNewestPersistence()
                 }
             } catch {
+                unpersistedOutboundIDs.remove(optimisticId)
                 logger.error("[MSG_VM] saveMessage(failed) failed: \(error.localizedDescription)")
             }
 

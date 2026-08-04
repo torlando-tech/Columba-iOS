@@ -294,7 +294,21 @@ final class MessageTimelinePolicyTests: XCTestCase {
 
         cursor.recordFetchedPage(recordCount: 50)
         XCTAssertEqual(cursor.nextOffset, 100)
+    }
 
+    func testRefreshPreservesOnlyUnpersistedOutboundRows() {
+        let persisted = Message(id: "persisted", content: "Persisted", isFromMe: true)
+        let pendingA = Message(id: "pending-a", content: "Pending A", isFromMe: true)
+        let pendingB = Message(id: "pending-b", content: "Pending B", isFromMe: true)
+        let stale = Message(id: "stale", content: "Stale", isFromMe: false)
+
+        let merged = MessagingViewModel.mergingPendingOutbound(
+            loaded: [persisted],
+            current: [stale, pendingA, persisted, pendingB],
+            pendingIDs: ["pending-a", "persisted", "pending-b"]
+        )
+
+        XCTAssertEqual(merged.map(\.id), ["persisted", "pending-a", "pending-b"])
     }
 
     @MainActor
