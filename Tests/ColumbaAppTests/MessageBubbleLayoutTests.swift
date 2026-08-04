@@ -359,6 +359,20 @@ final class MessageTimelinePolicyTests: XCTestCase {
         )
     }
 
+    func testDeliveryProofUsesOptimisticAliasDuringPersistence() {
+        XCTAssertEqual(
+            MessagingViewModel.visibleMessageID(
+                for: "real-hash",
+                aliases: ["real-hash": "optimistic-id"]
+            ),
+            "optimistic-id"
+        )
+        XCTAssertEqual(
+            MessagingViewModel.visibleMessageID(for: "persisted-hash", aliases: [:]),
+            "persisted-hash"
+        )
+    }
+
     func testRefreshPreservesOnlyUnpersistedOutboundRowsInTimelineOrder() {
         let base = Date(timeIntervalSince1970: 1_000)
         let oldest = Message(id: "oldest", content: "Oldest", timestamp: base, isFromMe: false)
