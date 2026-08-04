@@ -145,6 +145,63 @@ final class MessageBubbleLayoutTests: XCTestCase {
     }
 
     @MainActor
+    func testMarkdownAndPlaintextMessageRenderingProducesVisualEvidence() throws {
+        let markdown = """
+        # Markdown message
+
+        This is **bold**, *emphasized*, and ~~removed~~ text with `inline code`.
+
+        - First item
+        - Second item
+
+        > Authenticated Markdown renderer field
+
+        [HTTPS link](https://example.com/docs) and [NomadNet page](nomadnetwork://9ce92808be498e9e05590ff27cbfdfe4:/page/index.mu)
+
+        ![remote tracking image](https://tracking.example/pixel.png)
+
+        <script>alert('inert')</script>
+        """
+        let messages = [
+            Message(
+                content: markdown,
+                timestamp: Date(),
+                isFromMe: false,
+                deliveryStatus: .delivered,
+                renderer: .markdown
+            ),
+            Message(
+                content: "Plaintext gate: **not bold** https://example.com/docs",
+                timestamp: Date(),
+                isFromMe: true,
+                deliveryStatus: .delivered,
+                renderer: .plain
+            ),
+        ]
+        let view = VStack(spacing: 16) {
+            ForEach(messages) { message in
+                MessageBubble(message: message, onOpenLink: { _ in })
+            }
+        }
+        .frame(width: 390)
+        .padding(.vertical, 20)
+        .background(Color.black)
+        let host = UIHostingController(rootView: view)
+        let fitted = host.sizeThatFits(in: CGSize(width: 390, height: 2_000))
+
+        XCTAssertGreaterThan(fitted.height, 300)
+        XCTAssertLessThan(fitted.height, 1_500)
+
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 3
+        let image = try XCTUnwrap(renderer.uiImage)
+        let screenshot = XCTAttachment(image: image)
+        screenshot.name = "markdown-and-plaintext-message-bubbles"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testMessageTextScaleChangesRenderedBodyHeight() throws {
         let message = Message(
             content: "A longer message body that wraps across multiple lines so the selected conversation text size has a measurable effect on the rendered bubble height.",
