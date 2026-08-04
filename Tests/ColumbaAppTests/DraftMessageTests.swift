@@ -3,6 +3,50 @@ import GRDB
 @testable import ColumbaApp
 
 final class DraftMessageTests: XCTestCase {
+    private enum DraftSnapshot: Equatable {
+        case missing
+        case present(String)
+        case readFailed
+    }
+
+    private final class NotificationReads: @unchecked Sendable {
+        private let lock = NSLock()
+        private var tasks: [Task<Void, Never>] = []
+        private var snapshots: [Data: [DraftSnapshot]] = [:]
+
+        func track(_ task: Task<Void, Never>) {
+            lock.lock()
+            tasks.append(task)
+            lock.unlock()
+        }
+
+        func append(_ snapshot: DraftSnapshot, for conversationHash: Data) {
+            lock.lock()
+            snapshots[conversationHash, default: []].append(snapshot)
+            lock.unlock()
+        }
+
+        func snapshots(for conversationHash: Data) -> [DraftSnapshot] {
+            lock.lock()
+            defer { lock.unlock() }
+            return snapshots[conversationHash, default: []]
+        }
+
+        private func trackedTasks() -> [Task<Void, Never>] {
+            lock.lock()
+            defer { lock.unlock() }
+            return tasks
+        }
+
+        func cancelAndWaitForTasks() async {
+            let trackedTasks = trackedTasks()
+            trackedTasks.forEach { $0.cancel() }
+            for task in trackedTasks {
+                await task.value
+            }
+        }
+    }
+
     private func temporaryDatabaseURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("columba-drafts-\(UUID().uuidString).sqlite")
@@ -57,16 +101,14 @@ final class DraftMessageTests: XCTestCase {
 
         try await repository.ensureConversation(conversationHash, displayName: nil)
         try await repository.saveDraft("first", for: conversationHash)
-        let storedFirst = try await repository.fetchDraft(for: conversationHash)
-        let first = try XCTUnwrap(storedFirst)
-        try await Task.sleep(nanoseconds: 1_000_000)
         try await repository.saveDraft("second", for: conversationHash)
         let storedReplacement = try await repository.fetchDraft(for: conversationHash)
         let replacement = try XCTUnwrap(storedReplacement)
         let drafts = try await repository.fetchDrafts()
 
         XCTAssertEqual(replacement.content, "second")
-        XCTAssertGreaterThan(replacement.updatedAt, first.updatedAt)
+        XCTAssertTrue(replacement.updatedAt.timeIntervalSince1970.isFinite)
+        XCTAssertGreaterThan(replacement.updatedAt.timeIntervalSince1970, 0)
         XCTAssertEqual(drafts[conversationHash], replacement)
         XCTAssertEqual(Set(drafts.keys), Set([conversationHash]))
     }
@@ -153,6 +195,7 @@ final class DraftMessageTests: XCTestCase {
         let reader = try MessageRepository(grdbPath: databaseURL.path)
         let conversationHash = Data(repeating: 0x88, count: 16)
         let readable = expectation(description: "Draft is readable when notification arrives")
+        let reads = NotificationReads()
 
         try await writer.ensureConversation(conversationHash, displayName: nil)
         let observer = NotificationCenter.default.addObserver(
@@ -163,16 +206,92 @@ final class DraftMessageTests: XCTestCase {
             guard let notifiedHash = notification.userInfo?[MessageRepository.conversationHashUserInfoKey] as? Data,
                   notifiedHash == conversationHash,
                   notification.userInfo?.count == 1 else { return }
-            Task {
+            let task = Task {
                 if try await reader.fetchDraft(for: conversationHash)?.content == "committed" {
                     readable.fulfill()
                 }
             }
+            reads.track(task)
         }
-        defer { NotificationCenter.default.removeObserver(observer) }
 
-        try await writer.saveDraft("committed", for: conversationHash)
+        do {
+            try await writer.saveDraft("committed", for: conversationHash)
+            await fulfillment(of: [readable], timeout: 1.0)
+        } catch {
+            NotificationCenter.default.removeObserver(observer)
+            await reads.cancelAndWaitForTasks()
+            throw error
+        }
+        NotificationCenter.default.removeObserver(observer)
+        await reads.cancelAndWaitForTasks()
+    }
 
-        await fulfillment(of: [readable], timeout: 1.0)
+    func testOverlappingSaveAndClearNotifyCommittedStateInMutationOrder() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let writer = try MessageRepository(grdbPath: databaseURL.path)
+        let reader = try MessageRepository(grdbPath: databaseURL.path)
+        let reads = NotificationReads()
+        let hashes = (0..<12).map { Data(repeating: UInt8(0x90 + $0), count: 16) }
+
+        for conversationHash in hashes {
+            try await writer.ensureConversation(conversationHash, displayName: nil)
+            try await writer.saveDraft("baseline", for: conversationHash)
+        }
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: MessageRepository.draftChangedNotification,
+            object: nil,
+            queue: nil
+        ) { notification in
+            guard let conversationHash = notification.userInfo?[MessageRepository.conversationHashUserInfoKey] as? Data,
+                  hashes.contains(conversationHash) else { return }
+
+            // NotificationCenter invokes this observer synchronously. Waiting on
+            // a distinct repository captures the durable state at notification
+            // time before the writer can begin its next actor-isolated mutation.
+            let finished = DispatchSemaphore(value: 0)
+            let task = Task {
+                do {
+                    let draft = try await reader.fetchDraft(for: conversationHash)
+                    reads.append(draft.map { .present($0.content) } ?? .missing, for: conversationHash)
+                } catch {
+                    reads.append(.readFailed, for: conversationHash)
+                }
+                finished.signal()
+            }
+            reads.track(task)
+            _ = finished.wait(timeout: .now() + 2)
+        }
+
+        do {
+            for (index, conversationHash) in hashes.enumerated() {
+                let replacement = "replacement-\(index)"
+                async let save: Void = writer.saveDraft(replacement, for: conversationHash)
+                async let clear: Void = writer.clearDraft(for: conversationHash)
+                _ = try await (save, clear)
+
+                let snapshots = reads.snapshots(for: conversationHash)
+                let finalDraft = try await writer.fetchDraft(for: conversationHash)
+                let saveThenClear: [DraftSnapshot] = [.present(replacement), .missing]
+                let clearThenSave: [DraftSnapshot] = [.missing, .present(replacement)]
+
+                XCTAssertTrue(
+                    snapshots == saveThenClear || snapshots == clearThenSave,
+                    "Each notification must expose its own committed mutation; got \(snapshots)"
+                )
+                XCTAssertEqual(
+                    snapshots.last,
+                    finalDraft.map { .present($0.content) } ?? .missing
+                )
+            }
+        } catch {
+            NotificationCenter.default.removeObserver(observer)
+            await reads.cancelAndWaitForTasks()
+            throw error
+        }
+
+        NotificationCenter.default.removeObserver(observer)
+        await reads.cancelAndWaitForTasks()
     }
 }

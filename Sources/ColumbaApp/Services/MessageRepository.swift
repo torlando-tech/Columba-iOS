@@ -186,11 +186,14 @@ public actor MessageRepository {
     /// Nonblank content is persisted exactly as provided.
     public func saveDraft(_ content: String, for conversationHash: Data) async throws {
         if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            try await clearDraft(for: conversationHash)
+            try clearDraftAndNotify(for: conversationHash)
             return
         }
 
-        try await replacementPool.write { db in
+        // Keep the commit and its notification in one actor-isolated synchronous
+        // operation. Awaiting GRDB here would allow another draft mutation to
+        // commit before this mutation posts its notification.
+        try replacementPool.write { db in
             try db.execute(
                 sql: """
                     INSERT INTO columba_drafts (conversation_hash, content, updated_at)
@@ -236,7 +239,11 @@ public actor MessageRepository {
 
     /// Clear the draft for one conversation.
     public func clearDraft(for conversationHash: Data) async throws {
-        let deleted = try await replacementPool.write { db in
+        try clearDraftAndNotify(for: conversationHash)
+    }
+
+    private func clearDraftAndNotify(for conversationHash: Data) throws {
+        let deleted = try replacementPool.write { db in
             try db.execute(
                 sql: "DELETE FROM columba_drafts WHERE conversation_hash = ?",
                 arguments: [conversationHash]
