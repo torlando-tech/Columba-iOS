@@ -54,17 +54,19 @@ struct MessageBubble: View {
                                 onTapReplyPreview?(replyId)
                             }
                         } label: {
-                            HStack(spacing: 6) {
-                                Rectangle()
-                                    .fill(Theme.accentColor)
-                                    .frame(width: 2)
-                                Text(replyPreview)
-                                    .font(.caption)
-                                    .foregroundStyle(message.isFromMe ? .white.opacity(0.7) : .secondary)
-                                    .lineLimit(2)
-                                    .multilineTextAlignment(.leading)
-                            }
-                            .padding(.vertical, 4)
+                            Text(replyPreview)
+                                .font(.caption)
+                                .foregroundStyle(message.isFromMe ? .white.opacity(0.7) : .secondary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.leading, 8)
+                                .overlay(alignment: .leading) {
+                                    Rectangle()
+                                        .fill(Theme.accentColor)
+                                        .frame(width: 2)
+                                }
+                                .padding(.vertical, 4)
                         }
                         .buttonStyle(.plain)
                     }
@@ -90,6 +92,7 @@ struct MessageBubble: View {
                         Text(message.content)
                             .font(.body)
                             .foregroundStyle(message.isFromMe ? .white : Theme.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
                             // The text is already findable via Maestro's
                             // `text:` matcher; the identifier just lets the
                             // harness disambiguate the bubble's text from
