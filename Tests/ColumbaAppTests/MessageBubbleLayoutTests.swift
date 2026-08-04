@@ -50,7 +50,7 @@ final class MessageBubbleLayoutTests: XCTestCase {
 
     @MainActor
     func testTextSizePickerRendersCompleteControls() throws {
-        let size = CGSize(width: 390, height: 400)
+        let size = CGSize(width: 390, height: 460)
         let host = UIHostingController(
             rootView: TextSizePickerSheet(currentScale: 1.0, onSave: { _ in })
         )
@@ -61,7 +61,7 @@ final class MessageBubbleLayoutTests: XCTestCase {
         }
 
         XCTAssertEqual(image.size.width, 390, accuracy: 1)
-        XCTAssertEqual(image.size.height, 400, accuracy: 1)
+        XCTAssertEqual(image.size.height, 460, accuracy: 1)
 
         let screenshot = XCTAttachment(image: image)
         screenshot.name = "message-text-size-picker"

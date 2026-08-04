@@ -438,7 +438,7 @@ struct MessagingView: View {
                     messageTextScale = await settingsRepository.getMessageTextScale()
                 }
             }
-            .presentationDetents([.height(400)])
+            .presentationDetents([.height(460)])
             .presentationDragIndicator(.visible)
         }
         .onDisappear {
