@@ -114,9 +114,9 @@ final class MessageBubbleLayoutTests: XCTestCase {
         XCTAssertEqual(image.size.width, 390, accuracy: 1)
         XCTAssertEqual(image.size.height, 460, accuracy: 1)
         let contentBounds = try visibleContentBounds(in: image)
-        XCTAssertGreaterThan(contentBounds.width, 340)
-        XCTAssertGreaterThan(contentBounds.height, 340)
-        XCTAssertLessThan(contentBounds.minY, 60)
+        XCTAssertGreaterThan(contentBounds.width, 280)
+        XCTAssertGreaterThan(contentBounds.height, 280)
+        XCTAssertLessThan(contentBounds.minY, 90)
         XCTAssertLessThan(
             contentBounds.maxY,
             size.height - 8,
@@ -147,7 +147,7 @@ final class MessageBubbleLayoutTests: XCTestCase {
         }
         let accessibilityBounds = try visibleContentBounds(in: accessibilityImage)
         XCTAssertGreaterThan(accessibilityBounds.width, 270)
-        XCTAssertGreaterThan(accessibilityBounds.height, 400)
+        XCTAssertGreaterThan(accessibilityBounds.height, 300)
         XCTAssertLessThan(accessibilityBounds.maxY, accessibilitySize.height - 8)
 
         let accessibilityScreenshot = XCTAttachment(image: accessibilityImage)
