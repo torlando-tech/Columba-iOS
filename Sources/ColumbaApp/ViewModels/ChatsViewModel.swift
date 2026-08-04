@@ -151,6 +151,7 @@ public final class ChatsViewModel {
     private var inProcessObserver: NSObjectProtocol?
     private var conversationReadObserver: NSObjectProtocol?
     private var conversationActivityObserver: NSObjectProtocol?
+    private var conversationMetadataObserver: NSObjectProtocol?
     private var conversationLoadGeneration: UInt64 = 0
     private var activeConversationLoadCount: Int = 0
     private var activeConversationRefreshCount: Int = 0
@@ -207,6 +208,16 @@ public final class ChatsViewModel {
                 await self?.loadConversations()
             }
         }
+
+        conversationMetadataObserver = NotificationCenter.default.addObserver(
+            forName: MessageRepository.conversationMetadataChangedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.loadConversations()
+            }
+        }
     }
 
     deinit {
@@ -217,6 +228,9 @@ public final class ChatsViewModel {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = conversationActivityObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = conversationMetadataObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }

@@ -303,6 +303,43 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         }
     }
 
+    func testAnnouncedNameAtomicallyReplacesGeneratedFallback() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data([0x05, 0xc5, 0x7e, 0x42] + Array(repeating: 0xaa, count: 12))
+
+        try await repository.ensureConversation(destination, displayName: "Peer 05c57e42")
+        let applied = try await repository.applyAnnouncedDisplayName(
+            destination,
+            displayName: "Hermes Homelab"
+        )
+
+        let storedConversation = try await repository.fetchConversation(destination)
+        let conversation = try XCTUnwrap(storedConversation)
+        XCTAssertTrue(applied)
+        XCTAssertEqual(conversation.displayName, "Hermes Homelab")
+    }
+
+    func testAnnouncedNameCompareAndSetPreservesCurrentCustomName() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data([0x05, 0xc5, 0x7e, 0x42] + Array(repeating: 0xaa, count: 12))
+
+        try await repository.ensureConversation(destination, displayName: "Peer 05c57e42")
+        try await repository.updateDisplayName(destination, displayName: "My Server")
+        let applied = try await repository.applyAnnouncedDisplayName(
+            destination,
+            displayName: "Hermes Homelab"
+        )
+
+        let storedConversation = try await repository.fetchConversation(destination)
+        let conversation = try XCTUnwrap(storedConversation)
+        XCTAssertFalse(applied)
+        XCTAssertEqual(conversation.displayName, "My Server")
+    }
+
     func testRetryReplacementRekeysExactlyOneDurableRow() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }

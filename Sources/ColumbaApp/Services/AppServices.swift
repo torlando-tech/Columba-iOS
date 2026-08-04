@@ -2854,11 +2854,13 @@ public final class AppServices {
             // conversation title would otherwise stay stuck on the "Peer <hash>"
             // fallback even though the announce tells us the real name. This is
             // UPDATE-only (never creates a conversation for a bare announce) and
-            // only fills an empty/nil name (never clobbers one we already have).
-            if !displayName.isEmpty, let repo = self.messageRepository,
-               let convo = try? await repo.fetchConversation(data) {
-                if (convo.displayName ?? "").isEmpty {
-                    try? await repo.updateDisplayName(data, displayName: displayName)
+            // only fills an empty/nil name or the exact generated hash fallback
+            // (never clobbers a custom or previously announced name).
+            if !displayName.isEmpty, let repo = self.messageRepository {
+                if (try? await repo.applyAnnouncedDisplayName(
+                    data,
+                    displayName: displayName
+                )) == true {
                     DiagLog.log("[RNS] stamped display name onto convo \(data.map { String(format: "%02x", $0) }.joined().prefix(8))")
                 }
             }

@@ -49,6 +49,9 @@ public actor MessageRepository {
     /// messages already use `IncomingMessageHandler.messageReceivedNotification`.
     public static let conversationActivityNotification =
         Notification.Name("network.columba.conversationActivity")
+    /// Posted after durable conversation metadata changes without a new message.
+    public static let conversationMetadataChangedNotification =
+        Notification.Name("network.columba.conversationMetadataChanged")
 
     public static let conversationHashUserInfoKey = "conversationHash"
     public static let stagedRetryMarker = "columba-app-retry-staged-v1"
@@ -148,6 +151,50 @@ public actor MessageRepository {
     /// Update display name for a conversation.
     public func updateDisplayName(_ conversationHash: Data, displayName: String?) async throws {
         try await database.updateDisplayName(hash: conversationHash, displayName: displayName)
+    }
+
+    /// Apply an announced peer name only while the durable row still contains
+    /// an empty name or its generated hash placeholder. The predicate and write
+    /// execute in one SQL statement so a concurrently saved custom nickname
+    /// cannot be overwritten between a read and a later update.
+    @discardableResult
+    public func applyAnnouncedDisplayName(
+        _ conversationHash: Data,
+        displayName: String
+    ) async throws -> Bool {
+        guard !displayName.isEmpty else { return false }
+        let generatedFallback = AppDataParser.generatedConversationName(
+            destinationHash: conversationHash
+        )
+        let updated = try await replacementPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE conversations
+                    SET display_name = ?, updated_at = ?
+                    WHERE destination_hash = ?
+                      AND (
+                        display_name IS NULL
+                        OR display_name = ''
+                        OR display_name = ? COLLATE NOCASE
+                      )
+                    """,
+                arguments: [
+                    displayName,
+                    Date().timeIntervalSince1970,
+                    conversationHash,
+                    generatedFallback,
+                ]
+            )
+            return db.changesCount == 1
+        }
+        if updated {
+            NotificationCenter.default.post(
+                name: Self.conversationMetadataChangedNotification,
+                object: nil,
+                userInfo: [Self.conversationHashUserInfoKey: conversationHash]
+            )
+        }
+        return updated
     }
 
     // MARK: - Icon Appearance
