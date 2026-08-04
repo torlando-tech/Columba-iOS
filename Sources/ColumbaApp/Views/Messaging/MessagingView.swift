@@ -22,6 +22,21 @@ import AppKit
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingView")
 
+@MainActor
+enum MessagingDraftBootstrap {
+    static func prepare(
+        loadMessages: () async -> Void,
+        restoreDraft: () async -> String?,
+        applyRestoredText: (String) -> Void,
+        publishConversation: () -> Void
+    ) async {
+        await loadMessages()
+        let restoredText = await restoreDraft() ?? ""
+        applyRestoredText(restoredText)
+        publishConversation()
+    }
+}
+
 /// Main messaging/chat screen view.
 ///
 /// Layout:
@@ -45,6 +60,7 @@ struct MessagingView: View {
     // MARK: - State
 
     @State private var viewModel: MessagingViewModel?
+    @State private var draftController: DraftAutosaveController?
     @State private var messageText = ""
     @State private var showPhotoPicker = false
     @State private var showFilePicker = false
@@ -74,6 +90,7 @@ struct MessagingView: View {
     @State private var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     @State private var nomadNetLinkTarget: MessageLinkTarget?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     // MARK: - Body
 
@@ -115,7 +132,7 @@ struct MessagingView: View {
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     MessageInputBar(
-                        text: $messageText,
+                        text: messageTextBinding,
                         attachedImage: $attachedImage,
                         attachedFiles: $attachedFiles,
                         replyToMessage: vm.replyToMessage,
@@ -251,7 +268,7 @@ struct MessagingView: View {
                     // the keyboard and adjusts the scroll view's visible area to match.
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         MessageInputBar(
-                            text: $messageText,
+                            text: messageTextBinding,
                             attachedImage: $attachedImage,
                             attachedFiles: $attachedFiles,
                             replyToMessage: vm.replyToMessage,
@@ -535,7 +552,12 @@ struct MessagingView: View {
             .presentationDragIndicator(.visible)
         }
         .onDisappear {
+            flushDraft()
             NotificationService.activeConversationThreadId = nil
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            guard oldPhase == .active, newPhase != .active else { return }
+            flushDraft()
         }
         .task {
             messageTextScale = await settingsRepository.getMessageTextScale()
@@ -558,8 +580,27 @@ struct MessagingView: View {
                     appServices: appServices,
                     displayName: conversation.displayName
                 )
-                await vm.loadMessages()
-                viewModel = vm
+                let controller = DraftAutosaveController(
+                    repository: messageRepository,
+                    conversationHash: conversation.destinationHash
+                )
+                await MessagingDraftBootstrap.prepare(
+                    loadMessages: {
+                        await vm.loadMessages()
+                    },
+                    restoreDraft: {
+                        try? await controller.restore()
+                    },
+                    applyRestoredText: { restoredText in
+                        // Programmatic restore intentionally bypasses messageTextBinding.
+                        messageText = restoredText
+                        draftController = controller
+                    },
+                    publishConversation: {
+                        // Publish last so the composer is interactive only after restore.
+                        viewModel = vm
+                    }
+                )
             } else {
                 await viewModel?.loadMessages()
             }
@@ -692,6 +733,24 @@ struct MessagingView: View {
 
     // MARK: - Actions
 
+    private var messageTextBinding: Binding<String> {
+        Binding(
+            get: { messageText },
+            set: { newValue in
+                messageText = newValue
+                draftController?.textChanged(newValue)
+            }
+        )
+    }
+
+    private func flushDraft() {
+        let text = messageText
+        let controller = draftController
+        Task {
+            await controller?.flush(text)
+        }
+    }
+
     private func openMessageLink(_ target: MessageLinkTarget) {
         guard case .nomadNet = target else { return }
         nomadNetLinkTarget = target
@@ -741,6 +800,8 @@ struct MessagingView: View {
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 
+        draftController?.clearImmediately()
+        // Programmatic send clear intentionally bypasses messageTextBinding.
         messageText = ""
         attachedImage = nil
         attachedFiles = []

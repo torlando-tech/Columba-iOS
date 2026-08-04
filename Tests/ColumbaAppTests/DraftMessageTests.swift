@@ -796,4 +796,129 @@ final class DraftAutosaveControllerTests: XCTestCase {
         XCTAssertEqual(restored, "restored exactly")
         XCTAssertEqual(sleeper.invocationCount, 0)
     }
+
+    func testInitialDraftIsAppliedBeforeConversationBecomesInteractive() async {
+        var events: [String] = []
+        var composerText = ""
+        var isInteractive = false
+
+        await MessagingDraftBootstrap.prepare(
+            loadMessages: {
+                events.append("messages loaded")
+            },
+            restoreDraft: {
+                events.append("draft restored")
+                return "unfinished message"
+            },
+            applyRestoredText: { restoredText in
+                composerText = restoredText
+                events.append("draft applied")
+            },
+            publishConversation: {
+                isInteractive = true
+                events.append("conversation published")
+            }
+        )
+
+        XCTAssertEqual(composerText, "unfinished message")
+        XCTAssertTrue(isInteractive)
+        XCTAssertEqual(
+            events,
+            ["messages loaded", "draft restored", "draft applied", "conversation published"]
+        )
+    }
+
+    func testProgrammaticRestoreDoesNotScheduleRedundantAutosave() async {
+        let conversationHash = Data(repeating: 0xA9, count: 16)
+        let persistence = ControlledDraftPersistence(draftText: "restored without a write")
+        let sleeper = ControlledDraftSleeper()
+        let controller = makeController(
+            persistence: persistence,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+        var composerText = ""
+
+        await MessagingDraftBootstrap.prepare(
+            loadMessages: {},
+            restoreDraft: { try? await controller.restore() },
+            applyRestoredText: { composerText = $0 },
+            publishConversation: {}
+        )
+
+        XCTAssertEqual(composerText, "restored without a write")
+        XCTAssertEqual(sleeper.invocationCount, 0)
+        let mutations = await persistence.mutations()
+        XCTAssertTrue(mutations.isEmpty)
+    }
+
+    func testSendClearInvalidatesPendingTypedSave() async {
+        let conversationHash = Data(repeating: 0xAA, count: 16)
+        let persistence = ControlledDraftPersistence(draftText: "previous draft")
+        let sleeper = ControlledDraftSleeper()
+        let debounceStarted = expectation(description: "Typed autosave is pending")
+        sleeper.onSleep = { debounceStarted.fulfill() }
+        let controller = makeController(
+            persistence: persistence,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+
+        controller.textChanged("message being sent")
+        await fulfillment(of: [debounceStarted], timeout: 1)
+        controller.clearImmediately()
+        await persistence.waitForMutationCount(1)
+        sleeper.resumeAll()
+
+        let mutations = await persistence.mutations()
+        let stored = try? await persistence.fetchDraftText(for: conversationHash)
+        XCTAssertEqual(mutations, [.clear])
+        XCTAssertNil(stored)
+    }
+
+    func testNavigationFlushUsesLatestComposerValue() async {
+        let conversationHash = Data(repeating: 0xAB, count: 16)
+        let persistence = ControlledDraftPersistence()
+        let sleeper = ControlledDraftSleeper()
+        let debounceStarted = expectation(description: "Older autosave is pending")
+        sleeper.onSleep = { debounceStarted.fulfill() }
+        let controller = makeController(
+            persistence: persistence,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+
+        controller.textChanged("older value")
+        await fulfillment(of: [debounceStarted], timeout: 1)
+        await controller.flush("latest value at navigation")
+        sleeper.resumeAll()
+
+        let mutations = await persistence.mutations()
+        let stored = try? await persistence.fetchDraftText(for: conversationHash)
+        XCTAssertEqual(mutations, [.save("latest value at navigation")])
+        XCTAssertEqual(stored, "latest value at navigation")
+    }
+
+    func testBackgroundFlushUsesLatestComposerValue() async {
+        let conversationHash = Data(repeating: 0xAC, count: 16)
+        let persistence = ControlledDraftPersistence()
+        let sleeper = ControlledDraftSleeper()
+        let debounceStarted = expectation(description: "Visible-screen autosave is pending")
+        sleeper.onSleep = { debounceStarted.fulfill() }
+        let controller = makeController(
+            persistence: persistence,
+            conversationHash: conversationHash,
+            sleeper: sleeper
+        )
+
+        controller.textChanged("value before backgrounding")
+        await fulfillment(of: [debounceStarted], timeout: 1)
+        await controller.flush("latest value at background")
+        sleeper.resumeAll()
+
+        let mutations = await persistence.mutations()
+        let stored = try? await persistence.fetchDraftText(for: conversationHash)
+        XCTAssertEqual(mutations, [.save("latest value at background")])
+        XCTAssertEqual(stored, "latest value at background")
+    }
 }
