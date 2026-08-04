@@ -206,9 +206,13 @@ final class DraftMessageTests: XCTestCase {
             guard let notifiedHash = notification.userInfo?[MessageRepository.conversationHashUserInfoKey] as? Data,
                   notifiedHash == conversationHash,
                   notification.userInfo?.count == 1 else { return }
-            let task = Task {
-                if try await reader.fetchDraft(for: conversationHash)?.content == "committed" {
-                    readable.fulfill()
+            let task = Task<Void, Never> {
+                do {
+                    if try await reader.fetchDraft(for: conversationHash)?.content == "committed" {
+                        readable.fulfill()
+                    }
+                } catch {
+                    XCTFail("Draft read after notification failed: \(error)")
                 }
             }
             reads.track(task)
