@@ -24,6 +24,7 @@
 		TSP002 /* TextSizePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSP001 /* TextSizePickerSheet.swift */; };
 		A41F10000000000000000001 /* MessageTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A41F10000000000000000003 /* MessageTimelineView.swift */; };
 		014 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014 /* MessageBubble.swift */; };
+		MDB001 /* MessageBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDB003 /* MessageBody.swift */; };
 		015 /* MessageInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F015 /* MessageInputBar.swift */; };
 		016 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016 /* SettingsView.swift */; };
 		017 /* MyIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* MyIdentityView.swift */; };
@@ -274,6 +275,7 @@
 		C126E88E13D9DB7CCE7AD8A0 /* MicronDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07D /* MicronDocument.swift */; };
 		C17B4B4AD850DBC3CD27AEC0 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */; };
 		C204F5778ABB560C1FD4DC60 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014 /* MessageBubble.swift */; };
+		MDB002 /* MessageBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDB003 /* MessageBody.swift */; };
 		C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
 		C4F369EC98C2B903701CE74A /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
 		C60C9313A6AFB95FCFB8969A /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
@@ -471,6 +473,7 @@
 		TSP001 /* TextSizePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSizePickerSheet.swift; sourceTree = "<group>"; };
 		A41F10000000000000000003 /* MessageTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageTimelineView.swift; sourceTree = "<group>"; };
 		F014 /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
+		MDB003 /* MessageBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBody.swift; sourceTree = "<group>"; };
 		F015 /* MessageInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageInputBar.swift; sourceTree = "<group>"; };
 		F016 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F017 /* MyIdentityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyIdentityView.swift; sourceTree = "<group>"; };
@@ -847,6 +850,7 @@
 				TSP001 /* TextSizePickerSheet.swift */,
 				A41F10000000000000000003 /* MessageTimelineView.swift */,
 				F014 /* MessageBubble.swift */,
+				MDB003 /* MessageBody.swift */,
 				F015 /* MessageInputBar.swift */,
 				F073 /* MessageDetailView.swift */,
 			);
@@ -1373,6 +1377,7 @@
 				TSP003 /* TextSizePickerSheet.swift in Sources */,
 				A41F10000000000000000002 /* MessageTimelineView.swift in Sources */,
 				C204F5778ABB560C1FD4DC60 /* MessageBubble.swift in Sources */,
+				MDB002 /* MessageBody.swift in Sources */,
 				D93546FFCB0106CF3F68B2C5 /* MessageDetailView.swift in Sources */,
 				D709D8EDF36F85DEB5AABEC4 /* MessageInputBar.swift in Sources */,
 				A48DAD459DFDFDC94AC92B5A /* SettingsView.swift in Sources */,
@@ -1553,6 +1558,7 @@
 				TSP002 /* TextSizePickerSheet.swift in Sources */,
 				A41F10000000000000000001 /* MessageTimelineView.swift in Sources */,
 				014 /* MessageBubble.swift in Sources */,
+				MDB001 /* MessageBody.swift in Sources */,
 				073 /* MessageDetailView.swift in Sources */,
 				015 /* MessageInputBar.swift in Sources */,
 				016 /* SettingsView.swift in Sources */,
