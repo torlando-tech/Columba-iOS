@@ -101,6 +101,7 @@ enum MessageLinkParser {
 struct PlainMessageText: View {
     let content: String
     let color: SwiftUI.Color
+    let linkColor: SwiftUI.Color
     let fontSize: CGFloat
 
     var body: some View {
@@ -122,6 +123,7 @@ struct PlainMessageText: View {
             }
             var linked = AttributedString(content[range])
             linked.link = match.target.url
+            linked.foregroundColor = linkColor
             linked.underlineStyle = .single
             output += linked
             cursor = range.upperBound
@@ -137,6 +139,7 @@ struct MessageBody: View {
     let content: String
     let renderer: MessageRenderer
     let color: SwiftUI.Color
+    let isOutgoing: Bool
     let fontSize: CGFloat
     var onOpenLink: ((MessageLinkTarget) -> Void)?
 
@@ -147,6 +150,7 @@ struct MessageBody: View {
                 MarkdownMessageText(
                     content: content,
                     color: color,
+                    isOutgoing: isOutgoing,
                     fontSize: fontSize
                 )
                 .accessibilityIdentifier("bubble_markdown")
@@ -154,6 +158,7 @@ struct MessageBody: View {
                 PlainMessageText(
                     content: content,
                     color: color,
+                    linkColor: linkColor,
                     fontSize: fontSize
                 )
             }
@@ -173,31 +178,44 @@ struct MessageBody: View {
             }
         })
     }
+
+    private var linkColor: SwiftUI.Color {
+        isOutgoing
+            ? SwiftUI.Color(red: 0.75, green: 0.91, blue: 1.0)
+            : SwiftUI.Color(red: 0.25, green: 0.65, blue: 1.0)
+    }
 }
 
 private struct MarkdownMessageText: View {
     let content: String
     let color: SwiftUI.Color
+    let isOutgoing: Bool
     let fontSize: CGFloat
     @State private var parsedContent: MarkdownContent
 
-    init(content: String, color: SwiftUI.Color, fontSize: CGFloat) {
+    init(content: String, color: SwiftUI.Color, isOutgoing: Bool, fontSize: CGFloat) {
         self.content = content
         self.color = color
+        self.isOutgoing = isOutgoing
         self.fontSize = fontSize
         _parsedContent = State(initialValue: MarkdownContent(content))
     }
 
     var body: some View {
         Markdown(parsedContent)
-            .markdownTheme(.basic)
             .markdownTextStyle {
                 FontSize(fontSize)
                 ForegroundColor(color)
             }
             .markdownTextStyle(\.link) {
-                ForegroundColor(color)
+                ForegroundColor(linkColor)
                 UnderlineStyle(.single)
+            }
+            .markdownTextStyle(\.code) {
+                FontFamilyVariant(.monospaced)
+                FontSize(fontSize * 0.85)
+                ForegroundColor(color)
+                BackgroundColor(inlineCodeBackground)
             }
             .markdownImageProvider(BlockedMarkdownImageProvider())
             .markdownInlineImageProvider(BlockedMarkdownInlineImageProvider())
@@ -209,6 +227,7 @@ private struct MarkdownMessageText: View {
             .markdownBlockStyle(\.codeBlock) { configuration in
                 codeBlock(configuration)
             }
+            .markdownTheme(.basic)
             .onChange(of: content) { _, newContent in
                 parsedContent = MarkdownContent(newContent)
             }
@@ -239,9 +258,25 @@ private struct MarkdownMessageText: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(SwiftUI.Color(red: 0.08, green: 0.09, blue: 0.12))
+        .background(blockCodeBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .markdownMargin(top: .em(0.25), bottom: .em(0.6))
+    }
+
+    private var linkColor: SwiftUI.Color {
+        isOutgoing
+            ? SwiftUI.Color(red: 0.75, green: 0.91, blue: 1.0)
+            : SwiftUI.Color(red: 0.25, green: 0.65, blue: 1.0)
+    }
+
+    private var inlineCodeBackground: SwiftUI.Color {
+        isOutgoing
+            ? SwiftUI.Color.black.opacity(0.25)
+            : SwiftUI.Color.white.opacity(0.16)
+    }
+
+    private var blockCodeBackground: SwiftUI.Color {
+        SwiftUI.Color(red: 0.19, green: 0.20, blue: 0.23)
     }
 }
 

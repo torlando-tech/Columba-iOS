@@ -97,6 +97,7 @@ struct MessageBubble: View {
                             content: message.content,
                             renderer: message.renderer,
                             color: message.isFromMe ? .white : Theme.textPrimary,
+                            isOutgoing: message.isFromMe,
                             fontSize: bodyFontSize * CGFloat(messageTextScale),
                             onOpenLink: onOpenLink
                         )
