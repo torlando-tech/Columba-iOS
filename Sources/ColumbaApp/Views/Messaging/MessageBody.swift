@@ -100,7 +100,7 @@ enum MessageLinkParser {
 
 struct PlainMessageText: View {
     let content: String
-    let color: Color
+    let color: SwiftUI.Color
     let fontSize: CGFloat
 
     var body: some View {
@@ -136,7 +136,7 @@ struct PlainMessageText: View {
 struct MessageBody: View {
     let content: String
     let renderer: MessageRenderer
-    let color: Color
+    let color: SwiftUI.Color
     let fontSize: CGFloat
     var onOpenLink: ((MessageLinkTarget) -> Void)?
 
@@ -177,11 +177,11 @@ struct MessageBody: View {
 
 private struct MarkdownMessageText: View {
     let content: String
-    let color: Color
+    let color: SwiftUI.Color
     let fontSize: CGFloat
     @State private var parsedContent: MarkdownContent
 
-    init(content: String, color: Color, fontSize: CGFloat) {
+    init(content: String, color: SwiftUI.Color, fontSize: CGFloat) {
         self.content = content
         self.color = color
         self.fontSize = fontSize
@@ -224,7 +224,7 @@ private struct MarkdownMessageText: View {
                         weight: .semibold,
                         design: .monospaced
                     ))
-                    .foregroundStyle(Color.white.opacity(0.65))
+                    .foregroundStyle(SwiftUI.Color.white.opacity(0.65))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
             }
@@ -239,7 +239,7 @@ private struct MarkdownMessageText: View {
                     .padding(10)
             }
         }
-        .background(Color(red: 0.08, green: 0.09, blue: 0.12))
+        .background(SwiftUI.Color(red: 0.08, green: 0.09, blue: 0.12))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .markdownMargin(top: .em(0.25), bottom: .em(0.6))
     }
@@ -298,13 +298,17 @@ private struct SplashTextOutputFormat: OutputFormat {
         let theme: Splash.Theme
         private var fragments: [Text] = []
 
+        init(theme: Splash.Theme) {
+            self.theme = theme
+        }
+
         mutating func addToken(_ token: String, ofType type: TokenType) {
             let tokenColor = theme.tokenColors[type] ?? theme.plainTextColor
-            fragments.append(Text(token).foregroundColor(Color(uiColor: tokenColor)))
+            fragments.append(Text(token).foregroundColor(SwiftUI.Color(uiColor: tokenColor)))
         }
 
         mutating func addPlainText(_ text: String) {
-            fragments.append(Text(text).foregroundColor(Color(uiColor: theme.plainTextColor)))
+            fragments.append(Text(text).foregroundColor(SwiftUI.Color(uiColor: theme.plainTextColor)))
         }
 
         mutating func addWhitespace(_ whitespace: String) {
