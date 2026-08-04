@@ -5,31 +5,49 @@ import XCTest
 
 final class MessageBubbleLayoutTests: XCTestCase {
 
-    private func accessibilityIdentifiers(in root: UIView) -> Set<String> {
-        var identifiers = Set<String>()
-        var visited = Set<ObjectIdentifier>()
+    private func visibleContentBounds(in image: UIImage) throws -> CGRect {
+        let cgImage = try XCTUnwrap(image.cgImage)
+        let width = cgImage.width
+        let height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try XCTUnwrap(CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        func visit(_ object: AnyObject) {
-            let identifier = ObjectIdentifier(object)
-            guard visited.insert(identifier).inserted else { return }
-
-            if let identifiable = object as? UIAccessibilityIdentification,
-               let value = identifiable.accessibilityIdentifier,
-               !value.isEmpty {
-                identifiers.insert(value)
-            }
-            if let view = object as? UIView {
-                for child in view.subviews {
-                    visit(child)
-                }
-                for child in view.accessibilityElements ?? [] {
-                    visit(child as AnyObject)
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = (y * width + x) * 4
+                let brightness = Int(pixels[offset]) + Int(pixels[offset + 1]) + Int(pixels[offset + 2])
+                if brightness > 75 {
+                    minX = min(minX, x)
+                    minY = min(minY, y)
+                    maxX = max(maxX, x)
+                    maxY = max(maxY, y)
                 }
             }
         }
-
-        visit(root)
-        return identifiers
+        guard maxX >= minX, maxY >= minY else {
+            XCTFail("Picker rendering contains no visible controls")
+            return .zero
+        }
+        let scale = image.scale
+        return CGRect(
+            x: CGFloat(minX) / scale,
+            y: CGFloat(minY) / scale,
+            width: CGFloat(maxX - minX + 1) / scale,
+            height: CGFloat(maxY - minY + 1) / scale
+        )
     }
 
     @MainActor
@@ -89,31 +107,53 @@ final class MessageBubbleLayoutTests: XCTestCase {
         host.view.frame = CGRect(origin: .zero, size: size)
         host.view.layoutIfNeeded()
 
-        let identifiers = accessibilityIdentifiers(in: host.view)
-        let expectedIdentifiers: Set<String> = [
-            "text_size_preview",
-            "text_size_percent",
-            "text_size_slider",
-            "text_size_range_labels",
-            "text_size_cancel",
-            "text_size_confirm"
-        ]
-        XCTAssertTrue(
-            expectedIdentifiers.isSubset(of: identifiers),
-            "Missing picker controls: \(expectedIdentifiers.subtracting(identifiers).sorted())"
-        )
-
         let image = UIGraphicsImageRenderer(size: size).image { _ in
             host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
         }
 
         XCTAssertEqual(image.size.width, 390, accuracy: 1)
         XCTAssertEqual(image.size.height, 460, accuracy: 1)
+        let contentBounds = try visibleContentBounds(in: image)
+        XCTAssertGreaterThan(contentBounds.width, 340)
+        XCTAssertGreaterThan(contentBounds.height, 340)
+        XCTAssertLessThan(contentBounds.minY, 60)
+        XCTAssertLessThan(
+            contentBounds.maxY,
+            size.height - 8,
+            "Text-size controls must retain visible bottom padding instead of clipping"
+        )
 
         let screenshot = XCTAttachment(image: image)
         screenshot.name = "message-text-size-picker"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+
+        let accessibilitySize = CGSize(width: 320, height: 700)
+        let accessibilityHost = UIHostingController(
+            rootView: TextSizePickerSheet(currentScale: 1.0, onSave: { _ in })
+                .dynamicTypeSize(.accessibility2)
+        )
+        let accessibilityWindow = UIWindow(frame: CGRect(origin: .zero, size: accessibilitySize))
+        accessibilityWindow.rootViewController = accessibilityHost
+        accessibilityWindow.makeKeyAndVisible()
+        defer { accessibilityWindow.isHidden = true }
+        accessibilityHost.view.frame = CGRect(origin: .zero, size: accessibilitySize)
+        accessibilityHost.view.layoutIfNeeded()
+        let accessibilityImage = UIGraphicsImageRenderer(size: accessibilitySize).image { _ in
+            accessibilityHost.view.drawHierarchy(
+                in: accessibilityHost.view.bounds,
+                afterScreenUpdates: true
+            )
+        }
+        let accessibilityBounds = try visibleContentBounds(in: accessibilityImage)
+        XCTAssertGreaterThan(accessibilityBounds.width, 270)
+        XCTAssertGreaterThan(accessibilityBounds.height, 400)
+        XCTAssertLessThan(accessibilityBounds.maxY, accessibilitySize.height - 8)
+
+        let accessibilityScreenshot = XCTAttachment(image: accessibilityImage)
+        accessibilityScreenshot.name = "message-text-size-picker-accessibility-narrow"
+        accessibilityScreenshot.lifetime = .keepAlways
+        add(accessibilityScreenshot)
     }
 
     @MainActor

@@ -46,6 +46,15 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         self.assertIn('messageTextScale: messageTextScale', messaging_view)
         self.assertIn('@ScaledMetric(relativeTo: .body)', text_size_picker)
         self.assertIn('.accessibilityLabel("Message text size")', text_size_picker)
+        for identifier in (
+            "text_size_preview",
+            "text_size_percent",
+            "text_size_slider",
+            "text_size_range_labels",
+            "text_size_cancel",
+            "text_size_confirm",
+        ):
+            self.assertIn(f'.accessibilityIdentifier("{identifier}")', text_size_picker)
         self.assertIn('@ScaledMetric(relativeTo: .body)', message_bubble)
         self.assertIn('bodyFontSize * CGFloat(messageTextScale)', message_bubble)
         self.assertIn('.double("message_text_scale"', migration_exporter)
