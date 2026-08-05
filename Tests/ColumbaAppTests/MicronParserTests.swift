@@ -901,7 +901,11 @@ final class MicronParserTests: XCTestCase {
             )
             .frame(width: 200, height: 40, alignment: .leading)
         )
-        host.view.frame = CGRect(x: 0, y: 0, width: 200, height: 40)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 40))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.frame = window.bounds
         host.view.layoutIfNeeded()
 
         guard let label = descendants(of: host.view, matching: UILabel.self).first,
