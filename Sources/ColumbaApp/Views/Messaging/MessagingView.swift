@@ -181,6 +181,7 @@ struct MessagingView: View {
             if let vm = viewModel {
                 #if os(iOS)
                 MessageTimelineView(
+                    conversationID: conversation.id,
                     messages: vm.messages,
                     messageTextScale: messageTextScale,
                     isLoadingMore: vm.isLoadingMore,

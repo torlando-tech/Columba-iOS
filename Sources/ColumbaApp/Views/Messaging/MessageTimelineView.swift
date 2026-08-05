@@ -72,6 +72,7 @@ struct MessageRefreshWindowPolicy {
 #if os(iOS)
 @available(iOS 17.0, *)
 struct MessageTimelineView: UIViewControllerRepresentable {
+    let conversationID: String
     let messages: [Message]
     let messageTextScale: Double
     let isLoadingMore: Bool
@@ -100,6 +101,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onLongPress = onLongPress
         controller.onOpenLink = onOpenLink
         controller.update(
+            conversationID: conversationID,
             messages: messages,
             messageTextScale: messageTextScale,
             isLoadingMore: isLoadingMore,
@@ -117,6 +119,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     var onOpenLink: ((MessageLinkTarget) -> Void)?
 
     private var messages: [Message] = []
+    private var conversationID: String?
     fileprivate var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     private var isLoadingMore = false
     private var allMessagesLoaded = false
@@ -125,6 +128,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     private var hasCompletedInitialPositioning = false
     private var previousViewportSize = CGSize.zero
     private var shouldFollowBottomAcrossResize = false
+    private(set) var timelineReloadCountForTesting = 0
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewCompositionalLayout { _, _ in
@@ -214,31 +218,57 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     }
 
     func update(
+        conversationID newConversationID: String? = nil,
         messages newMessages: [Message],
         messageTextScale: Double? = nil,
         isLoadingMore: Bool,
         allMessagesLoaded: Bool
     ) {
-        let oldMessages = messages
-        let anchor = visibleAnchor()
-        let wasNearBottom = self.isNearBottom
-        let oldLastID = oldMessages.last?.id
+        let updatedMessages = deduplicated(newMessages)
+        let updatedMessageTextScale = messageTextScale ?? self.messageTextScale
+        let conversationChanged = conversationID != newConversationID
+        let needsRenderingUpdate = conversationChanged
+            || messages != updatedMessages
+            || self.messageTextScale != updatedMessageTextScale
 
-        messages = deduplicated(newMessages)
-        if let messageTextScale {
-            self.messageTextScale = messageTextScale
+        if conversationChanged {
+            loadTask?.cancel()
+            loadTask = nil
+            self.isLoadingMore = false
+            needsInitialBottomScroll = !updatedMessages.isEmpty
+            hasCompletedInitialPositioning = false
+            previousViewportSize = .zero
+            shouldFollowBottomAcrossResize = false
         }
+
         self.isLoadingMore = isLoadingMore || loadTask != nil
         self.allMessagesLoaded = allMessagesLoaded
         updateLoadingIndicator()
 
+        guard needsRenderingUpdate else {
+            requestOlderMessagesIfNecessary()
+            return
+        }
+
+        let oldMessages = messages
+        let anchor = conversationChanged ? nil : visibleAnchor()
+        let wasNearBottom = conversationChanged ? false : self.isNearBottom
+        let oldLastID = oldMessages.last?.id
+
+        conversationID = newConversationID
+        messages = updatedMessages
+        self.messageTextScale = updatedMessageTextScale
+
         guard isViewLoaded else { return }
 
+        timelineReloadCountForTesting += 1
         collectionView.reloadData()
         collectionView.collectionViewLayout.invalidateLayout()
         collectionView.layoutIfNeeded()
 
-        if oldMessages.isEmpty, !messages.isEmpty {
+        if conversationChanged {
+            view.setNeedsLayout()
+        } else if oldMessages.isEmpty, !messages.isEmpty {
             needsInitialBottomScroll = true
             hasCompletedInitialPositioning = false
             view.setNeedsLayout()
@@ -425,8 +455,37 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
         messageTextScale
     }
 
+    var configuredLoadingState: (isLoadingMore: Bool, allMessagesLoaded: Bool) {
+        (isLoadingMore, allMessagesLoaded)
+    }
+
+    var hasActiveLoadTaskForTesting: Bool {
+        loadTask != nil
+    }
+
+    var isViewportNearBottomForTesting: Bool {
+        isNearBottom
+    }
+
     var visibleMessageCellCount: Int {
         collectionView.indexPathsForVisibleItems.count
+    }
+
+    struct ViewportSnapshot: Equatable {
+        let anchorMessageID: String
+        let anchorViewportMinY: CGFloat
+        let contentOffsetY: CGFloat
+    }
+
+    func viewportSnapshotForTesting() -> ViewportSnapshot? {
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        guard let anchor = visibleAnchor() else { return nil }
+        return ViewportSnapshot(
+            anchorMessageID: anchor.messageID,
+            anchorViewportMinY: anchor.minY - anchor.contentOffsetY,
+            contentOffsetY: anchor.contentOffsetY
+        )
     }
 
     func setViewportForTesting(_ size: CGSize) {
