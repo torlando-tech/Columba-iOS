@@ -250,6 +250,9 @@
 		AA9D3715FB399E675BD53B41 /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		ACT02 /* AnnounceClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACT01 /* AnnounceClassificationTests.swift */; };
+		DRAFT002 /* DraftMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DRAFT001 /* DraftMessageTests.swift */; };
+		DA143A000000000000000002 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
+		DA143A000000000000000003 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
 		ADABD423CE22B9E00BC5D7F3 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
 		AF0B30F4F05BB35FCC50D99F /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* ChatsView.swift */; };
 		AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
@@ -438,6 +441,8 @@
 		A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PeerChildInterfaceRegistry.swift; sourceTree = "<group>"; };
 		ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
 		ACT01 /* AnnounceClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnounceClassificationTests.swift; sourceTree = "<group>"; };
+		DRAFT001 /* DraftMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftMessageTests.swift; sourceTree = "<group>"; };
+		DA143A000000000000000001 /* DraftAutosaveController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftAutosaveController.swift; sourceTree = "<group>"; };
 		AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
 		AGBF /* AppGroupBridgeInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBridgeInterface.swift; sourceTree = "<group>"; };
 		AGPF /* AppGroupPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupPaths.swift; sourceTree = "<group>"; };
@@ -1018,6 +1023,7 @@
 				BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */,
 				A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */,
 				ACT01 /* AnnounceClassificationTests.swift */,
+				DRAFT001 /* DraftMessageTests.swift */,
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
 				853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */,
 				B1C2D3E4F5061728394A5B6C /* IncomingMessageSizeLimitTests.swift */,
@@ -1062,6 +1068,7 @@
 				F003 /* ChatsViewModel.swift */,
 				F004 /* ContactsViewModel.swift */,
 				F005 /* MessagingViewModel.swift */,
+				DA143A000000000000000001 /* DraftAutosaveController.swift */,
 				F006 /* SettingsViewModel.swift */,
 				F030 /* InterfaceManagementViewModel.swift */,
 				F034 /* NetworkStatusViewModel.swift */,
@@ -1380,6 +1387,7 @@
 				89551A07A2FB8693E6C465FC /* ChatsViewModel.swift in Sources */,
 				35AAE3A0AE037F5B9305CFC1 /* ContactsViewModel.swift in Sources */,
 				3B33F02402537B1825B64EEC /* MessagingViewModel.swift in Sources */,
+				DA143A000000000000000003 /* DraftAutosaveController.swift in Sources */,
 				9673457897893BF9DE512A0F /* SettingsViewModel.swift in Sources */,
 				B71F90BE936BAF660BA0821B /* MainTabView.swift in Sources */,
 				AF0B30F4F05BB35FCC50D99F /* ChatsView.swift in Sources */,
@@ -1561,6 +1569,7 @@
 				003 /* ChatsViewModel.swift in Sources */,
 				004 /* ContactsViewModel.swift in Sources */,
 				005 /* MessagingViewModel.swift in Sources */,
+				DA143A000000000000000002 /* DraftAutosaveController.swift in Sources */,
 				006 /* SettingsViewModel.swift in Sources */,
 				007 /* MainTabView.swift in Sources */,
 				008 /* ChatsView.swift in Sources */,
@@ -1695,6 +1704,7 @@
 				9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5E /* MessageBubbleLayoutTests.swift in Sources */,
 				ACT02 /* AnnounceClassificationTests.swift in Sources */,
+				DRAFT002 /* DraftMessageTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* IncomingMessageSizeLimitTests.swift in Sources */,
 				26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */,

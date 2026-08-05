@@ -79,12 +79,7 @@ struct ConversationRow: View {
                 }
 
                 // Message preview
-                if let preview = conversation.lastMessagePreview {
-                    Text(preview)
-                        .font(.system(size: 14))
-                        .foregroundColor(Theme.textSecondary)
-                        .lineLimit(1)
-                }
+                messagePreview
             }
 
             // Favorite button
@@ -135,6 +130,28 @@ struct ConversationRow: View {
     }
 
     // MARK: - Subviews
+
+    @ViewBuilder
+    private var messagePreview: some View {
+        if conversation.previewKind == .draft, let draft = conversation.draftText {
+            (
+                Text("Draft:")
+                    .foregroundColor(.red)
+                + Text(" \(draft)")
+                    .foregroundColor(Theme.textSecondary)
+            )
+            .font(.system(size: 14))
+            .italic()
+            .lineLimit(2)
+            .truncationMode(.tail)
+            .accessibilityIdentifier("conversation_draft_preview")
+        } else if let preview = conversation.lastMessagePreview {
+            Text(preview)
+                .font(.system(size: 14))
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
+        }
+    }
 
     /// Profile icon with MDI icon or identicon fallback.
     private var avatarView: some View {

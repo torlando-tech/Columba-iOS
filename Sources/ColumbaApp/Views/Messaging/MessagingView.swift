@@ -22,6 +22,103 @@ import AppKit
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingView")
 
+@MainActor
+enum MessagingDraftBootstrap {
+    enum Outcome {
+        case restored(String)
+        case restoreFailed
+    }
+
+    static func prepare(
+        loadMessages: () async -> Void,
+        restoreDraft: () async throws -> String?
+    ) async throws -> Outcome {
+        await loadMessages()
+        try Task.checkCancellation()
+
+        let outcome: Outcome
+        do {
+            outcome = .restored(try await restoreDraft() ?? "")
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            logger.error("Draft restore failed; persistence remains gated")
+            outcome = .restoreFailed
+        }
+
+        try Task.checkCancellation()
+        return outcome
+    }
+
+    static func commit(
+        _ outcome: Outcome,
+        applyRestoredText: (String) -> Void,
+        handleRestoreFailure: () -> Void,
+        publishConversation: () -> Void
+    ) throws {
+        try Task.checkCancellation()
+
+        switch outcome {
+        case .restored(let restoredText):
+            applyRestoredText(restoredText)
+        case .restoreFailed:
+            handleRestoreFailure()
+        }
+
+        publishConversation()
+    }
+}
+
+/// Production boundary between SwiftUI composer lifecycle events and draft persistence.
+/// Persistence remains gated after a failed restore so an empty lifecycle event cannot
+/// destroy durable text that the screen was unable to read. The first explicit user edit
+/// deliberately supersedes that unknown durable value and opens the gate.
+@MainActor
+final class MessagingComposerLifecycle {
+    private let autosave: any DraftAutosaving
+    private(set) var draftPersistenceReady = false
+
+    init(autosave: any DraftAutosaving) {
+        self.autosave = autosave
+    }
+
+    func restore() async throws -> String? {
+        try await autosave.restore()
+    }
+
+    func applyProgrammaticRestore(_ text: String, applyText: (String) -> Void) {
+        applyText(text)
+        draftPersistenceReady = true
+    }
+
+    func restoreFailed() {
+        draftPersistenceReady = false
+    }
+
+    func userEdited(_ text: String, applyText: (String) -> Void) {
+        applyText(text)
+        draftPersistenceReady = true
+        autosave.textChanged(text)
+    }
+
+    func clearForSend(applyText: () -> Void) {
+        if draftPersistenceReady {
+            autosave.clearImmediately()
+        }
+        applyText()
+    }
+
+    func navigationFlush(_ text: String) async {
+        guard draftPersistenceReady else { return }
+        await autosave.flush(text)
+    }
+
+    func backgroundFlush(_ text: String) async {
+        guard draftPersistenceReady else { return }
+        await autosave.flush(text)
+    }
+}
+
 /// Main messaging/chat screen view.
 ///
 /// Layout:
@@ -45,6 +142,7 @@ struct MessagingView: View {
     // MARK: - State
 
     @State private var viewModel: MessagingViewModel?
+    @State private var composerLifecycle: MessagingComposerLifecycle?
     @State private var messageText = ""
     @State private var showPhotoPicker = false
     @State private var showFilePicker = false
@@ -74,6 +172,7 @@ struct MessagingView: View {
     @State private var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     @State private var nomadNetLinkTarget: MessageLinkTarget?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     // MARK: - Body
 
@@ -115,7 +214,7 @@ struct MessagingView: View {
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     MessageInputBar(
-                        text: $messageText,
+                        text: messageTextBinding,
                         attachedImage: $attachedImage,
                         attachedFiles: $attachedFiles,
                         replyToMessage: vm.replyToMessage,
@@ -251,7 +350,7 @@ struct MessagingView: View {
                     // the keyboard and adjusts the scroll view's visible area to match.
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         MessageInputBar(
-                            text: $messageText,
+                            text: messageTextBinding,
                             attachedImage: $attachedImage,
                             attachedFiles: $attachedFiles,
                             replyToMessage: vm.replyToMessage,
@@ -535,7 +634,12 @@ struct MessagingView: View {
             .presentationDragIndicator(.visible)
         }
         .onDisappear {
+            flushDraft(for: .navigation)
             NotificationService.activeConversationThreadId = nil
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            guard oldPhase == .active, newPhase != .active else { return }
+            flushDraft(for: .background)
         }
         .task {
             messageTextScale = await settingsRepository.getMessageTextScale()
@@ -558,8 +662,42 @@ struct MessagingView: View {
                     appServices: appServices,
                     displayName: conversation.displayName
                 )
-                await vm.loadMessages()
-                viewModel = vm
+                let controller = DraftAutosaveController(
+                    repository: messageRepository,
+                    conversationHash: conversation.destinationHash
+                )
+                let lifecycle = MessagingComposerLifecycle(autosave: controller)
+                do {
+                    let outcome = try await MessagingDraftBootstrap.prepare(
+                        loadMessages: {
+                            await vm.loadMessages()
+                        },
+                        restoreDraft: {
+                            try await lifecycle.restore()
+                        }
+                    )
+                    try MessagingDraftBootstrap.commit(
+                        outcome,
+                        applyRestoredText: { restoredText in
+                            lifecycle.applyProgrammaticRestore(restoredText) {
+                                messageText = $0
+                            }
+                            composerLifecycle = lifecycle
+                        },
+                        handleRestoreFailure: {
+                            lifecycle.restoreFailed()
+                            composerLifecycle = lifecycle
+                        },
+                        publishConversation: {
+                            // Publish last so the composer is interactive only after restore.
+                            viewModel = vm
+                        }
+                    )
+                } catch is CancellationError {
+                    // A later appearance retries bootstrap because no state was published.
+                } catch {
+                    logger.error("Messaging bootstrap failed")
+                }
             } else {
                 await viewModel?.loadMessages()
             }
@@ -692,6 +830,37 @@ struct MessagingView: View {
 
     // MARK: - Actions
 
+    private var messageTextBinding: Binding<String> {
+        Binding(
+            get: { messageText },
+            set: { newValue in
+                if let composerLifecycle {
+                    composerLifecycle.userEdited(newValue) { messageText = $0 }
+                } else {
+                    messageText = newValue
+                }
+            }
+        )
+    }
+
+    private enum DraftFlushBoundary {
+        case navigation
+        case background
+    }
+
+    private func flushDraft(for boundary: DraftFlushBoundary) {
+        let text = messageText
+        let lifecycle = composerLifecycle
+        Task {
+            switch boundary {
+            case .navigation:
+                await lifecycle?.navigationFlush(text)
+            case .background:
+                await lifecycle?.backgroundFlush(text)
+            }
+        }
+    }
+
     private func openMessageLink(_ target: MessageLinkTarget) {
         guard case .nomadNet = target else { return }
         nomadNetLinkTarget = target
@@ -741,7 +910,14 @@ struct MessagingView: View {
 
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
 
-        messageText = ""
+        if let composerLifecycle {
+            composerLifecycle.clearForSend {
+                // Programmatic send clear intentionally bypasses the user-edit path.
+                messageText = ""
+            }
+        } else {
+            messageText = ""
+        }
         attachedImage = nil
         attachedFiles = []
         withAnimation(.easeInOut(duration: 0.25)) {

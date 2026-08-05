@@ -33,12 +33,28 @@ import RNSAPI
 import LXMFSwift
 import GRDB
 
+public struct DraftRecord: Equatable, Sendable {
+    public let conversationHash: Data
+    public let content: String
+    public let updatedAt: Date
+
+    public init(conversationHash: Data, content: String, updatedAt: Date) {
+        self.conversationHash = conversationHash
+        self.content = content
+        self.updatedAt = updatedAt
+    }
+}
+
 /// Actor for thread-safe message database operations.
 ///
 /// Wraps the GRDB-backed `LXMFSwift.LXMFDatabase` and exposes RNSAPI Compat
 /// types so the existing ViewModels compile unchanged. All operations are
 /// serialized through the underlying GRDB actor.
 public actor MessageRepository {
+    /// Keep set queries comfortably below SQLite's commonly configured bind
+    /// variable limit while still avoiding one read per conversation.
+    private static let conversationQueryChunkSize = 500
+
     /// Posted after a conversation's unread count has been cleared in the
     /// canonical store. The chats list uses this to clear its in-memory badge
     /// while a conversation is open.
@@ -52,6 +68,9 @@ public actor MessageRepository {
     /// Posted after durable conversation metadata changes without a new message.
     public static let conversationMetadataChangedNotification =
         Notification.Name("network.columba.conversationMetadataChanged")
+    /// Posted after an app-owned conversation draft has committed to storage.
+    public static let draftChangedNotification =
+        Notification.Name("network.columba.draftChanged")
 
     public static let conversationHashUserInfoKey = "conversationHash"
     public static let stagedRetryMarker = "columba-app-retry-staged-v1"
@@ -106,11 +125,22 @@ public actor MessageRepository {
         self.database = try LXMFSwift.LXMFDatabase(path: grdbPath, readonly: false)
         var config = Configuration()
         config.defaultTransactionKind = .immediate
+        config.foreignKeysEnabled = true
         config.observesSuspensionNotifications = true
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA busy_timeout=5000")
         }
         self.replacementPool = try DatabasePool(path: grdbPath, configuration: config)
+        try self.replacementPool.write { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS columba_drafts (
+                    conversation_hash BLOB PRIMARY KEY NOT NULL
+                        REFERENCES conversations(destination_hash) ON DELETE CASCADE,
+                    content TEXT NOT NULL,
+                    updated_at DOUBLE NOT NULL
+                )
+                """)
+        }
     }
 
     // MARK: - Conversation Operations
@@ -120,9 +150,71 @@ public actor MessageRepository {
         try await database.getConversations(limit: limit, offset: offset).map(Self.mapConversation)
     }
 
+    /// Fetch conversations by their exact destination hashes without applying
+    /// the paginated conversation-list limit.
+    public func fetchConversations(for conversationHashes: [Data]) async throws -> [RNSAPI.ConversationRecord] {
+        let hashes = Self.sortedUniqueHashes(conversationHashes)
+        guard !hashes.isEmpty else { return [] }
+
+        return try await replacementPool.read { db in
+            var records: [LXMFSwift.ConversationRecord] = []
+            for start in stride(from: 0, to: hashes.count, by: Self.conversationQueryChunkSize) {
+                let end = min(start + Self.conversationQueryChunkSize, hashes.count)
+                let chunk = Array(hashes[start..<end])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+                records += try LXMFSwift.ConversationRecord.fetchAll(
+                    db,
+                    sql: """
+                        SELECT *
+                        FROM conversations
+                        WHERE destination_hash IN (\(placeholders))
+                        ORDER BY destination_hash
+                        """,
+                    arguments: StatementArguments(chunk)
+                )
+            }
+            return records.map(Self.mapConversation)
+        }
+    }
+
+    /// Return the requested conversation hashes that have at least one row in
+    /// the canonical messages table. Message preview text cannot provide this
+    /// signal because attachment-only messages legitimately have empty content.
+    public func fetchConversationHashesWithMessages(for conversationHashes: [Data]) async throws -> Set<Data> {
+        let hashes = Self.sortedUniqueHashes(conversationHashes)
+        guard !hashes.isEmpty else { return [] }
+
+        return try await replacementPool.read { db in
+            var result = Set<Data>()
+            for start in stride(from: 0, to: hashes.count, by: Self.conversationQueryChunkSize) {
+                let end = min(start + Self.conversationQueryChunkSize, hashes.count)
+                let chunk = Array(hashes[start..<end])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT DISTINCT conversation_hash
+                        FROM messages
+                        WHERE conversation_hash IN (\(placeholders))
+                        """,
+                    arguments: StatementArguments(chunk)
+                )
+                for row in rows {
+                    let conversationHash: Data = row["conversation_hash"]
+                    result.insert(conversationHash)
+                }
+            }
+            return result
+        }
+    }
+
     /// Fetch a single conversation by destination hash.
     public func fetchConversation(_ conversationHash: Data) async throws -> RNSAPI.ConversationRecord? {
         try await database.getConversation(hash: conversationHash).map(Self.mapConversation)
+    }
+
+    private static func sortedUniqueHashes(_ hashes: [Data]) -> [Data] {
+        Array(Set(hashes)).sorted { $0.lexicographicallyPrecedes($1) }
     }
 
     /// Mark conversation as read (reset unread count).
@@ -140,9 +232,22 @@ public actor MessageRepository {
         try await database.setUnreadCount(hash: conversationHash, count: count)
     }
 
-    /// Delete conversation and all its messages (cascades via FK).
+    /// Delete a conversation, its messages, and its app-owned draft.
     public func deleteConversation(_ conversationHash: Data) async throws {
+        try await deleteConversation(conversationHash, afterCanonicalDelete: nil)
+    }
+
+    /// Internal deterministic seam for coordinating work after the canonical
+    /// deletion commits. Production passes no hook and does not suspend here.
+    func deleteConversation(
+        _ conversationHash: Data,
+        afterCanonicalDelete: (@Sendable () async -> Void)?
+    ) async throws {
         try await database.deleteConversation(hash: conversationHash)
+        if let afterCanonicalDelete {
+            await afterCanonicalDelete()
+        }
+        try clearOrphanedDraftAndNotify(for: conversationHash)
     }
 
     /// Delete a single message by its ID hash.
@@ -153,6 +258,134 @@ public actor MessageRepository {
     /// Ensure a conversation exists for a destination.
     public func ensureConversation(_ conversationHash: Data, displayName: String?) async throws {
         try await database.ensureConversation(hash: conversationHash, displayName: displayName)
+    }
+
+    // MARK: - Draft Operations
+
+    /// Atomically save a draft, or clear it when the content is only whitespace.
+    /// Nonblank content is persisted exactly as provided.
+    public func saveDraft(_ content: String, for conversationHash: Data) async throws {
+        if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            try clearDraftAndNotify(for: conversationHash)
+            return
+        }
+
+        // Keep the mutation and its notification in one actor-isolated
+        // synchronous operation. This is a single atomic SQLite statement;
+        // awaiting GRDB here would allow another draft mutation to commit before
+        // this mutation posts its notification.
+        try Self.writeDraftSynchronously(to: replacementPool) { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO columba_drafts (conversation_hash, content, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(conversation_hash) DO UPDATE SET
+                        content = excluded.content,
+                        updated_at = excluded.updated_at
+                    """,
+                arguments: [conversationHash, content, Date().timeIntervalSince1970]
+            )
+        }
+        postDraftChanged(for: conversationHash)
+    }
+
+    /// Fetch the draft for one conversation.
+    public func fetchDraft(for conversationHash: Data) async throws -> DraftRecord? {
+        try await replacementPool.read { db in
+            try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT conversation_hash, content, updated_at
+                    FROM columba_drafts
+                    WHERE conversation_hash = ?
+                    """,
+                arguments: [conversationHash]
+            ).map(Self.mapDraft)
+        }
+    }
+
+    /// Fetch all drafts keyed by conversation hash.
+    public func fetchDrafts() async throws -> [Data: DraftRecord] {
+        try await replacementPool.read { db in
+            let drafts = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT conversation_hash, content, updated_at
+                    FROM columba_drafts
+                    """
+            ).map(Self.mapDraft)
+            return Dictionary(uniqueKeysWithValues: drafts.map { ($0.conversationHash, $0) })
+        }
+    }
+
+    /// Clear the draft for one conversation.
+    public func clearDraft(for conversationHash: Data) async throws {
+        try clearDraftAndNotify(for: conversationHash)
+    }
+
+    private func clearDraftAndNotify(for conversationHash: Data) throws {
+        let deleted = try Self.writeDraftSynchronously(to: replacementPool) { db in
+            try db.execute(
+                sql: "DELETE FROM columba_drafts WHERE conversation_hash = ?",
+                arguments: [conversationHash]
+            )
+            return db.changesCount > 0
+        }
+        if deleted {
+            postDraftChanged(for: conversationHash)
+        }
+    }
+
+    /// Delete only a draft that is still orphaned after canonical deletion.
+    /// The parent check and deletion share one SQLite statement, so recreation
+    /// and cleanup serialize in commit order across repository instances.
+    private func clearOrphanedDraftAndNotify(for conversationHash: Data) throws {
+        let deleted = try Self.writeDraftSynchronously(to: replacementPool) { db in
+            try db.execute(
+                sql: """
+                    DELETE FROM columba_drafts
+                    WHERE conversation_hash = ?
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM conversations
+                          WHERE destination_hash = ?
+                      )
+                    """,
+                arguments: [conversationHash, conversationHash]
+            )
+            return db.changesCount > 0
+        }
+        if deleted {
+            postDraftChanged(for: conversationHash)
+        }
+    }
+
+    /// Resolves GRDB's sync/async overload in a synchronous context so draft
+    /// mutations cannot suspend and re-enter this actor before notification.
+    private static func writeDraftSynchronously<T>(
+        to pool: DatabasePool,
+        _ updates: (Database) throws -> T
+    ) rethrows -> T {
+        try pool.writeWithoutTransaction(updates)
+    }
+
+    private static func mapDraft(_ row: Row) -> DraftRecord {
+        let conversationHash: Data = row["conversation_hash"]
+        let content: String = row["content"]
+        let updatedAt: Double = row["updated_at"]
+        return DraftRecord(
+            conversationHash: conversationHash,
+            content: content,
+            updatedAt: Date(timeIntervalSince1970: updatedAt)
+        )
+    }
+
+    private func postDraftChanged(for conversationHash: Data) {
+        NotificationCenter.default.post(
+            name: Self.draftChangedNotification,
+            object: nil,
+            userInfo: [Self.conversationHashUserInfoKey: conversationHash]
+        )
     }
 
     /// Posted after persisted favorite/contact membership changes.

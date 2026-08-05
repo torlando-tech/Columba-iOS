@@ -126,6 +126,7 @@ struct MessageInputBar: View {
                         .font(.body)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1...6)
+                        .accessibilityIdentifier("message_composer")
                         .focused($isFocused)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)

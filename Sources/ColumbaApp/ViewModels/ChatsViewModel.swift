@@ -12,6 +12,11 @@ import Observation
 
 // MARK: - Conversation Model
 
+public enum ConversationPreviewKind: Equatable, Hashable, Sendable {
+    case message
+    case draft
+}
+
 /// Represents a conversation in the chats list.
 /// Wraps ConversationRecord from LXMFSwift with UI-specific properties.
 public struct Conversation: Identifiable, Equatable, Hashable {
@@ -25,6 +30,9 @@ public struct Conversation: Identifiable, Equatable, Hashable {
     public var iconName: String?
     public var iconFgColor: String?
     public var iconBgColor: String?
+    public var draftText: String?
+    public var draftUpdatedAt: Date?
+    public var previewKind: ConversationPreviewKind
 
     /// Display name with fallback to truncated hash.
     public var peerName: String {
@@ -79,6 +87,9 @@ public struct Conversation: Identifiable, Equatable, Hashable {
         self.iconName = record.iconName
         self.iconFgColor = record.iconFgColor
         self.iconBgColor = record.iconBgColor
+        self.draftText = nil
+        self.draftUpdatedAt = nil
+        self.previewKind = .message
     }
 
     public init(
@@ -88,7 +99,10 @@ public struct Conversation: Identifiable, Equatable, Hashable {
         lastMessageTimestamp: Date,
         lastMessagePreview: String? = nil,
         unreadCount: Int = 0,
-        isFavorite: Bool = false
+        isFavorite: Bool = false,
+        draftText: String? = nil,
+        draftUpdatedAt: Date? = nil,
+        previewKind: ConversationPreviewKind = .message
     ) {
         self.id = id
         self.destinationHash = destinationHash
@@ -97,6 +111,9 @@ public struct Conversation: Identifiable, Equatable, Hashable {
         self.lastMessagePreview = lastMessagePreview
         self.unreadCount = unreadCount
         self.isFavorite = isFavorite
+        self.draftText = draftText
+        self.draftUpdatedAt = draftUpdatedAt
+        self.previewKind = previewKind
     }
 }
 
@@ -152,6 +169,7 @@ public final class ChatsViewModel {
     private var conversationReadObserver: NSObjectProtocol?
     private var conversationActivityObserver: NSObjectProtocol?
     private var conversationMetadataObserver: NSObjectProtocol?
+    private var draftChangedObserver: NSObjectProtocol?
     private var conversationLoadGeneration: UInt64 = 0
     private var activeConversationLoadCount: Int = 0
     private var activeConversationRefreshCount: Int = 0
@@ -218,6 +236,16 @@ public final class ChatsViewModel {
                 await self?.loadConversations()
             }
         }
+
+        draftChangedObserver = NotificationCenter.default.addObserver(
+            forName: MessageRepository.draftChangedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.loadConversations()
+            }
+        }
     }
 
     deinit {
@@ -233,6 +261,9 @@ public final class ChatsViewModel {
         if let observer = conversationMetadataObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let observer = draftChangedObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     // MARK: - Public Methods
@@ -244,21 +275,7 @@ public final class ChatsViewModel {
         defer { endLoadingConversations() }
 
         do {
-            let records = try await repository.fetchConversations()
-            var convos = Self.prepareConversations(records)
-
-            // Backfill display names from path table for conversations that have none
-            if let pathTable {
-                for i in convos.indices where convos[i].displayName == nil {
-                    if let entry = await pathTable.lookup(destinationHash: convos[i].destinationHash),
-                       !entry.displayName.isEmpty {
-                        convos[i].displayName = entry.displayName
-                        // Persist so we don't need to look up again
-                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: entry.displayName)
-                    }
-                }
-            }
-
+            let convos = try await loadConversationSnapshot()
             applyLoadedConversations(convos, generation: generation)
         } catch {
             if generation == conversationLoadGeneration {
@@ -274,26 +291,58 @@ public final class ChatsViewModel {
         defer { endRefreshingConversations() }
 
         do {
-            let records = try await repository.fetchConversations()
-            var convos = Self.prepareConversations(records)
-
-            // Backfill display names from path table for conversations that have none
-            if let pathTable {
-                for i in convos.indices where convos[i].displayName == nil {
-                    if let entry = await pathTable.lookup(destinationHash: convos[i].destinationHash),
-                       !entry.displayName.isEmpty {
-                        convos[i].displayName = entry.displayName
-                        try? await repository.ensureConversation(convos[i].destinationHash, displayName: entry.displayName)
-                    }
-                }
-            }
-
+            let convos = try await loadConversationSnapshot()
             applyLoadedConversations(convos, generation: generation)
         } catch {
             if generation == conversationLoadGeneration {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    /// Capture the visible page together with every committed draft and any
+    /// draft parent omitted by that page before projecting one coherent list.
+    @MainActor
+    private func loadConversationSnapshot() async throws -> [Conversation] {
+        async let visibleRecords = repository.fetchConversations()
+        async let drafts = repository.fetchDrafts()
+        let (visible, committedDrafts) = try await (visibleRecords, drafts)
+
+        let visibleHashes = Set(visible.map(\.destinationHash))
+        let missingDraftParentHashes = committedDrafts.keys
+            .filter { !visibleHashes.contains($0) }
+            .sorted { $0.lexicographicallyPrecedes($1) }
+        let missingDraftParents = try await repository.fetchConversations(for: missingDraftParentHashes)
+
+        var recordsByHash: [Data: ConversationRecord] = [:]
+        for record in visible + missingDraftParents where recordsByHash[record.destinationHash] == nil {
+            recordsByHash[record.destinationHash] = record
+        }
+        let messageHashes = try await repository.fetchConversationHashesWithMessages(
+            for: Array(recordsByHash.keys)
+        )
+
+        var conversations = Self.prepareConversations(
+            records: Array(recordsByHash.values),
+            drafts: committedDrafts,
+            conversationHashesWithMessages: messageHashes
+        )
+
+        // Backfill display names from path table for conversations that have none.
+        if let pathTable {
+            for i in conversations.indices where conversations[i].displayName == nil {
+                if let entry = await pathTable.lookup(destinationHash: conversations[i].destinationHash),
+                   !entry.displayName.isEmpty {
+                    conversations[i].displayName = entry.displayName
+                    try? await repository.ensureConversation(
+                        conversations[i].destinationHash,
+                        displayName: entry.displayName
+                    )
+                }
+            }
+        }
+
+        return conversations
     }
 
     /// Toggle favorite status for a conversation and persist to database.
@@ -321,18 +370,56 @@ public final class ChatsViewModel {
         }
     }
 
-    /// Convert persisted records to the visible chat list and enforce newest
-    /// activity first at the UI boundary, independent of database ordering.
-    static func prepareConversations(_ records: [ConversationRecord]) -> [Conversation] {
+    /// Convert persisted records and drafts to the visible chat list and enforce
+    /// newest activity first at the UI boundary, independent of database ordering.
+    static func prepareConversations(
+        records: [ConversationRecord],
+        drafts: [Data: DraftRecord],
+        conversationHashesWithMessages: Set<Data>
+    ) -> [Conversation] {
         records
-            .filter { !$0.lastMessagePreview.isEmpty }
-            .map { Conversation(from: $0) }
+            .compactMap { record in
+                let hasMessage = conversationHashesWithMessages.contains(record.destinationHash)
+                let draft = drafts[record.destinationHash].flatMap { draft in
+                    draft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : draft
+                }
+                guard hasMessage || draft != nil else { return nil }
+
+                var conversation = Conversation(from: record)
+                if let draft {
+                    conversation.draftText = draft.content
+                    conversation.draftUpdatedAt = draft.updatedAt
+                    conversation.lastMessagePreview = draft.content
+                    conversation.previewKind = .draft
+                    if !hasMessage {
+                        conversation.lastMessageTimestamp = draft.updatedAt
+                    }
+                }
+                return conversation
+            }
             .sorted {
                 if $0.lastMessageTimestamp != $1.lastMessageTimestamp {
                     return $0.lastMessageTimestamp > $1.lastMessageTimestamp
                 }
                 return $0.id < $1.id
             }
+    }
+
+    /// Preserve the original projection call for existing clients while routing
+    /// all list preparation through the draft-aware implementation. This legacy
+    /// no-draft entry point retains preview-based filtering only for callers that
+    /// do not project drafts; production draft projection always supplies the
+    /// canonical persisted-message set.
+    static func prepareConversations(_ records: [ConversationRecord]) -> [Conversation] {
+        prepareConversations(
+            records: records,
+            drafts: [:],
+            conversationHashesWithMessages: Set(
+                records.lazy
+                    .filter { !$0.lastMessagePreview.isEmpty }
+                    .map(\.destinationHash)
+            )
+        )
     }
 
     /// Start a list refresh. Only the latest generation may replace the
