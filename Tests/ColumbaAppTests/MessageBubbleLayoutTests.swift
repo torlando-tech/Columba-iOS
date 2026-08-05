@@ -755,6 +755,142 @@ final class MessageTimelinePolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testConversationTransitionPositionsNewTimelineAtBottomWithoutRestoringOldViewport() throws {
+        let controller = MessageTimelineViewController()
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 500))
+        let messagesA = timelineMessages(prefix: "a", count: 60)
+        let messagesB = timelineMessages(prefix: "b", count: 60)
+
+        controller.update(
+            conversationID: "conversation-a",
+            messages: messagesA,
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+        controller.setContentOffsetForTesting(y: 1_000)
+        let oldViewport = try XCTUnwrap(controller.viewportSnapshotForTesting())
+        XCTAssertTrue(oldViewport.anchorMessageID.hasPrefix("a-"))
+        XCTAssertFalse(controller.isViewportNearBottomForTesting)
+
+        controller.update(
+            conversationID: "conversation-b",
+            messages: messagesB,
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+
+        let newViewport = try XCTUnwrap(controller.viewportSnapshotForTesting())
+        XCTAssertTrue(newViewport.anchorMessageID.hasPrefix("b-"))
+        XCTAssertTrue(
+            controller.isViewportNearBottomForTesting,
+            "A reused controller must initially position the new conversation at its bottom"
+        )
+        XCTAssertGreaterThan(
+            newViewport.contentOffsetY,
+            oldViewport.contentOffsetY + 500,
+            "The new conversation must not inherit the old conversation's numeric offset"
+        )
+    }
+
+    @MainActor
+    func testConversationTransitionCancelsOlderHistoryLoadAndRejectsItsCompletion() async {
+        let gate = TimelineLoadGate()
+        let oldLoadReturned = expectation(description: "old load callback returned")
+        let controller = MessageTimelineViewController()
+        controller.onLoadOlder = {
+            await gate.wait()
+            oldLoadReturned.fulfill()
+            return true
+        }
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 500))
+        controller.update(
+            conversationID: "conversation-a",
+            messages: timelineMessages(prefix: "a", count: 60),
+            isLoadingMore: false,
+            allMessagesLoaded: false
+        )
+        controller.setContentOffsetForTesting(y: 0)
+        await gate.waitUntilBlocked()
+        XCTAssertTrue(controller.hasActiveLoadTaskForTesting)
+
+        var newConversationLoadCount = 0
+        controller.onLoadOlder = {
+            newConversationLoadCount += 1
+            return false
+        }
+        controller.update(
+            conversationID: "conversation-b",
+            messages: timelineMessages(prefix: "b", count: 60),
+            isLoadingMore: false,
+            allMessagesLoaded: false
+        )
+
+        XCTAssertFalse(
+            controller.hasActiveLoadTaskForTesting,
+            "Conversation B must not remain owned by conversation A's pagination task"
+        )
+        XCTAssertFalse(controller.configuredLoadingState.isLoadingMore)
+        XCTAssertTrue(controller.isViewportNearBottomForTesting)
+
+        controller.update(
+            conversationID: "conversation-b",
+            messages: timelineMessages(prefix: "b", count: 60),
+            isLoadingMore: true,
+            allMessagesLoaded: false
+        )
+        await gate.open()
+        await fulfillment(of: [oldLoadReturned], timeout: 1)
+        await Task.yield()
+
+        XCTAssertTrue(
+            controller.configuredLoadingState.isLoadingMore,
+            "A stale completion must not clear conversation B's externally owned loading state"
+        )
+        XCTAssertEqual(newConversationLoadCount, 0)
+    }
+
+    @MainActor
+    func testNoOpTimelineUpdateUsesFreshPaginationCallbackWithoutReloading() async {
+        let controller = MessageTimelineViewController()
+        var staleCallbackCount = 0
+        controller.onLoadOlder = {
+            staleCallbackCount += 1
+            return false
+        }
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 500))
+        let messages = timelineMessages(prefix: "callback", count: 60)
+        controller.update(
+            conversationID: "conversation",
+            messages: messages,
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+        controller.setContentOffsetForTesting(y: 2_000)
+        let reloadCount = controller.timelineReloadCountForTesting
+
+        let freshCallbackCalled = expectation(description: "fresh pagination callback called")
+        controller.onLoadOlder = {
+            freshCallbackCalled.fulfill()
+            return false
+        }
+        controller.update(
+            conversationID: "conversation",
+            messages: messages,
+            isLoadingMore: false,
+            allMessagesLoaded: false
+        )
+        XCTAssertEqual(controller.timelineReloadCountForTesting, reloadCount)
+
+        controller.setContentOffsetForTesting(y: 0)
+        await fulfillment(of: [freshCallbackCalled], timeout: 1)
+        XCTAssertEqual(staleCallbackCount, 0)
+        XCTAssertEqual(controller.timelineReloadCountForTesting, reloadCount)
+    }
+
+    @MainActor
     func testCollectionTimelineRequestsHistoryFromScrollOffset() async {
         let requested = expectation(description: "older page requested")
         let controller = MessageTimelineViewController()
@@ -799,5 +935,38 @@ final class MessageTimelinePolicyTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(100))
 
         XCTAssertEqual(requestCount, 1)
+    }
+
+    private func timelineMessages(prefix: String, count: Int) -> [Message] {
+        (0..<count).map { index in
+            Message(
+                id: "\(prefix)-\(index)",
+                content: String(repeating: "Variable timeline row \(prefix)-\(index). ", count: index % 5 + 1),
+                timestamp: Date(timeIntervalSince1970: TimeInterval(index)),
+                isFromMe: index.isMultiple(of: 2),
+                deliveryStatus: .delivered
+            )
+        }
+    }
+}
+
+private actor TimelineLoadGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilBlocked() async {
+        while continuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func open() {
+        continuation?.resume()
+        continuation = nil
     }
 }

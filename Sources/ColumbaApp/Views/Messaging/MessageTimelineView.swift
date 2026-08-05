@@ -446,6 +446,14 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
         (isLoadingMore, allMessagesLoaded)
     }
 
+    var hasActiveLoadTaskForTesting: Bool {
+        loadTask != nil
+    }
+
+    var isViewportNearBottomForTesting: Bool {
+        isNearBottom
+    }
+
     var visibleMessageCellCount: Int {
         collectionView.indexPathsForVisibleItems.count
     }
