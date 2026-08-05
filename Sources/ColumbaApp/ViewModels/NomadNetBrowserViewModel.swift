@@ -76,6 +76,33 @@ struct NomadNetLocation: Sendable, Equatable {
     var path: String
     var requestContext: NomadNetRequestContext
 
+    init(nodeHash: Data, path: String, requestContext: NomadNetRequestContext) {
+        self.nodeHash = nodeHash
+        self.path = path
+        self.requestContext = requestContext
+    }
+
+    init(nodeHash: Data, addressPath: String) {
+        let components = addressPath.split(
+            separator: "`",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        let fieldEntries = components.count == 2
+            ? components[1].split(separator: "|").map(String.init)
+            : []
+        self.init(
+            nodeHash: nodeHash,
+            path: components[0],
+            requestContext: NomadNetRequestContext.build(
+                fieldEntries: fieldEntries,
+                formFields: [:],
+                checkboxFields: [:],
+                radioFields: [:]
+            )
+        )
+    }
+
     var address: String {
         let hashHex = nodeHash.map { String(format: "%02x", $0) }.joined()
         let variables = requestContext.requestVariables
@@ -217,9 +244,11 @@ public final class NomadNetBrowserViewModel {
         backend: any RnsBackend,
         identity: Identity
     ) {
-        self.currentNodeHash = nodeHash
+        let initialLocation = NomadNetLocation(nodeHash: nodeHash, addressPath: initialPath)
+        self.currentNodeHash = initialLocation.nodeHash
         self.currentNodeName = nodeName
-        self.currentPath = initialPath
+        self.currentPath = initialLocation.path
+        self.currentRequestContext = initialLocation.requestContext
         self.browserService = NomadNetBrowserService(
             backend: backend,
             identity: identity
