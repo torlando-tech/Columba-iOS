@@ -7,6 +7,37 @@ import SwiftUI
 import UIKit
 #endif
 
+private actor RecordingNomadNetBackend: RnsNomadnet {
+    struct Request: Sendable, Equatable {
+        let destinationHash: String
+        let path: String
+        let requestData: [String: String]?
+    }
+
+    private var recordedRequests: [Request] = []
+
+    func fetchNomadNetPage(
+        destHashHex: String,
+        path: String,
+        timeout: TimeInterval,
+        formFields: [String: String]?
+    ) async throws -> NomadNetFetchResult {
+        recordedRequests.append(Request(
+            destinationHash: destHashHex,
+            path: path,
+            requestData: formFields
+        ))
+        return NomadNetFetchResult(
+            ok: true,
+            status: .ok,
+            data: Data("# response for \(path)".utf8),
+            contentType: "text/x-micron"
+        )
+    }
+
+    func requests() -> [Request] { recordedRequests }
+}
+
 private actor ReactionGateProbe {
     private var active = 0
     private var maximumActive = 0
@@ -638,14 +669,39 @@ final class MicronParserTests: XCTestCase {
 
         XCTAssertEqual(context.requestData, [
             "var_g": "reticulum",
-            "var_path": "docs/manual",
-            "var_query": "hello world",
+            "var_path": "docs%2Fmanual",
+            "var_query": "hello+world",
             "field_username": "torlando",
         ])
         XCTAssertEqual(context.requestVariables, [
             "g": "reticulum",
-            "path": "docs/manual",
-            "query": "hello world",
+            "path": "docs%2Fmanual",
+            "query": "hello+world",
+        ])
+    }
+
+    func testInlineMicronVariablesRemainByteForByteEquivalentStrings() {
+        let context = NomadNetRequestContext.build(
+            fieldEntries: [
+                "plus=a+b",
+                "encodedPlus=%2B",
+                "percent=%25",
+                "slash=%2F",
+                "delimiter=%7C",
+                "equals=%3D",
+            ],
+            formFields: [:],
+            checkboxFields: [:],
+            radioFields: [:]
+        )
+
+        XCTAssertEqual(context.requestData, [
+            "var_plus": "a+b",
+            "var_encodedPlus": "%2B",
+            "var_percent": "%25",
+            "var_slash": "%2F",
+            "var_delimiter": "%7C",
+            "var_equals": "%3D",
         ])
     }
 
@@ -689,6 +745,86 @@ final class MicronParserTests: XCTestCase {
             addressPath: "/page/group.mu`g=reticulum|topic=hello+world"
         )
         XCTAssertEqual(reopened, location)
+    }
+
+    func testNomadNetAddressRoundTripsReservedVariableCharacters() {
+        let variables = [
+            "delimiter": "a|b",
+            "equals": "a=b",
+            "plus": "a+b",
+            "percent": "a%b",
+            "slash": "a/b",
+        ]
+        let location = NomadNetLocation(
+            nodeHash: Data(repeating: 0xcd, count: 16),
+            path: "/page/repo.mu",
+            requestContext: NomadNetRequestContext(
+                requestData: Dictionary(uniqueKeysWithValues: variables.map { ("var_\($0.key)", $0.value) }),
+                requestVariables: variables
+            )
+        )
+
+        XCTAssertEqual(
+            location.address,
+            "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd:/page/repo.mu`delimiter=a%7Cb|equals=a%3Db|percent=a%25b|plus=a%2Bb|slash=a%2Fb"
+        )
+        let addressPath = String(location.address.dropFirst(33))
+        XCTAssertEqual(
+            NomadNetLocation(nodeHash: location.nodeHash, addressPath: addressPath),
+            location
+        )
+    }
+
+    @MainActor
+    func testRngitNavigationRefreshBackAndReopenSendExactVariablesWithoutSharingPassword() async throws {
+        let backend = RecordingNomadNetBackend()
+        let service = NomadNetBrowserService(backend: backend)
+        let hash = Data(repeating: 0xef, count: 16)
+        let viewModel = NomadNetBrowserViewModel(
+            nodeHash: hash,
+            nodeName: "rngit",
+            initialPath: "/page/index.mu",
+            browserService: service
+        )
+        viewModel.formFields["password"] = "never-share-this"
+
+        await viewModel.handleLinkTap(MicronLink(
+            text: "reticulum",
+            url: .samePage(path: "/page/group.mu"),
+            fieldNames: ["g=reticulum", "password"]
+        ))
+        XCTAssertEqual((await backend.requests()).last?.requestData, [
+            "var_g": "reticulum",
+            "field_password": "never-share-this",
+        ])
+        XCTAssertEqual(
+            viewModel.shareableAddress,
+            "nomadnetwork://efefefefefefefefefefefefefefefef:/page/group.mu`g=reticulum"
+        )
+        XCTAssertFalse(viewModel.shareableAddress.contains("never-share-this"))
+
+        await viewModel.refresh()
+        XCTAssertEqual((await backend.requests()).last?.requestData?["var_g"], "reticulum")
+
+        await viewModel.navigateTo(url: .samePage(path: "/page/index.mu"))
+        viewModel.goBack()
+        await viewModel.refresh()
+        XCTAssertEqual((await backend.requests()).last?.path, "/page/group.mu")
+        XCTAssertEqual((await backend.requests()).last?.requestData?["var_g"], "reticulum")
+
+        let reopened = NomadNetBrowserViewModel(
+            nodeHash: hash,
+            nodeName: nil,
+            initialPath: "/page/repo.mu`g=reticulum|r=lxmf|path=docs%252Fmanual",
+            browserService: service
+        )
+        await reopened.loadPage()
+        XCTAssertEqual((await backend.requests()).last?.path, "/page/repo.mu")
+        XCTAssertEqual((await backend.requests()).last?.requestData, [
+            "var_g": "reticulum",
+            "var_r": "lxmf",
+            "var_path": "docs%2Fmanual",
+        ])
     }
 
     func testLinkWithSurroundingText() {

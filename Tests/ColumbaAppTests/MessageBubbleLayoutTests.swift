@@ -39,14 +39,14 @@ final class MessageLinkParserTests: XCTestCase {
     }
 
     func testSharedNomadNetAddressPreservesEncodedRequestVariables() throws {
-        let address = "nomadnetwork://\(nodeHash):/page/group.mu`g=reticulum|topic=hello+world"
+        let address = "nomadnetwork://\(nodeHash):/page/group.mu`g=reticulum|delimiter=a%7Cb|equals=a%3Db|plus=a%2Bb|percent=a%25b"
         let url = try XCTUnwrap(URL(string: address))
 
         XCTAssertEqual(
             MessageLinkParser.target(for: url),
             .nomadNet(
                 nodeHash: Data(hexString: nodeHash)!,
-                path: "/page/group.mu`g=reticulum|topic=hello+world"
+                path: "/page/group.mu`g=reticulum|delimiter=a%7Cb|equals=a%3Db|plus=a%2Bb|percent=a%25b"
             )
         )
     }
