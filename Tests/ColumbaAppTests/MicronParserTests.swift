@@ -656,9 +656,9 @@ final class MicronParserTests: XCTestCase {
         XCTAssertGreaterThan(pixelCount(in: image, near: (0x77, 0x77, 0x77), tolerance: 4), 500)
         XCTAssertLessThan(blueDominantPixelCount(in: image), 5)
 
-        let level1Background = pixelBounds(in: image, near: (0xbb, 0xbb, 0xbb), tolerance: 4)
-        let level2Background = pixelBounds(in: image, near: (0x99, 0x99, 0x99), tolerance: 4)
-        let level3Background = pixelBounds(in: image, near: (0x77, 0x77, 0x77), tolerance: 4)
+        let level1Background = dominantBandBounds(in: image, near: (0xbb, 0xbb, 0xbb), tolerance: 4)
+        let level2Background = dominantBandBounds(in: image, near: (0x99, 0x99, 0x99), tolerance: 4)
+        let level3Background = dominantBandBounds(in: image, near: (0x77, 0x77, 0x77), tolerance: 4)
         XCTAssertNotNil(level1Background)
         XCTAssertNotNil(level2Background)
         XCTAssertNotNil(level3Background)
@@ -848,6 +848,51 @@ final class MicronParserTests: XCTestCase {
                 count += 1
             }
         }
+    }
+
+    private func dominantBandBounds(
+        in image: UIImage,
+        near expected: (UInt8, UInt8, UInt8),
+        tolerance: Int
+    ) -> CGRect? {
+        guard let source = image.cgImage else { return nil }
+        let width = source.width
+        let height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        func matches(_ index: Int) -> Bool {
+            abs(Int(pixels[index]) - Int(expected.0)) <= tolerance
+                && abs(Int(pixels[index + 1]) - Int(expected.1)) <= tolerance
+                && abs(Int(pixels[index + 2]) - Int(expected.2)) <= tolerance
+        }
+
+        let dominantRows = (0..<height).filter { y in
+            (0..<width).reduce(into: 0) { count, x in
+                if matches((y * width + x) * 4) { count += 1 }
+            } > width / 2
+        }
+        guard let minY = dominantRows.first, let maxY = dominantRows.last else { return nil }
+
+        var minX = width
+        var maxX = -1
+        for y in dominantRows {
+            for x in 0..<width where matches((y * width + x) * 4) {
+                minX = min(minX, x)
+                maxX = max(maxX, x)
+            }
+        }
+        guard maxX >= minX else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
     }
 
     private func pixelBounds(
