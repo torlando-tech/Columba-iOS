@@ -22,8 +22,7 @@ public actor NomadNetBrowserService {
 
     // MARK: - Dependencies
 
-    private let backend: any RnsBackend
-    private let localIdentity: Identity
+    private let backend: any RnsNomadnet
 
     // MARK: - Page Cache
 
@@ -44,7 +43,10 @@ public actor NomadNetBrowserService {
 
     public init(backend: any RnsBackend, identity: Identity) {
         self.backend = backend
-        self.localIdentity = identity
+    }
+
+    init(backend: any RnsNomadnet) {
+        self.backend = backend
     }
 
     // MARK: - Page Fetching

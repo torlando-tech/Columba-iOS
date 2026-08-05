@@ -40,11 +40,9 @@ struct NomadNetRequestContext: Sendable, Equatable {
 
         for entry in fieldEntries where entry != "*" {
             if let separator = entry.firstIndex(of: "=") {
-                let rawName = String(entry[..<separator])
-                let rawValue = String(entry[entry.index(after: separator)...])
-                guard !rawName.isEmpty else { continue }
-                let name = decodeFormComponent(rawName)
-                let value = decodeFormComponent(rawValue)
+                let name = String(entry[..<separator])
+                let value = String(entry[entry.index(after: separator)...])
+                guard !name.isEmpty else { continue }
                 requestData["var_\(name)"] = value
                 requestVariables[name] = value
             } else {
@@ -64,9 +62,6 @@ struct NomadNetRequestContext: Sendable, Equatable {
         )
     }
 
-    private static func decodeFormComponent(_ value: String) -> String {
-        value.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? value
-    }
 }
 
 /// A complete browser location, including the request variables needed to
@@ -88,17 +83,26 @@ struct NomadNetLocation: Sendable, Equatable {
             maxSplits: 1,
             omittingEmptySubsequences: false
         ).map(String.init)
-        let fieldEntries = components.count == 2
-            ? components[1].split(separator: "|").map(String.init)
-            : []
+        var requestData: [String: String] = [:]
+        var requestVariables: [String: String] = [:]
+        if components.count == 2 {
+            for entry in components[1].split(separator: "|").map(String.init) {
+                guard let separator = entry.firstIndex(of: "=") else { continue }
+                let encodedName = String(entry[..<separator])
+                let encodedValue = String(entry[entry.index(after: separator)...])
+                let name = Self.decodeAddressComponent(encodedName)
+                guard !name.isEmpty else { continue }
+                let value = Self.decodeAddressComponent(encodedValue)
+                requestData["var_\(name)"] = value
+                requestVariables[name] = value
+            }
+        }
         self.init(
             nodeHash: nodeHash,
             path: components[0],
-            requestContext: NomadNetRequestContext.build(
-                fieldEntries: fieldEntries,
-                formFields: [:],
-                checkboxFields: [:],
-                radioFields: [:]
+            requestContext: NomadNetRequestContext(
+                requestData: requestData,
+                requestVariables: requestVariables
             )
         )
     }
@@ -119,6 +123,11 @@ struct NomadNetLocation: Sendable, Equatable {
         allowed.insert(charactersIn: "-._~")
         return (value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value)
             .replacingOccurrences(of: "%20", with: "+")
+    }
+
+    private static func decodeAddressComponent(_ value: String) -> String {
+        let withSpaces = value.replacingOccurrences(of: "+", with: " ")
+        return withSpaces.removingPercentEncoding ?? withSpaces
     }
 }
 
@@ -237,22 +246,33 @@ public final class NomadNetBrowserViewModel {
 
     // MARK: - Init
 
-    public init(
+    public convenience init(
         nodeHash: Data,
         nodeName: String?,
         initialPath: String = "/page/index.mu",
         backend: any RnsBackend,
         identity: Identity
     ) {
+        self.init(
+            nodeHash: nodeHash,
+            nodeName: nodeName,
+            initialPath: initialPath,
+            browserService: NomadNetBrowserService(backend: backend, identity: identity)
+        )
+    }
+
+    init(
+        nodeHash: Data,
+        nodeName: String?,
+        initialPath: String = "/page/index.mu",
+        browserService: NomadNetBrowserService
+    ) {
         let initialLocation = NomadNetLocation(nodeHash: nodeHash, addressPath: initialPath)
         self.currentNodeHash = initialLocation.nodeHash
         self.currentNodeName = nodeName
         self.currentPath = initialLocation.path
         self.currentRequestContext = initialLocation.requestContext
-        self.browserService = NomadNetBrowserService(
-            backend: backend,
-            identity: identity
-        )
+        self.browserService = browserService
     }
 
     // MARK: - Page Loading

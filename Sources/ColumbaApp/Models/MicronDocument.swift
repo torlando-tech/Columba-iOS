@@ -20,9 +20,9 @@ public struct MicronDocument: Sendable, Equatable {
 public struct MicronPageHeaders: Sendable, Equatable {
     /// Cache duration in seconds. nil = default (12h), 0 = no cache.
     public var cacheSeconds: Int?
-    /// Background color as 3- or 6-digit hex (e.g. "222" or "282828").
+    /// Background color as legacy 3-digit hex (for example, "222").
     public var backgroundColor: String?
-    /// Foreground color as 3- or 6-digit hex (e.g. "fff" or "c9d1d9").
+    /// Foreground color as legacy 3-digit hex (for example, "fff").
     public var foregroundColor: String?
 
     public init(cacheSeconds: Int? = nil, backgroundColor: String? = nil, foregroundColor: String? = nil) {
