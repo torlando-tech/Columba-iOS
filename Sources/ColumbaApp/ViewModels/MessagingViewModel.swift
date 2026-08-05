@@ -19,6 +19,22 @@ import os.log
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
 public final class MessagingViewModel {
+    struct OutboundSendRequest {
+        let destHashHex: String
+        let content: String
+        let method: RNSAPI.LXDeliveryMethod
+        let failureFallbackMethod: RNSAPI.LXDeliveryMethod?
+        let imageData: Data?
+        let imageFormat: String?
+        let fileAttachments: [RnsFileAttachment]?
+        let iconAppearance: IconAppearance?
+        let replyToMessageHashHex: String?
+        let replyQuotedContent: String?
+        let extraFields: [UInt8: Data]?
+    }
+
+    typealias OutboundSendOperation = @MainActor (OutboundSendRequest) async throws -> SendOutcome
+
     struct PendingDeliveryProof: Equatable {
         let state: LXMessageState
         let method: RNSAPI.LXDeliveryMethod?
@@ -57,6 +73,8 @@ public final class MessagingViewModel {
     private let appServices: AppServices
     private let settingsRepository = SettingsRepository()
     private let displayName: String?
+    private var identityOverride: Identity?
+    private var outboundSendOperation: OutboundSendOperation?
     private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingViewModel")
 
     /// Observation token for incoming message notifications.
@@ -137,7 +155,7 @@ public final class MessagingViewModel {
                     for: hashHex,
                     aliases: self.pendingOutboundAliases
                 )
-                if wasAliased && !proofPersisted {
+                if !proofPersisted {
                     self.pendingDeliveryProofs[hashHex] = PendingDeliveryProof(
                         state: proofState,
                         method: proofMethod
@@ -168,6 +186,22 @@ public final class MessagingViewModel {
                 }
             }
         }
+    }
+
+    convenience init(
+        conversationHash: Data,
+        repository: MessageRepository,
+        appServices: AppServices,
+        identity: Identity,
+        outboundSendOperation: @escaping OutboundSendOperation
+    ) {
+        self.init(
+            conversationHash: conversationHash,
+            repository: repository,
+            appServices: appServices
+        )
+        self.identityOverride = identity
+        self.outboundSendOperation = outboundSendOperation
     }
 
     deinit {
@@ -447,6 +481,10 @@ public final class MessagingViewModel {
     }
 
     @MainActor
+    func hasPendingDeliveryProof(for hash: Data) -> Bool {
+        pendingDeliveryProofs[Self.hexString(hash)] != nil
+    }
+
     private func pendingDeliveryProof(for hash: Data) -> PendingDeliveryProof? {
         let hashHex = Self.hexString(hash)
         return pendingDeliveryProofs[hashHex]
@@ -657,6 +695,32 @@ public final class MessagingViewModel {
         )
     }
 
+    @MainActor
+    private func sendOutbound(
+        _ request: OutboundSendRequest,
+        backend: (any RnsBackend)?
+    ) async throws -> SendOutcome {
+        if let outboundSendOperation {
+            return try await outboundSendOperation(request)
+        }
+        guard let backend else {
+            throw NSError(domain: "MessagingViewModel", code: 1)
+        }
+        return try await backend.lxmf.sendLxmfMessage(
+            destHashHex: request.destHashHex,
+            content: request.content,
+            method: request.method,
+            failureFallbackMethod: request.failureFallbackMethod,
+            imageData: request.imageData,
+            imageFormat: request.imageFormat,
+            fileAttachments: request.fileAttachments,
+            iconAppearance: request.iconAppearance,
+            replyToMessageHashHex: request.replyToMessageHashHex,
+            replyQuotedContent: request.replyQuotedContent,
+            extraFields: request.extraFields
+        )
+    }
+
     private static func failureCategory(_ error: Error) -> String {
         (error as? SendFailure)?.category ?? "backend-error"
     }
@@ -699,12 +763,13 @@ public final class MessagingViewModel {
             return false
         }
 
-        guard let identity = appServices.identity else {
+        guard let identity = identityOverride ?? appServices.identity else {
             errorMessage = "Identity not initialized"
             return false
         }
 
-        guard let backend = appServices.backend else {
+        let backend = appServices.backend
+        guard backend != nil || outboundSendOperation != nil else {
             errorMessage = "Backend not initialized"
             return false
         }
@@ -820,14 +885,24 @@ public final class MessagingViewModel {
             // Compat router + sendHook path, which dropped all fields on the
             // wire.) Nothing persists the outbound message to the local DB, so
             // we save explicitly below once `lxMessage.hash` is stamped.
-            let outcome = try await backend.lxmf.sendLxmfMessage(
-                destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
-                content: trimmedText, method: .opportunistic,
-                failureFallbackMethod: retryViaRelay ? .propagated : nil,
-                imageData: imageData, imageFormat: imageFormat,
-                fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
-                iconAppearance: icon,
-                replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
+            let outcome = try await sendOutbound(
+                OutboundSendRequest(
+                    destHashHex: Self.hexString(conversationHash),
+                    content: trimmedText,
+                    method: .opportunistic,
+                    failureFallbackMethod: retryViaRelay ? .propagated : nil,
+                    imageData: imageData,
+                    imageFormat: imageFormat,
+                    fileAttachments: attachments?.map {
+                        RnsFileAttachment(name: $0.name, data: $0.data)
+                    },
+                    iconAppearance: icon,
+                    replyToMessageHashHex: replyToId,
+                    replyQuotedContent: replyPreview,
+                    extraFields: nil
+                ),
+                backend: backend
+            )
             let sentHash = try Self.queuedHash(from: outcome)
             lxMessage.hash = sentHash
             lxMessage.state = .sent
@@ -893,13 +968,24 @@ public final class MessagingViewModel {
 
                 do {
                     // Relay retry through the neutral facet (propagated method).
-                    let retryOutcome = try await backend.lxmf.sendLxmfMessage(
-                        destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
-                        content: trimmedText, method: .propagated,
-                        imageData: imageData, imageFormat: imageFormat,
-                        fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
-                        iconAppearance: icon,
-                        replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
+                    let retryOutcome = try await sendOutbound(
+                        OutboundSendRequest(
+                            destHashHex: Self.hexString(conversationHash),
+                            content: trimmedText,
+                            method: .propagated,
+                            failureFallbackMethod: nil,
+                            imageData: imageData,
+                            imageFormat: imageFormat,
+                            fileAttachments: attachments?.map {
+                                RnsFileAttachment(name: $0.name, data: $0.data)
+                            },
+                            iconAppearance: icon,
+                            replyToMessageHashHex: replyToId,
+                            replyQuotedContent: replyPreview,
+                            extraFields: nil
+                        ),
+                        backend: backend
+                    )
                     let retryHash = try Self.queuedHash(from: retryOutcome)
                     retryMessage.hash = retryHash
                     retryMessage.state = .sent

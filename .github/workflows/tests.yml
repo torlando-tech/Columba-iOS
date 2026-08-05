@@ -74,6 +74,7 @@ jobs:
             Tests.static.test_fetch_python_resilience \
             Tests.static.test_migration_export_flow \
             Tests.static.test_ios_stamp_runtime_hardening \
+            Tests.static.test_async_propagation_fallback \
             Tests.static.test_ui_screenshotter_readiness \
             Tests.static.test_collect_maestro_screenshots
 
