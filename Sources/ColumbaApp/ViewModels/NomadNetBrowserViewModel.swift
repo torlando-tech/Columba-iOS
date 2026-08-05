@@ -484,7 +484,7 @@ public final class NomadNetBrowserViewModel {
     public func loadPartials() async {
         guard let document = currentDocument else { return }
         for element in document.elements {
-            guard case .partial(let partial) = element else { continue }
+            guard case .partial(let partial, _) = element else { continue }
             await loadPartial(partial)
         }
     }
@@ -540,7 +540,7 @@ public final class NomadNetBrowserViewModel {
         radioFields.removeAll()
 
         for element in document.elements {
-            guard case .formField(let field) = element else { continue }
+            guard case .formField(let field, _) = element else { continue }
             switch field {
             case .textInput(_, let name, let defaultValue):
                 formFields[name] = defaultValue

@@ -44,10 +44,23 @@ public struct MicronPageHeaders: Sendable, Equatable {
 public enum MicronElement: Sendable, Equatable {
     case heading(level: Int, spans: [MicronSpan], alignment: MicronAlignment)
     case paragraph(spans: [MicronSpan], alignment: MicronAlignment, indentLevel: Int)
-    case divider(character: Character?)
-    case literalBlock(text: String)
-    case formField(MicronFormField)
-    case partial(MicronPartial)
+    case divider(character: Character?, indentLevel: Int)
+    case literalBlock(text: String, indentLevel: Int)
+    case formField(MicronFormField, indentLevel: Int)
+    case partial(MicronPartial, indentLevel: Int)
+
+    public var sectionIndent: Int {
+        switch self {
+        case .heading(let level, _, _):
+            return max(0, (level - 1) * 2)
+        case .paragraph(_, _, let indentLevel),
+             .divider(_, let indentLevel),
+             .literalBlock(_, let indentLevel),
+             .formField(_, let indentLevel),
+             .partial(_, let indentLevel):
+            return indentLevel
+        }
+    }
 }
 
 // MARK: - Partials

@@ -198,7 +198,7 @@ final class MicronParserTests: XCTestCase {
 
     func testDefaultDivider() {
         let doc = MicronParser.parse("-")
-        guard case .divider(let ch) = doc.elements.first else {
+        guard case .divider(let ch, _) = doc.elements.first else {
             XCTFail("Expected divider"); return
         }
         XCTAssertNil(ch)
@@ -206,7 +206,7 @@ final class MicronParserTests: XCTestCase {
 
     func testCustomDivider() {
         let doc = MicronParser.parse("-=")
-        guard case .divider(let ch) = doc.elements.first else {
+        guard case .divider(let ch, _) = doc.elements.first else {
             XCTFail("Expected divider"); return
         }
         XCTAssertEqual(ch, "=")
@@ -229,7 +229,7 @@ final class MicronParserTests: XCTestCase {
 
     func testLiteralBlock() {
         let doc = MicronParser.parse("`=\nfoo\nbar\n`=")
-        guard case .literalBlock(let text) = doc.elements.first else {
+        guard case .literalBlock(let text, _) = doc.elements.first else {
             XCTFail("Expected literal block"); return
         }
         XCTAssertEqual(text, "foo\nbar")
@@ -237,7 +237,7 @@ final class MicronParserTests: XCTestCase {
 
     func testUnclosedLiteralBlock() {
         let doc = MicronParser.parse("`=\nsome code")
-        guard case .literalBlock(let text) = doc.elements.first else {
+        guard case .literalBlock(let text, _) = doc.elements.first else {
             XCTFail("Expected literal block"); return
         }
         XCTAssertEqual(text, "some code")
@@ -756,7 +756,7 @@ final class MicronParserTests: XCTestCase {
             partialId: nil,
             fieldNames: nil
         )
-        let document = MicronDocument(elements: [.partial(partial)])
+        let document = MicronDocument(elements: [.partial(partial, indentLevel: 0)])
         let partialDocument = MicronParser.parse(">>`[Partial Heading`:/page/target.mu]")
         let size = CGSize(width: 340, height: 120)
         let host = UIHostingController(
@@ -1230,7 +1230,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`<24|username`admin>")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
         XCTAssertEqual(formElements.count, 1)
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .textInput(let width, let name, let defaultValue) = field else {
             XCTFail("Expected text input"); return
         }
@@ -1243,7 +1243,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`<!|password`>")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
         XCTAssertEqual(formElements.count, 1)
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .passwordInput(let name, _) = field else {
             XCTFail("Expected password input"); return
         }
@@ -1254,7 +1254,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`<?|option|yes`>Accept terms")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
         XCTAssertEqual(formElements.count, 1)
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .checkbox(let name, let value, let label, let checked) = field else {
             XCTFail("Expected checkbox"); return
         }
@@ -1267,7 +1267,7 @@ final class MicronParserTests: XCTestCase {
     func testCheckboxPrechecked() {
         let doc = MicronParser.parse("`<?|option|yes|*`>Accept terms")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .checkbox(_, _, _, let checked) = field else {
             XCTFail("Expected checkbox"); return
         }
@@ -1278,7 +1278,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`<^|choice|a`>Option A")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
         XCTAssertEqual(formElements.count, 1)
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .radio(let name, let value, let label, let selected) = field else {
             XCTFail("Expected radio"); return
         }
@@ -1291,7 +1291,7 @@ final class MicronParserTests: XCTestCase {
     func testRadioPreselected() {
         let doc = MicronParser.parse("`<^|choice|b|*`>Option B")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .radio(_, _, _, let selected) = field else {
             XCTFail("Expected radio"); return
         }
@@ -1304,7 +1304,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`{/page/status.mu}")
         let partials = doc.elements.filter { if case .partial = $0 { return true }; return false }
         XCTAssertEqual(partials.count, 1)
-        guard case .partial(let p) = partials[0] else { XCTFail("Expected partial"); return }
+        guard case .partial(let p, _) = partials[0] else { XCTFail("Expected partial"); return }
         XCTAssertEqual(p.url, "/page/status.mu")
         XCTAssertNil(p.refreshInterval)
         XCTAssertNil(p.partialId)
@@ -1312,7 +1312,7 @@ final class MicronParserTests: XCTestCase {
 
     func testPartialWithRefresh() {
         let doc = MicronParser.parse("`{/page/status.mu`5}")
-        guard case .partial(let p) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
+        guard case .partial(let p, _) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
             XCTFail("Expected partial"); return
         }
         XCTAssertEqual(p.url, "/page/status.mu")
@@ -1321,7 +1321,7 @@ final class MicronParserTests: XCTestCase {
 
     func testPartialWithIdAndFields() {
         let doc = MicronParser.parse("`{/page/widget.mu`10`pid=status|username}")
-        guard case .partial(let p) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
+        guard case .partial(let p, _) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
             XCTFail("Expected partial"); return
         }
         XCTAssertEqual(p.url, "/page/widget.mu")

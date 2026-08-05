@@ -92,17 +92,17 @@ struct MicronDocumentView: View {
                     bold: false,
                     onLinkTapped: onLinkTapped
                 )
-                .padding(.leading, CGFloat(indentLevel) * style.approxCharWidth)
                 .frame(minWidth: viewportWidth, alignment: alignment.swiftUI)
+                .padding(.horizontal, CGFloat(indentLevel) * style.approxCharWidth)
             } else {
                 renderSpans(spans, onLinkTapped: onLinkTapped)
                     .font(bodyFont)
                     .lineLimit(nil)
                     .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                    .padding(.leading, indentationWidth(columns: indentLevel))
+                    .padding(.horizontal, indentationWidth(columns: indentLevel))
             }
 
-        case .divider(let character):
+        case .divider(let character, let indentLevel):
             if isScrollMode {
                 // Use a full-width horizontal line character for scroll mode
                 let divChar = character.map(String.init) ?? "─"
@@ -115,6 +115,7 @@ struct MicronDocumentView: View {
                     onLinkTapped: nil
                 )
                 .frame(minWidth: viewportWidth, alignment: .leading)
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else if let ch = character {
                 Text(String(repeating: ch, count: 40))
                     .font(.system(size: style.fontSize, design: .monospaced))
@@ -122,12 +123,14 @@ struct MicronDocumentView: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
+                    .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else {
                 Divider()
                     .padding(.vertical, 4)
+                    .padding(.horizontal, indentationWidth(columns: indentLevel))
             }
 
-        case .literalBlock(let text):
+        case .literalBlock(let text, let indentLevel):
             if isScrollMode {
                 // Split literal blocks into individual lines so each gets exact cell height
                 VStack(alignment: .leading, spacing: 0) {
@@ -142,6 +145,7 @@ struct MicronDocumentView: View {
                         )
                     }
                 }
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else {
                 Text(text)
                     .font(.system(size: style.fontSize, design: .monospaced))
@@ -150,14 +154,17 @@ struct MicronDocumentView: View {
                     .background(Color.platformSystemGray6)
                     .cornerRadius(6)
                     .padding(.vertical, 4)
+                    .padding(.horizontal, indentationWidth(columns: indentLevel))
             }
 
-        case .formField(let field):
+        case .formField(let field, let indentLevel):
             renderFormField(field)
                 .padding(.vertical, 2)
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
 
-        case .partial(let partial):
+        case .partial(let partial, let indentLevel):
             renderPartial(partial)
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
         }
     }
 
@@ -310,15 +317,18 @@ private struct MicronSimpleElementView: View {
             renderSpans(spans, onLinkTapped: onLinkTapped)
                 .font(.system(.body, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                .padding(.leading, CGFloat(indentLevel) * 8)
-        case .divider:
-            Divider().padding(.vertical, 4)
-        case .literalBlock(let text):
+                .padding(.horizontal, CGFloat(indentLevel) * 8)
+        case .divider(_, let indentLevel):
+            Divider()
+                .padding(.vertical, 4)
+                .padding(.horizontal, CGFloat(indentLevel) * 8)
+        case .literalBlock(let text, let indentLevel):
             Text(text)
                 .font(.system(.body, design: .monospaced))
                 .padding(8)
                 .background(Color.platformSystemGray6)
                 .cornerRadius(6)
+                .padding(.horizontal, CGFloat(indentLevel) * 8)
         case .formField, .partial:
             EmptyView()
         }

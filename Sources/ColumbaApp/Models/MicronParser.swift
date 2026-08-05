@@ -12,6 +12,7 @@ public struct MicronParser {
         var lineIndex = 0
         var inLiteral = false
         var literalLines: [String] = []
+        var literalIndent = 0
         var currentIndent = 0
         var currentAlignment: MicronAlignment = .left
         // Formatting state persists across lines (matches python NomadNet's
@@ -39,11 +40,15 @@ public struct MicronParser {
             // Literal block toggle
             if line == "`=" {
                 if inLiteral {
-                    elements.append(.literalBlock(text: literalLines.joined(separator: "\n")))
+                    elements.append(.literalBlock(
+                        text: literalLines.joined(separator: "\n"),
+                        indentLevel: literalIndent
+                    ))
                     literalLines = []
                     inLiteral = false
                 } else {
                     inLiteral = true
+                    literalIndent = currentIndent
                 }
                 continue
             }
@@ -99,7 +104,9 @@ public struct MicronParser {
                 let (spans, alignment, fields, _) = parseInline(content, currentStyle: .plain, currentAlignment: currentAlignment)
                 if let alignment = alignment { currentAlignment = alignment }
                 elements.append(.heading(level: level, spans: spans, alignment: currentAlignment))
-                for field in fields { elements.append(.formField(field)) }
+                for field in fields {
+                    elements.append(.formField(field, indentLevel: currentIndent))
+                }
                 continue
             }
 
@@ -113,14 +120,14 @@ public struct MicronParser {
                 } else {
                     divChar = nil
                 }
-                elements.append(.divider(character: divChar))
+                elements.append(.divider(character: divChar, indentLevel: currentIndent))
                 continue
             }
 
             // Partial include: `{url`refresh`fields}
             if line.hasPrefix("`{") {
                 if let partial = parsePartial(line) {
-                    elements.append(.partial(partial))
+                    elements.append(.partial(partial, indentLevel: currentIndent))
                 }
                 continue
             }
@@ -137,12 +144,17 @@ public struct MicronParser {
             currentStyle = updatedStyle
             if let alignment = alignment { currentAlignment = alignment }
             elements.append(.paragraph(spans: spans, alignment: currentAlignment, indentLevel: currentIndent))
-            for field in fields { elements.append(.formField(field)) }
+            for field in fields {
+                elements.append(.formField(field, indentLevel: currentIndent))
+            }
         }
 
         // Close unclosed literal block
         if inLiteral && !literalLines.isEmpty {
-            elements.append(.literalBlock(text: literalLines.joined(separator: "\n")))
+            elements.append(.literalBlock(
+                text: literalLines.joined(separator: "\n"),
+                indentLevel: literalIndent
+            ))
         }
 
         return MicronDocument(headers: headers, elements: elements)
