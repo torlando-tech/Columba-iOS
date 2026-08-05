@@ -700,10 +700,26 @@ final class MicronParserTests: XCTestCase {
         XCTAssertNotNil(level2Background)
         XCTAssertNotNil(level3Background)
         if let level1Background, let level2Background, let level3Background {
-            XCTAssertEqual(level1Background.minX, level2Background.minX, accuracy: 4)
-            XCTAssertEqual(level2Background.minX, level3Background.minX, accuracy: 4)
-            XCTAssertEqual(level1Background.maxX, level2Background.maxX, accuracy: 4)
-            XCTAssertEqual(level2Background.maxX, level3Background.maxX, accuracy: 4)
+            XCTAssertEqual(
+                level1Background.minX / image.scale,
+                level2Background.minX / image.scale,
+                accuracy: 1.5
+            )
+            XCTAssertEqual(
+                level2Background.minX / image.scale,
+                level3Background.minX / image.scale,
+                accuracy: 1.5
+            )
+            XCTAssertEqual(
+                level1Background.maxX / image.scale,
+                level2Background.maxX / image.scale,
+                accuracy: 1.5
+            )
+            XCTAssertEqual(
+                level2Background.maxX / image.scale,
+                level3Background.maxX / image.scale,
+                accuracy: 1.5
+            )
 
             let level1Text = pixelBounds(
                 in: image,
@@ -721,7 +737,7 @@ final class MicronParserTests: XCTestCase {
                 in: image,
                 near: (0x00, 0x00, 0x00),
                 tolerance: 4,
-                inside: level3Background.insetBy(dx: 30, dy: 4)
+                inside: level3Background.insetBy(dx: 10 * image.scale, dy: image.scale)
             )
             XCTAssertNotNil(level1Text)
             XCTAssertNotNil(level2Text)
@@ -872,10 +888,30 @@ final class MicronParserTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testScrollMetricsUseRenderedMonospaceFont() {
         let style = MicronRenderStyle.monospaceScroll
-        let font = MicronRenderStyle.uiMonospaceFont(fontSize: style.fontSize)
-        let renderedWidth = ("M" as NSString).size(withAttributes: [.font: font]).width
+        let host = UIHostingController(
+            rootView: MonospaceLineView(
+                spans: [.text("MMMM", .plain)],
+                fontSize: style.fontSize,
+                cellHeight: style.approxCharWidth * 2,
+                alignment: .left,
+                bold: false
+            )
+            .frame(width: 200, height: 40, alignment: .leading)
+        )
+        host.view.frame = CGRect(x: 0, y: 0, width: 200, height: 40)
+        host.view.layoutIfNeeded()
+
+        guard let label = descendants(of: host.view, matching: UILabel.self).first,
+              let attributed = label.attributedText,
+              attributed.length > 0,
+              let renderedFont = attributed.attribute(.font, at: 0, effectiveRange: nil) as? UIFont else {
+            XCTFail("Expected a rendered monospace UILabel font")
+            return
+        }
+        let renderedWidth = ("M" as NSString).size(withAttributes: [.font: renderedFont]).width
         XCTAssertEqual(style.approxCharWidth, renderedWidth, accuracy: 0.001)
     }
 
@@ -921,7 +957,7 @@ final class MicronParserTests: XCTestCase {
     func testLoadedPartialRecursivelyRendersFormsAndNestedPartialsInEveryMode() {
         let outer = MicronPartial(url: "/outer.mu", refreshInterval: nil, partialId: nil, fieldNames: nil)
         let inner = MicronPartial(url: "/inner.mu", refreshInterval: nil, partialId: nil, fieldNames: nil)
-        let rootDocument = MicronDocument(elements: [.partial(outer, indentLevel: 0)])
+        let rootDocument = MicronDocument(elements: [.partial(outer, indentLevel: 2)])
         let outerDocument = MicronDocument(elements: [
             .formField(.textInput(width: 12, name: "nested", defaultValue: "value"), indentLevel: 2),
             .partial(inner, indentLevel: 2),
@@ -955,7 +991,13 @@ final class MicronParserTests: XCTestCase {
             host.view.frame = CGRect(origin: .zero, size: size)
             host.view.layoutIfNeeded()
 
-            XCTAssertEqual(descendants(of: host.view, matching: UITextField.self).count, 1, "style: \(style)")
+            let textFields = descendants(of: host.view, matching: UITextField.self)
+            XCTAssertEqual(textFields.count, 1, "style: \(style)")
+            if let textField = textFields.first {
+                let fieldFrame = textField.convert(textField.bounds, to: host.view)
+                XCTAssertGreaterThan(fieldFrame.minX, 30, "style: \(style)")
+                XCTAssertGreaterThan(size.width - fieldFrame.maxX, 20, "style: \(style)")
+            }
             let image = UIGraphicsImageRenderer(size: size).image { _ in
                 host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
             }
@@ -964,6 +1006,63 @@ final class MicronParserTests: XCTestCase {
                 100,
                 "style: \(style)"
             )
+            let headingBounds = dominantBandBounds(
+                in: image,
+                near: (0xaa, 0xaa, 0xaa),
+                tolerance: 4
+            )
+            XCTAssertNotNil(headingBounds, "style: \(style)")
+            if let headingBounds {
+                XCTAssertGreaterThan(headingBounds.minX / image.scale, 20, "style: \(style)")
+                XCTAssertGreaterThan(
+                    (CGFloat(image.cgImage?.width ?? 0) - headingBounds.maxX) / image.scale,
+                    20,
+                    "style: \(style)"
+                )
+            }
+            window.isHidden = true
+        }
+    }
+
+    @MainActor
+    func testNestedLiteralAppliesSectionGeometryInEveryMode() {
+        let document = MicronDocument(elements: [
+            .literalBlock(text: "MMMM", indentLevel: 2),
+        ])
+        let styles: [MicronRenderStyle] = [.monospaceScroll, .monospaceCompact, .proportional]
+
+        for style in styles {
+            let size = CGSize(width: 340, height: 100)
+            let host = UIHostingController(
+                rootView: MicronDocumentView(
+                    document: document,
+                    formFields: .constant([:]),
+                    checkboxFields: .constant([:]),
+                    radioFields: .constant([:]),
+                    style: style,
+                    viewportWidth: 320
+                )
+                .frame(width: 320, alignment: .leading)
+                .environment(\.colorScheme, .light)
+                .padding(10)
+                .frame(width: size.width, height: size.height, alignment: .topLeading)
+                .background(Color.white)
+                .ignoresSafeArea()
+            )
+            let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            host.view.frame = CGRect(origin: .zero, size: size)
+            host.view.layoutIfNeeded()
+
+            let image = UIGraphicsImageRenderer(size: size).image { _ in
+                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            }
+            let textBounds = pixelBounds(in: image, near: (0x00, 0x00, 0x00), tolerance: 24)
+            XCTAssertNotNil(textBounds, "style: \(style)")
+            if let textBounds {
+                XCTAssertGreaterThan(textBounds.minX / image.scale, 20, "style: \(style)")
+            }
             window.isHidden = true
         }
     }
