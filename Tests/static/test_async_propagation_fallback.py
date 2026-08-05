@@ -298,6 +298,20 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
             [event["state"] for event in self.delivery_events(events)],
         )
 
+    def test_recipient_proof_upgrades_prior_failure(self):
+        router = FakeRouter()
+        events = []
+        message = self.queue(router, events, fallback="")
+
+        message.failed_callback(message)
+        message.state = FakeMessage.DELIVERED
+        message.delivery_callback(message)
+
+        self.assertEqual(
+            ["failed", "delivered"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
+
     def test_concurrent_lifecycle_events_cannot_queue_delivered_before_sent(self):
         router = FakeRouter()
         events = BlockingLifecycleEvents()
@@ -506,6 +520,8 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertIn('"deliveryMethod": acceptedMethod?.rawValue ?? ""', app_services)
         self.assertIn("viewModel?.currentMessage(for:", messaging_view)
         self.assertIn("recordCanonicalAlias", messaging_view_model)
+        self.assertIn("PendingDeliveryProof", messaging_view_model)
+        self.assertIn("method: proof.method", messaging_view_model)
         self.assertNotIn("(proof == .delivered) ? .delivered : .failed", messaging_view_model)
         self.assertIn("monotonicDeliveryState", message_repository)
 

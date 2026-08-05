@@ -280,41 +280,78 @@ final class AnnounceClassificationTests: XCTestCase {
 }
 
 final class MessageDetailAliasTests: XCTestCase {
+    private func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-detail-alias-\(UUID().uuidString).sqlite")
+    }
+
+    private func removeDatabase(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(atPath: url.path + "-shm")
+        try? FileManager.default.removeItem(atPath: url.path + "-wal")
+    }
+
     @MainActor
-    func testOpenDetailFollowsOptimisticMessageToCanonicalID() {
+    func testOpenDetailFollowsNormalPersistenceAndBufferedPropagatedProof() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x41, count: 16)
+        let canonicalHash = Data(repeating: 0x42, count: 32)
+        let canonicalID = canonicalHash.map { String(format: "%02x", $0) }.joined()
         let selected = Message(
             id: "optimistic",
             content: "hello",
             isFromMe: true,
             deliveryStatus: .sending
         )
-        var canonical = Message(
-            id: "canonical",
-            content: "hello",
-            isFromMe: true,
-            deliveryStatus: .delivered
+        let viewModel = MessagingViewModel(
+            conversationHash: destination,
+            repository: repository,
+            appServices: AppServices()
         )
-        canonical.deliveryMethod = "propagated"
-        var pendingAliases = ["canonical": "optimistic"]
-        var canonicalizedAliases: [String: String] = [:]
-        MessagingViewModel.recordCanonicalAlias(
-            canonicalID: "canonical",
-            pendingAliases: &pendingAliases,
-            canonicalizedAliases: &canonicalizedAliases
+        viewModel.messages = [selected]
+        viewModel.registerPendingOutboundAlias(
+            canonicalHash: canonicalHash,
+            optimisticID: selected.id
         )
 
-        let resolved = MessagingViewModel.resolveCurrentMessage(
-            selected,
-            messages: [canonical],
-            pendingAliases: pendingAliases,
-            canonicalizedAliases: canonicalizedAliases
+        NotificationCenter.default.post(
+            name: Notification.Name("ColumbaPythonDelivery"),
+            object: nil,
+            userInfo: [
+                "messageHash": canonicalHash,
+                "state": "delivered",
+                "persisted": false,
+                "deliveryMethod": "propagated",
+            ]
         )
+        for _ in 0..<10 { await Task.yield() }
 
-        XCTAssertNil(pendingAliases["canonical"])
-        XCTAssertEqual(canonicalizedAliases["optimistic"], "canonical")
-        XCTAssertEqual(resolved.id, "canonical")
+        try await repository.ensureConversation(destination, displayName: nil)
+        let canonical = RNSAPI.LXMessage(
+            destinationHash: destination,
+            sourceIdentity: nil,
+            content: Data("hello".utf8),
+            desiredMethod: .opportunistic
+        )
+        canonical.hash = canonicalHash
+        canonical.state = .sent
+        canonical.method = .opportunistic
+        try await repository.saveMessage(canonical)
+
+        await viewModel.reconcilePendingDeliveryProof(for: canonicalHash)
+        await viewModel.loadMessages()
+
+        let resolved = viewModel.currentMessage(for: selected)
+        XCTAssertEqual(resolved.id, canonicalID)
         XCTAssertEqual(resolved.deliveryStatus, .delivered)
         XCTAssertEqual(resolved.deliveryMethod, "propagated")
+        let stored = try XCTUnwrap(
+            try await repository.getMessageRecord(id: canonicalHash)
+        )
+        XCTAssertEqual(stored.state, LXMessageState.delivered.rawValue)
+        XCTAssertEqual(stored.method, LXMFSwift.LXDeliveryMethod.propagated.rawValue)
     }
 }
 
