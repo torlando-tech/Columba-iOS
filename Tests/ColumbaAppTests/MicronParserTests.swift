@@ -468,7 +468,7 @@ final class MicronParserTests: XCTestCase {
             return
         }
 
-        let size = CGSize(width: 320, height: 60)
+        let size = CGSize(width: 320, height: 160)
         let host = UIHostingController(
             rootView: MonospaceLineView(
                 spans: spans,
@@ -479,7 +479,9 @@ final class MicronParserTests: XCTestCase {
             )
             .frame(width: 300, height: 32, alignment: .leading)
             .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .center)
             .background(Color.white)
+            .ignoresSafeArea()
         )
         let window = UIWindow(frame: CGRect(origin: .zero, size: size))
         window.rootViewController = host
