@@ -1550,14 +1550,11 @@ def fetch_nomadnet_page(
         empty bytes on failure
       - content_type: optional mime hint when the server provides one
 
-    `form_fields` is a `dict[str, str]` (form name -> value) for
-    POST-style submissions; pass `None` for a plain GET-equivalent
-    fetch. Form values are passed as msgpack to match Reticulum's
-    convention. Link is established fresh each call and closed
-    before return — no link caching on the Python side yet (Swift's
-    NomadNetBrowserService used to cache, but with this simplified
-    bridge we trade a few hundred ms of re-establishment for a much
-    smaller API surface)."""
+    `form_fields` is a `dict[str, str]` (exact `field_*` / `var_*` keys)
+    for POST-style submissions; pass `None` for a plain GET-equivalent
+    fetch. The mapping is passed directly to `RNS.Link.request`, which owns
+    request framing. Pre-packing it turns the server-side request data into
+    bytes instead of a dict, so node apps such as rngit reject the request."""
     with _lock:
         if not _state["started"]:
             return {"ok": False, "status": "not-started", "data": b"", "content_type": ""}
@@ -1642,16 +1639,9 @@ def fetch_nomadnet_page(
     except Exception:
         pass
 
-    # Pack form fields as msgpack when present (Reticulum/LXMF convention).
-    request_data: Any = None
-    if form_fields:
-        try:
-            from RNS.vendor import umsgpack
-            request_data = umsgpack.packb(dict(form_fields))
-        except Exception:
-            # Fall back to nothing — better to send the request unform'd
-            # than to fail outright.
-            request_data = None
+    # RNS.Link.request owns request-data framing. Pass the mapping directly so
+    # the remote path handler receives a dict rather than pre-packed bytes.
+    request_data: Any = dict(form_fields) if form_fields else None
 
     try:
         link.request(
