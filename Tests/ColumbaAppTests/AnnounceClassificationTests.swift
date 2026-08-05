@@ -279,6 +279,36 @@ final class AnnounceClassificationTests: XCTestCase {
     }
 }
 
+final class MessageDetailAliasTests: XCTestCase {
+    @MainActor
+    func testOpenDetailFollowsOptimisticMessageToCanonicalID() {
+        let selected = Message(
+            id: "optimistic",
+            content: "hello",
+            isFromMe: true,
+            deliveryStatus: .sending
+        )
+        var canonical = Message(
+            id: "canonical",
+            content: "hello",
+            isFromMe: true,
+            deliveryStatus: .delivered
+        )
+        canonical.deliveryMethod = "propagated"
+
+        let resolved = MessagingViewModel.resolveCurrentMessage(
+            selected,
+            messages: [canonical],
+            pendingAliases: [:],
+            canonicalizedAliases: ["optimistic": "canonical"]
+        )
+
+        XCTAssertEqual(resolved.id, "canonical")
+        XCTAssertEqual(resolved.deliveryStatus, .delivered)
+        XCTAssertEqual(resolved.deliveryMethod, "propagated")
+    }
+}
+
 final class MessageRepositoryAtomicReplacementTests: XCTestCase {
     private func temporaryDatabaseURL() -> URL {
         FileManager.default.temporaryDirectory
