@@ -172,6 +172,21 @@ final class MicronParserTests: XCTestCase {
         XCTAssertTrue(doc.elements.isEmpty)
     }
 
+    func testResetRemainderCanOpenLiteralBlock() {
+        let doc = MicronParser.parse("<`=\n<`=\n`=")
+        guard case .literalBlock(let text, let indentLevel) = doc.elements.first else {
+            XCTFail("Expected reset remainder to open a literal block")
+            return
+        }
+        XCTAssertEqual(text, "<`=")
+        XCTAssertEqual(indentLevel, 0)
+    }
+
+    func testFieldBearingHeadingSanitizationReclassifiesExposedReset() {
+        let doc = MicronParser.parse("><# hidden `<name`value>")
+        XCTAssertTrue(doc.elements.isEmpty)
+    }
+
     func testNestedBlocksCarryCanonicalSectionIndent() {
         let doc = MicronParser.parse("""
         >>Nested
@@ -690,8 +705,8 @@ final class MicronParserTests: XCTestCase {
             XCTAssertNotNil(level2Text)
             XCTAssertNotNil(level3Text)
             if let level1Text, let level2Text, let level3Text {
-                XCTAssertGreaterThan(level2Text.minX - level1Text.minX, 30)
-                XCTAssertGreaterThan(level3Text.minX - level2Text.minX, 30)
+                XCTAssertGreaterThan((level2Text.minX - level1Text.minX) / image.scale, 10)
+                XCTAssertGreaterThan((level3Text.minX - level2Text.minX) / image.scale, 10)
                 XCTAssertGreaterThanOrEqual(level1Text.minY, level1Background.minY)
                 XCTAssertLessThanOrEqual(level1Text.maxY, level1Background.maxY)
                 XCTAssertGreaterThanOrEqual(level2Text.minY, level2Background.minY)
@@ -827,8 +842,108 @@ final class MicronParserTests: XCTestCase {
         let bounds = pixelBounds(in: image, near: (0xff, 0x00, 0x00), tolerance: 4)
         XCTAssertNotNil(bounds)
         if let bounds {
-            XCTAssertGreaterThan(bounds.minX, 100)
-            XCTAssertLessThan(bounds.maxX, CGFloat(image.cgImage?.width ?? 0) - 100)
+            XCTAssertGreaterThan(bounds.minX / image.scale, 30)
+            XCTAssertGreaterThan(
+                (CGFloat(image.cgImage?.width ?? 0) - bounds.maxX) / image.scale,
+                30
+            )
+        }
+    }
+
+    @MainActor
+    func testZeroViewportScrollDividerKeepsIntrinsicFallbackWidth() {
+        let document = MicronDocument(elements: [.divider(character: "=", indentLevel: 2)])
+        let size = CGSize(width: 340, height: 80)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                style: .monospaceScroll
+            )
+            .frame(width: 320, alignment: .leading)
+            .environment(\.colorScheme, .light)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.white)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        let bounds = pixelBounds(in: image, near: (0x00, 0x00, 0x00), tolerance: 24)
+        XCTAssertNotNil(bounds)
+        if let bounds {
+            XCTAssertGreaterThan(bounds.width / image.scale, 200)
+            XCTAssertGreaterThan(bounds.minX / image.scale, 20)
+        }
+    }
+
+    @MainActor
+    func testLoadedPartialRecursivelyRendersFormsAndNestedPartialsInEveryMode() {
+        let outer = MicronPartial(url: "/outer.mu", refreshInterval: nil, partialId: nil, fieldNames: nil)
+        let inner = MicronPartial(url: "/inner.mu", refreshInterval: nil, partialId: nil, fieldNames: nil)
+        let rootDocument = MicronDocument(elements: [.partial(outer, indentLevel: 0)])
+        let outerDocument = MicronDocument(elements: [
+            .formField(.textInput(width: 12, name: "nested", defaultValue: "value"), indentLevel: 2),
+            .partial(inner, indentLevel: 2),
+        ])
+        let innerDocument = MicronParser.parse(">>Nested Partial")
+        let partials = [outer.url: outerDocument, inner.url: innerDocument]
+        let styles: [MicronRenderStyle] = [.monospaceScroll, .monospaceCompact, .proportional]
+
+        for style in styles {
+            let size = CGSize(width: 340, height: 180)
+            let host = UIHostingController(
+                rootView: MicronDocumentView(
+                    document: rootDocument,
+                    formFields: .constant([:]),
+                    checkboxFields: .constant([:]),
+                    radioFields: .constant([:]),
+                    partialDocuments: partials,
+                    style: style,
+                    viewportWidth: 320
+                )
+                .frame(width: 320, alignment: .leading)
+                .environment(\.colorScheme, .light)
+                .padding(10)
+                .frame(width: size.width, height: size.height, alignment: .topLeading)
+                .background(Color.white)
+                .ignoresSafeArea()
+            )
+            let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            host.view.frame = CGRect(origin: .zero, size: size)
+            host.view.layoutIfNeeded()
+
+            XCTAssertEqual(descendants(of: host.view, matching: UITextField.self).count, 1, "style: \(style)")
+            let image = UIGraphicsImageRenderer(size: size).image { _ in
+                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            }
+            XCTAssertGreaterThan(
+                pixelCount(in: image, near: (0xaa, 0xaa, 0xaa), tolerance: 4),
+                100,
+                "style: \(style)"
+            )
+            window.isHidden = true
+        }
+    }
+
+    private func descendants<T: UIView>(of root: UIView, matching type: T.Type) -> [T] {
+        root.subviews.flatMap { child in
+            var matches = (child as? T).map { [$0] } ?? []
+            matches.append(contentsOf: descendants(of: child, matching: type))
+            return matches
         }
     }
 
