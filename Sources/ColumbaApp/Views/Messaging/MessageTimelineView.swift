@@ -72,6 +72,7 @@ struct MessageRefreshWindowPolicy {
 #if os(iOS)
 @available(iOS 17.0, *)
 struct MessageTimelineView: UIViewControllerRepresentable {
+    let conversationID: String
     let messages: [Message]
     let messageTextScale: Double
     let isLoadingMore: Bool
@@ -100,6 +101,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onLongPress = onLongPress
         controller.onOpenLink = onOpenLink
         controller.update(
+            conversationID: conversationID,
             messages: messages,
             messageTextScale: messageTextScale,
             isLoadingMore: isLoadingMore,
@@ -117,6 +119,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     var onOpenLink: ((MessageLinkTarget) -> Void)?
 
     private var messages: [Message] = []
+    private var conversationID: String?
     fileprivate var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     private var isLoadingMore = false
     private var allMessagesLoaded = false
@@ -215,23 +218,35 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     }
 
     func update(
+        conversationID newConversationID: String? = nil,
         messages newMessages: [Message],
         messageTextScale: Double? = nil,
         isLoadingMore: Bool,
         allMessagesLoaded: Bool
     ) {
+        let updatedMessages = deduplicated(newMessages)
+        let updatedMessageTextScale = messageTextScale ?? self.messageTextScale
+        let needsRenderingUpdate = conversationID != newConversationID
+            || messages != updatedMessages
+            || self.messageTextScale != updatedMessageTextScale
+
+        self.isLoadingMore = isLoadingMore || loadTask != nil
+        self.allMessagesLoaded = allMessagesLoaded
+        updateLoadingIndicator()
+
+        guard needsRenderingUpdate else {
+            requestOlderMessagesIfNecessary()
+            return
+        }
+
         let oldMessages = messages
         let anchor = visibleAnchor()
         let wasNearBottom = self.isNearBottom
         let oldLastID = oldMessages.last?.id
 
-        messages = deduplicated(newMessages)
-        if let messageTextScale {
-            self.messageTextScale = messageTextScale
-        }
-        self.isLoadingMore = isLoadingMore || loadTask != nil
-        self.allMessagesLoaded = allMessagesLoaded
-        updateLoadingIndicator()
+        conversationID = newConversationID
+        messages = updatedMessages
+        self.messageTextScale = updatedMessageTextScale
 
         guard isViewLoaded else { return }
 
@@ -425,6 +440,10 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
 
     var configuredMessageTextScale: Double {
         messageTextScale
+    }
+
+    var configuredLoadingState: (isLoadingMore: Bool, allMessagesLoaded: Bool) {
+        (isLoadingMore, allMessagesLoaded)
     }
 
     var visibleMessageCellCount: Int {

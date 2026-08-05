@@ -715,6 +715,43 @@ final class MessageTimelinePolicyTests: XCTestCase {
             initialReloadCount,
             "An unchanged SwiftUI update must not reload or restore the collection timeline"
         )
+
+        controller.update(
+            messages: messages,
+            messageTextScale: 1.0,
+            isLoadingMore: true,
+            allMessagesLoaded: false
+        )
+        XCTAssertTrue(controller.configuredLoadingState.isLoadingMore)
+        XCTAssertFalse(controller.configuredLoadingState.allMessagesLoaded)
+        XCTAssertEqual(controller.timelineReloadCountForTesting, initialReloadCount)
+
+        var changedMessages = messages
+        changedMessages[20].content = "Updated delivery content"
+        controller.update(
+            messages: changedMessages,
+            messageTextScale: 1.0,
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+        XCTAssertEqual(controller.timelineReloadCountForTesting, initialReloadCount + 1)
+
+        controller.update(
+            messages: changedMessages,
+            messageTextScale: 1.3,
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+        XCTAssertEqual(controller.timelineReloadCountForTesting, initialReloadCount + 2)
+
+        controller.update(
+            conversationID: "different-conversation",
+            messages: changedMessages,
+            messageTextScale: 1.3,
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+        XCTAssertEqual(controller.timelineReloadCountForTesting, initialReloadCount + 3)
     }
 
     @MainActor
