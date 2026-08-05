@@ -234,7 +234,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
         if conversationChanged {
             loadTask?.cancel()
             loadTask = nil
-            isLoadingMore = false
+            self.isLoadingMore = false
             needsInitialBottomScroll = !updatedMessages.isEmpty
             hasCompletedInitialPositioning = false
             previousViewportSize = .zero
