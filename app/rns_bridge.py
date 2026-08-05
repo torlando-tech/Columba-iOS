@@ -1563,15 +1563,18 @@ def fetch_nomadnet_page(
     except ValueError:
         return {"ok": False, "status": "bad-hash", "data": b"", "content_type": ""}
 
-    # Recall the remote identity. If we haven't received an announce yet,
-    # kick off a request_path and bail — caller can retry once the path
-    # arrives. (Mirrors send_opportunistic's behavior.)
+    # Resolve both the route and announced node identity before opening the
+    # link. A cold first request must wait for the path response instead of
+    # merely triggering discovery and requiring the user to retry manually.
+    path_result = resolve_path(
+        dest_hash_hex,
+        timeout_seconds=min(15.0, max(0.0, float(timeout))),
+    )
+    if not path_result["ok"]:
+        return {"ok": False, "status": "no-path", "data": b"", "content_type": ""}
+
     peer_identity = RNS.Identity.recall(dest_hash)
     if peer_identity is None:
-        try:
-            RNS.Transport.request_path(dest_hash)
-        except Exception:
-            pass
         return {"ok": False, "status": "no-path", "data": b"", "content_type": ""}
 
     peer_dest = RNS.Destination(
