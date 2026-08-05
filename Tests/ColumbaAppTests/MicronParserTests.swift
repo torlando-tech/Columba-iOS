@@ -968,19 +968,18 @@ final class MicronParserTests: XCTestCase {
         ])
         let innerDocument = MicronParser.parse(">>Nested Partial")
         let partials = [outer.url: outerDocument, inner.url: innerDocument]
-        let styles: [MicronRenderStyle] = [.monospaceScroll, .monospaceCompact, .proportional]
+        let modes: [NomadNetRenderingMode] = [.monospaceScroll, .monospaceZoom, .proportionalWrap]
 
-        for style in styles {
+        for mode in modes {
             let size = CGSize(width: 340, height: 180)
             let host = UIHostingController(
-                rootView: MicronDocumentView(
+                rootView: MicronRenderContainer(
                     document: rootDocument,
+                    mode: mode,
                     formFields: .constant([:]),
                     checkboxFields: .constant([:]),
                     radioFields: .constant([:]),
-                    partialDocuments: partials,
-                    style: style,
-                    viewportWidth: 320
+                    partialDocuments: partials
                 )
                 .frame(width: 320, alignment: .leading)
                 .environment(\.colorScheme, .light)
@@ -996,11 +995,11 @@ final class MicronParserTests: XCTestCase {
             host.view.layoutIfNeeded()
 
             let textFields = descendants(of: host.view, matching: UITextField.self)
-            XCTAssertEqual(textFields.count, 1, "style: \(style)")
+            XCTAssertEqual(textFields.count, 1, "mode: \(mode)")
             if let textField = textFields.first {
                 let fieldFrame = textField.convert(textField.bounds, to: host.view)
-                XCTAssertGreaterThan(fieldFrame.minX, 30, "style: \(style)")
-                XCTAssertGreaterThan(size.width - fieldFrame.maxX, 20, "style: \(style)")
+                XCTAssertGreaterThan(fieldFrame.minX, 30, "mode: \(mode)")
+                XCTAssertGreaterThan(size.width - fieldFrame.maxX, 20, "mode: \(mode)")
             }
             let image = UIGraphicsImageRenderer(size: size).image { _ in
                 host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
@@ -1008,20 +1007,20 @@ final class MicronParserTests: XCTestCase {
             XCTAssertGreaterThan(
                 pixelCount(in: image, near: (0xaa, 0xaa, 0xaa), tolerance: 4),
                 100,
-                "style: \(style)"
+                "mode: \(mode)"
             )
             let headingBounds = dominantBandBounds(
                 in: image,
                 near: (0xaa, 0xaa, 0xaa),
                 tolerance: 4
             )
-            XCTAssertNotNil(headingBounds, "style: \(style)")
+            XCTAssertNotNil(headingBounds, "mode: \(mode)")
             if let headingBounds {
-                XCTAssertGreaterThan(headingBounds.minX / image.scale, 20, "style: \(style)")
+                XCTAssertGreaterThan(headingBounds.minX / image.scale, 20, "mode: \(mode)")
                 XCTAssertGreaterThan(
                     (CGFloat(image.cgImage?.width ?? 0) - headingBounds.maxX) / image.scale,
                     20,
-                    "style: \(style)"
+                    "mode: \(mode)"
                 )
             }
             window.isHidden = true
