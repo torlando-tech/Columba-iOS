@@ -1500,11 +1500,21 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                     return
                 callback_state["terminal"] = True
             try:
+                method_value = getattr(m, "method", None)
+                if method_value == LXMF.LXMessage.OPPORTUNISTIC:
+                    effective_method = "opportunistic"
+                elif method_value == LXMF.LXMessage.DIRECT:
+                    effective_method = "direct"
+                elif method_value == LXMF.LXMessage.PROPAGATED:
+                    effective_method = "propagated"
+                else:
+                    effective_method = ""
                 _put(
                     "delivery",
                     message_hash=m.hash.hex(),
                     state=state,
                     reason=reason,
+                    method=effective_method,
                 )
             except Exception:
                 pass
@@ -1581,6 +1591,7 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                         message_hash=m.hash.hex(),
                         state="failed",
                         reason="no-propagation-node",
+                        method="opportunistic",
                     )
                 except Exception:
                     pass

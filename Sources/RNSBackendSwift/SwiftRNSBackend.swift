@@ -754,17 +754,38 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         }
         func router(_ router: LXMFSwift.LXMRouter, didUpdateMessage message: LXMFSwift.LXMessage) {
             if message.state == .delivered {
-                continuation.yield(.delivery(messageHash: message.hash.hexHash, state: "delivered", t: Date()))
+                continuation.yield(.delivery(
+                    messageHash: message.hash.hexHash,
+                    state: "delivered",
+                    method: Self.mapDeliveryMethod(message.method),
+                    t: Date()
+                ))
             }
         }
         func router(_ router: LXMFSwift.LXMRouter, didFailMessage message: LXMFSwift.LXMessage, reason: LXMFSwift.LXMFError) {
-            continuation.yield(.delivery(messageHash: message.hash.hexHash, state: "failed", t: Date()))
+            continuation.yield(.delivery(
+                messageHash: message.hash.hexHash,
+                state: "failed",
+                method: Self.mapDeliveryMethod(message.method),
+                t: Date()
+            ))
         }
         func router(_ router: LXMFSwift.LXMRouter, didConfirmDelivery messageHash: Data) {
-            continuation.yield(.delivery(messageHash: messageHash.hexHash, state: "delivered", t: Date()))
+            continuation.yield(.delivery(messageHash: messageHash.hexHash, state: "delivered", method: nil, t: Date()))
         }
         func router(_ router: LXMFSwift.LXMRouter, didUpdateSyncState state: LXMFSwift.PropagationTransferState) {}
         func router(_ router: LXMFSwift.LXMRouter, didCompleteSyncWithNewMessages newMessages: Int) {}
+
+        private static func mapDeliveryMethod(
+            _ method: LXMFSwift.LXDeliveryMethod
+        ) -> RNSAPI.LXDeliveryMethod? {
+            switch method {
+            case .opportunistic: return .opportunistic
+            case .direct: return .direct
+            case .propagated: return .propagated
+            default: return nil
+            }
+        }
     }
 }
 

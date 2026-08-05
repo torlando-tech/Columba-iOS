@@ -376,8 +376,15 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
             return .inbound(sourceHash: s, messageHash: mh, content: c, title: ti, fieldsPacked: (try? fh.hexToData()) ?? Data(), t: t)
         case let .state(s, t):
             return .state(s, t: t)
-        case let .delivery(m, s, t):
-            return .delivery(messageHash: m, state: s, t: t)
+        case let .delivery(m, s, method, t):
+            let effectiveMethod: LXDeliveryMethod?
+            switch method {
+            case "opportunistic": effectiveMethod = .opportunistic
+            case "direct": effectiveMethod = .direct
+            case "propagated": effectiveMethod = .propagated
+            default: effectiveMethod = nil
+            }
+            return .delivery(messageHash: m, state: s, method: effectiveMethod, t: t)
         case let .linkState(l, s, r, i, t):
             return .linkState(linkId: l, state: s, reason: r, inbound: i, t: t)
         case let .linkPacket(l, dat, t):

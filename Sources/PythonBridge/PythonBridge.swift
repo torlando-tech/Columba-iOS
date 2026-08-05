@@ -71,10 +71,10 @@ public final class PythonBridge: @unchecked Sendable {
         case inbound(sourceHash: String, messageHash: String, content: String, title: String, fieldsHex: String, t: Date)
         case state(String, t: Date)
 
-        /// Delivery / failure proof for an outbound message, keyed by its LXMF
-        /// message hash hex. `state` is "delivered" or "failed". Drives the
-        /// chat UI's double-check / failed indicator.
-        case delivery(messageHash: String, state: String, t: Date)
+        /// Delivery lifecycle event for an outbound message, keyed by its LXMF
+        /// message hash hex. `method` is the effective transport used for this
+        /// attempt and is independent of `state`.
+        case delivery(messageHash: String, state: String, method: String, t: Date)
 
         // RNS.Link events — used by lxst-swift for voice calls. The
         // Swift LXST state machine consumes these to drive its own
@@ -869,7 +869,8 @@ public final class PythonBridge: @unchecked Sendable {
             case "delivery":
                 let h = pyStringFromDict(item, key: "message_hash") ?? ""
                 let state = pyStringFromDict(item, key: "state") ?? ""
-                out.append(.delivery(messageHash: h, state: state, t: t))
+                let method = pyStringFromDict(item, key: "method") ?? ""
+                out.append(.delivery(messageHash: h, state: state, method: method, t: t))
             case "link_state":
                 let linkId = pyIntFromDict(item, key: "link_id") ?? 0
                 let state = pyStringFromDict(item, key: "state") ?? ""

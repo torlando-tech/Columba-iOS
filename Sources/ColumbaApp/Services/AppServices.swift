@@ -2890,7 +2890,7 @@ public final class AppServices {
         case .state(let value, _):
             DiagLog.log("[RNS] state \(value)")
             logger.info("Python state: \(value, privacy: .public)")
-        case .delivery(let messageHash, let state, _):
+        case .delivery(let messageHash, let state, let method, _):
             DiagLog.log("[RNS] delivery \(messageHash.prefix(16)) state=\(state)")
             guard let hashData = Data(hexString: messageHash) else { return }
             let newState: LXMessageState
@@ -2906,7 +2906,11 @@ public final class AppServices {
             // persisted and the UI reads from), via the shared repository's
             // RNSAPI-typed method — not the Compat `database`.
             var proofPersisted = false
-            let acceptedMethod: LXDeliveryMethod? = (state == "sent") ? .propagated : nil
+            // Transport and lifecycle are independent. A propagated fallback
+            // can report recipient proof without a separately observed `sent`
+            // event, so persist the backend's effective method on every state.
+            // Retain the old sent-state inference for legacy event producers.
+            let acceptedMethod = method ?? ((state == "sent") ? .propagated : nil)
             if let repo = self.messageRepository {
                 proofPersisted = (try? await repo.applyDeliveryProof(
                     canonicalHash: hashData,
