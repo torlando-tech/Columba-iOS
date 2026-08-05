@@ -141,6 +141,8 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
             for node in tree.body
             if isinstance(node, ast.FunctionDef) and node.name == "send_opportunistic"
         )
+        bridge_lock = threading.Lock()
+        runtime_state = {"started": True, "router": router, "destination": object()}
         namespace = {
             "Any": Any,
             "LXMF": types.SimpleNamespace(LXMessage=FakeMessage),
@@ -149,15 +151,18 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
                 Destination=FakeDestination,
                 Transport=types.SimpleNamespace(request_path=lambda _hash: None),
             ),
-            "_lock": threading.Lock(),
+            "_lock": bridge_lock,
             "threading": threading,
-            "_state": {"started": True, "router": router, "destination": object()},
+            "_runtime_teardown_requested": threading.Event(),
+            "_state": runtime_state,
             "_put": lambda kind, **payload: events.append((kind, payload)),
         }
         exec(
             compile(ast.Module(body=[function], type_ignores=[]), str(BRIDGE), "exec"),
             namespace,
         )
+        self.loaded_bridge_lock = bridge_lock
+        self.loaded_runtime_state = runtime_state
         return namespace["send_opportunistic"]
 
     def queue(self, router, events, *, fallback="propagated", method="opportunistic"):
@@ -296,6 +301,28 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
 
         self.assertTrue(router.wait_for_handled_count(2))
         self.assertEqual([], self.delivery_events(events))
+
+    def test_runtime_replacement_prevents_requeue_on_superseded_router(self):
+        router = LockedCallbackRouter()
+        events = []
+        message = self.queue(router, events)
+
+        self.loaded_bridge_lock.acquire()
+        router.outbound_processing_lock.acquire()
+        try:
+            message.failed_callback(message)
+            self.loaded_runtime_state["router"] = FakeRouter()
+        finally:
+            self.loaded_bridge_lock.release()
+            router.outbound_processing_lock.release()
+
+        self.assertFalse(router.wait_for_handled_count(2, timeout=0.4))
+        self.assertTrue(self.wait_for_delivery_events(events, 1))
+        self.assertEqual("failed", self.delivery_events(events)[0]["state"])
+        self.assertEqual(
+            "propagated-enqueue-failed",
+            self.delivery_events(events)[0]["reason"],
+        )
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
