@@ -1548,10 +1548,22 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                 return
 
             # LXMRouter.fail_message removed this object from pending_outbound
-            # before invoking us. Requeueing the same packed object preserves its
-            # canonical hash and all typed fields while changing only transport.
+            # before invoking us. Re-pack the same immutable payload with the
+            # propagated desired method so LXMF builds `propagation_packed` and
+            # selects packet/resource representation. Timestamp, content and
+            # fields are unchanged, so the canonical hash must remain identical.
+            original_hash = m.hash
             m.desired_method = LXMF.LXMessage.PROPAGATED
-            m.method = LXMF.LXMessage.PROPAGATED
+            m.packed = None
+            try:
+                m.pack()
+            except Exception:
+                _emit_terminal(m, "failed", "propagated-enqueue-failed")
+                return
+            if original_hash is None or m.hash != original_hash or m.propagation_packed is None:
+                _emit_terminal(m, "failed", "propagated-enqueue-failed")
+                return
+
             m.state = LXMF.LXMessage.OUTBOUND
             m.delivery_attempts = 0
             m.progress = 0.0
