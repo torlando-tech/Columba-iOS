@@ -66,23 +66,10 @@ struct MonospaceLineView: View {
         // trailing-whitespace stripping under .center / .right alignment.
         paragraph.alignment = .left
 
-        // Prefer bundled JetBrains Mono — its Unicode block-drawing glyphs are
-        // truly cell-uniform with ASCII spaces, which the iOS system monospaced
-        // font (SF Mono) is not. SF Mono renders ▗▄▖█ at slightly different
-        // pixel widths than space, so a row of mixed box-chars + spaces ends
-        // up at a different intrinsic width than the next row, breaking
-        // column alignment in NomadNet ASCII art (e.g. fr33n0w/thechatroom).
-        // Falls back to the system font if the bundled font fails to load.
-        let baseFont: UIFont = {
-            let name = bold ? "JetBrainsMono-Bold" : "JetBrainsMono-Regular"
-            if let custom = UIFont(name: name, size: fontSize) {
-                return custom
-            }
-            if bold {
-                return UIFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)
-            }
-            return UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        }()
+        let baseFont = MicronRenderStyle.uiMonospaceFont(
+            fontSize: fontSize,
+            bold: bold
+        )
 
         for span in spans {
             switch span {
@@ -124,8 +111,10 @@ struct MonospaceLineView: View {
     private func font(for style: MicronTextStyle, base: UIFont) -> UIFont {
         var font = base
         if style.bold {
-            font = UIFont(name: "JetBrainsMono-Bold", size: base.pointSize)
-                ?? UIFont.monospacedSystemFont(ofSize: base.pointSize, weight: .bold)
+            font = MicronRenderStyle.uiMonospaceFont(
+                fontSize: base.pointSize,
+                bold: true
+            )
         }
         if style.italic,
            let desc = font.fontDescriptor.withSymbolicTraits(.traitItalic) {

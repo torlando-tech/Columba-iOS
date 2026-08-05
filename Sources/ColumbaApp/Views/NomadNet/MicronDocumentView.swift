@@ -22,6 +22,8 @@ struct MicronDocumentView: View {
     /// whitespace line) sets the VStack width and centered shorter rows end up
     /// scrolled offscreen-right.
     var viewportWidth: CGFloat = 0
+    var appliesDocumentPadding = true
+    var partialAncestry: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: isScrollMode ? 0 : 2) {
@@ -29,8 +31,8 @@ struct MicronDocumentView: View {
                 renderElement(element, index: index)
             }
         }
-        .padding(.horizontal, isScrollMode ? 0 : 12)
-        .padding(.vertical, isScrollMode ? 0 : 8)
+        .padding(.horizontal, appliesDocumentPadding && !isScrollMode ? 12 : 0)
+        .padding(.vertical, appliesDocumentPadding && !isScrollMode ? 8 : 0)
     }
 
     private var isScrollMode: Bool { style == .monospaceScroll }
@@ -109,10 +111,9 @@ struct MicronDocumentView: View {
             if isScrollMode {
                 // Use a full-width horizontal line character for scroll mode
                 let divChar = character.map(String.init) ?? "─"
-                let dividerCount = max(
-                    1,
-                    Int(sectionViewportWidth(columns: indentLevel) / style.approxCharWidth)
-                )
+                let dividerCount = viewportWidth > 0
+                    ? max(1, Int(sectionViewportWidth(columns: indentLevel) / style.approxCharWidth))
+                    : 80
                 MonospaceLineView(
                     spans: [.text(String(repeating: divChar, count: dividerCount), .plain)],
                     fontSize: style.fontSize,
@@ -183,12 +184,37 @@ struct MicronDocumentView: View {
     @ViewBuilder
     private func renderPartial(_ partial: MicronPartial) -> some View {
         let key = partial.partialId ?? partial.url
-        MicronPartialView(
-            partialKey: key,
-            partialDocuments: partialDocuments,
-            loadingPartials: loadingPartials,
-            onLinkTapped: onLinkTapped
-        )
+        if let partialDocument = partialDocuments[key], !partialAncestry.contains(key) {
+            AnyView(
+                MicronDocumentView(
+                    document: partialDocument,
+                    formFields: $formFields,
+                    checkboxFields: $checkboxFields,
+                    radioFields: $radioFields,
+                    partialDocuments: partialDocuments,
+                    loadingPartials: loadingPartials,
+                    onLinkTapped: onLinkTapped,
+                    style: style,
+                    viewportWidth: viewportWidth,
+                    appliesDocumentPadding: false,
+                    partialAncestry: partialAncestry.union([key])
+                )
+            )
+        } else if loadingPartials.contains(key) {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.7)
+                Text("Loading...")
+                    .font(
+                        .system(
+                            size: style.fontSize,
+                            design: style.usesMonospace ? .monospaced : .default
+                        )
+                    )
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
     }
 
     // MARK: - Form Field Rendering
@@ -198,13 +224,15 @@ struct MicronDocumentView: View {
         switch field {
         case .textInput(let width, let name, _):
             TextField(name, text: binding(for: name))
-                .font(.system(.body, design: .monospaced))
+                .font(bodyFont)
                 .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: CGFloat(width) * 10)
+                .frame(
+                    maxWidth: CGFloat(width) * (style.usesMonospace ? style.approxCharWidth : 10)
+                )
 
         case .passwordInput(let name, _):
             SecureField(name, text: binding(for: name))
-                .font(.system(.body, design: .monospaced))
+                .font(bodyFont)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 240)
 
@@ -217,7 +245,7 @@ struct MicronDocumentView: View {
                     Image(systemName: (checkboxFields[key] ?? false) ? "checkmark.square.fill" : "square")
                         .foregroundColor((checkboxFields[key] ?? false) ? .accentColor : .secondary)
                     Text(label)
-                        .font(.system(.body, design: .monospaced))
+                        .font(bodyFont)
                         .foregroundStyle(.primary)
                 }
             }
@@ -231,7 +259,7 @@ struct MicronDocumentView: View {
                     Image(systemName: radioFields[name] == value ? "circle.inset.filled" : "circle")
                         .foregroundColor(radioFields[name] == value ? .accentColor : .secondary)
                     Text(label)
-                        .font(.system(.body, design: .monospaced))
+                        .font(bodyFont)
                         .foregroundStyle(.primary)
                 }
             }
@@ -271,81 +299,6 @@ struct MicronDocumentView: View {
 
     private func sectionViewportWidth(columns: Int) -> CGFloat {
         max(0, viewportWidth - (2 * indentationWidth(columns: columns)))
-    }
-}
-
-// MARK: - Partial View
-
-/// Renders a loaded partial document inline, or a loading indicator.
-@available(iOS 17.0, macOS 14.0, *)
-private struct MicronPartialView: View {
-    let partialKey: String
-    let partialDocuments: [String: MicronDocument]
-    let loadingPartials: Set<String>
-    var onLinkTapped: ((MicronLink) -> Void)?
-
-    var body: some View {
-        if let partialDoc = partialDocuments[partialKey] {
-            // Render partial content as simple text spans (no nested form/partial support)
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(partialDoc.elements.enumerated()), id: \.offset) { _, element in
-                    MicronSimpleElementView(element: element, onLinkTapped: onLinkTapped)
-                }
-            }
-        } else if loadingPartials.contains(partialKey) {
-            HStack(spacing: 6) {
-                ProgressView()
-                    .scaleEffect(0.7)
-                Text("Loading...")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 4)
-        }
-    }
-}
-
-/// Simplified element renderer for partial content (no form fields or nested partials).
-@available(iOS 17.0, macOS 14.0, *)
-private struct MicronSimpleElementView: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let element: MicronElement
-    var onLinkTapped: ((MicronLink) -> Void)?
-
-    var body: some View {
-        switch element {
-        case .heading(let level, let spans, let alignment):
-            let palette = MicronHeadingPalette.style(level: level, colorScheme: colorScheme)
-            renderSpans(
-                spans,
-                onLinkTapped: onLinkTapped,
-                linkForegroundColor: palette.foreground
-            )
-                .font(.headline)
-                .bold()
-                .foregroundStyle(palette.foreground)
-                .padding(.leading, CGFloat(max(0, (level - 1) * 2)) * 8)
-                .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                .background(palette.background)
-        case .paragraph(let spans, let alignment, let indentLevel):
-            renderSpans(spans, onLinkTapped: onLinkTapped)
-                .font(.system(.body, design: .monospaced))
-                .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                .padding(.horizontal, CGFloat(indentLevel) * 8)
-        case .divider(_, let indentLevel):
-            Divider()
-                .padding(.vertical, 4)
-                .padding(.horizontal, CGFloat(indentLevel) * 8)
-        case .literalBlock(let text, let indentLevel):
-            Text(text)
-                .font(.system(.body, design: .monospaced))
-                .padding(8)
-                .background(Color.platformSystemGray6)
-                .cornerRadius(6)
-                .padding(.horizontal, CGFloat(indentLevel) * 8)
-        case .formField, .partial:
-            EmptyView()
-        }
     }
 }
 

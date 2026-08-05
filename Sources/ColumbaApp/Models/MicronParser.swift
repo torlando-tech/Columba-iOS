@@ -37,9 +37,10 @@ public struct MicronParser {
             var line = lines[lineIndex]
             lineIndex += 1
 
-            // Literal block toggle
-            if line == "`=" {
-                if inLiteral {
+            // Literal content is opaque. Only an exact toggle closes the block;
+            // reset and heading markers inside it remain literal text.
+            if inLiteral {
+                if line == "`=" {
                     elements.append(.literalBlock(
                         text: literalLines.joined(separator: "\n"),
                         indentLevel: literalIndent
@@ -47,105 +48,126 @@ public struct MicronParser {
                     literalLines = []
                     inLiteral = false
                 } else {
+                    literalLines.append(line)
+                }
+                continue
+            }
+
+            // Canonical NomadNet recursively reparses a line whenever a reset or
+            // field-bearing heading sanitization exposes a new block control.
+            classificationLoop: while true {
+                while line.first == "<" {
+                    currentIndent = 0
+                    line.removeFirst()
+                    if line.isEmpty { continue lineLoop }
+                }
+
+                // A reset can expose a literal toggle, for example `<`=`.
+                if line == "`=" {
                     inLiteral = true
                     literalIndent = currentIndent
+                    continue lineLoop
                 }
-                continue
-            }
 
-            if inLiteral {
-                literalLines.append(line)
-                continue
-            }
-
-            // Empty line
-            if line.isEmpty {
-                elements.append(.paragraph(spans: [.text("", .plain)], alignment: currentAlignment, indentLevel: currentIndent))
-                continue
-            }
-
-            // `<` resets section depth, then canonical NomadNet recursively
-            // classifies the remainder of the same line. rngit relies on this
-            // when its template's trailing `<` is joined directly to a README
-            // heading, producing lines such as `<>Title`.
-            while line.first == "<" {
-                currentIndent = 0
-                line.removeFirst()
-                if line.isEmpty { continue lineLoop }
-            }
-
-            // A heading containing fields is treated as a regular content line
-            // by canonical NomadNet so heading styling cannot interfere with
-            // interactive controls.
-            if line.first == ">" && line.contains("`<") {
-                line.removeFirst(line.prefix(while: { $0 == ">" }).count)
-            }
-
-            // Heading sanitization changes the block-leading character, so all
-            // block classification below must inspect the sanitized remainder.
-            let firstChar = line.first!
-
-            // Comment
-            if firstChar == "#" {
-                continue
-            }
-
-            // Heading
-            if line.first == ">" {
-                let level = line.prefix(while: { $0 == ">" }).count
-                currentIndent = max(0, (level - 1) * 2)
-                let content = String(line.dropFirst(level))
-                if content.isEmpty {
-                    continue
+                // Empty line
+                if line.isEmpty {
+                    elements.append(.paragraph(
+                        spans: [.text("", .plain)],
+                        alignment: currentAlignment,
+                        indentLevel: currentIndent
+                    ))
+                    continue lineLoop
                 }
-                // Heading palette state is temporary in NomadNet. Inline
-                // formatting may style the heading and change alignment, but
-                // it must not inherit or mutate document text formatting.
-                let (spans, alignment, fields, _) = parseInline(content, currentStyle: .plain, currentAlignment: currentAlignment)
+
+                // A heading containing fields is treated as a regular content
+                // line. Stripping the heading markers can expose any other block
+                // control, so restart classification from the beginning.
+                if line.first == ">" && line.contains("`<") {
+                    line.removeFirst(line.prefix(while: { $0 == ">" }).count)
+                    continue classificationLoop
+                }
+
+                let firstChar = line.first!
+
+                // Comment
+                if firstChar == "#" {
+                    continue lineLoop
+                }
+
+                // Heading
+                if firstChar == ">" {
+                    let level = line.prefix(while: { $0 == ">" }).count
+                    currentIndent = max(0, (level - 1) * 2)
+                    let content = String(line.dropFirst(level))
+                    if content.isEmpty {
+                        continue lineLoop
+                    }
+                    // Heading palette state is temporary in NomadNet. Inline
+                    // formatting may style the heading and change alignment, but
+                    // it must not inherit or mutate document text formatting.
+                    let (spans, alignment, fields, _) = parseInline(
+                        content,
+                        currentStyle: .plain,
+                        currentAlignment: currentAlignment
+                    )
+                    if let alignment = alignment { currentAlignment = alignment }
+                    elements.append(.heading(level: level, spans: spans, alignment: currentAlignment))
+                    for field in fields {
+                        elements.append(.formField(field, indentLevel: currentIndent))
+                    }
+                    continue lineLoop
+                }
+
+                // Divider
+                if firstChar == "-" {
+                    let rest = line.dropFirst()
+                    let requested = line.count == 2 ? rest.first : nil
+                    let divChar: Character?
+                    if let requested, requested.asciiValue.map({ $0 < 32 }) != true {
+                        divChar = requested
+                    } else {
+                        divChar = nil
+                    }
+                    elements.append(.divider(character: divChar, indentLevel: currentIndent))
+                    continue lineLoop
+                }
+
+                // Partial include: `{url`refresh`fields}
+                if line.hasPrefix("`{") {
+                    if let partial = parsePartial(line) {
+                        elements.append(.partial(partial, indentLevel: currentIndent))
+                    }
+                    continue lineLoop
+                }
+
+                // Escaped line
+                if firstChar == "\\" {
+                    let text = String(line.dropFirst())
+                    elements.append(.paragraph(
+                        spans: [.text(text, currentStyle)],
+                        alignment: currentAlignment,
+                        indentLevel: currentIndent
+                    ))
+                    continue lineLoop
+                }
+
+                // Regular paragraph - parse inline formatting
+                let (spans, alignment, fields, updatedStyle) = parseInline(
+                    line,
+                    currentStyle: currentStyle,
+                    currentAlignment: currentAlignment
+                )
+                currentStyle = updatedStyle
                 if let alignment = alignment { currentAlignment = alignment }
-                elements.append(.heading(level: level, spans: spans, alignment: currentAlignment))
+                elements.append(.paragraph(
+                    spans: spans,
+                    alignment: currentAlignment,
+                    indentLevel: currentIndent
+                ))
                 for field in fields {
                     elements.append(.formField(field, indentLevel: currentIndent))
                 }
-                continue
-            }
-
-            // Divider
-            if firstChar == "-" {
-                let rest = line.dropFirst()
-                let requested = line.count == 2 ? rest.first : nil
-                let divChar: Character?
-                if let requested, requested.asciiValue.map({ $0 < 32 }) != true {
-                    divChar = requested
-                } else {
-                    divChar = nil
-                }
-                elements.append(.divider(character: divChar, indentLevel: currentIndent))
-                continue
-            }
-
-            // Partial include: `{url`refresh`fields}
-            if line.hasPrefix("`{") {
-                if let partial = parsePartial(line) {
-                    elements.append(.partial(partial, indentLevel: currentIndent))
-                }
-                continue
-            }
-
-            // Escaped line
-            if firstChar == "\\" {
-                let text = String(line.dropFirst())
-                elements.append(.paragraph(spans: [.text(text, currentStyle)], alignment: currentAlignment, indentLevel: currentIndent))
-                continue
-            }
-
-            // Regular paragraph — parse inline formatting
-            let (spans, alignment, fields, updatedStyle) = parseInline(line, currentStyle: currentStyle, currentAlignment: currentAlignment)
-            currentStyle = updatedStyle
-            if let alignment = alignment { currentAlignment = alignment }
-            elements.append(.paragraph(spans: spans, alignment: currentAlignment, indentLevel: currentIndent))
-            for field in fields {
-                elements.append(.formField(field, indentLevel: currentIndent))
+                continue lineLoop
             }
         }
 
