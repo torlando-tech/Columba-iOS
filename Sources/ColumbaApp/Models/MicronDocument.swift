@@ -147,18 +147,20 @@ public enum MicronURL: Sendable, Equatable, Hashable {
 // MARK: - Color Helpers
 
 extension MicronTextStyle {
-    /// Convert legacy 3-digit or true-color 6-digit hex to a SwiftUI Color.
-    public static func colorFromHex(_ hex: String) -> Color? {
-        let expanded: String
-        switch hex.count {
-        case 3:
-            expanded = hex.map { String(repeating: $0, count: 2) }.joined()
-        case 6:
-            expanded = hex
-        default:
-            return nil
-        }
+    /// Convert a legacy Micron 3-digit color to a SwiftUI Color.
+    public static func colorFrom3Hex(_ hex: String) -> Color? {
+        guard hex.count == 3 else { return nil }
+        return colorFromExpandedHex(hex.map { String(repeating: $0, count: 2) }.joined())
+    }
 
+    /// Convert a parsed inline style color, including `FT`/`BT` true color.
+    public static func colorFromStyleHex(_ hex: String) -> Color? {
+        if hex.count == 3 { return colorFrom3Hex(hex) }
+        guard hex.count == 6 else { return nil }
+        return colorFromExpandedHex(hex)
+    }
+
+    private static func colorFromExpandedHex(_ expanded: String) -> Color? {
         guard expanded.allSatisfy(\.isHexDigit),
               let value = UInt32(expanded, radix: 16) else { return nil }
         let r = (value >> 16) & 0xFF

@@ -368,10 +368,10 @@ struct MicronSpansText: View {
             piece.font = .body.italic()
         }
         if style.underline { piece.underlineStyle = .single }
-        if let fg = style.foregroundColor, let color = MicronTextStyle.colorFromHex(fg) {
+        if let fg = style.foregroundColor, let color = MicronTextStyle.colorFromStyleHex(fg) {
             piece.foregroundColor = color
         }
-        if let bg = style.backgroundColor, let color = MicronTextStyle.colorFromHex(bg) {
+        if let bg = style.backgroundColor, let color = MicronTextStyle.colorFromStyleHex(bg) {
             piece.backgroundColor = color
         }
         return piece
