@@ -730,17 +730,20 @@ public actor MessageRepository {
     @discardableResult
     public func applyDeliveryProof(
         canonicalHash: Data,
-        state: RNSAPI.LXMessageState
+        state: RNSAPI.LXMessageState,
+        method: RNSAPI.LXDeliveryMethod? = nil
     ) async throws -> Bool {
         try await replacementPool.write { db in
             let mappedState = Self.mapStateToGRDB(state).rawValue
+            let mappedMethod = method.map { Self.mapMethodToGRDB($0).rawValue }
             let now = Date().timeIntervalSince1970
             try db.execute(
                 sql: """
-                    UPDATE messages SET state = ?, updated_at = ?
+                    UPDATE messages
+                    SET state = ?, method = COALESCE(?, method), updated_at = ?
                     WHERE message_id = ?
                     """,
-                arguments: [mappedState, now, canonicalHash]
+                arguments: [mappedState, mappedMethod, now, canonicalHash]
             )
             if db.changesCount == 1 {
                 try db.execute(
@@ -760,13 +763,15 @@ public actor MessageRepository {
             try db.execute(
                 sql: """
                     UPDATE messages
-                    SET message_id = ?, state = ?, receiving_interface = NULL,
+                    SET message_id = ?, state = ?, method = COALESCE(?, method),
+                        receiving_interface = NULL,
                         updated_at = ?
                     WHERE incoming = 0 AND receiving_interface = ?
                     """,
                 arguments: [
                     canonicalHash,
                     mappedState,
+                    mappedMethod,
                     now,
                     Self.uncertainRetryMarker(canonicalHash: canonicalHash),
                 ]

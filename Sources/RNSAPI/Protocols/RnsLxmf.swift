@@ -44,6 +44,24 @@ public protocol RnsLxmf: AnyObject, Sendable {
         extraFields: [UInt8: Data]?
     ) async throws -> SendOutcome
 
+    /// Send with an optional backend-owned fallback for a later asynchronous
+    /// delivery failure. The shipping Python backend supports propagated
+    /// fallback while retaining the original message hash and complete fields.
+    @discardableResult
+    func sendLxmfMessage(
+        destHashHex: String,
+        content: String,
+        method: LXDeliveryMethod,
+        failureFallbackMethod: LXDeliveryMethod?,
+        imageData: Data?,
+        imageFormat: String?,
+        fileAttachments: [RnsFileAttachment]?,
+        iconAppearance: IconAppearance?,
+        replyToMessageHashHex: String?,
+        replyQuotedContent: String?,
+        extraFields: [UInt8: Data]?
+    ) async throws -> SendOutcome
+
     /// Send a tap-back reaction via canonical `FIELD_REACTION` (0x40) on an
     /// otherwise-empty message: `{0x00: targetHashBytes, 0x01: emojiUTF8}`.
     @discardableResult
@@ -63,6 +81,34 @@ public protocol RnsLxmf: AnyObject, Sendable {
 
 // Ergonomic overloads (protocol requirements can't carry default arguments).
 public extension RnsLxmf {
+    @discardableResult
+    func sendLxmfMessage(
+        destHashHex: String,
+        content: String,
+        method: LXDeliveryMethod,
+        failureFallbackMethod: LXDeliveryMethod?,
+        imageData: Data?,
+        imageFormat: String?,
+        fileAttachments: [RnsFileAttachment]?,
+        iconAppearance: IconAppearance?,
+        replyToMessageHashHex: String?,
+        replyQuotedContent: String?,
+        extraFields: [UInt8: Data]?
+    ) async throws -> SendOutcome {
+        try await sendLxmfMessage(
+            destHashHex: destHashHex,
+            content: content,
+            method: method,
+            imageData: imageData,
+            imageFormat: imageFormat,
+            fileAttachments: fileAttachments,
+            iconAppearance: iconAppearance,
+            replyToMessageHashHex: replyToMessageHashHex,
+            replyQuotedContent: replyQuotedContent,
+            extraFields: extraFields
+        )
+    }
+
     @discardableResult
     func sendLxmfMessage(destHashHex: String, content: String,
                          method: LXDeliveryMethod = .opportunistic) async throws -> SendOutcome {

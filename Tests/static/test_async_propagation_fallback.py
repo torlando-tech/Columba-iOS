@@ -104,6 +104,7 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
                 Transport=types.SimpleNamespace(request_path=lambda _hash: None),
             ),
             "_lock": threading.Lock(),
+            "threading": threading,
             "_state": {"started": True, "router": router, "destination": object()},
             "_put": lambda kind, **payload: events.append((kind, payload)),
         }

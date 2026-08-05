@@ -113,9 +113,18 @@ public final class MessagingViewModel {
                   let hashData = notification.userInfo?["messageHash"] as? Data,
                   let state = notification.userInfo?["state"] as? String else { return }
             let proofPersisted = notification.userInfo?["persisted"] as? Bool ?? false
+            let deliveryMethod = notification.userInfo?["deliveryMethod"] as? String
             let hashHex = hashData.map { String(format: "%02x", $0) }.joined()
             Task { @MainActor in
-                let proofState: LXMessageState = (state == "delivered") ? .delivered : .failed
+                let proofState: LXMessageState
+                switch state {
+                case "sent": proofState = .sent
+                case "delivered": proofState = .delivered
+                case "failed": proofState = .failed
+                default:
+                    self.logger.warning("[MSG_VM] Ignoring unknown delivery state: \(state, privacy: .public)")
+                    return
+                }
                 let wasAliased = self.pendingOutboundAliases[hashHex] != nil
                 let visibleID = Self.visibleMessageID(
                     for: hashHex,
@@ -131,11 +140,17 @@ public final class MessagingViewModel {
                         canonicalHash: hashData,
                         proofState: proofState
                     )
+                    if let deliveryMethod, !deliveryMethod.isEmpty {
+                        self.messages[index].deliveryMethod = deliveryMethod
+                    }
                     self.pendingOutboundAliases.removeValue(forKey: hashHex)
                     self.pendingDeliveryProofs.removeValue(forKey: hashHex)
                     await self.invalidatePaginationAndRefresh()
                 } else {
-                    self.messages[index].deliveryStatus = (proofState == .delivered) ? .delivered : .failed
+                    self.messages[index].deliveryStatus = Self.deliveryStatus(for: proofState)
+                    if let deliveryMethod, !deliveryMethod.isEmpty {
+                        self.messages[index].deliveryMethod = deliveryMethod
+                    }
                 }
             }
         }
@@ -450,7 +465,7 @@ public final class MessagingViewModel {
             content: message.content,
             timestamp: message.timestamp,
             isFromMe: message.isFromMe,
-            deliveryStatus: proofState == .delivered ? .delivered : .failed,
+            deliveryStatus: deliveryStatus(for: proofState),
             imageData: message.imageData,
             imageFormat: message.imageFormat,
             attachments: message.attachments,
@@ -466,6 +481,15 @@ public final class MessagingViewModel {
         canonical.snr = message.snr
         canonical.receivedInterface = nil
         return canonical
+    }
+
+    static func deliveryStatus(for state: LXMessageState) -> DeliveryStatus {
+        switch state {
+        case .sent: return .sent
+        case .delivered: return .delivered
+        case .failed: return .failed
+        default: return .sent
+        }
     }
 
     static func mergingPendingOutbound(
@@ -597,6 +621,7 @@ public final class MessagingViewModel {
         // On failure, retry-via-relay handles the final propagated fallback.
         let settingsMethod = await settingsRepository.getDefaultDeliveryMethod()
         let fallbackForLargeMessages: LXDeliveryMethod = (settingsMethod == "propagated") ? .propagated : .direct
+        let retryViaRelay = await settingsRepository.getRetryViaRelay()
 
         // Resolve icon once — passed to the typed backend send below and also
         // stashed in the local Compat.LXMessage fields for persistence/display.
@@ -703,6 +728,7 @@ public final class MessagingViewModel {
             let outcome = try await backend.lxmf.sendLxmfMessage(
                 destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
                 content: trimmedText, method: .opportunistic,
+                failureFallbackMethod: retryViaRelay ? .propagated : nil,
                 imageData: imageData, imageFormat: imageFormat,
                 fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
                 iconAppearance: icon,
@@ -747,7 +773,6 @@ public final class MessagingViewModel {
         } catch {
             var failure: Error = error
             // Retry via relay if enabled
-            let retryViaRelay = await settingsRepository.getRetryViaRelay()
             if retryViaRelay {
                 logger.info("[MSG_VM] Delivery failed, retrying via relay")
 

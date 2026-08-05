@@ -518,8 +518,13 @@ public final class PythonBridge: @unchecked Sendable {
     /// desired-method (opportunistic / direct / propagated); the function name
     /// stays `sendOpportunistic` historically because that was the only mode
     /// when the Swift surface was first carved.
-    public func sendOpportunistic(destHashHex: String, content: String, fieldsHex: String = "",
-                                  method: String = "opportunistic") async throws -> SendOutcome {
+    public func sendOpportunistic(
+        destHashHex: String,
+        content: String,
+        fieldsHex: String = "",
+        method: String = "opportunistic",
+        failureFallbackMethod: String = ""
+    ) async throws -> SendOutcome {
         try await runOnQueue { [self] in
             try PythonRuntime.shared.withGIL { [self] in
                 guard let module = self.module else { return .notStarted }
@@ -527,18 +532,20 @@ public final class PythonBridge: @unchecked Sendable {
                     throw BridgeError.pythonException(currentPythonException())
                 }
                 defer { Py_DecRef(fn) }
-                guard let args = PyTuple_New(4) else { throw BridgeError.marshallingFailure("PyTuple_New") }
+                guard let args = PyTuple_New(5) else { throw BridgeError.marshallingFailure("PyTuple_New") }
                 defer { Py_DecRef(args) }
                 guard let soDest = PyUnicode_FromString(destHashHex),
                       let soContent = PyUnicode_FromString(content),
                       let soFields = PyUnicode_FromString(fieldsHex),
-                      let soMethod = PyUnicode_FromString(method) else {
+                      let soMethod = PyUnicode_FromString(method),
+                      let soFailureFallback = PyUnicode_FromString(failureFallbackMethod) else {
                     throw BridgeError.marshallingFailure("PyUnicode_FromString")
                 }
                 PyTuple_SetItem(args, 0, soDest)
                 PyTuple_SetItem(args, 1, soContent)
                 PyTuple_SetItem(args, 2, soFields)
                 PyTuple_SetItem(args, 3, soMethod)
+                PyTuple_SetItem(args, 4, soFailureFallback)
                 guard let result = PyObject_CallObject(fn, args) else {
                     throw BridgeError.pythonException(currentPythonException())
                 }

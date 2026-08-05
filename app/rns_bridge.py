@@ -1431,22 +1431,15 @@ def resolve_path(dest_hash_hex: str, timeout_seconds: float = 10.0) -> dict[str,
 
 
 def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
-                       method: str = "opportunistic") -> dict[str, Any]:
-    """Send an LXMF message. Returns a dict with 'ok' (bool) and 'reason'
-    (string) describing the outcome. If the destination's identity isn't
-    recallable yet (no announce / no path), kicks off a `request_path` and
-    returns ok=False reason='requesting-path'.
+                       method: str = "opportunistic",
+                       failure_fallback_method: str = "") -> dict[str, Any]:
+    """Send an LXMF message and optionally retry an async failure once.
 
-    `method` selects the LXMF desired-method on the outbound message:
-      - "opportunistic" (default): single encrypted packet, no link.
-        Upstream LXMF auto-falls-back to DIRECT when the encrypted payload
-        exceeds packet size (e.g. an image attachment).
-      - "direct": opens an RNS.Link for the transfer (link-based).
-      - "propagated": uploads to the configured propagation node; the
-        recipient downloads when it next syncs.
-
-    The function name is historical (was opportunistic-only); the bridge's
-    public Swift wrapper still uses `sendOpportunistic` for the same reason.
+    `method` selects the initial LXMF desired method. When
+    `failure_fallback_method` is ``"propagated"``, a later asynchronous failure
+    of the accepted opportunistic submission requeues the exact same LXMessage
+    once through the configured propagation node. Reusing the object preserves
+    its hash, timestamp and complete field map for Swift persistence.
     """
     with _lock:
         if not _state["started"]:
@@ -1473,8 +1466,6 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
             "lxmf",
             "delivery",
         )
-        # Decode the MessagePack-packed LXMF field map from Swift (image /
-        # attachments / icon / reply / reaction / telemetry), if any.
         fields = None
         if fields_hex:
             try:
@@ -1483,15 +1474,13 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
             except Exception:
                 fields = None
 
-        # Map the public method string onto LXMF's three desired-method codes.
-        # Anything unrecognised falls back to OPPORTUNISTIC so a typo at the
-        # Swift caller doesn't silently change wire semantics in unexpected
-        # ways (the typo + opportunistic-text combo is the lowest-risk fallback).
-        desired_method = {
+        methods = {
             "opportunistic": LXMF.LXMessage.OPPORTUNISTIC,
             "direct": LXMF.LXMessage.DIRECT,
             "propagated": LXMF.LXMessage.PROPAGATED,
-        }.get(method, LXMF.LXMessage.OPPORTUNISTIC)
+        }
+        desired_method = methods.get(method, LXMF.LXMessage.OPPORTUNISTIC)
+        fallback_method = methods.get(failure_fallback_method)
 
         msg = LXMF.LXMessage(
             peer_dest,
@@ -1502,31 +1491,84 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
             desired_method=desired_method,
         )
 
-        # Surface delivery / failure proofs to Swift so the chat UI can flip a
-        # sent message to the double-check (delivered) or failed state. The
-        # callbacks fire on RNS worker threads when a proof arrives; we drop a
-        # "delivery" event onto the queue keyed by the LXMF message hash so the
-        # Swift side can match it to the persisted message row.
-        def _on_delivered(m: "LXMF.LXMessage") -> None:
+        callback_lock = threading.Lock()
+        callback_state = {"terminal": False, "fallback_started": False}
+
+        def _emit_terminal(m: "LXMF.LXMessage", state: str, reason: str) -> None:
+            with callback_lock:
+                if callback_state["terminal"]:
+                    return
+                callback_state["terminal"] = True
             try:
-                _put("delivery", message_hash=m.hash.hex(), state="delivered")
+                _put(
+                    "delivery",
+                    message_hash=m.hash.hex(),
+                    state=state,
+                    reason=reason,
+                )
             except Exception:
                 pass
 
-        def _on_failed(m: "LXMF.LXMessage") -> None:
+        def _on_delivered(m: "LXMF.LXMessage") -> None:
+            # LXMF invokes the same callback for recipient proof (DELIVERED) and
+            # propagation-node acceptance (SENT). Keep those semantics distinct.
+            if m.state == LXMF.LXMessage.SENT:
+                _emit_terminal(m, "sent", "propagation-accepted")
+            elif m.state == LXMF.LXMessage.DELIVERED:
+                _emit_terminal(m, "delivered", "recipient-proof")
+
+        def _on_propagated_failed(m: "LXMF.LXMessage") -> None:
+            _emit_terminal(m, "failed", "propagated-failed")
+
+        def _on_primary_failed(m: "LXMF.LXMessage") -> None:
+            if fallback_method != LXMF.LXMessage.PROPAGATED:
+                _emit_terminal(m, "failed", "primary-failed")
+                return
+
+            with callback_lock:
+                if callback_state["terminal"] or callback_state["fallback_started"]:
+                    return
+                if getattr(router, "outbound_propagation_node", None) is None:
+                    callback_state["terminal"] = True
+                    missing_node = True
+                else:
+                    callback_state["fallback_started"] = True
+                    missing_node = False
+
+            if missing_node:
+                try:
+                    _put(
+                        "delivery",
+                        message_hash=m.hash.hex(),
+                        state="failed",
+                        reason="no-propagation-node",
+                    )
+                except Exception:
+                    pass
+                return
+
+            # LXMRouter.fail_message removed this object from pending_outbound
+            # before invoking us. Requeueing the same packed object preserves its
+            # canonical hash and all typed fields while changing only transport.
+            m.desired_method = LXMF.LXMessage.PROPAGATED
+            m.method = LXMF.LXMessage.PROPAGATED
+            m.state = LXMF.LXMessage.OUTBOUND
+            m.delivery_attempts = 0
+            m.progress = 0.0
+            m.register_failed_callback(_on_propagated_failed)
             try:
-                _put("delivery", message_hash=m.hash.hex(), state="failed")
+                router.handle_outbound(m)
             except Exception:
-                pass
+                _emit_terminal(m, "failed", "propagated-enqueue-failed")
 
         msg.register_delivery_callback(_on_delivered)
-        msg.register_failed_callback(_on_failed)
+        if desired_method == LXMF.LXMessage.PROPAGATED:
+            msg.register_failed_callback(_on_propagated_failed)
+        else:
+            msg.register_failed_callback(_on_primary_failed)
 
         router.handle_outbound(msg)
 
-        # `handle_outbound` packs the message, so `msg.hash` is now the real
-        # LXMF message hash. Return it so Swift persists the outbound message
-        # under the same key the delivery event will carry.
         message_hash = msg.hash.hex() if msg.hash is not None else ""
         return {"ok": True, "reason": "queued", "message_hash": message_hash}
 
