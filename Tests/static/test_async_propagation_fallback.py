@@ -248,6 +248,21 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
 
         self.assertEqual("delivered", self.delivery_events(events)[0]["state"])
 
+    def test_propagation_acceptance_does_not_suppress_recipient_proof(self):
+        router = FakeRouter()
+        events = []
+        message = self.queue(router, events, method="propagated", fallback="")
+
+        message.state = FakeMessage.SENT
+        message.delivery_callback(message)
+        message.state = FakeMessage.DELIVERED
+        message.delivery_callback(message)
+
+        self.assertEqual(
+            ["sent", "delivered"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
+
     def test_disabled_fallback_emits_final_failure_without_requeue(self):
         router = FakeRouter()
         events = []
@@ -314,6 +329,25 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertTrue(router.wait_for_handled_count(2))
         self.assertEqual([], self.delivery_events(events))
 
+    def test_recipient_proof_cancels_deferred_fallback_before_requeue(self):
+        router = FakeRouter()
+        events = []
+        message = self.queue(router, events)
+
+        self.loaded_bridge_lock.acquire()
+        try:
+            message.failed_callback(message)
+            message.state = FakeMessage.DELIVERED
+            message.delivery_callback(message)
+        finally:
+            self.loaded_bridge_lock.release()
+
+        self.assertFalse(router.wait_for_handled_count(2, timeout=0.4))
+        self.assertEqual(
+            ["delivered"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
+
     def test_runtime_replacement_prevents_requeue_on_superseded_router(self):
         router = LockedCallbackRouter()
         events = []
@@ -357,11 +391,15 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         python_backend = (ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift").read_text()
         app_services = (ROOT / "Sources/ColumbaApp/Services/AppServices.swift").read_text()
         messaging_view = (ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift").read_text()
+        messaging_view_model = (
+            ROOT / "Sources/ColumbaApp/ViewModels/MessagingViewModel.swift"
+        ).read_text()
         for source in (python_bridge, rns_backend, python_backend):
             self.assertIn("method:", source)
         self.assertIn("method: acceptedMethod", app_services)
         self.assertIn('"deliveryMethod": acceptedMethod?.rawValue ?? ""', app_services)
-        self.assertIn("viewModel?.messages.first(where:", messaging_view)
+        self.assertIn("viewModel?.currentMessage(for:", messaging_view)
+        self.assertIn("canonicalizedOutboundAliases", messaging_view_model)
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
