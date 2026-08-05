@@ -535,6 +535,75 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(link.fieldNames, ["username", "password"])
     }
 
+    func testRngitGroupLinkPreservesInlineVariable() {
+        let doc = MicronParser.parse("`[reticulum`:/page/group.mu`g=reticulum]")
+        guard case .paragraph(let spans, _, _) = doc.elements.first,
+              case .link(let link) = spans.first else {
+            XCTFail("Expected rngit group link")
+            return
+        }
+
+        XCTAssertEqual(link.url, .samePage(path: "/page/group.mu"))
+        XCTAssertEqual(link.fieldNames, ["g=reticulum"])
+    }
+
+    func testRngitInlineVariablesAndFormFieldsEncodeForNomadNetRequest() {
+        let context = NomadNetRequestContext.build(
+            fieldEntries: ["g=reticulum", "path=docs%2Fmanual", "query=hello+world", "username"],
+            formFields: ["username": "torlando"],
+            checkboxFields: [:],
+            radioFields: [:]
+        )
+
+        XCTAssertEqual(context.requestData, [
+            "var_g": "reticulum",
+            "var_path": "docs/manual",
+            "var_query": "hello world",
+            "field_username": "torlando",
+        ])
+        XCTAssertEqual(context.requestVariables, [
+            "g": "reticulum",
+            "path": "docs/manual",
+            "query": "hello world",
+        ])
+    }
+
+    func testSubmitAllIncludesTextCheckboxAndRadioFields() {
+        let context = NomadNetRequestContext.build(
+            fieldEntries: ["*"],
+            formFields: ["username": "torlando"],
+            checkboxFields: ["features:mail": true, "features:voice": false],
+            radioFields: ["theme": "dark"]
+        )
+
+        XCTAssertEqual(context.requestData, [
+            "field_username": "torlando",
+            "field_features": "mail",
+            "field_theme": "dark",
+        ])
+        XCTAssertTrue(context.requestVariables.isEmpty)
+    }
+
+    func testNomadNetAddressPreservesSortedRequestVariables() {
+        let location = NomadNetLocation(
+            nodeHash: Data(repeating: 0xab, count: 16),
+            path: "/page/group.mu",
+            requestContext: NomadNetRequestContext(
+                requestData: ["var_topic": "hello world", "var_g": "reticulum"],
+                requestVariables: ["topic": "hello world", "g": "reticulum"]
+            )
+        )
+
+        XCTAssertEqual(
+            location.address,
+            "abababababababababababababababab:/page/group.mu`g=reticulum|topic=hello+world"
+        )
+        XCTAssertEqual(
+            location.shareableAddress,
+            "nomadnetwork://abababababababababababababababab:/page/group.mu`g=reticulum|topic=hello+world"
+        )
+    }
+
     func testLinkWithSurroundingText() {
         let doc = MicronParser.parse("Click `[here`/page/info.mu] for info")
         guard case .paragraph(let spans, _, _) = doc.elements.first else {
