@@ -720,11 +720,12 @@ public actor MessageRepository {
 
     /// Update message delivery state and optional effective transport without
     /// allowing stale evidence to downgrade authoritative recipient delivery.
+    @discardableResult
     public func updateMessageState(
         id: Data,
         state: RNSAPI.LXMessageState,
         method: RNSAPI.LXDeliveryMethod? = nil
-    ) async throws {
+    ) async throws -> Bool {
         try await replacementPool.write { db in
             let incomingState = Int(Self.mapStateToGRDB(state).rawValue)
             let existingState = try Int.fetchOne(
@@ -752,6 +753,7 @@ public actor MessageRepository {
                     id,
                 ]
             )
+            return db.changesCount > 0
         }
     }
 

@@ -428,12 +428,14 @@ public final class MessagingViewModel {
         )
         guard let proof = pendingDeliveryProofs[hashHex] else { return }
         do {
-            try await repository.updateMessageState(
+            let rowUpdated = try await repository.updateMessageState(
                 id: hash,
                 state: proof.state,
                 method: proof.method
             )
-            pendingDeliveryProofs.removeValue(forKey: hashHex)
+            if rowUpdated, pendingDeliveryProofs[hashHex] == proof {
+                pendingDeliveryProofs.removeValue(forKey: hashHex)
+            }
         } catch {
             logger.error("[MSG_VM] failed to persist delivery proof: \(error.localizedDescription)")
         }
@@ -445,12 +447,12 @@ public final class MessagingViewModel {
             guard pendingOutboundAliases[hashHex] == nil,
                   let hash = Self.hexToData(hashHex) else { continue }
             do {
-                try await repository.updateMessageState(
+                let rowUpdated = try await repository.updateMessageState(
                     id: hash,
                     state: proof.state,
                     method: proof.method
                 )
-                if pendingDeliveryProofs[hashHex] == proof {
+                if rowUpdated, pendingDeliveryProofs[hashHex] == proof {
                     pendingDeliveryProofs.removeValue(forKey: hashHex)
                 }
             } catch {
@@ -466,12 +468,13 @@ public final class MessagingViewModel {
                   let storageHash = message.storageHash,
                   let proof = pendingDeliveryProofs[Self.hexString(canonicalHash)] else { continue }
             do {
-                try await repository.updateMessageState(
+                let rowUpdated = try await repository.updateMessageState(
                     id: storageHash,
                     state: proof.state,
                     method: proof.method
                 )
-                if pendingDeliveryProofs[Self.hexString(canonicalHash)] == proof {
+                if rowUpdated,
+                   pendingDeliveryProofs[Self.hexString(canonicalHash)] == proof {
                     pendingDeliveryProofs.removeValue(forKey: Self.hexString(canonicalHash))
                 }
             } catch {
