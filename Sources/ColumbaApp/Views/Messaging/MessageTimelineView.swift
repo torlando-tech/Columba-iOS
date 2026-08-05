@@ -125,6 +125,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     private var hasCompletedInitialPositioning = false
     private var previousViewportSize = CGSize.zero
     private var shouldFollowBottomAcrossResize = false
+    private(set) var timelineReloadCountForTesting = 0
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewCompositionalLayout { _, _ in
@@ -234,6 +235,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
 
         guard isViewLoaded else { return }
 
+        timelineReloadCountForTesting += 1
         collectionView.reloadData()
         collectionView.collectionViewLayout.invalidateLayout()
         collectionView.layoutIfNeeded()
@@ -427,6 +429,23 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
 
     var visibleMessageCellCount: Int {
         collectionView.indexPathsForVisibleItems.count
+    }
+
+    struct ViewportSnapshot: Equatable {
+        let anchorMessageID: String
+        let anchorViewportMinY: CGFloat
+        let contentOffsetY: CGFloat
+    }
+
+    func viewportSnapshotForTesting() -> ViewportSnapshot? {
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        guard let anchor = visibleAnchor() else { return nil }
+        return ViewportSnapshot(
+            anchorMessageID: anchor.messageID,
+            anchorViewportMinY: anchor.minY - anchor.contentOffsetY,
+            contentOffsetY: anchor.contentOffsetY
+        )
     }
 
     func setViewportForTesting(_ size: CGSize) {

@@ -673,6 +673,51 @@ final class MessageTimelinePolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testIdenticalTimelineUpdatesPreserveViewportWithoutReloading() throws {
+        let controller = MessageTimelineViewController()
+        controller.loadViewIfNeeded()
+        controller.setViewportForTesting(CGSize(width: 390, height: 500))
+        let messages = (0..<50).map { index in
+            Message(
+                id: "message-\(index)",
+                content: String(repeating: "Variable-height message \(index). ", count: index % 5 + 1),
+                timestamp: Date(timeIntervalSince1970: TimeInterval(index)),
+                isFromMe: index.isMultiple(of: 2),
+                deliveryStatus: .delivered
+            )
+        }
+        controller.update(
+            messages: messages,
+            messageTextScale: 1.0,
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+        controller.setContentOffsetForTesting(y: 1_000)
+
+        let initialViewport = try XCTUnwrap(controller.viewportSnapshotForTesting())
+        let initialReloadCount = controller.timelineReloadCountForTesting
+
+        for _ in 0..<10 {
+            controller.update(
+                messages: messages,
+                messageTextScale: 1.0,
+                isLoadingMore: false,
+                allMessagesLoaded: true
+            )
+        }
+
+        let finalViewport = try XCTUnwrap(controller.viewportSnapshotForTesting())
+        XCTAssertEqual(finalViewport.anchorMessageID, initialViewport.anchorMessageID)
+        XCTAssertEqual(finalViewport.anchorViewportMinY, initialViewport.anchorViewportMinY, accuracy: 0.001)
+        XCTAssertEqual(finalViewport.contentOffsetY, initialViewport.contentOffsetY, accuracy: 0.001)
+        XCTAssertEqual(
+            controller.timelineReloadCountForTesting,
+            initialReloadCount,
+            "An unchanged SwiftUI update must not reload or restore the collection timeline"
+        )
+    }
+
+    @MainActor
     func testCollectionTimelineRequestsHistoryFromScrollOffset() async {
         let requested = expectation(description: "older page requested")
         let controller = MessageTimelineViewController()
