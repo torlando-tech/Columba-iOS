@@ -528,6 +528,9 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertNotIn("if wasAliased && !proofPersisted", messaging_view_model)
         self.assertNotIn("(proof == .delivered) ? .delivered : .failed", messaging_view_model)
         self.assertIn("monotonicDeliveryState", message_repository)
+        self.assertIn(") async throws -> Bool", message_repository)
+        self.assertIn("let rowUpdated = try await repository.updateMessageState", messaging_view_model)
+        self.assertIn("if rowUpdated, pendingDeliveryProofs[hashHex] == proof", messaging_view_model)
         self.assertIn("Tests.static.test_async_propagation_fallback", ci_workflow)
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):

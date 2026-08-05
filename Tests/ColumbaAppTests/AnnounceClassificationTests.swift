@@ -326,6 +326,10 @@ final class MessageDetailAliasTests: XCTestCase {
                 guard viewModel.hasPendingDeliveryProof(for: canonicalHash) else {
                     throw NSError(domain: "MessageDetailAliasTests", code: 1)
                 }
+                await viewModel.loadMessages()
+                guard viewModel.hasPendingDeliveryProof(for: canonicalHash) else {
+                    throw NSError(domain: "MessageDetailAliasTests", code: 2)
+                }
                 return .queued(messageHash: canonicalID)
             }
         )
