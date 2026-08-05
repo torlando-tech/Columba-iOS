@@ -1,11 +1,17 @@
 #if COLUMBA_NOMADNET_ENABLED
 import SwiftUI
 import RNSAPI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// Main browser view for browsing NomadNet node pages.
 @available(iOS 17.0, macOS 14.0, *)
 struct NomadNetBrowserView: View {
     @State private var viewModel: NomadNetBrowserViewModel
+    @State private var showingAddressShareSheet = false
 
     init(
         nodeHash: Data,
@@ -83,6 +89,9 @@ struct NomadNetBrowserView: View {
                 ShareSheet(items: [url])
             }
         }
+        .sheet(isPresented: $showingAddressShareSheet) {
+            ShareSheet(items: [viewModel.shareableAddress])
+        }
         #endif
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
@@ -106,6 +115,13 @@ struct NomadNetBrowserView: View {
             .truncationMode(.middle)
             .foregroundStyle(.secondary)
             .frame(maxWidth: 220)
+            .contextMenu {
+                Button {
+                    copyAddress()
+                } label: {
+                    Label("Copy Address", systemImage: "doc.on.doc")
+                }
+            }
     }
 
     @ViewBuilder
@@ -135,6 +151,22 @@ struct NomadNetBrowserView: View {
 
             Divider()
 
+            Button {
+                copyAddress()
+            } label: {
+                Label("Copy Address", systemImage: "doc.on.doc")
+            }
+
+            #if os(iOS)
+            Button {
+                showingAddressShareSheet = true
+            } label: {
+                Label("Share Address", systemImage: "square.and.arrow.up")
+            }
+            #endif
+
+            Divider()
+
             Menu {
                 ForEach(NomadNetRenderingMode.allCases, id: \.self) { mode in
                     Button {
@@ -153,6 +185,16 @@ struct NomadNetBrowserView: View {
         } label: {
             Image(systemName: "ellipsis.circle")
         }
+    }
+
+    private func copyAddress() {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = viewModel.shareableAddress
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        #elseif canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(viewModel.shareableAddress, forType: .string)
+        #endif
     }
 
     private var loadingOverlay: some View {
