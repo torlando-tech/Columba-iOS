@@ -1520,6 +1520,35 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
         def _on_propagated_failed(m: "LXMF.LXMessage") -> None:
             _emit_terminal(m, "failed", "propagated-failed")
 
+        def _enqueue_propagated(m: "LXMF.LXMessage") -> None:
+            # LXMRouter.fail_message invokes callbacks while process_outbound
+            # holds outbound_processing_lock in the shipping LXMF runtime. Run
+            # requeue work after leaving that callback stack so handle_outbound
+            # cannot wait on the lock owned by its own caller.
+            original_hash = m.hash
+            m.desired_method = LXMF.LXMessage.PROPAGATED
+            m.packed = None
+            try:
+                # Re-pack the same immutable payload with the propagated desired
+                # method so LXMF builds `propagation_packed` and selects packet
+                # or resource representation. Timestamp, content and fields are
+                # unchanged, so the canonical hash must remain identical.
+                m.pack()
+                if (
+                    original_hash is None
+                    or m.hash != original_hash
+                    or m.propagation_packed is None
+                ):
+                    raise ValueError("propagation repack changed canonical message")
+
+                m.state = LXMF.LXMessage.OUTBOUND
+                m.delivery_attempts = 0
+                m.progress = 0.0
+                m.register_failed_callback(_on_propagated_failed)
+                router.handle_outbound(m)
+            except Exception:
+                _emit_terminal(m, "failed", "propagated-enqueue-failed")
+
         def _on_primary_failed(m: "LXMF.LXMessage") -> None:
             if fallback_method != LXMF.LXMessage.PROPAGATED:
                 _emit_terminal(m, "failed", "primary-failed")
@@ -1547,29 +1576,13 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                     pass
                 return
 
-            # LXMRouter.fail_message removed this object from pending_outbound
-            # before invoking us. Re-pack the same immutable payload with the
-            # propagated desired method so LXMF builds `propagation_packed` and
-            # selects packet/resource representation. Timestamp, content and
-            # fields are unchanged, so the canonical hash must remain identical.
-            original_hash = m.hash
-            m.desired_method = LXMF.LXMessage.PROPAGATED
-            m.packed = None
             try:
-                m.pack()
-            except Exception:
-                _emit_terminal(m, "failed", "propagated-enqueue-failed")
-                return
-            if original_hash is None or m.hash != original_hash or m.propagation_packed is None:
-                _emit_terminal(m, "failed", "propagated-enqueue-failed")
-                return
-
-            m.state = LXMF.LXMessage.OUTBOUND
-            m.delivery_attempts = 0
-            m.progress = 0.0
-            m.register_failed_callback(_on_propagated_failed)
-            try:
-                router.handle_outbound(m)
+                threading.Thread(
+                    target=_enqueue_propagated,
+                    args=(m,),
+                    name="ColumbaPropagationFallback",
+                    daemon=True,
+                ).start()
             except Exception:
                 _emit_terminal(m, "failed", "propagated-enqueue-failed")
 
