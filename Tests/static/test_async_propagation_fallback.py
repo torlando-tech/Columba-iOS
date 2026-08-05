@@ -1,6 +1,7 @@
 import ast
 import inspect
 import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -80,13 +81,42 @@ class FakeRouter:
         self.outbound_propagation_node = object() if propagation_node else None
         self.reject_propagated = reject_propagated
         self.handled = []
+        self._handled_condition = threading.Condition()
 
     def handle_outbound(self, message):
         if message.packed is None:
             message.pack()
-        self.handled.append(message)
+        with self._handled_condition:
+            self.handled.append(message)
+            self._handled_condition.notify_all()
         if message.method == FakeMessage.PROPAGATED and self.reject_propagated:
             raise OSError("propagation enqueue rejected")
+
+    def wait_for_handled_count(self, count: int, timeout: float = 1.0) -> bool:
+        deadline = time.monotonic() + timeout
+        with self._handled_condition:
+            while len(self.handled) < count:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._handled_condition.wait(remaining)
+            return True
+
+
+class LockedCallbackRouter(FakeRouter):
+    def __init__(self):
+        super().__init__()
+        self.outbound_processing_lock = threading.Lock()
+
+    def handle_outbound(self, message):
+        if not self.handled:
+            return super().handle_outbound(message)
+        if not self.outbound_processing_lock.acquire(timeout=0.25):
+            raise TimeoutError("re-entered outbound router while callback lock held")
+        try:
+            return super().handle_outbound(message)
+        finally:
+            self.outbound_processing_lock.release()
 
 
 class FakeIdentity:
@@ -148,6 +178,14 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
     def delivery_events(self, events):
         return [payload for kind, payload in events if kind == "delivery"]
 
+    def wait_for_delivery_events(self, events, count: int, timeout: float = 1.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while len(self.delivery_events(events)) < count:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.001)
+        return True
+
     def test_async_failure_requeues_same_message_once_as_propagated(self):
         router = FakeRouter()
         events = []
@@ -162,6 +200,7 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
 
         primary.failed_callback(primary)
 
+        self.assertTrue(router.wait_for_handled_count(2))
         self.assertEqual(2, len(router.handled))
         retry = router.handled[1]
         self.assertIs(primary, retry)
@@ -232,12 +271,31 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
 
         message.failed_callback(message)
 
+        self.assertTrue(router.wait_for_handled_count(2))
+        self.assertTrue(self.wait_for_delivery_events(events, 1))
         self.assertEqual(2, len(router.handled))
         self.assertEqual(1, len(self.delivery_events(events)))
         self.assertEqual("propagated-enqueue-failed", self.delivery_events(events)[0]["reason"])
         message.failed_callback(message)
         self.assertEqual(2, len(router.handled))
         self.assertEqual(1, len(self.delivery_events(events)))
+
+    def test_failure_callback_returns_before_locked_router_requeue(self):
+        router = LockedCallbackRouter()
+        events = []
+        message = self.queue(router, events)
+
+        router.outbound_processing_lock.acquire()
+        try:
+            started = time.monotonic()
+            message.failed_callback(message)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 0.1)
+        finally:
+            router.outbound_processing_lock.release()
+
+        self.assertTrue(router.wait_for_handled_count(2))
+        self.assertEqual([], self.delivery_events(events))
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
