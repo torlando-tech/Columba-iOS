@@ -2,6 +2,7 @@ import XCTest
 @testable import ColumbaApp
 import RNSAPI
 import LXMFSwift
+import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -457,6 +458,79 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(green, 0x94 / 255.0, accuracy: 0.001)
         XCTAssertEqual(blue, 0x9e / 255.0, accuracy: 0.001)
         XCTAssertEqual(alpha, 1, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testRngitTrueColorsReachMonospaceRenderer() throws {
+        let document = MicronParser.parse("`BT282828`FT8b949e# Add tasks")
+        guard case .paragraph(let spans, _, _) = document.elements.first else {
+            XCTFail("Expected rngit paragraph")
+            return
+        }
+
+        let size = CGSize(width: 320, height: 60)
+        let host = UIHostingController(
+            rootView: MonospaceLineView(
+                spans: spans,
+                fontSize: 18,
+                cellHeight: 32,
+                alignment: .left,
+                bold: false
+            )
+            .frame(width: 300, height: 32, alignment: .leading)
+            .padding(10)
+            .background(Color.white)
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x28, 0x28, 0x28), tolerance: 8), 100)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x8b, 0x94, 0x9e), tolerance: 12), 5)
+
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "nomadnet-rngit-true-color-line"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func pixelCount(
+        in image: UIImage,
+        near expected: (UInt8, UInt8, UInt8),
+        tolerance: Int
+    ) -> Int {
+        guard let source = image.cgImage else { return 0 }
+        let width = source.width
+        let height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        return stride(from: 0, to: pixels.count, by: 4).reduce(into: 0) { count, index in
+            let red = Int(pixels[index])
+            let green = Int(pixels[index + 1])
+            let blue = Int(pixels[index + 2])
+            if abs(red - Int(expected.0)) <= tolerance,
+               abs(green - Int(expected.1)) <= tolerance,
+               abs(blue - Int(expected.2)) <= tolerance {
+                count += 1
+            }
+        }
     }
     #endif
 
