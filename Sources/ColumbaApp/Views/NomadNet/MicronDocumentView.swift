@@ -60,15 +60,22 @@ struct MicronDocumentView: View {
                     alignment: alignment,
                     bold: true,
                     defaultForegroundColor: palette.foreground,
+                    linkForegroundColor: palette.foreground,
                     onLinkTapped: onLinkTapped
                 )
+                .padding(.leading, headingIndentWidth(level: level))
                 .frame(minWidth: viewportWidth, alignment: alignment.swiftUI)
                 .background(palette.background)
             } else {
-                renderSpans(spans, onLinkTapped: onLinkTapped)
+                renderSpans(
+                    spans,
+                    onLinkTapped: onLinkTapped,
+                    linkForegroundColor: palette.foreground
+                )
                     .font(headingFont(level: level))
                     .bold()
                     .foregroundStyle(palette.foreground)
+                    .padding(.leading, headingIndentWidth(level: level))
                     .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
                     .background(palette.background)
                     .padding(.top, level == 1 ? 12 : 8)
@@ -92,7 +99,7 @@ struct MicronDocumentView: View {
                     .font(bodyFont)
                     .lineLimit(nil)
                     .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                    .padding(.leading, CGFloat(indentLevel) * 16)
+                    .padding(.leading, indentationWidth(columns: indentLevel))
             }
 
         case .divider(let character):
@@ -236,6 +243,14 @@ struct MicronDocumentView: View {
         default: return .title3
         }
     }
+
+    private func indentationWidth(columns: Int) -> CGFloat {
+        CGFloat(columns) * (style.usesMonospace ? style.approxCharWidth : 8)
+    }
+
+    private func headingIndentWidth(level: Int) -> CGFloat {
+        indentationWidth(columns: max(0, (level - 1) * 2))
+    }
 }
 
 // MARK: - Partial View
@@ -280,17 +295,22 @@ private struct MicronSimpleElementView: View {
         switch element {
         case .heading(let level, let spans, let alignment):
             let palette = MicronHeadingPalette.style(level: level, colorScheme: colorScheme)
-            renderSpans(spans, onLinkTapped: onLinkTapped)
+            renderSpans(
+                spans,
+                onLinkTapped: onLinkTapped,
+                linkForegroundColor: palette.foreground
+            )
                 .font(.headline)
                 .bold()
                 .foregroundStyle(palette.foreground)
+                .padding(.leading, CGFloat(max(0, (level - 1) * 2)) * 8)
                 .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
                 .background(palette.background)
         case .paragraph(let spans, let alignment, let indentLevel):
             renderSpans(spans, onLinkTapped: onLinkTapped)
                 .font(.system(.body, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                .padding(.leading, CGFloat(indentLevel) * 16)
+                .padding(.leading, CGFloat(indentLevel) * 8)
         case .divider:
             Divider().padding(.vertical, 4)
         case .literalBlock(let text):
@@ -335,14 +355,23 @@ private enum MicronHeadingPalette {
 /// custom URL scheme (`micron-link://<index>`) that `OpenURLAction` maps
 /// back to the originating `MicronLink`.
 @available(iOS 17.0, macOS 14.0, *)
-func renderSpans(_ spans: [MicronSpan], onLinkTapped: ((MicronLink) -> Void)?) -> some View {
-    MicronSpansText(spans: spans, onLinkTapped: onLinkTapped)
+func renderSpans(
+    _ spans: [MicronSpan],
+    onLinkTapped: ((MicronLink) -> Void)?,
+    linkForegroundColor: Color? = nil
+) -> some View {
+    MicronSpansText(
+        spans: spans,
+        onLinkTapped: onLinkTapped,
+        linkForegroundColor: linkForegroundColor
+    )
 }
 
 @available(iOS 17.0, macOS 14.0, *)
 struct MicronSpansText: View {
     let spans: [MicronSpan]
     var onLinkTapped: ((MicronLink) -> Void)?
+    var linkForegroundColor: Color? = nil
 
     var body: some View {
         Text(buildAttributed())
@@ -377,7 +406,7 @@ struct MicronSpansText: View {
                 result.append(styledAttributed(content, style: style))
             case .link(let link):
                 var piece = AttributedString(link.label)
-                piece.foregroundColor = .accentColor
+                piece.foregroundColor = linkForegroundColor ?? .accentColor
                 piece.underlineStyle = .single
                 if let url = URL(string: "micron-link://\(linkIndex)") {
                     piece.link = url

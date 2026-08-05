@@ -21,6 +21,7 @@ struct MonospaceLineView: View {
     let alignment: MicronAlignment
     let bold: Bool
     var defaultForegroundColor: Color? = nil
+    var linkForegroundColor: Color? = nil
     /// Force the UIKit label to be at least this wide so center/right alignment
     /// resolves against the visible viewport, not just the text's intrinsic width.
     /// Pass 0 to opt out (label sizes to its own intrinsic only).
@@ -111,7 +112,7 @@ struct MonospaceLineView: View {
                 var attrs: [NSAttributedString.Key: Any] = [
                     .font: baseFont,
                     .paragraphStyle: paragraph,
-                    .foregroundColor: UIColor.tintColor,
+                    .foregroundColor: UIColor(linkForegroundColor ?? .accentColor),
                     .underlineStyle: NSUnderlineStyle.single.rawValue,
                     .link: "columba-micron://link/\(result.length)",
                 ]

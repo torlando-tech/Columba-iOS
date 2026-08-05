@@ -69,6 +69,15 @@ public struct MicronParser {
                 if line.isEmpty { continue lineLoop }
             }
 
+            // A heading containing fields is treated as a regular content line
+            // by canonical NomadNet so heading styling cannot interfere with
+            // interactive controls.
+            if line.first == ">" && line.contains("`<") {
+                line.removeFirst(line.prefix(while: { $0 == ">" }).count)
+            }
+
+            // Heading sanitization changes the block-leading character, so all
+            // block classification below must inspect the sanitized remainder.
             let firstChar = line.first!
 
             // Comment
@@ -76,17 +85,10 @@ public struct MicronParser {
                 continue
             }
 
-            // A heading containing fields is treated as a regular content line
-            // by canonical NomadNet so heading styling cannot interfere with
-            // interactive controls.
-            if firstChar == ">" && line.contains("`<") {
-                line.removeFirst(line.prefix(while: { $0 == ">" }).count)
-            }
-
             // Heading
             if line.first == ">" {
                 let level = line.prefix(while: { $0 == ">" }).count
-                currentIndent = level
+                currentIndent = max(0, (level - 1) * 2)
                 let content = String(line.dropFirst(level))
                 if content.isEmpty {
                     continue
@@ -126,7 +128,7 @@ public struct MicronParser {
             // Escaped line
             if firstChar == "\\" {
                 let text = String(line.dropFirst())
-                elements.append(.paragraph(spans: [.text(text, .plain)], alignment: currentAlignment, indentLevel: currentIndent))
+                elements.append(.paragraph(spans: [.text(text, currentStyle)], alignment: currentAlignment, indentLevel: currentIndent))
                 continue
             }
 
