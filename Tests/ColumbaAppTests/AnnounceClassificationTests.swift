@@ -295,14 +295,23 @@ final class MessageDetailAliasTests: XCTestCase {
             deliveryStatus: .delivered
         )
         canonical.deliveryMethod = "propagated"
+        var pendingAliases = ["canonical": "optimistic"]
+        var canonicalizedAliases: [String: String] = [:]
+        MessagingViewModel.recordCanonicalAlias(
+            canonicalID: "canonical",
+            pendingAliases: &pendingAliases,
+            canonicalizedAliases: &canonicalizedAliases
+        )
 
         let resolved = MessagingViewModel.resolveCurrentMessage(
             selected,
             messages: [canonical],
-            pendingAliases: [:],
-            canonicalizedAliases: ["optimistic": "canonical"]
+            pendingAliases: pendingAliases,
+            canonicalizedAliases: canonicalizedAliases
         )
 
+        XCTAssertNil(pendingAliases["canonical"])
+        XCTAssertEqual(canonicalizedAliases["optimistic"], "canonical")
         XCTAssertEqual(resolved.id, "canonical")
         XCTAssertEqual(resolved.deliveryStatus, .delivered)
         XCTAssertEqual(resolved.deliveryMethod, "propagated")
@@ -622,6 +631,19 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         XCTAssertEqual(delivered.method, LXMFSwift.LXDeliveryMethod.propagated.rawValue)
         XCTAssertEqual(Message(from: delivered, localHash: Data()).deliveryMethod, "propagated")
         XCTAssertNil(delivered.receivingInterface)
+
+        let staleSentApplied = try await repository.applyDeliveryProof(
+            canonicalHash: canonicalHash,
+            state: .sent,
+            method: .opportunistic
+        )
+        XCTAssertTrue(staleSentApplied)
+        let afterStaleSent = try XCTUnwrap(
+            try await repository.getMessageRecord(id: canonicalHash)
+        )
+        XCTAssertEqual(afterStaleSent.state, LXMessageState.delivered.rawValue)
+        XCTAssertEqual(afterStaleSent.method, LXMFSwift.LXDeliveryMethod.propagated.rawValue)
+
         let stillHasUncertainRetry = try await repository.hasUncertainRetry(for: destination)
         XCTAssertFalse(stillHasUncertainRetry)
     }

@@ -1,4 +1,5 @@
 import ast
+import copy
 import inspect
 import threading
 import time
@@ -58,6 +59,8 @@ class FakeMessage:
         self.representation = None
         self.delivery_callback = None
         self.failed_callback = None
+        self.pack_entered = None
+        self.pack_release = None
 
     def pack(self):
         self.packed = b"packed-payload"
@@ -68,6 +71,10 @@ class FakeMessage:
             if self.desired_method == self.PROPAGATED
             else None
         )
+        if self.pack_entered is not None:
+            self.pack_entered.set()
+            if self.pack_release is not None:
+                self.pack_release.wait(timeout=1.0)
 
     def register_delivery_callback(self, callback):
         self.delivery_callback = callback
@@ -119,6 +126,33 @@ class LockedCallbackRouter(FakeRouter):
             self.outbound_processing_lock.release()
 
 
+class AdmissionBlockingRouter(FakeRouter):
+    def __init__(self):
+        super().__init__()
+        self.second_handle_entered = threading.Event()
+        self.second_handle_release = threading.Event()
+
+    def handle_outbound(self, message):
+        if self.handled:
+            self.second_handle_entered.set()
+            self.second_handle_release.wait(timeout=1.0)
+        return super().handle_outbound(message)
+
+
+class BlockingLifecycleEvents(list):
+    def __init__(self):
+        super().__init__()
+        self.sent_put_entered = threading.Event()
+        self.sent_put_release = threading.Event()
+
+    def append(self, item):
+        kind, payload = item
+        if kind == "delivery" and payload.get("state") == "sent":
+            self.sent_put_entered.set()
+            self.sent_put_release.wait(timeout=1.0)
+        super().append(item)
+
+
 class FakeIdentity:
     @staticmethod
     def recall(_hash):
@@ -152,6 +186,7 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
                 Transport=types.SimpleNamespace(request_path=lambda _hash: None),
             ),
             "_lock": bridge_lock,
+            "copy": copy,
             "threading": threading,
             "_runtime_teardown_requested": threading.Event(),
             "_state": runtime_state,
@@ -263,6 +298,28 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
             [event["state"] for event in self.delivery_events(events)],
         )
 
+    def test_concurrent_lifecycle_events_cannot_queue_delivered_before_sent(self):
+        router = FakeRouter()
+        events = BlockingLifecycleEvents()
+        message = self.queue(router, events, method="propagated", fallback="")
+
+        message.state = FakeMessage.SENT
+        sent_thread = threading.Thread(target=message.delivery_callback, args=(message,))
+        sent_thread.start()
+        self.assertTrue(events.sent_put_entered.wait(timeout=1.0))
+
+        message.state = FakeMessage.DELIVERED
+        delivered_thread = threading.Thread(target=message.delivery_callback, args=(message,))
+        delivered_thread.start()
+        events.sent_put_release.set()
+        sent_thread.join(timeout=1.0)
+        delivered_thread.join(timeout=1.0)
+
+        self.assertEqual(
+            ["sent", "delivered"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
+
     def test_disabled_fallback_emits_final_failure_without_requeue(self):
         router = FakeRouter()
         events = []
@@ -348,6 +405,52 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
             [event["state"] for event in self.delivery_events(events)],
         )
 
+    def test_proof_during_repack_does_not_mutate_primary_or_requeue(self):
+        router = FakeRouter()
+        events = []
+        message = self.queue(router, events)
+        message.pack_entered = threading.Event()
+        message.pack_release = threading.Event()
+
+        message.failed_callback(message)
+        self.assertTrue(message.pack_entered.wait(timeout=1.0))
+        message.state = FakeMessage.DELIVERED
+        message.delivery_callback(message)
+        message.pack_release.set()
+
+        self.assertFalse(router.wait_for_handled_count(2, timeout=0.4))
+        delivery = self.delivery_events(events)
+        self.assertEqual(["delivered"], [event["state"] for event in delivery])
+        self.assertEqual("opportunistic", delivery[0]["method"])
+        self.assertEqual(FakeMessage.OPPORTUNISTIC, message.desired_method)
+        self.assertEqual(FakeMessage.OPPORTUNISTIC, message.method)
+        self.assertIsNone(message.propagation_packed)
+
+    def test_final_enqueue_admission_is_atomic_against_recipient_proof(self):
+        router = AdmissionBlockingRouter()
+        events = []
+        message = self.queue(router, events)
+
+        message.failed_callback(message)
+        self.assertTrue(router.second_handle_entered.wait(timeout=1.0))
+
+        message.state = FakeMessage.DELIVERED
+        proof_done = threading.Event()
+        proof_thread = threading.Thread(
+            target=lambda: (message.delivery_callback(message), proof_done.set())
+        )
+        proof_thread.start()
+        self.assertFalse(proof_done.wait(timeout=0.1))
+
+        router.second_handle_release.set()
+        proof_thread.join(timeout=1.0)
+        self.assertTrue(proof_done.is_set())
+        self.assertTrue(router.wait_for_handled_count(2))
+        self.assertEqual(
+            ["delivered"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
+
     def test_runtime_replacement_prevents_requeue_on_superseded_router(self):
         router = LockedCallbackRouter()
         events = []
@@ -394,12 +497,17 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         messaging_view_model = (
             ROOT / "Sources/ColumbaApp/ViewModels/MessagingViewModel.swift"
         ).read_text()
+        message_repository = (
+            ROOT / "Sources/ColumbaApp/Services/MessageRepository.swift"
+        ).read_text()
         for source in (python_bridge, rns_backend, python_backend):
             self.assertIn("method:", source)
         self.assertIn("method: acceptedMethod", app_services)
         self.assertIn('"deliveryMethod": acceptedMethod?.rawValue ?? ""', app_services)
         self.assertIn("viewModel?.currentMessage(for:", messaging_view)
-        self.assertIn("canonicalizedOutboundAliases", messaging_view_model)
+        self.assertIn("recordCanonicalAlias", messaging_view_model)
+        self.assertNotIn("(proof == .delivered) ? .delivered : .failed", messaging_view_model)
+        self.assertIn("monotonicDeliveryState", message_repository)
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
