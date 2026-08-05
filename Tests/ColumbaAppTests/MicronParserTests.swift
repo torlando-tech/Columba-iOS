@@ -172,6 +172,28 @@ final class MicronParserTests: XCTestCase {
         XCTAssertTrue(doc.elements.isEmpty)
     }
 
+    func testNestedBlocksCarryCanonicalSectionIndent() {
+        let doc = MicronParser.parse("""
+        >>Nested
+        -X
+        `=
+        literal
+        `=
+        `<12|name`value>
+        `{/page/partial.mu}
+        """)
+
+        let nestedBlockIndents = doc.elements.compactMap { element -> Int? in
+            switch element {
+            case .divider, .literalBlock, .formField, .partial:
+                return element.sectionIndent
+            case .heading, .paragraph:
+                return nil
+            }
+        }
+        XCTAssertEqual(nestedBlockIndents, [2, 2, 2, 2])
+    }
+
     // MARK: - Dividers
 
     func testDefaultDivider() {
@@ -595,7 +617,7 @@ final class MicronParserTests: XCTestCase {
     func testCanonicalDarkSectionHeadingsRenderPaletteBackgrounds() {
         let document = MicronParser.parse("""
         <>The Non-linear Task Manager
-        >>Key Features
+        >>`[Key Features`:/page/features.mu]
         >>>Installation
         """)
         let size = CGSize(width: 340, height: 360)
@@ -632,6 +654,52 @@ final class MicronParserTests: XCTestCase {
         XCTAssertGreaterThan(pixelCount(in: image, near: (0xbb, 0xbb, 0xbb), tolerance: 4), 500)
         XCTAssertGreaterThan(pixelCount(in: image, near: (0x99, 0x99, 0x99), tolerance: 4), 500)
         XCTAssertGreaterThan(pixelCount(in: image, near: (0x77, 0x77, 0x77), tolerance: 4), 500)
+        XCTAssertLessThan(blueDominantPixelCount(in: image), 5)
+
+        let level1Background = pixelBounds(in: image, near: (0xbb, 0xbb, 0xbb), tolerance: 4)
+        let level2Background = pixelBounds(in: image, near: (0x99, 0x99, 0x99), tolerance: 4)
+        let level3Background = pixelBounds(in: image, near: (0x77, 0x77, 0x77), tolerance: 4)
+        XCTAssertNotNil(level1Background)
+        XCTAssertNotNil(level2Background)
+        XCTAssertNotNil(level3Background)
+        if let level1Background, let level2Background, let level3Background {
+            XCTAssertEqual(level1Background.minX, level2Background.minX, accuracy: 4)
+            XCTAssertEqual(level2Background.minX, level3Background.minX, accuracy: 4)
+            XCTAssertEqual(level1Background.maxX, level2Background.maxX, accuracy: 4)
+            XCTAssertEqual(level2Background.maxX, level3Background.maxX, accuracy: 4)
+
+            let level1Text = pixelBounds(
+                in: image,
+                near: (0x22, 0x22, 0x22),
+                tolerance: 8,
+                inside: level1Background
+            )
+            let level2Text = pixelBounds(
+                in: image,
+                near: (0x11, 0x11, 0x11),
+                tolerance: 8,
+                inside: level2Background
+            )
+            let level3Text = pixelBounds(
+                in: image,
+                near: (0x00, 0x00, 0x00),
+                tolerance: 4,
+                inside: level3Background
+            )
+            XCTAssertNotNil(level1Text)
+            XCTAssertNotNil(level2Text)
+            XCTAssertNotNil(level3Text)
+            if let level1Text, let level2Text, let level3Text {
+                XCTAssertGreaterThan(level2Text.minX - level1Text.minX, 30)
+                XCTAssertGreaterThan(level3Text.minX - level2Text.minX, 30)
+                XCTAssertGreaterThanOrEqual(level1Text.minY, level1Background.minY)
+                XCTAssertLessThanOrEqual(level1Text.maxY, level1Background.maxY)
+                XCTAssertGreaterThanOrEqual(level2Text.minY, level2Background.minY)
+                XCTAssertLessThanOrEqual(level2Text.maxY, level2Background.maxY)
+                XCTAssertGreaterThanOrEqual(level3Text.minY, level3Background.minY)
+                XCTAssertLessThanOrEqual(level3Text.maxY, level3Background.maxY)
+            }
+        }
 
         let attachment = XCTAttachment(image: image)
         attachment.name = "nomadnet-canonical-dark-section-headings"
@@ -689,7 +757,7 @@ final class MicronParserTests: XCTestCase {
             fieldNames: nil
         )
         let document = MicronDocument(elements: [.partial(partial)])
-        let partialDocument = MicronParser.parse(">>Partial Heading")
+        let partialDocument = MicronParser.parse(">>`[Partial Heading`:/page/target.mu]")
         let size = CGSize(width: 340, height: 120)
         let host = UIHostingController(
             rootView: MicronDocumentView(
@@ -721,6 +789,7 @@ final class MicronParserTests: XCTestCase {
 
         XCTAssertGreaterThan(pixelCount(in: image, near: (0xaa, 0xaa, 0xaa), tolerance: 4), 500)
         XCTAssertGreaterThan(pixelCount(in: image, near: (0x11, 0x11, 0x11), tolerance: 8), 5)
+        XCTAssertLessThan(blueDominantPixelCount(in: image), 5)
     }
 
     private func pixelCount(
@@ -779,6 +848,53 @@ final class MicronParserTests: XCTestCase {
                 count += 1
             }
         }
+    }
+
+    private func pixelBounds(
+        in image: UIImage,
+        near expected: (UInt8, UInt8, UInt8),
+        tolerance: Int,
+        inside region: CGRect? = nil
+    ) -> CGRect? {
+        guard let source = image.cgImage else { return nil }
+        let width = source.width
+        let height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+        let search = region?.integral.intersection(canvas) ?? canvas
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+        for y in Int(search.minY)..<Int(search.maxY) {
+            for x in Int(search.minX)..<Int(search.maxX) {
+                let index = (y * width + x) * 4
+                let red = Int(pixels[index])
+                let green = Int(pixels[index + 1])
+                let blue = Int(pixels[index + 2])
+                if abs(red - Int(expected.0)) <= tolerance,
+                   abs(green - Int(expected.1)) <= tolerance,
+                   abs(blue - Int(expected.2)) <= tolerance {
+                    minX = min(minX, x)
+                    minY = min(minY, y)
+                    maxX = max(maxX, x)
+                    maxY = max(maxY, y)
+                }
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
     }
     #endif
 
