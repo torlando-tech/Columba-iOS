@@ -672,7 +672,7 @@ final class MicronParserTests: XCTestCase {
 
         XCTAssertGreaterThan(pixelCount(in: image, near: (0x99, 0x99, 0x99), tolerance: 4), 500)
         XCTAssertGreaterThan(pixelCount(in: image, near: (0x11, 0x11, 0x11), tolerance: 8), 5)
-        XCTAssertLessThan(pixelCount(in: image, near: (0x3a, 0x82, 0xf7), tolerance: 4), 5)
+        XCTAssertLessThan(blueDominantPixelCount(in: image), 5)
 
         let attachment = XCTAttachment(image: image)
         attachment.name = "nomadnet-monospace-heading-link"
@@ -750,6 +750,32 @@ final class MicronParserTests: XCTestCase {
             if abs(red - Int(expected.0)) <= tolerance,
                abs(green - Int(expected.1)) <= tolerance,
                abs(blue - Int(expected.2)) <= tolerance {
+                count += 1
+            }
+        }
+    }
+
+    private func blueDominantPixelCount(in image: UIImage) -> Int {
+        guard let source = image.cgImage else { return 0 }
+        let width = source.width
+        let height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        return stride(from: 0, to: pixels.count, by: 4).reduce(into: 0) { count, index in
+            let red = Int(pixels[index])
+            let green = Int(pixels[index + 1])
+            let blue = Int(pixels[index + 2])
+            if blue > red + 50, blue > green + 50 {
                 count += 1
             }
         }
