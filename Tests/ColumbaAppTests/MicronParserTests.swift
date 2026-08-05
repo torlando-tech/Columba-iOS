@@ -792,6 +792,46 @@ final class MicronParserTests: XCTestCase {
         XCTAssertLessThan(blueDominantPixelCount(in: image), 5)
     }
 
+    @MainActor
+    func testNestedWrappedParagraphReservesBothSectionMargins() {
+        let content = "`Bf00" + String(repeating: "M ", count: 80)
+        let document = MicronParser.parse(">>Nested\n\(content)")
+        let size = CGSize(width: 340, height: 220)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                style: .proportional,
+                viewportWidth: 320
+            )
+            .frame(width: 320, alignment: .leading)
+            .environment(\.colorScheme, .light)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.white)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        let bounds = pixelBounds(in: image, near: (0xff, 0x00, 0x00), tolerance: 4)
+        XCTAssertNotNil(bounds)
+        if let bounds {
+            XCTAssertGreaterThan(bounds.minX, 100)
+            XCTAssertLessThan(bounds.maxX, CGFloat(image.cgImage?.width ?? 0) - 100)
+        }
+    }
+
     private func pixelCount(
         in image: UIImage,
         near expected: (UInt8, UInt8, UInt8),
