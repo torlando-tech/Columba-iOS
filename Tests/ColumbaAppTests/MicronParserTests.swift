@@ -2,6 +2,9 @@ import XCTest
 @testable import ColumbaApp
 import RNSAPI
 import LXMFSwift
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private actor ReactionGateProbe {
     private var active = 0
@@ -384,6 +387,86 @@ final class MicronParserTests: XCTestCase {
             XCTAssertEqual(t, "blue")
             XCTAssertEqual(s.backgroundColor, "00f")
         } else { XCTFail("Expected text") }
+    }
+
+    func testRngitTrueColorsRenderWithoutLeakingControlPayloads() {
+        let markup = """
+        `BT282828`Fddd`FT8b949e# Add tasks`f
+        `FTc9d1d9nt add `FTa5d6ff"Buy groceries"`f`b
+        """
+
+        let doc = MicronParser.parse(markup)
+        let renderedText = doc.elements.compactMap { element -> String? in
+            guard case .paragraph(let spans, _, _) = element else { return nil }
+            return spans.compactMap { span -> String? in
+                guard case .text(let text, _) = span else { return nil }
+                return text
+            }.joined()
+        }.joined(separator: "\n")
+
+        XCTAssertEqual(renderedText, "# Add tasks\nnt add \"Buy groceries\"")
+
+        guard case .paragraph(let commentSpans, _, _) = doc.elements[0],
+              case .text(_, let commentStyle) = commentSpans.first,
+              case .paragraph(let commandSpans, _, _) = doc.elements[1],
+              case .text(_, let commandStyle) = commandSpans[0],
+              case .text(_, let argumentStyle) = commandSpans[1] else {
+            XCTFail("Expected rngit true-color text spans")
+            return
+        }
+
+        XCTAssertEqual(commentStyle.foregroundColor, "8b949e")
+        XCTAssertEqual(commentStyle.backgroundColor, "282828")
+        XCTAssertEqual(commandStyle.foregroundColor, "c9d1d9")
+        XCTAssertEqual(commandStyle.backgroundColor, "282828")
+        XCTAssertEqual(argumentStyle.foregroundColor, "a5d6ff")
+        XCTAssertEqual(argumentStyle.backgroundColor, "282828")
+    }
+
+    func testMalformedAndTruncatedTrueColorsDoNotChangeStyle() {
+        let foreground = MicronParser.parse("`FT12")
+        let background = MicronParser.parse("`BT12")
+        let malformedForeground = MicronParser.parse("`FTzzzzzztext")
+        let malformedBackground = MicronParser.parse("`BTggggggtext")
+
+        let foregroundText = singleText(from: foreground)
+        let backgroundText = singleText(from: background)
+        let malformedForegroundText = singleText(from: malformedForeground)
+        let malformedBackgroundText = singleText(from: malformedBackground)
+
+        XCTAssertEqual(foregroundText.0, "T12")
+        XCTAssertEqual(foregroundText.1, .plain)
+        XCTAssertEqual(backgroundText.0, "T12")
+        XCTAssertEqual(backgroundText.1, .plain)
+        XCTAssertEqual(malformedForegroundText.0, "Tzzzzzztext")
+        XCTAssertEqual(malformedForegroundText.1, .plain)
+        XCTAssertEqual(malformedBackgroundText.0, "Tggggggtext")
+        XCTAssertEqual(malformedBackgroundText.1, .plain)
+    }
+
+    #if canImport(UIKit)
+    func testTrueColorConvertsToExactRGBComponents() throws {
+        let color = try XCTUnwrap(MicronTextStyle.colorFromHex("8b949e"))
+        let uiColor = UIColor(color)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        XCTAssertTrue(uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+        XCTAssertEqual(red, 0x8b / 255.0, accuracy: 0.001)
+        XCTAssertEqual(green, 0x94 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(blue, 0x9e / 255.0, accuracy: 0.001)
+        XCTAssertEqual(alpha, 1, accuracy: 0.001)
+    }
+    #endif
+
+    private func singleText(from document: MicronDocument) -> (String, MicronTextStyle) {
+        guard case .paragraph(let spans, _, _) = document.elements.first,
+              case .text(let text, let style) = spans.first else {
+            XCTFail("Expected one text span")
+            return ("", .plain)
+        }
+        return (text, style)
     }
 
     // MARK: - Alignment
