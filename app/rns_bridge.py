@@ -15,6 +15,7 @@ sole signal for typing peers vs relays vs audio vs sites.
 
 from __future__ import annotations
 
+import copy
 import os
 import queue
 import threading
@@ -1491,7 +1492,7 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
             desired_method=desired_method,
         )
 
-        callback_lock = threading.Lock()
+        callback_lock = threading.RLock()
         callback_state = {"outcome": None, "fallback_started": False}
 
         def _effective_method_name(m: "LXMF.LXMessage") -> str:
@@ -1519,16 +1520,16 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                 else:
                     return
                 callback_state["outcome"] = state
-            try:
-                _put(
-                    "delivery",
-                    message_hash=m.hash.hex(),
-                    state=state,
-                    reason=reason,
-                    method=_effective_method_name(m),
-                )
-            except Exception:
-                pass
+                try:
+                    _put(
+                        "delivery",
+                        message_hash=m.hash.hex(),
+                        state=state,
+                        reason=reason,
+                        method=_effective_method_name(m),
+                    )
+                except Exception:
+                    pass
 
         def _on_delivered(m: "LXMF.LXMessage") -> None:
             # LXMF invokes the same callback for recipient proof (DELIVERED) and
@@ -1550,6 +1551,21 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
             # stop/reset replaced this worker's captured router.
             original_hash = m.hash
             try:
+                # Build and validate propagated transport representation on a
+                # shallow copy. Recipient proof can still win while this work is
+                # in flight, and the authoritative primary message stays wholly
+                # opportunistic until final enqueue admission.
+                prepared = copy.copy(m)
+                prepared.desired_method = LXMF.LXMessage.PROPAGATED
+                prepared.packed = None
+                prepared.pack()
+                if (
+                    original_hash is None
+                    or prepared.hash != original_hash
+                    or prepared.propagation_packed is None
+                ):
+                    raise ValueError("propagation repack changed canonical message")
+
                 with _lock:
                     if (
                         _runtime_teardown_requested.is_set()
@@ -1558,36 +1574,24 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                     ):
                         raise RuntimeError("LXMF runtime changed before fallback enqueue")
 
+                    # This RLock is the enqueue linearization boundary. Competing
+                    # recipient proof either wins before this point and cancels,
+                    # or waits until handle_outbound has accepted ownership. The
+                    # lock is reentrant because shipping LXMF can synchronously
+                    # invoke our callbacks from handle_outbound.
                     with callback_lock:
                         if callback_state["outcome"] is not None:
                             return
-
-                    m.desired_method = LXMF.LXMessage.PROPAGATED
-                    m.packed = None
-                    # Re-pack the same immutable payload with the propagated desired
-                    # method so LXMF builds `propagation_packed` and selects packet
-                    # or resource representation. Timestamp, content and fields are
-                    # unchanged, so the canonical hash must remain identical.
-                    m.pack()
-                    if (
-                        original_hash is None
-                        or m.hash != original_hash
-                        or m.propagation_packed is None
-                    ):
-                        raise ValueError("propagation repack changed canonical message")
-
-                    # Recipient proof can arrive while the fallback representation
-                    # is being built. Give that authoritative outcome one last chance
-                    # to cancel before ownership returns to LXMF.
-                    with callback_lock:
-                        if callback_state["outcome"] is not None:
-                            return
-
-                    m.state = LXMF.LXMessage.OUTBOUND
-                    m.delivery_attempts = 0
-                    m.progress = 0.0
-                    m.register_failed_callback(_on_propagated_failed)
-                    router.handle_outbound(m)
+                        m.desired_method = LXMF.LXMessage.PROPAGATED
+                        m.packed = None
+                        m.pack()
+                        if m.hash != original_hash or m.propagation_packed is None:
+                            raise ValueError("propagation repack changed canonical message")
+                        m.state = LXMF.LXMessage.OUTBOUND
+                        m.delivery_attempts = 0
+                        m.progress = 0.0
+                        m.register_failed_callback(_on_propagated_failed)
+                        router.handle_outbound(m)
             except Exception:
                 _emit_lifecycle(m, "failed", "propagated-enqueue-failed")
 

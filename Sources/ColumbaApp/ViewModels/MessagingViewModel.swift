@@ -144,8 +144,11 @@ public final class MessagingViewModel {
                     if let deliveryMethod, !deliveryMethod.isEmpty {
                         self.messages[index].deliveryMethod = deliveryMethod
                     }
-                    self.canonicalizedOutboundAliases[visibleID] = hashHex
-                    self.pendingOutboundAliases.removeValue(forKey: hashHex)
+                    Self.recordCanonicalAlias(
+                        canonicalID: hashHex,
+                        pendingAliases: &self.pendingOutboundAliases,
+                        canonicalizedAliases: &self.canonicalizedOutboundAliases
+                    )
                     self.pendingDeliveryProofs.removeValue(forKey: hashHex)
                     await self.invalidatePaginationAndRefresh()
                 } else {
@@ -248,7 +251,7 @@ public final class MessagingViewModel {
                     aliases: pendingOutboundAliases,
                     proofs: pendingDeliveryProofs
                 ) {
-                    resolvedMessages[i].deliveryStatus = (proof == .delivered) ? .delivered : .failed
+                    resolvedMessages[i].deliveryStatus = Self.deliveryStatus(for: proof)
                 }
             }
             await reconcileAliasedDeliveryProofs(in: resolvedMessages)
@@ -372,7 +375,11 @@ public final class MessagingViewModel {
     @MainActor
     private func reconcilePendingDeliveryProof(for hash: Data) async {
         let hashHex = Self.hexString(hash)
-        pendingOutboundAliases.removeValue(forKey: hashHex)
+        Self.recordCanonicalAlias(
+            canonicalID: hashHex,
+            pendingAliases: &pendingOutboundAliases,
+            canonicalizedAliases: &canonicalizedOutboundAliases
+        )
         guard let proof = pendingDeliveryProofs[hashHex] else { return }
         do {
             try await repository.updateMessageState(id: hash, state: proof)
@@ -430,6 +437,7 @@ public final class MessagingViewModel {
             pendingOutboundAliases.removeValue(forKey: hash)
             pendingDeliveryProofs.removeValue(forKey: hash)
         }
+        canonicalizedOutboundAliases.removeValue(forKey: visibleID)
     }
 
     private static func hexString(_ data: Data) -> String {
@@ -441,6 +449,15 @@ public final class MessagingViewModel {
         aliases: [String: String]
     ) -> String {
         aliases[realID] ?? realID
+    }
+
+    static func recordCanonicalAlias(
+        canonicalID: String,
+        pendingAliases: inout [String: String],
+        canonicalizedAliases: inout [String: String]
+    ) {
+        guard let optimisticID = pendingAliases.removeValue(forKey: canonicalID) else { return }
+        canonicalizedAliases[optimisticID] = canonicalID
     }
 
     func currentMessage(for selected: Message) -> Message {
@@ -790,7 +807,7 @@ public final class MessagingViewModel {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
                 if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                     messages[index].messageHash = sentHash
-                    messages[index].deliveryStatus = (proof == .delivered) ? .delivered : .failed
+                    messages[index].deliveryStatus = proof.map(Self.deliveryStatus(for:)) ?? .failed
                 }
                 errorMessage = "Message was sent, but local confirmation could not be saved. Verify whether it arrived before retrying."
             }
@@ -858,7 +875,7 @@ public final class MessagingViewModel {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                         if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                             messages[index].messageHash = retryHash
-                            messages[index].deliveryStatus = (proof == .delivered) ? .delivered : .failed
+                            messages[index].deliveryStatus = proof.map(Self.deliveryStatus(for:)) ?? .failed
                         }
                         errorMessage = "Message was relayed, but local confirmation could not be saved. Verify whether it arrived before retrying."
                     }

@@ -727,6 +727,12 @@ public actor MessageRepository {
     /// persistence previously failed during a retry, atomically resolve the
     /// durable storage-key row through its canonical uncertainty marker and
     /// rekey it to the wire hash. This path works without an open chat view.
+    static func monotonicDeliveryState(existing: Int?, incoming: Int) -> Int {
+        guard let existing else { return incoming }
+        let delivered = Int(LXMFSwift.LXMessageState.delivered.rawValue)
+        return existing == delivered ? existing : incoming
+    }
+
     @discardableResult
     public func applyDeliveryProof(
         canonicalHash: Data,
@@ -734,16 +740,26 @@ public actor MessageRepository {
         method: RNSAPI.LXDeliveryMethod? = nil
     ) async throws -> Bool {
         try await replacementPool.write { db in
-            let mappedState = Self.mapStateToGRDB(state).rawValue
+            let incomingState = Int(Self.mapStateToGRDB(state).rawValue)
             let mappedMethod = method.map { Self.mapMethodToGRDB($0).rawValue }
             let now = Date().timeIntervalSince1970
+            let existingCanonicalState = try Int.fetchOne(
+                db,
+                sql: "SELECT state FROM messages WHERE message_id = ?",
+                arguments: [canonicalHash]
+            )
+            let canonicalState = Self.monotonicDeliveryState(
+                existing: existingCanonicalState,
+                incoming: incomingState
+            )
+            let canonicalMethod = canonicalState == incomingState ? mappedMethod : nil
             try db.execute(
                 sql: """
                     UPDATE messages
                     SET state = ?, method = COALESCE(?, method), updated_at = ?
                     WHERE message_id = ?
                     """,
-                arguments: [mappedState, mappedMethod, now, canonicalHash]
+                arguments: [canonicalState, canonicalMethod, now, canonicalHash]
             )
             if db.changesCount == 1 {
                 try db.execute(
@@ -760,6 +776,17 @@ public actor MessageRepository {
                 return true
             }
 
+            let uncertaintyMarker = Self.uncertainRetryMarker(canonicalHash: canonicalHash)
+            let existingAliasState = try Int.fetchOne(
+                db,
+                sql: "SELECT state FROM messages WHERE incoming = 0 AND receiving_interface = ?",
+                arguments: [uncertaintyMarker]
+            )
+            let aliasState = Self.monotonicDeliveryState(
+                existing: existingAliasState,
+                incoming: incomingState
+            )
+            let aliasMethod = aliasState == incomingState ? mappedMethod : nil
             try db.execute(
                 sql: """
                     UPDATE messages
@@ -770,10 +797,10 @@ public actor MessageRepository {
                     """,
                 arguments: [
                     canonicalHash,
-                    mappedState,
-                    mappedMethod,
+                    aliasState,
+                    aliasMethod,
                     now,
-                    Self.uncertainRetryMarker(canonicalHash: canonicalHash),
+                    uncertaintyMarker,
                 ]
             )
             return db.changesCount == 1
