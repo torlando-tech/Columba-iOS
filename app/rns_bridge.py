@@ -1512,7 +1512,7 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                     if current is not None:
                         return
                 elif state == "delivered":
-                    if current in ("delivered", "failed"):
+                    if current == "delivered":
                         return
                 elif state == "failed":
                     if current in ("delivered", "failed"):

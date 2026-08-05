@@ -19,6 +19,11 @@ import os.log
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
 public final class MessagingViewModel {
+    struct PendingDeliveryProof: Equatable {
+        let state: LXMessageState
+        let method: RNSAPI.LXDeliveryMethod?
+    }
+
     // MARK: - Published Properties
 
     /// List of messages in chronological order (oldest first).
@@ -64,7 +69,7 @@ public final class MessagingViewModel {
     private var stagedRetryRecoveryHashes: [String: Data] = [:]
     private var pendingOutboundAliases: [String: String] = [:]
     private var canonicalizedOutboundAliases: [String: String] = [:]
-    private var pendingDeliveryProofs: [String: LXMessageState] = [:]
+    private var pendingDeliveryProofs: [String: PendingDeliveryProof] = [:]
 
     // MARK: - Initialization
 
@@ -126,13 +131,17 @@ public final class MessagingViewModel {
                     self.logger.warning("[MSG_VM] Ignoring unknown delivery state: \(state, privacy: .public)")
                     return
                 }
+                let proofMethod = Self.deliveryMethod(from: deliveryMethod)
                 let wasAliased = self.pendingOutboundAliases[hashHex] != nil
                 let visibleID = Self.visibleMessageID(
                     for: hashHex,
                     aliases: self.pendingOutboundAliases
                 )
                 if wasAliased && !proofPersisted {
-                    self.pendingDeliveryProofs[hashHex] = proofState
+                    self.pendingDeliveryProofs[hashHex] = PendingDeliveryProof(
+                        state: proofState,
+                        method: proofMethod
+                    )
                 }
                 guard let index = self.messages.firstIndex(where: { $0.id == visibleID }) else { return }
                 if wasAliased && proofPersisted {
@@ -246,12 +255,15 @@ public final class MessagingViewModel {
                    canonicalHash != resolvedMessages[i].storageHash {
                     pendingOutboundAliases[Self.hexString(canonicalHash)] = resolvedMessages[i].id
                 }
-                if let proof = Self.pendingProof(
+                if let proof = Self.pendingProofDetails(
                     forVisibleID: resolvedMessages[i].id,
                     aliases: pendingOutboundAliases,
                     proofs: pendingDeliveryProofs
                 ) {
-                    resolvedMessages[i].deliveryStatus = Self.deliveryStatus(for: proof)
+                    resolvedMessages[i].deliveryStatus = Self.deliveryStatus(for: proof.state)
+                    if let method = proof.method {
+                        resolvedMessages[i].deliveryMethod = method.rawValue
+                    }
                 }
             }
             await reconcileAliasedDeliveryProofs(in: resolvedMessages)
@@ -373,7 +385,7 @@ public final class MessagingViewModel {
     }
 
     @MainActor
-    private func reconcilePendingDeliveryProof(for hash: Data) async {
+    func reconcilePendingDeliveryProof(for hash: Data) async {
         let hashHex = Self.hexString(hash)
         Self.recordCanonicalAlias(
             canonicalID: hashHex,
@@ -382,7 +394,11 @@ public final class MessagingViewModel {
         )
         guard let proof = pendingDeliveryProofs[hashHex] else { return }
         do {
-            try await repository.updateMessageState(id: hash, state: proof)
+            try await repository.updateMessageState(
+                id: hash,
+                state: proof.state,
+                method: proof.method
+            )
             pendingDeliveryProofs.removeValue(forKey: hashHex)
         } catch {
             logger.error("[MSG_VM] failed to persist delivery proof: \(error.localizedDescription)")
@@ -395,7 +411,11 @@ public final class MessagingViewModel {
             guard pendingOutboundAliases[hashHex] == nil,
                   let hash = Self.hexToData(hashHex) else { continue }
             do {
-                try await repository.updateMessageState(id: hash, state: proof)
+                try await repository.updateMessageState(
+                    id: hash,
+                    state: proof.state,
+                    method: proof.method
+                )
                 if pendingDeliveryProofs[hashHex] == proof {
                     pendingDeliveryProofs.removeValue(forKey: hashHex)
                 }
@@ -412,7 +432,11 @@ public final class MessagingViewModel {
                   let storageHash = message.storageHash,
                   let proof = pendingDeliveryProofs[Self.hexString(canonicalHash)] else { continue }
             do {
-                try await repository.updateMessageState(id: storageHash, state: proof)
+                try await repository.updateMessageState(
+                    id: storageHash,
+                    state: proof.state,
+                    method: proof.method
+                )
                 if pendingDeliveryProofs[Self.hexString(canonicalHash)] == proof {
                     pendingDeliveryProofs.removeValue(forKey: Self.hexString(canonicalHash))
                 }
@@ -423,7 +447,7 @@ public final class MessagingViewModel {
     }
 
     @MainActor
-    private func pendingDeliveryProof(for hash: Data) -> LXMessageState? {
+    private func pendingDeliveryProof(for hash: Data) -> PendingDeliveryProof? {
         let hashHex = Self.hexString(hash)
         return pendingDeliveryProofs[hashHex]
     }
@@ -460,6 +484,20 @@ public final class MessagingViewModel {
         canonicalizedAliases[optimisticID] = canonicalID
     }
 
+    @MainActor
+    func registerPendingOutboundAlias(canonicalHash: Data, optimisticID: String) {
+        pendingOutboundAliases[Self.hexString(canonicalHash)] = optimisticID
+    }
+
+    private static func deliveryMethod(from value: String?) -> RNSAPI.LXDeliveryMethod? {
+        switch value {
+        case "opportunistic": return .opportunistic
+        case "direct": return .direct
+        case "propagated": return .propagated
+        default: return nil
+        }
+    }
+
     func currentMessage(for selected: Message) -> Message {
         Self.resolveCurrentMessage(
             selected,
@@ -482,6 +520,20 @@ public final class MessagingViewModel {
             ?? pendingAliases.first(where: { $0.value == selected.id })?.key
         guard let canonicalID else { return selected }
         return messages.first(where: { $0.id == canonicalID }) ?? selected
+    }
+
+    private static func pendingProofDetails(
+        forVisibleID visibleID: String,
+        aliases: [String: String],
+        proofs: [String: PendingDeliveryProof]
+    ) -> PendingDeliveryProof? {
+        if let direct = proofs[visibleID] { return direct }
+        guard let canonicalID = aliases.first(where: {
+            $0.value == visibleID && proofs[$0.key] != nil
+        })?.key else {
+            return nil
+        }
+        return proofs[canonicalID]
     }
 
     static func pendingProof(
@@ -779,7 +831,10 @@ public final class MessagingViewModel {
             let sentHash = try Self.queuedHash(from: outcome)
             lxMessage.hash = sentHash
             lxMessage.state = .sent
-            pendingOutboundAliases[Self.hexString(sentHash)] = optimisticId
+            registerPendingOutboundAlias(
+                canonicalHash: sentHash,
+                optimisticID: optimisticId
+            )
 
             // Persist so a subsequent loadMessages() doesn't wipe it.
             do {
@@ -807,7 +862,7 @@ public final class MessagingViewModel {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
                 if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                     messages[index].messageHash = sentHash
-                    messages[index].deliveryStatus = proof.map(Self.deliveryStatus(for:)) ?? .failed
+                    messages[index].deliveryStatus = proof.map { Self.deliveryStatus(for: $0.state) } ?? .failed
                 }
                 errorMessage = "Message was sent, but local confirmation could not be saved. Verify whether it arrived before retrying."
             }
@@ -849,7 +904,10 @@ public final class MessagingViewModel {
                     retryMessage.hash = retryHash
                     retryMessage.state = .sent
                     retryMessage.method = .propagated
-                    pendingOutboundAliases[Self.hexString(retryHash)] = optimisticId
+                    registerPendingOutboundAlias(
+                        canonicalHash: retryHash,
+                        optimisticID: optimisticId
+                    )
                     do {
                         try await persistMessage(retryMessage, replacing: localRetryHash)
                         await reconcilePendingDeliveryProof(for: retryHash)
@@ -875,7 +933,7 @@ public final class MessagingViewModel {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                         if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                             messages[index].messageHash = retryHash
-                            messages[index].deliveryStatus = proof.map(Self.deliveryStatus(for:)) ?? .failed
+                            messages[index].deliveryStatus = proof.map { Self.deliveryStatus(for: $0.state) } ?? .failed
                         }
                         errorMessage = "Message was relayed, but local confirmation could not be saved. Verify whether it arrived before retrying."
                     }

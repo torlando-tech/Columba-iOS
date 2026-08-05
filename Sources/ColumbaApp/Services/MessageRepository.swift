@@ -718,9 +718,41 @@ public actor MessageRepository {
         try await database.hasMessage(id: id)
     }
 
-    /// Update message delivery state.
-    public func updateMessageState(id: Data, state: RNSAPI.LXMessageState) async throws {
-        try await database.updateMessageState(id: id, state: Self.mapStateToGRDB(state))
+    /// Update message delivery state and optional effective transport without
+    /// allowing stale evidence to downgrade authoritative recipient delivery.
+    public func updateMessageState(
+        id: Data,
+        state: RNSAPI.LXMessageState,
+        method: RNSAPI.LXDeliveryMethod? = nil
+    ) async throws {
+        try await replacementPool.write { db in
+            let incomingState = Int(Self.mapStateToGRDB(state).rawValue)
+            let existingState = try Int.fetchOne(
+                db,
+                sql: "SELECT state FROM messages WHERE message_id = ?",
+                arguments: [id]
+            )
+            let persistedState = Self.monotonicDeliveryState(
+                existing: existingState,
+                incoming: incomingState
+            )
+            let persistedMethod = persistedState == incomingState
+                ? method.map { Self.mapMethodToGRDB($0).rawValue }
+                : nil
+            try db.execute(
+                sql: """
+                    UPDATE messages
+                    SET state = ?, method = COALESCE(?, method), updated_at = ?
+                    WHERE message_id = ?
+                    """,
+                arguments: [
+                    persistedState,
+                    persistedMethod,
+                    Date().timeIntervalSince1970,
+                    id,
+                ]
+            )
+        }
     }
 
     /// Persist an authoritative backend delivery proof. If canonical message
