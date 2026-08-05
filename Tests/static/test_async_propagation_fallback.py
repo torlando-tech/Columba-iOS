@@ -29,6 +29,7 @@ class FakeMessage:
     OPPORTUNISTIC = 0x01
     DIRECT = 0x02
     PROPAGATED = 0x03
+    PACKET = 0x04
 
     def __init__(
         self,
@@ -51,8 +52,21 @@ class FakeMessage:
         self.state = self.GENERATING
         self.delivery_attempts = 4
         self.progress = 0.75
+        self.packed = None
+        self.propagation_packed = None
+        self.representation = None
         self.delivery_callback = None
         self.failed_callback = None
+
+    def pack(self):
+        self.packed = b"packed-payload"
+        self.method = self.desired_method
+        self.representation = self.PACKET
+        self.propagation_packed = (
+            b"propagation-payload"
+            if self.desired_method == self.PROPAGATED
+            else None
+        )
 
     def register_delivery_callback(self, callback):
         self.delivery_callback = callback
@@ -68,6 +82,8 @@ class FakeRouter:
         self.handled = []
 
     def handle_outbound(self, message):
+        if message.packed is None:
+            message.pack()
         self.handled.append(message)
         if message.method == FakeMessage.PROPAGATED and self.reject_propagated:
             raise OSError("propagation enqueue rejected")
@@ -155,6 +171,8 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         )
         self.assertEqual(FakeMessage.PROPAGATED, retry.desired_method)
         self.assertEqual(FakeMessage.PROPAGATED, retry.method)
+        self.assertEqual(b"propagation-payload", retry.propagation_packed)
+        self.assertEqual(FakeMessage.PACKET, retry.representation)
         self.assertEqual(FakeMessage.OUTBOUND, retry.state)
         self.assertEqual(0, retry.delivery_attempts)
         self.assertEqual(0.0, retry.progress)
