@@ -491,7 +491,12 @@ public final class NomadNetBrowserViewModel {
 
     /// Load a single partial.
     public func loadPartial(_ partial: MicronPartial) async {
+        await loadPartial(partial, ancestry: [])
+    }
+
+    private func loadPartial(_ partial: MicronPartial, ancestry: Set<String>) async {
         let key = partial.partialId ?? partial.url
+        guard !ancestry.contains(key) else { return }
         loadingPartials.insert(key)
 
         do {
@@ -500,6 +505,13 @@ public final class NomadNetBrowserViewModel {
                 path: partial.url
             )
             partialDocuments[key] = document
+            mergeFormDefaults(from: document)
+
+            let nestedAncestry = ancestry.union([key])
+            for element in document.elements {
+                guard case .partial(let nestedPartial, _) = element else { continue }
+                await loadPartial(nestedPartial, ancestry: nestedAncestry)
+            }
         } catch {
             // Partials fail silently — show empty content
         }
@@ -539,17 +551,22 @@ public final class NomadNetBrowserViewModel {
         checkboxFields.removeAll()
         radioFields.removeAll()
 
+        mergeFormDefaults(from: document)
+    }
+
+    private func mergeFormDefaults(from document: MicronDocument) {
         for element in document.elements {
             guard case .formField(let field, _) = element else { continue }
             switch field {
             case .textInput(_, let name, let defaultValue):
-                formFields[name] = defaultValue
+                if formFields[name] == nil { formFields[name] = defaultValue }
             case .passwordInput(let name, let defaultValue):
-                formFields[name] = defaultValue
+                if formFields[name] == nil { formFields[name] = defaultValue }
             case .checkbox(let name, let value, _, let checked):
-                checkboxFields["\(name):\(value)"] = checked
+                let key = "\(name):\(value)"
+                if checkboxFields[key] == nil { checkboxFields[key] = checked }
             case .radio(let name, let value, _, let selected):
-                if selected {
+                if selected && radioFields[name] == nil {
                     radioFields[name] = value
                 }
             }
