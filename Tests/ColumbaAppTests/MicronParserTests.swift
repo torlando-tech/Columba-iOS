@@ -38,6 +38,28 @@ private actor RecordingNomadNetBackend: RnsNomadnet {
     func requests() -> [Request] { recordedRequests }
 }
 
+private actor MappedNomadNetBackend: RnsNomadnet {
+    private let responses: [String: String]
+
+    init(responses: [String: String]) {
+        self.responses = responses
+    }
+
+    func fetchNomadNetPage(
+        destHashHex: String,
+        path: String,
+        timeout: TimeInterval,
+        formFields: [String: String]?
+    ) async throws -> NomadNetFetchResult {
+        NomadNetFetchResult(
+            ok: true,
+            status: .ok,
+            data: Data((responses[path] ?? "").utf8),
+            contentType: "text/x-micron"
+        )
+    }
+}
+
 private actor ReactionGateProbe {
     private var active = 0
     private var maximumActive = 0
@@ -1306,6 +1328,33 @@ final class MicronParserTests: XCTestCase {
             NomadNetLocation(nodeHash: location.nodeHash, addressPath: addressPath),
             location
         )
+    }
+
+    @MainActor
+    func testLoadedPartialRecursivelyFetchesNestedPartialsAndInitializesFields() async {
+        let backend = MappedNomadNetBackend(responses: [
+            "/outer.mu": "`{/inner.mu}",
+            "/inner.mu": "`<12|nested`default>",
+        ])
+        let service = NomadNetBrowserService(backend: backend)
+        let viewModel = NomadNetBrowserViewModel(
+            nodeHash: Data(repeating: 0xab, count: 16),
+            nodeName: "nested",
+            initialPath: "/page/index.mu",
+            browserService: service
+        )
+        let outer = MicronPartial(
+            url: "/outer.mu",
+            refreshInterval: nil,
+            partialId: nil,
+            fieldNames: nil
+        )
+
+        await viewModel.loadPartial(outer)
+
+        XCTAssertNotNil(viewModel.partialDocuments["/outer.mu"])
+        XCTAssertNotNil(viewModel.partialDocuments["/inner.mu"])
+        XCTAssertEqual(viewModel.formFields["nested"], "default")
     }
 
     @MainActor
