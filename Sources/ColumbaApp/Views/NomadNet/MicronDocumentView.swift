@@ -92,8 +92,11 @@ struct MicronDocumentView: View {
                     bold: false,
                     onLinkTapped: onLinkTapped
                 )
-                .frame(minWidth: viewportWidth, alignment: alignment.swiftUI)
-                .padding(.horizontal, CGFloat(indentLevel) * style.approxCharWidth)
+                .frame(
+                    minWidth: sectionViewportWidth(columns: indentLevel),
+                    alignment: alignment.swiftUI
+                )
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else {
                 renderSpans(spans, onLinkTapped: onLinkTapped)
                     .font(bodyFont)
@@ -106,15 +109,22 @@ struct MicronDocumentView: View {
             if isScrollMode {
                 // Use a full-width horizontal line character for scroll mode
                 let divChar = character.map(String.init) ?? "─"
+                let dividerCount = max(
+                    1,
+                    Int(sectionViewportWidth(columns: indentLevel) / style.approxCharWidth)
+                )
                 MonospaceLineView(
-                    spans: [.text(String(repeating: divChar, count: 80), .plain)],
+                    spans: [.text(String(repeating: divChar, count: dividerCount), .plain)],
                     fontSize: style.fontSize,
                     cellHeight: cellHeight,
                     alignment: .left,
                     bold: false,
                     onLinkTapped: nil
                 )
-                .frame(minWidth: viewportWidth, alignment: .leading)
+                .frame(
+                    minWidth: sectionViewportWidth(columns: indentLevel),
+                    alignment: .leading
+                )
                 .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else if let ch = character {
                 Text(String(repeating: ch, count: 40))
@@ -257,6 +267,10 @@ struct MicronDocumentView: View {
 
     private func headingIndentWidth(level: Int) -> CGFloat {
         indentationWidth(columns: max(0, (level - 1) * 2))
+    }
+
+    private func sectionViewportWidth(columns: Int) -> CGFloat {
+        max(0, viewportWidth - (2 * indentationWidth(columns: columns)))
     }
 }
 
