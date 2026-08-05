@@ -1492,7 +1492,7 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
         )
 
         callback_lock = threading.Lock()
-        callback_state = {"terminal": False, "fallback_started": False}
+        callback_state = {"outcome": None, "fallback_started": False}
 
         def _effective_method_name(m: "LXMF.LXMessage") -> str:
             method_value = getattr(m, "method", None)
@@ -1504,11 +1504,21 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                 return "propagated"
             return ""
 
-        def _emit_terminal(m: "LXMF.LXMessage", state: str, reason: str) -> None:
+        def _emit_lifecycle(m: "LXMF.LXMessage", state: str, reason: str) -> None:
             with callback_lock:
-                if callback_state["terminal"]:
+                current = callback_state["outcome"]
+                if state == "sent":
+                    if current is not None:
+                        return
+                elif state == "delivered":
+                    if current in ("delivered", "failed"):
+                        return
+                elif state == "failed":
+                    if current in ("delivered", "failed"):
+                        return
+                else:
                     return
-                callback_state["terminal"] = True
+                callback_state["outcome"] = state
             try:
                 _put(
                     "delivery",
@@ -1524,12 +1534,12 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
             # LXMF invokes the same callback for recipient proof (DELIVERED) and
             # propagation-node acceptance (SENT). Keep those semantics distinct.
             if m.state == LXMF.LXMessage.SENT:
-                _emit_terminal(m, "sent", "propagation-accepted")
+                _emit_lifecycle(m, "sent", "propagation-accepted")
             elif m.state == LXMF.LXMessage.DELIVERED:
-                _emit_terminal(m, "delivered", "recipient-proof")
+                _emit_lifecycle(m, "delivered", "recipient-proof")
 
         def _on_propagated_failed(m: "LXMF.LXMessage") -> None:
-            _emit_terminal(m, "failed", "propagated-failed")
+            _emit_lifecycle(m, "failed", "propagated-failed")
 
         def _enqueue_propagated(m: "LXMF.LXMessage") -> None:
             # LXMRouter.fail_message invokes callbacks while process_outbound
@@ -1548,6 +1558,10 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                     ):
                         raise RuntimeError("LXMF runtime changed before fallback enqueue")
 
+                    with callback_lock:
+                        if callback_state["outcome"] is not None:
+                            return
+
                     m.desired_method = LXMF.LXMessage.PROPAGATED
                     m.packed = None
                     # Re-pack the same immutable payload with the propagated desired
@@ -1562,40 +1576,37 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                     ):
                         raise ValueError("propagation repack changed canonical message")
 
+                    # Recipient proof can arrive while the fallback representation
+                    # is being built. Give that authoritative outcome one last chance
+                    # to cancel before ownership returns to LXMF.
+                    with callback_lock:
+                        if callback_state["outcome"] is not None:
+                            return
+
                     m.state = LXMF.LXMessage.OUTBOUND
                     m.delivery_attempts = 0
                     m.progress = 0.0
                     m.register_failed_callback(_on_propagated_failed)
                     router.handle_outbound(m)
             except Exception:
-                _emit_terminal(m, "failed", "propagated-enqueue-failed")
+                _emit_lifecycle(m, "failed", "propagated-enqueue-failed")
 
         def _on_primary_failed(m: "LXMF.LXMessage") -> None:
             if fallback_method != LXMF.LXMessage.PROPAGATED:
-                _emit_terminal(m, "failed", "primary-failed")
+                _emit_lifecycle(m, "failed", "primary-failed")
                 return
 
             with callback_lock:
-                if callback_state["terminal"] or callback_state["fallback_started"]:
+                if callback_state["outcome"] is not None or callback_state["fallback_started"]:
                     return
                 if getattr(router, "outbound_propagation_node", None) is None:
-                    callback_state["terminal"] = True
                     missing_node = True
                 else:
                     callback_state["fallback_started"] = True
                     missing_node = False
 
             if missing_node:
-                try:
-                    _put(
-                        "delivery",
-                        message_hash=m.hash.hex(),
-                        state="failed",
-                        reason="no-propagation-node",
-                        method=_effective_method_name(m),
-                    )
-                except Exception:
-                    pass
+                _emit_lifecycle(m, "failed", "no-propagation-node")
                 return
 
             try:
@@ -1606,7 +1617,7 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                     daemon=True,
                 ).start()
             except Exception:
-                _emit_terminal(m, "failed", "propagated-enqueue-failed")
+                _emit_lifecycle(m, "failed", "propagated-enqueue-failed")
 
         msg.register_delivery_callback(_on_delivered)
         if desired_method == LXMF.LXMessage.PROPAGATED:

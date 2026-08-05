@@ -63,6 +63,7 @@ public final class MessagingViewModel {
     private var unsavedFailedOutboundIDs: Set<String> = []
     private var stagedRetryRecoveryHashes: [String: Data] = [:]
     private var pendingOutboundAliases: [String: String] = [:]
+    private var canonicalizedOutboundAliases: [String: String] = [:]
     private var pendingDeliveryProofs: [String: LXMessageState] = [:]
 
     // MARK: - Initialization
@@ -143,6 +144,7 @@ public final class MessagingViewModel {
                     if let deliveryMethod, !deliveryMethod.isEmpty {
                         self.messages[index].deliveryMethod = deliveryMethod
                     }
+                    self.canonicalizedOutboundAliases[visibleID] = hashHex
                     self.pendingOutboundAliases.removeValue(forKey: hashHex)
                     self.pendingDeliveryProofs.removeValue(forKey: hashHex)
                     await self.invalidatePaginationAndRefresh()
@@ -439,6 +441,30 @@ public final class MessagingViewModel {
         aliases: [String: String]
     ) -> String {
         aliases[realID] ?? realID
+    }
+
+    func currentMessage(for selected: Message) -> Message {
+        Self.resolveCurrentMessage(
+            selected,
+            messages: messages,
+            pendingAliases: pendingOutboundAliases,
+            canonicalizedAliases: canonicalizedOutboundAliases
+        )
+    }
+
+    static func resolveCurrentMessage(
+        _ selected: Message,
+        messages: [Message],
+        pendingAliases: [String: String],
+        canonicalizedAliases: [String: String]
+    ) -> Message {
+        if let exact = messages.first(where: { $0.id == selected.id }) {
+            return exact
+        }
+        let canonicalID = canonicalizedAliases[selected.id]
+            ?? pendingAliases.first(where: { $0.value == selected.id })?.key
+        guard let canonicalID else { return selected }
+        return messages.first(where: { $0.id == canonicalID }) ?? selected
     }
 
     static func pendingProof(
