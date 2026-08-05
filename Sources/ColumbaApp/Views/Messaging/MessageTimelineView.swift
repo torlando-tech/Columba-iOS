@@ -226,9 +226,20 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     ) {
         let updatedMessages = deduplicated(newMessages)
         let updatedMessageTextScale = messageTextScale ?? self.messageTextScale
-        let needsRenderingUpdate = conversationID != newConversationID
+        let conversationChanged = conversationID != newConversationID
+        let needsRenderingUpdate = conversationChanged
             || messages != updatedMessages
             || self.messageTextScale != updatedMessageTextScale
+
+        if conversationChanged {
+            loadTask?.cancel()
+            loadTask = nil
+            isLoadingMore = false
+            needsInitialBottomScroll = !updatedMessages.isEmpty
+            hasCompletedInitialPositioning = false
+            previousViewportSize = .zero
+            shouldFollowBottomAcrossResize = false
+        }
 
         self.isLoadingMore = isLoadingMore || loadTask != nil
         self.allMessagesLoaded = allMessagesLoaded
@@ -240,8 +251,8 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
         }
 
         let oldMessages = messages
-        let anchor = visibleAnchor()
-        let wasNearBottom = self.isNearBottom
+        let anchor = conversationChanged ? nil : visibleAnchor()
+        let wasNearBottom = conversationChanged ? false : self.isNearBottom
         let oldLastID = oldMessages.last?.id
 
         conversationID = newConversationID
@@ -255,7 +266,9 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
         collectionView.collectionViewLayout.invalidateLayout()
         collectionView.layoutIfNeeded()
 
-        if oldMessages.isEmpty, !messages.isEmpty {
+        if conversationChanged {
+            view.setNeedsLayout()
+        } else if oldMessages.isEmpty, !messages.isEmpty {
             needsInitialBottomScroll = true
             hasCompletedInitialPositioning = false
             view.setNeedsLayout()

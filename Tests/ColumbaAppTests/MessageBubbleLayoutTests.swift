@@ -832,6 +832,7 @@ final class MessageTimelinePolicyTests: XCTestCase {
             "Conversation B must not remain owned by conversation A's pagination task"
         )
         XCTAssertFalse(controller.configuredLoadingState.isLoadingMore)
+        XCTAssertNotNil(controller.viewportSnapshotForTesting())
         XCTAssertTrue(controller.isViewportNearBottomForTesting)
 
         controller.update(
