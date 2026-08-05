@@ -113,12 +113,27 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(level, 3)
     }
 
-    func testHeadingLevelCappedAt3() {
+    func testSectionDepthIsNotCappedByThreeHeadingPaletteStyles() {
         let doc = MicronParser.parse(">>>>TooDeep")
         guard case .heading(let level, _, _) = doc.elements.first else {
             XCTFail("Expected heading"); return
         }
-        XCTAssertEqual(level, 3)
+        XCTAssertEqual(level, 4)
+    }
+
+    func testRngitResetImmediatelyFollowedByReadmeHeadingReparsesRemainder() {
+        // Current rngit repo pages join the template's trailing `<` directly
+        // to a converted Markdown heading, producing this exact line shape.
+        let doc = MicronParser.parse("<>The Non-linear Task Manager")
+
+        guard case .heading(let level, let spans, _) = doc.elements.first,
+              case .text(let text, _) = spans.first else {
+            XCTFail("Expected reset remainder to be parsed as a heading")
+            return
+        }
+
+        XCTAssertEqual(level, 1)
+        XCTAssertEqual(text, "The Non-linear Task Manager")
     }
 
     // MARK: - Dividers
@@ -379,8 +394,9 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(resetSpans.count, 0)
     }
 
-    func testIndentResetClearsStyle() {
-        // `< at line-start resets formatting state in addition to indent.
+    func testSectionResetPreservesFormattingState() {
+        // Canonical NomadNet uses `<` only to reset section depth. Formatting
+        // remains document-scoped until its own reset command is encountered.
         let doc = MicronParser.parse("`!bold-line\n<plain-after-reset")
         XCTAssertEqual(doc.elements.count, 2)
 
@@ -390,7 +406,7 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(line2Spans.count, 1)
         if case .text(let t, let s) = line2Spans[0] {
             XCTAssertEqual(t, "plain-after-reset")
-            XCTAssertFalse(s.bold) // `< wiped the persisted bold from line 1
+            XCTAssertTrue(s.bold)
         } else { XCTFail("Expected text") }
     }
 
@@ -535,6 +551,54 @@ final class MicronParserTests: XCTestCase {
 
         let attachment = XCTAttachment(image: image)
         attachment.name = "nomadnet-rngit-true-color-line"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    func testCanonicalDarkSectionHeadingsRenderPaletteBackgrounds() {
+        let document = MicronParser.parse("""
+        <>The Non-linear Task Manager
+        >>Key Features
+        >>>Installation
+        """)
+        let size = CGSize(width: 340, height: 180)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                style: .monospaceScroll,
+                viewportWidth: 320
+            )
+            .frame(width: 320, alignment: .leading)
+            .background(Color.black)
+            .preferredColorScheme(.dark)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.black)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        // Canonical NomadNet dark heading backgrounds: level 1 = bbb,
+        // level 2 = 999, level 3 (and deeper) = 777.
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0xbb, 0xbb, 0xbb), tolerance: 4), 500)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x99, 0x99, 0x99), tolerance: 4), 500)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x77, 0x77, 0x77), tolerance: 4), 500)
+
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "nomadnet-canonical-dark-section-headings"
         attachment.lifetime = .keepAlways
         add(attachment)
     }
