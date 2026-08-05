@@ -447,7 +447,7 @@ final class MicronParserTests: XCTestCase {
 
     #if canImport(UIKit)
     func testTrueColorConvertsToExactRGBComponents() throws {
-        let color = try XCTUnwrap(MicronTextStyle.colorFromHex("8b949e"))
+        let color = try XCTUnwrap(MicronTextStyle.colorFromStyleHex("8b949e"))
         let uiColor = UIColor(color)
         var red: CGFloat = 0
         var green: CGFloat = 0
@@ -458,6 +458,11 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(green, 0x94 / 255.0, accuracy: 0.001)
         XCTAssertEqual(blue, 0x9e / 255.0, accuracy: 0.001)
         XCTAssertEqual(alpha, 1, accuracy: 0.001)
+    }
+
+    func testPageHeaderColorRemainsLegacyThreeDigitOnly() {
+        XCTAssertNotNil(MicronTextStyle.colorFrom3Hex("abc"))
+        XCTAssertNil(MicronTextStyle.colorFrom3Hex("aabbcc"))
     }
 
     @MainActor
