@@ -5,6 +5,7 @@ import RNSAPI
 /// Renders a parsed MicronDocument as SwiftUI views.
 @available(iOS 17.0, macOS 14.0, *)
 struct MicronDocumentView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let document: MicronDocument
     @Binding var formFields: [String: String]
     @Binding var checkboxFields: [String: Bool]
@@ -21,6 +22,8 @@ struct MicronDocumentView: View {
     /// whitespace line) sets the VStack width and centered shorter rows end up
     /// scrolled offscreen-right.
     var viewportWidth: CGFloat = 0
+    var appliesDocumentPadding = true
+    var partialAncestry: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: isScrollMode ? 0 : 2) {
@@ -28,8 +31,8 @@ struct MicronDocumentView: View {
                 renderElement(element, index: index)
             }
         }
-        .padding(.horizontal, isScrollMode ? 0 : 12)
-        .padding(.vertical, isScrollMode ? 0 : 8)
+        .padding(.horizontal, appliesDocumentPadding && !isScrollMode ? 12 : 0)
+        .padding(.vertical, appliesDocumentPadding && !isScrollMode ? 8 : 0)
     }
 
     private var isScrollMode: Bool { style == .monospaceScroll }
@@ -38,17 +41,14 @@ struct MicronDocumentView: View {
     private var cellHeight: CGFloat { style.approxCharWidth * 2 }
 
     private var bodyFont: Font {
-        if style.usesMonospace {
-            return .system(size: style.fontSize, design: .monospaced)
-        } else {
-            return .system(size: style.fontSize)
-        }
+        style.swiftUIFont
     }
 
     @ViewBuilder
     private func renderElement(_ element: MicronElement, index: Int) -> some View {
         switch element {
         case .heading(let level, let spans, let alignment):
+            let palette = MicronHeadingPalette.style(level: level, colorScheme: colorScheme)
             if isScrollMode {
                 // UIKit-backed line with strict paragraph line-height so block chars stack tight
                 MonospaceLineView(
@@ -57,14 +57,25 @@ struct MicronDocumentView: View {
                     cellHeight: cellHeight,
                     alignment: alignment,
                     bold: true,
+                    defaultForegroundColor: palette.foreground,
+                    linkForegroundColor: palette.foreground,
                     onLinkTapped: onLinkTapped
                 )
+                .padding(.leading, headingIndentWidth(level: level))
                 .frame(minWidth: viewportWidth, alignment: alignment.swiftUI)
+                .background(palette.background)
             } else {
-                renderSpans(spans, onLinkTapped: onLinkTapped)
+                renderSpans(
+                    spans,
+                    onLinkTapped: onLinkTapped,
+                    linkForegroundColor: palette.foreground
+                )
                     .font(headingFont(level: level))
                     .bold()
+                    .foregroundStyle(palette.foreground)
+                    .padding(.leading, headingIndentWidth(level: level))
                     .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
+                    .background(palette.background)
                     .padding(.top, level == 1 ? 12 : 8)
                     .padding(.bottom, 4)
             }
@@ -79,42 +90,54 @@ struct MicronDocumentView: View {
                     bold: false,
                     onLinkTapped: onLinkTapped
                 )
-                .padding(.leading, CGFloat(indentLevel) * style.approxCharWidth)
-                .frame(minWidth: viewportWidth, alignment: alignment.swiftUI)
+                .frame(
+                    minWidth: sectionViewportWidth(columns: indentLevel),
+                    alignment: alignment.swiftUI
+                )
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else {
                 renderSpans(spans, onLinkTapped: onLinkTapped)
                     .font(bodyFont)
                     .lineLimit(nil)
                     .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                    .padding(.leading, CGFloat(indentLevel) * 16)
+                    .padding(.horizontal, indentationWidth(columns: indentLevel))
             }
 
-        case .divider(let character):
+        case .divider(let character, let indentLevel):
             if isScrollMode {
                 // Use a full-width horizontal line character for scroll mode
                 let divChar = character.map(String.init) ?? "─"
+                let dividerCount = viewportWidth > 0
+                    ? max(1, Int(sectionViewportWidth(columns: indentLevel) / style.approxCharWidth))
+                    : 80
                 MonospaceLineView(
-                    spans: [.text(String(repeating: divChar, count: 80), .plain)],
+                    spans: [.text(String(repeating: divChar, count: dividerCount), .plain)],
                     fontSize: style.fontSize,
                     cellHeight: cellHeight,
                     alignment: .left,
                     bold: false,
                     onLinkTapped: nil
                 )
-                .frame(minWidth: viewportWidth, alignment: .leading)
+                .frame(
+                    minWidth: sectionViewportWidth(columns: indentLevel),
+                    alignment: .leading
+                )
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else if let ch = character {
                 Text(String(repeating: ch, count: 40))
-                    .font(.system(size: style.fontSize, design: .monospaced))
+                    .font(bodyFont)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
+                    .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else {
                 Divider()
                     .padding(.vertical, 4)
+                    .padding(.horizontal, indentationWidth(columns: indentLevel))
             }
 
-        case .literalBlock(let text):
+        case .literalBlock(let text, let indentLevel):
             if isScrollMode {
                 // Split literal blocks into individual lines so each gets exact cell height
                 VStack(alignment: .leading, spacing: 0) {
@@ -129,36 +152,60 @@ struct MicronDocumentView: View {
                         )
                     }
                 }
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else {
                 Text(text)
-                    .font(.system(size: style.fontSize, design: .monospaced))
+                    .font(bodyFont)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.platformSystemGray6)
                     .cornerRadius(6)
                     .padding(.vertical, 4)
+                    .padding(.horizontal, indentationWidth(columns: indentLevel))
             }
 
-        case .formField(let field):
+        case .formField(let field, let indentLevel):
             renderFormField(field)
                 .padding(.vertical, 2)
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
 
-        case .partial(let partial):
-            renderPartial(partial)
+        case .partial(let partial, let indentLevel):
+            renderPartial(partial, indentLevel: indentLevel)
+                .padding(.horizontal, indentationWidth(columns: indentLevel))
         }
     }
 
     // MARK: - Partial Rendering
 
     @ViewBuilder
-    private func renderPartial(_ partial: MicronPartial) -> some View {
+    private func renderPartial(_ partial: MicronPartial, indentLevel: Int) -> some View {
         let key = partial.partialId ?? partial.url
-        MicronPartialView(
-            partialKey: key,
-            partialDocuments: partialDocuments,
-            loadingPartials: loadingPartials,
-            onLinkTapped: onLinkTapped
-        )
+        if let partialDocument = partialDocuments[key], !partialAncestry.contains(key) {
+            AnyView(
+                MicronDocumentView(
+                    document: partialDocument,
+                    formFields: $formFields,
+                    checkboxFields: $checkboxFields,
+                    radioFields: $radioFields,
+                    partialDocuments: partialDocuments,
+                    loadingPartials: loadingPartials,
+                    onLinkTapped: onLinkTapped,
+                    style: style,
+                    viewportWidth: sectionViewportWidth(columns: indentLevel),
+                    appliesDocumentPadding: false,
+                    partialAncestry: partialAncestry.union([key])
+                )
+            )
+        } else if loadingPartials.contains(key) {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.7)
+                Text("Loading...")
+                    .font(bodyFont)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
     }
 
     // MARK: - Form Field Rendering
@@ -168,13 +215,15 @@ struct MicronDocumentView: View {
         switch field {
         case .textInput(let width, let name, _):
             TextField(name, text: binding(for: name))
-                .font(.system(.body, design: .monospaced))
+                .font(bodyFont)
                 .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: CGFloat(width) * 10)
+                .frame(
+                    maxWidth: CGFloat(width) * (style.usesMonospace ? style.approxCharWidth : 10)
+                )
 
         case .passwordInput(let name, _):
             SecureField(name, text: binding(for: name))
-                .font(.system(.body, design: .monospaced))
+                .font(bodyFont)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 240)
 
@@ -187,7 +236,7 @@ struct MicronDocumentView: View {
                     Image(systemName: (checkboxFields[key] ?? false) ? "checkmark.square.fill" : "square")
                         .foregroundColor((checkboxFields[key] ?? false) ? .accentColor : .secondary)
                     Text(label)
-                        .font(.system(.body, design: .monospaced))
+                        .font(bodyFont)
                         .foregroundStyle(.primary)
                 }
             }
@@ -201,7 +250,7 @@ struct MicronDocumentView: View {
                     Image(systemName: radioFields[name] == value ? "circle.inset.filled" : "circle")
                         .foregroundColor(radioFields[name] == value ? .accentColor : .secondary)
                     Text(label)
-                        .font(.system(.body, design: .monospaced))
+                        .font(bodyFont)
                         .foregroundStyle(.primary)
                 }
             }
@@ -230,68 +279,38 @@ struct MicronDocumentView: View {
         default: return .title3
         }
     }
-}
 
-// MARK: - Partial View
+    private func indentationWidth(columns: Int) -> CGFloat {
+        CGFloat(columns) * (style.usesMonospace ? style.approxCharWidth : 8)
+    }
 
-/// Renders a loaded partial document inline, or a loading indicator.
-@available(iOS 17.0, macOS 14.0, *)
-private struct MicronPartialView: View {
-    let partialKey: String
-    let partialDocuments: [String: MicronDocument]
-    let loadingPartials: Set<String>
-    var onLinkTapped: ((MicronLink) -> Void)?
+    private func headingIndentWidth(level: Int) -> CGFloat {
+        indentationWidth(columns: max(0, (level - 1) * 2))
+    }
 
-    var body: some View {
-        if let partialDoc = partialDocuments[partialKey] {
-            // Render partial content as simple text spans (no nested form/partial support)
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(partialDoc.elements.enumerated()), id: \.offset) { _, element in
-                    MicronSimpleElementView(element: element, onLinkTapped: onLinkTapped)
-                }
-            }
-        } else if loadingPartials.contains(partialKey) {
-            HStack(spacing: 6) {
-                ProgressView()
-                    .scaleEffect(0.7)
-                Text("Loading...")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 4)
-        }
+    private func sectionViewportWidth(columns: Int) -> CGFloat {
+        max(0, viewportWidth - (2 * indentationWidth(columns: columns)))
     }
 }
 
-/// Simplified element renderer for partial content (no form fields or nested partials).
-@available(iOS 17.0, macOS 14.0, *)
-private struct MicronSimpleElementView: View {
-    let element: MicronElement
-    var onLinkTapped: ((MicronLink) -> Void)?
+private enum MicronHeadingPalette {
+    static func style(level: Int, colorScheme: ColorScheme) -> (foreground: Color, background: Color) {
+        let paletteLevel = min(max(level, 1), 3)
+        let foregroundHex: String
+        let backgroundHex: String
 
-    var body: some View {
-        switch element {
-        case .heading(_, let spans, let alignment):
-            renderSpans(spans, onLinkTapped: onLinkTapped)
-                .font(.headline)
-                .bold()
-                .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-        case .paragraph(let spans, let alignment, let indentLevel):
-            renderSpans(spans, onLinkTapped: onLinkTapped)
-                .font(.system(.body, design: .monospaced))
-                .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                .padding(.leading, CGFloat(indentLevel) * 16)
-        case .divider:
-            Divider().padding(.vertical, 4)
-        case .literalBlock(let text):
-            Text(text)
-                .font(.system(.body, design: .monospaced))
-                .padding(8)
-                .background(Color.platformSystemGray6)
-                .cornerRadius(6)
-        case .formField, .partial:
-            EmptyView()
+        if colorScheme == .dark {
+            foregroundHex = ["222", "111", "000"][paletteLevel - 1]
+            backgroundHex = ["bbb", "999", "777"][paletteLevel - 1]
+        } else {
+            foregroundHex = ["000", "111", "222"][paletteLevel - 1]
+            backgroundHex = ["777", "aaa", "ccc"][paletteLevel - 1]
         }
+
+        return (
+            MicronTextStyle.colorFrom3Hex(foregroundHex) ?? .primary,
+            MicronTextStyle.colorFrom3Hex(backgroundHex) ?? .clear
+        )
     }
 }
 
@@ -304,14 +323,23 @@ private struct MicronSimpleElementView: View {
 /// custom URL scheme (`micron-link://<index>`) that `OpenURLAction` maps
 /// back to the originating `MicronLink`.
 @available(iOS 17.0, macOS 14.0, *)
-func renderSpans(_ spans: [MicronSpan], onLinkTapped: ((MicronLink) -> Void)?) -> some View {
-    MicronSpansText(spans: spans, onLinkTapped: onLinkTapped)
+func renderSpans(
+    _ spans: [MicronSpan],
+    onLinkTapped: ((MicronLink) -> Void)?,
+    linkForegroundColor: Color? = nil
+) -> some View {
+    MicronSpansText(
+        spans: spans,
+        onLinkTapped: onLinkTapped,
+        linkForegroundColor: linkForegroundColor
+    )
 }
 
 @available(iOS 17.0, macOS 14.0, *)
 struct MicronSpansText: View {
     let spans: [MicronSpan]
     var onLinkTapped: ((MicronLink) -> Void)?
+    var linkForegroundColor: Color? = nil
 
     var body: some View {
         Text(buildAttributed())
@@ -346,7 +374,7 @@ struct MicronSpansText: View {
                 result.append(styledAttributed(content, style: style))
             case .link(let link):
                 var piece = AttributedString(link.label)
-                piece.foregroundColor = .accentColor
+                piece.foregroundColor = linkForegroundColor ?? .accentColor
                 piece.underlineStyle = .single
                 if let url = URL(string: "micron-link://\(linkIndex)") {
                     piece.link = url
@@ -360,18 +388,15 @@ struct MicronSpansText: View {
 
     private func styledAttributed(_ content: String, style: MicronTextStyle) -> AttributedString {
         var piece = AttributedString(content)
-        if style.bold && style.italic {
-            piece.font = .body.bold().italic()
-        } else if style.bold {
-            piece.font = .body.bold()
-        } else if style.italic {
-            piece.font = .body.italic()
-        }
+        var intents: InlinePresentationIntent = []
+        if style.bold { intents.insert(.stronglyEmphasized) }
+        if style.italic { intents.insert(.emphasized) }
+        if !intents.isEmpty { piece.inlinePresentationIntent = intents }
         if style.underline { piece.underlineStyle = .single }
-        if let fg = style.foregroundColor, let color = MicronTextStyle.colorFrom3Hex(fg) {
+        if let fg = style.foregroundColor, let color = MicronTextStyle.colorFromStyleHex(fg) {
             piece.foregroundColor = color
         }
-        if let bg = style.backgroundColor, let color = MicronTextStyle.colorFrom3Hex(bg) {
+        if let bg = style.backgroundColor, let color = MicronTextStyle.colorFromStyleHex(bg) {
             piece.backgroundColor = color
         }
         return piece

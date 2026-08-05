@@ -12,10 +12,11 @@ public struct MicronParser {
         var lineIndex = 0
         var inLiteral = false
         var literalLines: [String] = []
+        var literalIndent = 0
         var currentIndent = 0
         var currentAlignment: MicronAlignment = .left
         // Formatting state persists across lines (matches python NomadNet's
-        // MicronParser, where `!/`*/`_/`Fxxx/`Bxxx are document-scoped until
+        // MicronParser, where `!/`*/`_/`Fxxx/`FTxxxxxx/`Bxxx/`BTxxxxxx are document-scoped until
         // toggled off or reset). Without this the chat-room page's
         // `F0ff`B52f preamble drops its colors before the ASCII art.
         var currentStyle: MicronTextStyle = .plain
@@ -32,108 +33,150 @@ public struct MicronParser {
         }
 
         // Process remaining lines
-        while lineIndex < lines.count {
-            let line = lines[lineIndex]
+        lineLoop: while lineIndex < lines.count {
+            var line = lines[lineIndex]
             lineIndex += 1
 
-            // Literal block toggle
-            if line.hasPrefix("`=") {
-                if inLiteral {
-                    elements.append(.literalBlock(text: literalLines.joined(separator: "\n")))
+            // Literal content is opaque. Only an exact toggle closes the block;
+            // reset and heading markers inside it remain literal text.
+            if inLiteral {
+                if line == "`=" {
+                    elements.append(.literalBlock(
+                        text: literalLines.joined(separator: "\n"),
+                        indentLevel: literalIndent
+                    ))
                     literalLines = []
                     inLiteral = false
                 } else {
+                    literalLines.append(line)
+                }
+                continue
+            }
+
+            // Canonical NomadNet recursively reparses a line whenever a reset or
+            // field-bearing heading sanitization exposes a new block control.
+            classificationLoop: while true {
+                while line.first == "<" {
+                    currentIndent = 0
+                    line.removeFirst()
+                    if line.isEmpty { continue lineLoop }
+                }
+
+                // A reset can expose a literal toggle, for example `<`=`.
+                if line == "`=" {
                     inLiteral = true
+                    literalIndent = currentIndent
+                    continue lineLoop
                 }
-                continue
-            }
 
-            if inLiteral {
-                literalLines.append(line)
-                continue
-            }
-
-            // Empty line
-            if line.isEmpty {
-                elements.append(.paragraph(spans: [.text("", .plain)], alignment: currentAlignment, indentLevel: currentIndent))
-                continue
-            }
-
-            let firstChar = line.first!
-
-            // Comment
-            if firstChar == "#" {
-                continue
-            }
-
-            // Heading
-            if firstChar == ">" {
-                let level = line.prefix(while: { $0 == ">" }).count
-                let headingLevel = min(level, 3)
-                currentIndent = headingLevel
-                let content = String(line.dropFirst(level)).trimmingCharacters(in: .whitespaces)
-                if content.isEmpty {
-                    continue
+                // Empty line
+                if line.isEmpty {
+                    elements.append(.paragraph(
+                        spans: [.text("", .plain)],
+                        alignment: currentAlignment,
+                        indentLevel: currentIndent
+                    ))
+                    continue lineLoop
                 }
-                let (spans, alignment, fields, updatedStyle) = parseInline(content, currentStyle: currentStyle, currentAlignment: currentAlignment)
+
+                // A heading containing fields is treated as a regular content
+                // line. Stripping the heading markers can expose any other block
+                // control, so restart classification from the beginning.
+                if line.first == ">" && line.contains("`<") {
+                    line.removeFirst(line.prefix(while: { $0 == ">" }).count)
+                    continue classificationLoop
+                }
+
+                let firstChar = line.first!
+
+                // Comment
+                if firstChar == "#" {
+                    continue lineLoop
+                }
+
+                // Heading
+                if firstChar == ">" {
+                    let level = line.prefix(while: { $0 == ">" }).count
+                    currentIndent = max(0, (level - 1) * 2)
+                    let content = String(line.dropFirst(level))
+                    if content.isEmpty {
+                        continue lineLoop
+                    }
+                    // Heading palette state is temporary in NomadNet. Inline
+                    // formatting may style the heading and change alignment, but
+                    // it must not inherit or mutate document text formatting.
+                    let (spans, alignment, fields, _) = parseInline(
+                        content,
+                        currentStyle: .plain,
+                        currentAlignment: currentAlignment
+                    )
+                    if let alignment = alignment { currentAlignment = alignment }
+                    elements.append(.heading(level: level, spans: spans, alignment: currentAlignment))
+                    for field in fields {
+                        elements.append(.formField(field, indentLevel: currentIndent))
+                    }
+                    continue lineLoop
+                }
+
+                // Divider
+                if firstChar == "-" {
+                    let rest = line.dropFirst()
+                    let requested = line.count == 2 ? rest.first : nil
+                    let divChar: Character?
+                    if let requested, requested.asciiValue.map({ $0 < 32 }) != true {
+                        divChar = requested
+                    } else {
+                        divChar = nil
+                    }
+                    elements.append(.divider(character: divChar, indentLevel: currentIndent))
+                    continue lineLoop
+                }
+
+                // Partial include: `{url`refresh`fields}
+                if line.hasPrefix("`{") {
+                    if let partial = parsePartial(line) {
+                        elements.append(.partial(partial, indentLevel: currentIndent))
+                    }
+                    continue lineLoop
+                }
+
+                // Escaped line
+                if firstChar == "\\" {
+                    let text = String(line.dropFirst())
+                    elements.append(.paragraph(
+                        spans: [.text(text, currentStyle)],
+                        alignment: currentAlignment,
+                        indentLevel: currentIndent
+                    ))
+                    continue lineLoop
+                }
+
+                // Regular paragraph - parse inline formatting
+                let (spans, alignment, fields, updatedStyle) = parseInline(
+                    line,
+                    currentStyle: currentStyle,
+                    currentAlignment: currentAlignment
+                )
                 currentStyle = updatedStyle
                 if let alignment = alignment { currentAlignment = alignment }
-                elements.append(.heading(level: headingLevel, spans: spans, alignment: currentAlignment))
-                for field in fields { elements.append(.formField(field)) }
-                continue
-            }
-
-            // Divider
-            if firstChar == "-" {
-                let rest = line.dropFirst()
-                let divChar: Character? = rest.isEmpty ? nil : rest.first
-                elements.append(.divider(character: divChar))
-                continue
-            }
-
-            // Reset indent — also resets formatting state to plain, matching
-            // python NomadNet's `<` semantics where the line restarts parsing
-            // from a default state.
-            if firstChar == "<" {
-                currentIndent = 0
-                currentStyle = .plain
-                let rest = String(line.dropFirst())
-                if !rest.isEmpty {
-                    let (spans, alignment, fields, updatedStyle) = parseInline(rest, currentStyle: currentStyle, currentAlignment: currentAlignment)
-                    currentStyle = updatedStyle
-                    if let alignment = alignment { currentAlignment = alignment }
-                    elements.append(.paragraph(spans: spans, alignment: currentAlignment, indentLevel: currentIndent))
-                    for field in fields { elements.append(.formField(field)) }
+                elements.append(.paragraph(
+                    spans: spans,
+                    alignment: currentAlignment,
+                    indentLevel: currentIndent
+                ))
+                for field in fields {
+                    elements.append(.formField(field, indentLevel: currentIndent))
                 }
-                continue
+                continue lineLoop
             }
-
-            // Partial include: `{url`refresh`fields}
-            if line.hasPrefix("`{") {
-                if let partial = parsePartial(line) {
-                    elements.append(.partial(partial))
-                }
-                continue
-            }
-
-            // Escaped line
-            if firstChar == "\\" {
-                let text = String(line.dropFirst())
-                elements.append(.paragraph(spans: [.text(text, .plain)], alignment: currentAlignment, indentLevel: currentIndent))
-                continue
-            }
-
-            // Regular paragraph — parse inline formatting
-            let (spans, alignment, fields, updatedStyle) = parseInline(line, currentStyle: currentStyle, currentAlignment: currentAlignment)
-            currentStyle = updatedStyle
-            if let alignment = alignment { currentAlignment = alignment }
-            elements.append(.paragraph(spans: spans, alignment: currentAlignment, indentLevel: currentIndent))
-            for field in fields { elements.append(.formField(field)) }
         }
 
         // Close unclosed literal block
         if inLiteral && !literalLines.isEmpty {
-            elements.append(.literalBlock(text: literalLines.joined(separator: "\n")))
+            elements.append(.literalBlock(
+                text: literalLines.joined(separator: "\n"),
+                indentLevel: literalIndent
+            ))
         }
 
         return MicronDocument(headers: headers, elements: elements)
@@ -233,26 +276,27 @@ public struct MicronParser {
                     continue
                 }
 
-                // Foreground color
+                // Foreground color: Fxxx (3-digit) or FTxxxxxx (true color)
                 if cmd == "F" || cmd == "f" {
                     flushBuffer()
                     if cmd == "f" {
                         style.foregroundColor = nil
                         i = text.index(after: next)
                     } else {
-                        // Read 3 hex digits
                         let colorStart = text.index(after: next)
-                        if let colorEnd = text.index(colorStart, offsetBy: 3, limitedBy: text.endIndex) {
-                            style.foregroundColor = String(text[colorStart..<colorEnd])
-                            i = colorEnd
+                        if let parsed = parseColor(in: text, from: colorStart) {
+                            style.foregroundColor = parsed.value
+                            i = parsed.endIndex
                         } else {
-                            i = text.index(after: next)
+                            // Consume only the command. Preserve malformed or
+                            // truncated payload text and leave the style intact.
+                            i = colorStart
                         }
                     }
                     continue
                 }
 
-                // Background color
+                // Background color: Bxxx (3-digit) or BTxxxxxx (true color)
                 if cmd == "B" || cmd == "b" {
                     flushBuffer()
                     if cmd == "b" {
@@ -260,11 +304,11 @@ public struct MicronParser {
                         i = text.index(after: next)
                     } else {
                         let colorStart = text.index(after: next)
-                        if let colorEnd = text.index(colorStart, offsetBy: 3, limitedBy: text.endIndex) {
-                            style.backgroundColor = String(text[colorStart..<colorEnd])
-                            i = colorEnd
+                        if let parsed = parseColor(in: text, from: colorStart) {
+                            style.backgroundColor = parsed.value
+                            i = parsed.endIndex
                         } else {
-                            i = text.index(after: next)
+                            i = colorStart
                         }
                     }
                     continue
@@ -337,6 +381,29 @@ public struct MicronParser {
 
         flushBuffer()
         return (spans, alignment, formFields, style)
+    }
+
+    private struct ParsedColor {
+        let value: String
+        let endIndex: String.Index
+    }
+
+    /// Parse a Micron color payload starting immediately after F/B.
+    /// `T` selects six-digit true color; otherwise the legacy three-digit
+    /// form is used. Invalid payloads are rejected without consuming them.
+    private static func parseColor(in text: String, from start: String.Index) -> ParsedColor? {
+        guard start < text.endIndex else { return nil }
+
+        let isTrueColor = text[start] == "T"
+        let valueStart = isTrueColor ? text.index(after: start) : start
+        let length = isTrueColor ? 6 : 3
+        guard let valueEnd = text.index(valueStart, offsetBy: length, limitedBy: text.endIndex) else {
+            return nil
+        }
+
+        let value = String(text[valueStart..<valueEnd])
+        guard value.count == length, value.allSatisfy(\.isHexDigit) else { return nil }
+        return ParsedColor(value: value.lowercased(), endIndex: valueEnd)
     }
 
     // MARK: - Form Field Parsing

@@ -3,6 +3,134 @@ import Foundation
 import RNSAPI
 import SwiftUI
 
+/// Exact request data attached to a NomadNet location.
+///
+/// `requestData` is ready for the wire (`field_` and `var_` prefixes included).
+/// Only request variables are retained separately for safe address sharing;
+/// user-entered form fields, including passwords, are never serialized into URLs.
+struct NomadNetRequestContext: Sendable, Equatable {
+    var requestData: [String: String]
+    var requestVariables: [String: String]
+
+    static let empty = NomadNetRequestContext(requestData: [:], requestVariables: [:])
+
+    static func build(
+        fieldEntries: [String],
+        formFields: [String: String],
+        checkboxFields: [String: Bool],
+        radioFields: [String: String]
+    ) -> NomadNetRequestContext {
+        var availableFields = formFields
+        var selectedCheckboxes: [String: [String]] = [:]
+        for (key, checked) in checkboxFields where checked {
+            let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            selectedCheckboxes[parts[0], default: []].append(parts[1])
+        }
+        for (name, values) in selectedCheckboxes {
+            availableFields[name] = values.sorted().joined(separator: ",")
+        }
+        for (name, value) in radioFields {
+            availableFields[name] = value
+        }
+
+        var requestData: [String: String] = [:]
+        var requestVariables: [String: String] = [:]
+        let submitAll = fieldEntries.contains("*")
+
+        for entry in fieldEntries where entry != "*" {
+            if let separator = entry.firstIndex(of: "=") {
+                let name = String(entry[..<separator])
+                let value = String(entry[entry.index(after: separator)...])
+                guard !name.isEmpty else { continue }
+                requestData["var_\(name)"] = value
+                requestVariables[name] = value
+            } else {
+                requestData["field_\(entry)"] = availableFields[entry] ?? ""
+            }
+        }
+
+        if submitAll {
+            for (name, value) in availableFields {
+                requestData["field_\(name)"] = value
+            }
+        }
+
+        return NomadNetRequestContext(
+            requestData: requestData,
+            requestVariables: requestVariables
+        )
+    }
+
+}
+
+/// A complete browser location, including the request variables needed to
+/// reproduce dynamic pages such as rngit's group and repository views.
+struct NomadNetLocation: Sendable, Equatable {
+    var nodeHash: Data
+    var path: String
+    var requestContext: NomadNetRequestContext
+
+    init(nodeHash: Data, path: String, requestContext: NomadNetRequestContext) {
+        self.nodeHash = nodeHash
+        self.path = path
+        self.requestContext = requestContext
+    }
+
+    init(nodeHash: Data, addressPath: String) {
+        let components = addressPath.split(
+            separator: "`",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        var requestData: [String: String] = [:]
+        var requestVariables: [String: String] = [:]
+        if components.count == 2 {
+            for entry in components[1].split(separator: "|").map(String.init) {
+                guard let separator = entry.firstIndex(of: "=") else { continue }
+                let encodedName = String(entry[..<separator])
+                let encodedValue = String(entry[entry.index(after: separator)...])
+                let name = Self.decodeAddressComponent(encodedName)
+                guard !name.isEmpty else { continue }
+                let value = Self.decodeAddressComponent(encodedValue)
+                requestData["var_\(name)"] = value
+                requestVariables[name] = value
+            }
+        }
+        self.init(
+            nodeHash: nodeHash,
+            path: components[0],
+            requestContext: NomadNetRequestContext(
+                requestData: requestData,
+                requestVariables: requestVariables
+            )
+        )
+    }
+
+    var address: String {
+        let hashHex = nodeHash.map { String(format: "%02x", $0) }.joined()
+        let variables = requestContext.requestVariables
+            .sorted { $0.key < $1.key }
+            .map { "\(Self.encodeFormComponent($0.key))=\(Self.encodeFormComponent($0.value))" }
+            .joined(separator: "|")
+        return variables.isEmpty ? "\(hashHex):\(path)" : "\(hashHex):\(path)`\(variables)"
+    }
+
+    var shareableAddress: String { "nomadnetwork://\(address)" }
+
+    private static func encodeFormComponent(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return (value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value)
+            .replacingOccurrences(of: "%20", with: "+")
+    }
+
+    private static func decodeAddressComponent(_ value: String) -> String {
+        let withSpaces = value.replacingOccurrences(of: "+", with: " ")
+        return withSpaces.removingPercentEncoding ?? withSpaces
+    }
+}
+
 /// Rendering mode for NomadNet pages.
 public enum NomadNetRenderingMode: String, Sendable, CaseIterable {
     /// Monospace font with horizontal+vertical scroll, square line height, pinch zoom.
@@ -37,6 +165,7 @@ public struct NomadNetNavigationEntry: Sendable {
     public let nodeHash: Data
     public let path: String
     public let document: MicronDocument?
+    let requestContext: NomadNetRequestContext
 }
 
 /// ViewModel for the NomadNet node page browser.
@@ -92,13 +221,23 @@ public final class NomadNetBrowserViewModel {
 
     private var navigationHistory: [NomadNetNavigationEntry] = []
     private static let maxHistorySize = 50
+    private var currentRequestContext: NomadNetRequestContext = .empty
 
     public var canGoBack: Bool { !navigationHistory.isEmpty }
 
-    /// URL display string: "hashPrefix:/path"
+    /// Complete address, including request variables required to reproduce the page.
     public var displayURL: String {
-        let hashHex = currentNodeHash.map { String(format: "%02x", $0) }.joined()
-        return "\(hashHex):\(currentPath)"
+        currentLocation.address
+    }
+
+    public var shareableAddress: String { currentLocation.shareableAddress }
+
+    private var currentLocation: NomadNetLocation {
+        NomadNetLocation(
+            nodeHash: currentNodeHash,
+            path: currentPath,
+            requestContext: currentRequestContext
+        )
     }
 
     // MARK: - Dependencies
@@ -107,20 +246,33 @@ public final class NomadNetBrowserViewModel {
 
     // MARK: - Init
 
-    public init(
+    public convenience init(
         nodeHash: Data,
         nodeName: String?,
         initialPath: String = "/page/index.mu",
         backend: any RnsBackend,
         identity: Identity
     ) {
-        self.currentNodeHash = nodeHash
-        self.currentNodeName = nodeName
-        self.currentPath = initialPath
-        self.browserService = NomadNetBrowserService(
-            backend: backend,
-            identity: identity
+        self.init(
+            nodeHash: nodeHash,
+            nodeName: nodeName,
+            initialPath: initialPath,
+            browserService: NomadNetBrowserService(backend: backend, identity: identity)
         )
+    }
+
+    init(
+        nodeHash: Data,
+        nodeName: String?,
+        initialPath: String = "/page/index.mu",
+        browserService: NomadNetBrowserService
+    ) {
+        let initialLocation = NomadNetLocation(nodeHash: nodeHash, addressPath: initialPath)
+        self.currentNodeHash = initialLocation.nodeHash
+        self.currentNodeName = nodeName
+        self.currentPath = initialLocation.path
+        self.currentRequestContext = initialLocation.requestContext
+        self.browserService = browserService
     }
 
     // MARK: - Page Loading
@@ -132,10 +284,18 @@ public final class NomadNetBrowserViewModel {
         errorMessage = nil
 
         do {
-            let (document, _) = try await browserService.fetchPage(
-                destinationHash: currentNodeHash,
-                path: currentPath
-            )
+            let (document, _) = if currentRequestContext.requestData.isEmpty {
+                try await browserService.fetchPage(
+                    destinationHash: currentNodeHash,
+                    path: currentPath
+                )
+            } else {
+                try await browserService.submitRequest(
+                    destinationHash: currentNodeHash,
+                    path: currentPath,
+                    requestData: currentRequestContext.requestData
+                )
+            }
             currentDocument = document
             partialDocuments.removeAll()
             initializeFormDefaults(from: document)
@@ -161,6 +321,7 @@ public final class NomadNetBrowserViewModel {
             }
             pushHistory()
             currentPath = path
+            currentRequestContext = .empty
             await loadPage()
 
         case .remoteNode(let hash, let path):
@@ -178,6 +339,7 @@ public final class NomadNetBrowserViewModel {
             currentNodeHash = hashData
             currentNodeName = nil
             currentPath = path
+            currentRequestContext = .empty
             await loadPage()
 
         case .lxmf:
@@ -218,6 +380,7 @@ public final class NomadNetBrowserViewModel {
         cancelPartialRefreshTasks()
         currentNodeHash = previous.nodeHash
         currentPath = previous.path
+        currentRequestContext = previous.requestContext
 
         if let doc = previous.document {
             currentDocument = doc
@@ -259,7 +422,12 @@ public final class NomadNetBrowserViewModel {
 
     /// Submit form fields to a page.
     public func submitForm(url: MicronURL, fieldNames: [String]) async {
-        let fields = collectFormFields(fieldNames: fieldNames)
+        let requestContext = NomadNetRequestContext.build(
+            fieldEntries: fieldNames,
+            formFields: formFields,
+            checkboxFields: checkboxFields,
+            radioFields: radioFields
+        )
 
         // Resolve target node hash and path from the URL. Reject LXMF targets
         // (no form submission semantics) and bail on invalid remote hashes
@@ -288,14 +456,15 @@ public final class NomadNetBrowserViewModel {
             currentNodeName = nil
         }
         currentPath = targetPath
+        currentRequestContext = requestContext
         isLoading = true
         errorMessage = nil
 
         do {
-            let (document, _) = try await browserService.submitForm(
+            let (document, _) = try await browserService.submitRequest(
                 destinationHash: targetHash,
                 path: targetPath,
-                fields: fields
+                requestData: requestContext.requestData
             )
             currentDocument = document
             initializeFormDefaults(from: document)
@@ -315,14 +484,19 @@ public final class NomadNetBrowserViewModel {
     public func loadPartials() async {
         guard let document = currentDocument else { return }
         for element in document.elements {
-            guard case .partial(let partial) = element else { continue }
+            guard case .partial(let partial, _) = element else { continue }
             await loadPartial(partial)
         }
     }
 
     /// Load a single partial.
     public func loadPartial(_ partial: MicronPartial) async {
+        await loadPartial(partial, ancestry: [])
+    }
+
+    private func loadPartial(_ partial: MicronPartial, ancestry: Set<String>) async {
         let key = partial.partialId ?? partial.url
+        guard !ancestry.contains(key) else { return }
         loadingPartials.insert(key)
 
         do {
@@ -331,6 +505,13 @@ public final class NomadNetBrowserViewModel {
                 path: partial.url
             )
             partialDocuments[key] = document
+            mergeFormDefaults(from: document)
+
+            let nestedAncestry = ancestry.union([key])
+            for element in document.elements {
+                guard case .partial(let nestedPartial, _) = element else { continue }
+                await loadPartial(nestedPartial, ancestry: nestedAncestry)
+            }
         } catch {
             // Partials fail silently — show empty content
         }
@@ -370,57 +551,26 @@ public final class NomadNetBrowserViewModel {
         checkboxFields.removeAll()
         radioFields.removeAll()
 
+        mergeFormDefaults(from: document)
+    }
+
+    private func mergeFormDefaults(from document: MicronDocument) {
         for element in document.elements {
-            guard case .formField(let field) = element else { continue }
+            guard case .formField(let field, _) = element else { continue }
             switch field {
             case .textInput(_, let name, let defaultValue):
-                formFields[name] = defaultValue
+                if formFields[name] == nil { formFields[name] = defaultValue }
             case .passwordInput(let name, let defaultValue):
-                formFields[name] = defaultValue
+                if formFields[name] == nil { formFields[name] = defaultValue }
             case .checkbox(let name, let value, _, let checked):
-                checkboxFields["\(name):\(value)"] = checked
+                let key = "\(name):\(value)"
+                if checkboxFields[key] == nil { checkboxFields[key] = checked }
             case .radio(let name, let value, _, let selected):
-                if selected {
+                if selected && radioFields[name] == nil {
                     radioFields[name] = value
                 }
             }
         }
-    }
-
-    /// Collect form field values for submission.
-    private func collectFormFields(fieldNames: [String]) -> [String: String] {
-        var result: [String: String] = [:]
-        let submitAll = fieldNames.contains("*")
-
-        for (name, value) in formFields {
-            if submitAll || fieldNames.contains(name) {
-                result[name] = value
-            }
-        }
-
-        // Collect checked checkboxes — concatenate values with same name
-        var checkboxValues: [String: [String]] = [:]
-        for (key, checked) in checkboxFields where checked {
-            let parts = key.split(separator: ":", maxSplits: 1)
-            guard parts.count == 2 else { continue }
-            let name = String(parts[0])
-            let value = String(parts[1])
-            if submitAll || fieldNames.contains(name) {
-                checkboxValues[name, default: []].append(value)
-            }
-        }
-        for (name, values) in checkboxValues {
-            result[name] = values.joined(separator: ",")
-        }
-
-        // Collect radio selections
-        for (name, value) in radioFields {
-            if submitAll || fieldNames.contains(name) {
-                result[name] = value
-            }
-        }
-
-        return result
     }
 
     // MARK: - History
@@ -429,7 +579,8 @@ public final class NomadNetBrowserViewModel {
         let entry = NomadNetNavigationEntry(
             nodeHash: currentNodeHash,
             path: currentPath,
-            document: currentDocument
+            document: currentDocument,
+            requestContext: currentRequestContext
         )
         navigationHistory.append(entry)
         if navigationHistory.count > Self.maxHistorySize {

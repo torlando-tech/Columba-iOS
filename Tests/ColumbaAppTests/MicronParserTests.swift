@@ -2,6 +2,63 @@ import XCTest
 @testable import ColumbaApp
 import RNSAPI
 import LXMFSwift
+import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+
+private actor RecordingNomadNetBackend: RnsNomadnet {
+    struct Request: Sendable, Equatable {
+        let destinationHash: String
+        let path: String
+        let requestData: [String: String]?
+    }
+
+    private var recordedRequests: [Request] = []
+
+    func fetchNomadNetPage(
+        destHashHex: String,
+        path: String,
+        timeout: TimeInterval,
+        formFields: [String: String]?
+    ) async throws -> NomadNetFetchResult {
+        recordedRequests.append(Request(
+            destinationHash: destHashHex,
+            path: path,
+            requestData: formFields
+        ))
+        return NomadNetFetchResult(
+            ok: true,
+            status: .ok,
+            data: Data("# response for \(path)".utf8),
+            contentType: "text/x-micron"
+        )
+    }
+
+    func requests() -> [Request] { recordedRequests }
+}
+
+private actor MappedNomadNetBackend: RnsNomadnet {
+    private let responses: [String: String]
+
+    init(responses: [String: String]) {
+        self.responses = responses
+    }
+
+    func fetchNomadNetPage(
+        destHashHex: String,
+        path: String,
+        timeout: TimeInterval,
+        formFields: [String: String]?
+    ) async throws -> NomadNetFetchResult {
+        NomadNetFetchResult(
+            ok: true,
+            status: .ok,
+            data: Data((responses[path] ?? "").utf8),
+            contentType: "text/x-micron"
+        )
+    }
+}
 
 private actor ReactionGateProbe {
     private var active = 0
@@ -78,19 +135,107 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(level, 3)
     }
 
-    func testHeadingLevelCappedAt3() {
+    func testSectionDepthIsNotCappedByThreeHeadingPaletteStyles() {
         let doc = MicronParser.parse(">>>>TooDeep")
         guard case .heading(let level, _, _) = doc.elements.first else {
             XCTFail("Expected heading"); return
         }
-        XCTAssertEqual(level, 3)
+        XCTAssertEqual(level, 4)
+    }
+
+    func testRngitResetImmediatelyFollowedByReadmeHeadingReparsesRemainder() {
+        // Current rngit repo pages join the template's trailing `<` directly
+        // to a converted Markdown heading, producing this exact line shape.
+        let doc = MicronParser.parse("<>The Non-linear Task Manager")
+
+        guard case .heading(let level, let spans, _) = doc.elements.first,
+              case .text(let text, _) = spans.first else {
+            XCTFail("Expected reset remainder to be parsed as a heading")
+            return
+        }
+
+        XCTAssertEqual(level, 1)
+        XCTAssertEqual(text, "The Non-linear Task Manager")
+    }
+
+    func testSectionIndentUsesCanonicalTwoCellsPerNestedLevel() {
+        let doc = MicronParser.parse("""
+        >Top
+        top body
+        >>Nested
+        nested body
+        >>>>Deep
+        deep body
+        """)
+
+        let paragraphIndents = doc.elements.compactMap { element -> Int? in
+            guard case .paragraph(_, _, let indent) = element else { return nil }
+            return indent
+        }
+        XCTAssertEqual(paragraphIndents, [0, 2, 6])
+    }
+
+    func testSectionResetEscapedRemainderPreservesFormattingState() {
+        let doc = MicronParser.parse("`!bold\n<\\>literal")
+
+        guard case .paragraph(let spans, _, let indent) = doc.elements.last,
+              case .text(let text, let style) = spans.first else {
+            XCTFail("Expected escaped reset remainder")
+            return
+        }
+
+        XCTAssertEqual(text, ">literal")
+        XCTAssertEqual(indent, 0)
+        XCTAssertTrue(style.bold)
+    }
+
+    func testFieldBearingHeadingSanitizationRestartsBlockClassification() {
+        let doc = MicronParser.parse(">># hidden `<name`value>")
+        XCTAssertTrue(doc.elements.isEmpty)
+    }
+
+    func testResetRemainderCanOpenLiteralBlock() {
+        let doc = MicronParser.parse("<`=\n<`=\n`=")
+        guard case .literalBlock(let text, let indentLevel) = doc.elements.first else {
+            XCTFail("Expected reset remainder to open a literal block")
+            return
+        }
+        XCTAssertEqual(text, "<`=")
+        XCTAssertEqual(indentLevel, 0)
+    }
+
+    func testFieldBearingHeadingSanitizationReclassifiesExposedReset() {
+        let doc = MicronParser.parse("><# hidden `<name`value>")
+        XCTAssertTrue(doc.elements.isEmpty)
+    }
+
+    func testNestedBlocksCarryCanonicalSectionIndent() {
+        let doc = MicronParser.parse("""
+        >>Nested
+        -X
+        `=
+        literal
+        `=
+        `<12|name`value>
+        `{/page/partial.mu}
+        """)
+
+        let nestedBlockIndents = doc.elements.compactMap { element -> Int? in
+            switch element {
+            case .divider, .literalBlock, .formField, .partial:
+                return element.sectionIndent
+            case .heading, .paragraph:
+                return nil
+            }
+        }
+        XCTAssertEqual(nestedBlockIndents, [2, 2, 2, 2])
     }
 
     // MARK: - Dividers
 
     func testDefaultDivider() {
         let doc = MicronParser.parse("-")
-        guard case .divider(let ch) = doc.elements.first else {
+        guard case .divider(let ch, _) = doc.elements.first else {
             XCTFail("Expected divider"); return
         }
         XCTAssertNil(ch)
@@ -98,7 +243,7 @@ final class MicronParserTests: XCTestCase {
 
     func testCustomDivider() {
         let doc = MicronParser.parse("-=")
-        guard case .divider(let ch) = doc.elements.first else {
+        guard case .divider(let ch, _) = doc.elements.first else {
             XCTFail("Expected divider"); return
         }
         XCTAssertEqual(ch, "=")
@@ -121,7 +266,7 @@ final class MicronParserTests: XCTestCase {
 
     func testLiteralBlock() {
         let doc = MicronParser.parse("`=\nfoo\nbar\n`=")
-        guard case .literalBlock(let text) = doc.elements.first else {
+        guard case .literalBlock(let text, _) = doc.elements.first else {
             XCTFail("Expected literal block"); return
         }
         XCTAssertEqual(text, "foo\nbar")
@@ -129,7 +274,7 @@ final class MicronParserTests: XCTestCase {
 
     func testUnclosedLiteralBlock() {
         let doc = MicronParser.parse("`=\nsome code")
-        guard case .literalBlock(let text) = doc.elements.first else {
+        guard case .literalBlock(let text, _) = doc.elements.first else {
             XCTFail("Expected literal block"); return
         }
         XCTAssertEqual(text, "some code")
@@ -344,8 +489,9 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(resetSpans.count, 0)
     }
 
-    func testIndentResetClearsStyle() {
-        // `< at line-start resets formatting state in addition to indent.
+    func testSectionResetPreservesFormattingState() {
+        // Canonical NomadNet uses `<` only to reset section depth. Formatting
+        // remains document-scoped until its own reset command is encountered.
         let doc = MicronParser.parse("`!bold-line\n<plain-after-reset")
         XCTAssertEqual(doc.elements.count, 2)
 
@@ -355,7 +501,7 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(line2Spans.count, 1)
         if case .text(let t, let s) = line2Spans[0] {
             XCTAssertEqual(t, "plain-after-reset")
-            XCTAssertFalse(s.bold) // `< wiped the persisted bold from line 1
+            XCTAssertTrue(s.bold)
         } else { XCTFail("Expected text") }
     }
 
@@ -384,6 +530,712 @@ final class MicronParserTests: XCTestCase {
             XCTAssertEqual(t, "blue")
             XCTAssertEqual(s.backgroundColor, "00f")
         } else { XCTFail("Expected text") }
+    }
+
+    func testRngitTrueColorsRenderWithoutLeakingControlPayloads() {
+        let markup = """
+        `BT282828`Fddd`FT8b949e# Add tasks`f
+        `FTc9d1d9nt add `FTa5d6ff"Buy groceries"`f`b
+        """
+
+        let doc = MicronParser.parse(markup)
+        let renderedText = doc.elements.compactMap { element -> String? in
+            guard case .paragraph(let spans, _, _) = element else { return nil }
+            return spans.compactMap { span -> String? in
+                guard case .text(let text, _) = span else { return nil }
+                return text
+            }.joined()
+        }.joined(separator: "\n")
+
+        XCTAssertEqual(renderedText, "# Add tasks\nnt add \"Buy groceries\"")
+
+        guard case .paragraph(let commentSpans, _, _) = doc.elements[0],
+              case .text(_, let commentStyle) = commentSpans.first,
+              case .paragraph(let commandSpans, _, _) = doc.elements[1],
+              case .text(_, let commandStyle) = commandSpans[0],
+              case .text(_, let argumentStyle) = commandSpans[1] else {
+            XCTFail("Expected rngit true-color text spans")
+            return
+        }
+
+        XCTAssertEqual(commentStyle.foregroundColor, "8b949e")
+        XCTAssertEqual(commentStyle.backgroundColor, "282828")
+        XCTAssertEqual(commandStyle.foregroundColor, "c9d1d9")
+        XCTAssertEqual(commandStyle.backgroundColor, "282828")
+        XCTAssertEqual(argumentStyle.foregroundColor, "a5d6ff")
+        XCTAssertEqual(argumentStyle.backgroundColor, "282828")
+    }
+
+    func testMalformedAndTruncatedTrueColorsDoNotChangeStyle() {
+        let foreground = MicronParser.parse("`FT12")
+        let background = MicronParser.parse("`BT12")
+        let malformedForeground = MicronParser.parse("`FTzzzzzztext")
+        let malformedBackground = MicronParser.parse("`BTggggggtext")
+
+        let foregroundText = singleText(from: foreground)
+        let backgroundText = singleText(from: background)
+        let malformedForegroundText = singleText(from: malformedForeground)
+        let malformedBackgroundText = singleText(from: malformedBackground)
+
+        XCTAssertEqual(foregroundText.0, "T12")
+        XCTAssertEqual(foregroundText.1, .plain)
+        XCTAssertEqual(backgroundText.0, "T12")
+        XCTAssertEqual(backgroundText.1, .plain)
+        XCTAssertEqual(malformedForegroundText.0, "Tzzzzzztext")
+        XCTAssertEqual(malformedForegroundText.1, .plain)
+        XCTAssertEqual(malformedBackgroundText.0, "Tggggggtext")
+        XCTAssertEqual(malformedBackgroundText.1, .plain)
+    }
+
+    #if canImport(UIKit)
+    func testTrueColorConvertsToExactRGBComponents() throws {
+        let color = try XCTUnwrap(MicronTextStyle.colorFromStyleHex("8b949e"))
+        let uiColor = UIColor(color)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        XCTAssertTrue(uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+        XCTAssertEqual(red, 0x8b / 255.0, accuracy: 0.001)
+        XCTAssertEqual(green, 0x94 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(blue, 0x9e / 255.0, accuracy: 0.001)
+        XCTAssertEqual(alpha, 1, accuracy: 0.001)
+    }
+
+    func testPageHeaderColorRemainsLegacyThreeDigitOnly() {
+        XCTAssertNotNil(MicronTextStyle.colorFrom3Hex("abc"))
+        XCTAssertNil(MicronTextStyle.colorFrom3Hex("aabbcc"))
+    }
+
+    @MainActor
+    func testRngitTrueColorsReachMonospaceRenderer() throws {
+        let document = MicronParser.parse("`BT282828`FT8b949e# Add tasks")
+        guard case .paragraph(let spans, _, _) = document.elements.first else {
+            XCTFail("Expected rngit paragraph")
+            return
+        }
+
+        let size = CGSize(width: 320, height: 160)
+        let host = UIHostingController(
+            rootView: MonospaceLineView(
+                spans: spans,
+                fontSize: 18,
+                cellHeight: 32,
+                alignment: .left,
+                bold: false
+            )
+            .frame(width: 300, height: 32, alignment: .leading)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .center)
+            .background(Color.white)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x28, 0x28, 0x28), tolerance: 8), 100)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x8b, 0x94, 0x9e), tolerance: 12), 5)
+
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "nomadnet-rngit-true-color-line"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    func testCanonicalDarkSectionHeadingsRenderPaletteBackgrounds() {
+        let document = MicronParser.parse("""
+        <>The Non-linear Task Manager
+        >>`[Key Features`:/page/features.mu]
+        >>>Installation
+        """)
+        let size = CGSize(width: 340, height: 360)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                style: .proportional,
+                viewportWidth: 320
+            )
+            .frame(width: 320, alignment: .leading)
+            .background(Color.black)
+            .environment(\.colorScheme, .dark)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.black)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        // Canonical NomadNet dark heading backgrounds: level 1 = bbb,
+        // level 2 = 999, level 3 (and deeper) = 777.
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0xbb, 0xbb, 0xbb), tolerance: 4), 500)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x99, 0x99, 0x99), tolerance: 4), 500)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x77, 0x77, 0x77), tolerance: 4), 500)
+        XCTAssertLessThan(blueDominantPixelCount(in: image), 5)
+
+        let level1Background = dominantBandBounds(in: image, near: (0xbb, 0xbb, 0xbb), tolerance: 4)
+        let level2Background = dominantBandBounds(in: image, near: (0x99, 0x99, 0x99), tolerance: 4)
+        let level3Background = dominantBandBounds(in: image, near: (0x77, 0x77, 0x77), tolerance: 4)
+        XCTAssertNotNil(level1Background)
+        XCTAssertNotNil(level2Background)
+        XCTAssertNotNil(level3Background)
+        if let level1Background, let level2Background, let level3Background {
+            XCTAssertEqual(
+                level1Background.minX / image.scale,
+                level2Background.minX / image.scale,
+                accuracy: 1.5
+            )
+            XCTAssertEqual(
+                level2Background.minX / image.scale,
+                level3Background.minX / image.scale,
+                accuracy: 1.5
+            )
+            XCTAssertEqual(
+                level1Background.maxX / image.scale,
+                level2Background.maxX / image.scale,
+                accuracy: 1.5
+            )
+            XCTAssertEqual(
+                level2Background.maxX / image.scale,
+                level3Background.maxX / image.scale,
+                accuracy: 1.5
+            )
+
+            let level1Text = pixelBounds(
+                in: image,
+                near: (0x22, 0x22, 0x22),
+                tolerance: 8,
+                inside: level1Background
+            )
+            let level2Text = pixelBounds(
+                in: image,
+                near: (0x11, 0x11, 0x11),
+                tolerance: 8,
+                inside: level2Background
+            )
+            let level3Text = pixelBounds(
+                in: image,
+                near: (0x00, 0x00, 0x00),
+                tolerance: 4,
+                inside: level3Background.insetBy(dx: 10 * image.scale, dy: image.scale)
+            )
+            XCTAssertNotNil(level1Text)
+            XCTAssertNotNil(level2Text)
+            XCTAssertNotNil(level3Text)
+            if let level1Text, let level2Text, let level3Text {
+                XCTAssertGreaterThan((level2Text.minX - level1Text.minX) / image.scale, 10)
+                XCTAssertGreaterThan((level3Text.minX - level2Text.minX) / image.scale, 10)
+                XCTAssertGreaterThanOrEqual(level1Text.minY, level1Background.minY)
+                XCTAssertLessThanOrEqual(level1Text.maxY, level1Background.maxY)
+                XCTAssertGreaterThanOrEqual(level2Text.minY, level2Background.minY)
+                XCTAssertLessThanOrEqual(level2Text.maxY, level2Background.maxY)
+                XCTAssertGreaterThanOrEqual(level3Text.minY, level3Background.minY)
+                XCTAssertLessThanOrEqual(level3Text.maxY, level3Background.maxY)
+            }
+        }
+
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "nomadnet-canonical-dark-section-headings"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    func testMonospaceHeadingLinkInheritsCanonicalForeground() {
+        let document = MicronParser.parse(">>`[Key Features`:/page/features.mu]")
+        let size = CGSize(width: 340, height: 100)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                style: .monospaceScroll,
+                viewportWidth: 320
+            )
+            .frame(width: 320, alignment: .leading)
+            .environment(\.colorScheme, .dark)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.black)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x99, 0x99, 0x99), tolerance: 4), 500)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x11, 0x11, 0x11), tolerance: 8), 5)
+        XCTAssertLessThan(blueDominantPixelCount(in: image), 5)
+
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "nomadnet-monospace-heading-link"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    func testLightPartialHeadingUsesCanonicalPalette() {
+        let partial = MicronPartial(
+            url: "/page/partial.mu",
+            refreshInterval: nil,
+            partialId: nil,
+            fieldNames: nil
+        )
+        let document = MicronDocument(elements: [.partial(partial, indentLevel: 0)])
+        let partialDocument = MicronParser.parse(">>`[Partial Heading`:/page/target.mu]")
+        let size = CGSize(width: 340, height: 120)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                partialDocuments: [partial.url: partialDocument],
+                style: .proportional,
+                viewportWidth: 320
+            )
+            .frame(width: 320, alignment: .leading)
+            .environment(\.colorScheme, .light)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.white)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0xaa, 0xaa, 0xaa), tolerance: 4), 500)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x11, 0x11, 0x11), tolerance: 8), 5)
+        XCTAssertLessThan(blueDominantPixelCount(in: image), 5)
+    }
+
+    @MainActor
+    func testNestedWrappedParagraphReservesBothSectionMargins() {
+        let content = "`Bf00" + String(repeating: "M ", count: 80)
+        let document = MicronParser.parse(">>Nested\n\(content)")
+        let size = CGSize(width: 340, height: 220)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                style: .proportional,
+                viewportWidth: 320
+            )
+            .frame(width: 320, alignment: .leading)
+            .environment(\.colorScheme, .light)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.white)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        let bounds = pixelBounds(in: image, near: (0xff, 0x00, 0x00), tolerance: 4)
+        XCTAssertNotNil(bounds)
+        if let bounds {
+            XCTAssertGreaterThan(bounds.minX / image.scale, 30)
+            XCTAssertGreaterThan(
+                (CGFloat(image.cgImage?.width ?? 0) - bounds.maxX) / image.scale,
+                30
+            )
+        }
+    }
+
+    @MainActor
+    func testScrollMetricsUseRenderedMonospaceFont() {
+        let style = MicronRenderStyle.monospaceScroll
+        let host = UIHostingController(
+            rootView: MonospaceLineView(
+                spans: [.text("MMMM", .plain)],
+                fontSize: style.fontSize,
+                cellHeight: style.approxCharWidth * 2,
+                alignment: .left,
+                bold: false
+            )
+            .frame(width: 200, height: 40, alignment: .leading)
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 40))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.frame = window.bounds
+        host.view.layoutIfNeeded()
+
+        guard let label = descendants(of: host.view, matching: UILabel.self).first,
+              let attributed = label.attributedText,
+              attributed.length > 0,
+              let renderedFont = attributed.attribute(.font, at: 0, effectiveRange: nil) as? UIFont else {
+            XCTFail("Expected a rendered monospace UILabel font")
+            return
+        }
+        let renderedWidth = ("M" as NSString).size(withAttributes: [.font: renderedFont]).width
+        XCTAssertEqual(style.approxCharWidth, renderedWidth, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testZeroViewportScrollDividerKeepsIntrinsicFallbackWidth() {
+        let document = MicronDocument(elements: [.divider(character: "=", indentLevel: 2)])
+        let size = CGSize(width: 340, height: 80)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                style: .monospaceScroll
+            )
+            .frame(width: 320, alignment: .leading)
+            .environment(\.colorScheme, .light)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.white)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        let bounds = pixelBounds(in: image, near: (0x00, 0x00, 0x00), tolerance: 24)
+        XCTAssertNotNil(bounds)
+        if let bounds {
+            XCTAssertGreaterThan(bounds.width / image.scale, 200)
+            XCTAssertGreaterThan(bounds.minX / image.scale, 20)
+        }
+    }
+
+    @MainActor
+    func testLoadedPartialRecursivelyRendersFormsAndNestedPartialsInEveryMode() {
+        let outer = MicronPartial(url: "/outer.mu", refreshInterval: nil, partialId: nil, fieldNames: nil)
+        let inner = MicronPartial(url: "/inner.mu", refreshInterval: nil, partialId: nil, fieldNames: nil)
+        let rootDocument = MicronDocument(elements: [.partial(outer, indentLevel: 2)])
+        let outerDocument = MicronDocument(elements: [
+            .formField(.textInput(width: 12, name: "nested", defaultValue: "value"), indentLevel: 2),
+            .partial(inner, indentLevel: 2),
+        ])
+        let innerDocument = MicronParser.parse(">>Nested Partial")
+        let partials = [outer.url: outerDocument, inner.url: innerDocument]
+        let modes: [NomadNetRenderingMode] = [.monospaceScroll, .monospaceZoom, .proportionalWrap]
+
+        for mode in modes {
+            let size = CGSize(width: 340, height: 180)
+            let host = UIHostingController(
+                rootView: MicronRenderContainer(
+                    document: rootDocument,
+                    mode: mode,
+                    formFields: .constant([:]),
+                    checkboxFields: .constant([:]),
+                    radioFields: .constant([:]),
+                    partialDocuments: partials
+                )
+                .frame(width: 320, alignment: .leading)
+                .environment(\.colorScheme, .light)
+                .padding(10)
+                .frame(width: size.width, height: size.height, alignment: .topLeading)
+                .background(Color.white)
+                .ignoresSafeArea()
+            )
+            let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            host.view.frame = CGRect(origin: .zero, size: size)
+            host.view.layoutIfNeeded()
+
+            let textFields = descendants(of: host.view, matching: UITextField.self)
+            XCTAssertEqual(textFields.count, 1, "mode: \(mode)")
+            if let textField = textFields.first {
+                let fieldFrame = textField.convert(textField.bounds, to: host.view)
+                XCTAssertGreaterThan(fieldFrame.minX, 30, "mode: \(mode)")
+                XCTAssertGreaterThan(size.width - fieldFrame.maxX, 20, "mode: \(mode)")
+            }
+            let image = UIGraphicsImageRenderer(size: size).image { _ in
+                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            }
+            XCTAssertGreaterThan(
+                pixelCount(in: image, near: (0xaa, 0xaa, 0xaa), tolerance: 4),
+                100,
+                "mode: \(mode)"
+            )
+            let headingBounds = dominantBandBounds(
+                in: image,
+                near: (0xaa, 0xaa, 0xaa),
+                tolerance: 4
+            )
+            XCTAssertNotNil(headingBounds, "mode: \(mode)")
+            if let headingBounds {
+                XCTAssertGreaterThan(headingBounds.minX / image.scale, 20, "mode: \(mode)")
+                XCTAssertGreaterThan(
+                    (CGFloat(image.cgImage?.width ?? 0) - headingBounds.maxX) / image.scale,
+                    20,
+                    "mode: \(mode)"
+                )
+            }
+            window.isHidden = true
+        }
+    }
+
+    @MainActor
+    func testNestedLiteralAppliesSectionGeometryInEveryMode() {
+        let document = MicronDocument(elements: [
+            .literalBlock(text: "MMMM", indentLevel: 2),
+        ])
+        let styles: [MicronRenderStyle] = [.monospaceScroll, .monospaceCompact, .proportional]
+
+        for style in styles {
+            let size = CGSize(width: 340, height: 100)
+            let host = UIHostingController(
+                rootView: MicronDocumentView(
+                    document: document,
+                    formFields: .constant([:]),
+                    checkboxFields: .constant([:]),
+                    radioFields: .constant([:]),
+                    style: style,
+                    viewportWidth: 320
+                )
+                .frame(width: 320, alignment: .leading)
+                .environment(\.colorScheme, .light)
+                .padding(10)
+                .frame(width: size.width, height: size.height, alignment: .topLeading)
+                .background(Color.white)
+                .ignoresSafeArea()
+            )
+            let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            host.view.frame = CGRect(origin: .zero, size: size)
+            host.view.layoutIfNeeded()
+
+            let image = UIGraphicsImageRenderer(size: size).image { _ in
+                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            }
+            let textBounds = pixelBounds(in: image, near: (0x00, 0x00, 0x00), tolerance: 24)
+            XCTAssertNotNil(textBounds, "style: \(style)")
+            if let textBounds {
+                XCTAssertGreaterThan(textBounds.minX / image.scale, 20, "style: \(style)")
+            }
+            window.isHidden = true
+        }
+    }
+
+    private func descendants<T: UIView>(of root: UIView, matching type: T.Type) -> [T] {
+        root.subviews.flatMap { child in
+            var matches = (child as? T).map { [$0] } ?? []
+            matches.append(contentsOf: descendants(of: child, matching: type))
+            return matches
+        }
+    }
+
+    private func pixelCount(
+        in image: UIImage,
+        near expected: (UInt8, UInt8, UInt8),
+        tolerance: Int
+    ) -> Int {
+        guard let source = image.cgImage else { return 0 }
+        let width = source.width
+        let height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        return stride(from: 0, to: pixels.count, by: 4).reduce(into: 0) { count, index in
+            let red = Int(pixels[index])
+            let green = Int(pixels[index + 1])
+            let blue = Int(pixels[index + 2])
+            if abs(red - Int(expected.0)) <= tolerance,
+               abs(green - Int(expected.1)) <= tolerance,
+               abs(blue - Int(expected.2)) <= tolerance {
+                count += 1
+            }
+        }
+    }
+
+    private func blueDominantPixelCount(in image: UIImage) -> Int {
+        guard let source = image.cgImage else { return 0 }
+        let width = source.width
+        let height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        return stride(from: 0, to: pixels.count, by: 4).reduce(into: 0) { count, index in
+            let red = Int(pixels[index])
+            let green = Int(pixels[index + 1])
+            let blue = Int(pixels[index + 2])
+            if blue > red + 50, blue > green + 50 {
+                count += 1
+            }
+        }
+    }
+
+    private func dominantBandBounds(
+        in image: UIImage,
+        near expected: (UInt8, UInt8, UInt8),
+        tolerance: Int
+    ) -> CGRect? {
+        guard let source = image.cgImage else { return nil }
+        let width = source.width
+        let height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        func matches(_ index: Int) -> Bool {
+            abs(Int(pixels[index]) - Int(expected.0)) <= tolerance
+                && abs(Int(pixels[index + 1]) - Int(expected.1)) <= tolerance
+                && abs(Int(pixels[index + 2]) - Int(expected.2)) <= tolerance
+        }
+
+        let dominantRows = (0..<height).filter { y in
+            (0..<width).reduce(into: 0) { count, x in
+                if matches((y * width + x) * 4) { count += 1 }
+            } > width / 2
+        }
+        guard let minY = dominantRows.first, let maxY = dominantRows.last else { return nil }
+
+        var minX = width
+        var maxX = -1
+        for y in dominantRows {
+            for x in 0..<width where matches((y * width + x) * 4) {
+                minX = min(minX, x)
+                maxX = max(maxX, x)
+            }
+        }
+        guard maxX >= minX else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+    }
+
+    private func pixelBounds(
+        in image: UIImage,
+        near expected: (UInt8, UInt8, UInt8),
+        tolerance: Int,
+        inside region: CGRect? = nil
+    ) -> CGRect? {
+        guard let source = image.cgImage else { return nil }
+        let width = source.width
+        let height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+        let search = region?.integral.intersection(canvas) ?? canvas
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+        for y in Int(search.minY)..<Int(search.maxY) {
+            for x in Int(search.minX)..<Int(search.maxX) {
+                let index = (y * width + x) * 4
+                let red = Int(pixels[index])
+                let green = Int(pixels[index + 1])
+                let blue = Int(pixels[index + 2])
+                if abs(red - Int(expected.0)) <= tolerance,
+                   abs(green - Int(expected.1)) <= tolerance,
+                   abs(blue - Int(expected.2)) <= tolerance {
+                    minX = min(minX, x)
+                    minY = min(minY, y)
+                    maxX = max(maxX, x)
+                    maxY = max(maxY, y)
+                }
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+    }
+    #endif
+
+    private func singleText(from document: MicronDocument) -> (String, MicronTextStyle) {
+        guard case .paragraph(let spans, _, _) = document.elements.first,
+              case .text(let text, let style) = spans.first else {
+            XCTFail("Expected one text span")
+            return ("", .plain)
+        }
+        return (text, style)
     }
 
     // MARK: - Alignment
@@ -450,6 +1302,217 @@ final class MicronParserTests: XCTestCase {
             XCTFail("Expected link"); return
         }
         XCTAssertEqual(link.fieldNames, ["username", "password"])
+    }
+
+    func testRngitGroupLinkPreservesInlineVariable() {
+        let doc = MicronParser.parse("`[reticulum`:/page/group.mu`g=reticulum]")
+        guard case .paragraph(let spans, _, _) = doc.elements.first,
+              case .link(let link) = spans.first else {
+            XCTFail("Expected rngit group link")
+            return
+        }
+
+        XCTAssertEqual(link.url, .samePage(path: "/page/group.mu"))
+        XCTAssertEqual(link.fieldNames, ["g=reticulum"])
+    }
+
+    func testRngitInlineVariablesAndFormFieldsEncodeForNomadNetRequest() {
+        let context = NomadNetRequestContext.build(
+            fieldEntries: ["g=reticulum", "path=docs%2Fmanual", "query=hello+world", "username"],
+            formFields: ["username": "torlando"],
+            checkboxFields: [:],
+            radioFields: [:]
+        )
+
+        XCTAssertEqual(context.requestData, [
+            "var_g": "reticulum",
+            "var_path": "docs%2Fmanual",
+            "var_query": "hello+world",
+            "field_username": "torlando",
+        ])
+        XCTAssertEqual(context.requestVariables, [
+            "g": "reticulum",
+            "path": "docs%2Fmanual",
+            "query": "hello+world",
+        ])
+    }
+
+    func testInlineMicronVariablesRemainByteForByteEquivalentStrings() {
+        let context = NomadNetRequestContext.build(
+            fieldEntries: [
+                "plus=a+b",
+                "encodedPlus=%2B",
+                "percent=%25",
+                "slash=%2F",
+                "delimiter=%7C",
+                "equals=%3D",
+            ],
+            formFields: [:],
+            checkboxFields: [:],
+            radioFields: [:]
+        )
+
+        XCTAssertEqual(context.requestData, [
+            "var_plus": "a+b",
+            "var_encodedPlus": "%2B",
+            "var_percent": "%25",
+            "var_slash": "%2F",
+            "var_delimiter": "%7C",
+            "var_equals": "%3D",
+        ])
+    }
+
+    func testSubmitAllIncludesTextCheckboxAndRadioFields() {
+        let context = NomadNetRequestContext.build(
+            fieldEntries: ["*"],
+            formFields: ["username": "torlando"],
+            checkboxFields: ["features:mail": true, "features:voice": false],
+            radioFields: ["theme": "dark"]
+        )
+
+        XCTAssertEqual(context.requestData, [
+            "field_username": "torlando",
+            "field_features": "mail",
+            "field_theme": "dark",
+        ])
+        XCTAssertTrue(context.requestVariables.isEmpty)
+    }
+
+    func testNomadNetAddressPreservesSortedRequestVariables() {
+        let location = NomadNetLocation(
+            nodeHash: Data(repeating: 0xab, count: 16),
+            path: "/page/group.mu",
+            requestContext: NomadNetRequestContext(
+                requestData: ["var_topic": "hello world", "var_g": "reticulum"],
+                requestVariables: ["topic": "hello world", "g": "reticulum"]
+            )
+        )
+
+        XCTAssertEqual(
+            location.address,
+            "abababababababababababababababab:/page/group.mu`g=reticulum|topic=hello+world"
+        )
+        XCTAssertEqual(
+            location.shareableAddress,
+            "nomadnetwork://abababababababababababababababab:/page/group.mu`g=reticulum|topic=hello+world"
+        )
+
+        let reopened = NomadNetLocation(
+            nodeHash: location.nodeHash,
+            addressPath: "/page/group.mu`g=reticulum|topic=hello+world"
+        )
+        XCTAssertEqual(reopened, location)
+    }
+
+    func testNomadNetAddressRoundTripsReservedVariableCharacters() {
+        let variables = [
+            "delimiter": "a|b",
+            "equals": "a=b",
+            "plus": "a+b",
+            "percent": "a%b",
+            "slash": "a/b",
+        ]
+        let location = NomadNetLocation(
+            nodeHash: Data(repeating: 0xcd, count: 16),
+            path: "/page/repo.mu",
+            requestContext: NomadNetRequestContext(
+                requestData: Dictionary(uniqueKeysWithValues: variables.map { ("var_\($0.key)", $0.value) }),
+                requestVariables: variables
+            )
+        )
+
+        XCTAssertEqual(
+            location.address,
+            "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd:/page/repo.mu`delimiter=a%7Cb|equals=a%3Db|percent=a%25b|plus=a%2Bb|slash=a%2Fb"
+        )
+        let addressPath = String(location.address.dropFirst(33))
+        XCTAssertEqual(
+            NomadNetLocation(nodeHash: location.nodeHash, addressPath: addressPath),
+            location
+        )
+    }
+
+    @MainActor
+    func testLoadedPartialRecursivelyFetchesNestedPartialsAndInitializesFields() async {
+        let backend = MappedNomadNetBackend(responses: [
+            "/outer.mu": "`{/inner.mu}",
+            "/inner.mu": "`<12|nested`default>",
+        ])
+        let service = NomadNetBrowserService(backend: backend)
+        let viewModel = NomadNetBrowserViewModel(
+            nodeHash: Data(repeating: 0xab, count: 16),
+            nodeName: "nested",
+            initialPath: "/page/index.mu",
+            browserService: service
+        )
+        let outer = MicronPartial(
+            url: "/outer.mu",
+            refreshInterval: nil,
+            partialId: nil,
+            fieldNames: nil
+        )
+
+        await viewModel.loadPartial(outer)
+
+        XCTAssertNotNil(viewModel.partialDocuments["/outer.mu"])
+        XCTAssertNotNil(viewModel.partialDocuments["/inner.mu"])
+        XCTAssertEqual(viewModel.formFields["nested"], "default")
+    }
+
+    @MainActor
+    func testRngitNavigationRefreshBackAndReopenSendExactVariablesWithoutSharingPassword() async throws {
+        let backend = RecordingNomadNetBackend()
+        let service = NomadNetBrowserService(backend: backend)
+        let hash = Data(repeating: 0xef, count: 16)
+        let viewModel = NomadNetBrowserViewModel(
+            nodeHash: hash,
+            nodeName: "rngit",
+            initialPath: "/page/index.mu",
+            browserService: service
+        )
+        viewModel.formFields["password"] = "never-share-this"
+
+        await viewModel.handleLinkTap(MicronLink(
+            label: "reticulum",
+            url: .samePage(path: "/page/group.mu"),
+            fieldNames: ["g=reticulum", "password"]
+        ))
+        var requests = await backend.requests()
+        XCTAssertEqual(requests.last?.requestData, [
+            "var_g": "reticulum",
+            "field_password": "never-share-this",
+        ])
+        XCTAssertEqual(
+            viewModel.shareableAddress,
+            "nomadnetwork://efefefefefefefefefefefefefefefef:/page/group.mu`g=reticulum"
+        )
+        XCTAssertFalse(viewModel.shareableAddress.contains("never-share-this"))
+
+        await viewModel.refresh()
+        requests = await backend.requests()
+        XCTAssertEqual(requests.last?.requestData?["var_g"], "reticulum")
+
+        await viewModel.navigateTo(url: MicronURL.samePage(path: "/page/index.mu"))
+        await viewModel.goBack()
+        await viewModel.refresh()
+        requests = await backend.requests()
+        XCTAssertEqual(requests.last?.path, "/page/group.mu")
+        XCTAssertEqual(requests.last?.requestData?["var_g"], "reticulum")
+
+        let reopened = NomadNetBrowserViewModel(
+            nodeHash: hash,
+            nodeName: nil,
+            initialPath: "/page/repo.mu`g=reticulum|r=lxmf|path=docs%252Fmanual",
+            browserService: service
+        )
+        await reopened.loadPage()
+        requests = await backend.requests()
+        XCTAssertEqual(requests.last?.path, "/page/repo.mu")
+        XCTAssertEqual(requests.last?.requestData, [
+            "var_g": "reticulum",
+            "var_r": "lxmf",
+            "var_path": "docs%2Fmanual",
+        ])
     }
 
     func testLinkWithSurroundingText() {
@@ -525,7 +1588,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`<24|username`admin>")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
         XCTAssertEqual(formElements.count, 1)
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .textInput(let width, let name, let defaultValue) = field else {
             XCTFail("Expected text input"); return
         }
@@ -538,7 +1601,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`<!|password`>")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
         XCTAssertEqual(formElements.count, 1)
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .passwordInput(let name, _) = field else {
             XCTFail("Expected password input"); return
         }
@@ -549,7 +1612,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`<?|option|yes`>Accept terms")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
         XCTAssertEqual(formElements.count, 1)
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .checkbox(let name, let value, let label, let checked) = field else {
             XCTFail("Expected checkbox"); return
         }
@@ -562,7 +1625,7 @@ final class MicronParserTests: XCTestCase {
     func testCheckboxPrechecked() {
         let doc = MicronParser.parse("`<?|option|yes|*`>Accept terms")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .checkbox(_, _, _, let checked) = field else {
             XCTFail("Expected checkbox"); return
         }
@@ -573,7 +1636,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`<^|choice|a`>Option A")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
         XCTAssertEqual(formElements.count, 1)
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .radio(let name, let value, let label, let selected) = field else {
             XCTFail("Expected radio"); return
         }
@@ -586,7 +1649,7 @@ final class MicronParserTests: XCTestCase {
     func testRadioPreselected() {
         let doc = MicronParser.parse("`<^|choice|b|*`>Option B")
         let formElements = doc.elements.filter { if case .formField = $0 { return true }; return false }
-        guard case .formField(let field) = formElements[0] else { XCTFail("Expected form field"); return }
+        guard case .formField(let field, _) = formElements[0] else { XCTFail("Expected form field"); return }
         guard case .radio(_, _, _, let selected) = field else {
             XCTFail("Expected radio"); return
         }
@@ -599,7 +1662,7 @@ final class MicronParserTests: XCTestCase {
         let doc = MicronParser.parse("`{/page/status.mu}")
         let partials = doc.elements.filter { if case .partial = $0 { return true }; return false }
         XCTAssertEqual(partials.count, 1)
-        guard case .partial(let p) = partials[0] else { XCTFail("Expected partial"); return }
+        guard case .partial(let p, _) = partials[0] else { XCTFail("Expected partial"); return }
         XCTAssertEqual(p.url, "/page/status.mu")
         XCTAssertNil(p.refreshInterval)
         XCTAssertNil(p.partialId)
@@ -607,7 +1670,7 @@ final class MicronParserTests: XCTestCase {
 
     func testPartialWithRefresh() {
         let doc = MicronParser.parse("`{/page/status.mu`5}")
-        guard case .partial(let p) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
+        guard case .partial(let p, _) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
             XCTFail("Expected partial"); return
         }
         XCTAssertEqual(p.url, "/page/status.mu")
@@ -616,7 +1679,7 @@ final class MicronParserTests: XCTestCase {
 
     func testPartialWithIdAndFields() {
         let doc = MicronParser.parse("`{/page/widget.mu`10`pid=status|username}")
-        guard case .partial(let p) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
+        guard case .partial(let p, _) = doc.elements.first(where: { if case .partial = $0 { return true }; return false }) else {
             XCTFail("Expected partial"); return
         }
         XCTAssertEqual(p.url, "/page/widget.mu")

@@ -156,6 +156,19 @@ public enum MicronRenderStyle: Sendable, Equatable {
         }
     }
 
+    var swiftUIFont: Font {
+        guard usesMonospace else {
+            return .system(size: fontSize)
+        }
+        #if os(iOS)
+        let resolved = Self.uiMonospaceFont(fontSize: fontSize)
+        if resolved.fontName.hasPrefix("JetBrainsMono") {
+            return .custom(resolved.fontName, size: fontSize)
+        }
+        #endif
+        return .system(size: fontSize, design: .monospaced)
+    }
+
     /// Measured width of a single character in the monospace font at this style's font size.
     /// Used to compute square line height for block-drawing characters (▀▄█ etc.).
     public var approxCharWidth: CGFloat {
@@ -170,10 +183,23 @@ public enum MicronRenderStyle: Sendable, Equatable {
     /// Cached so we don't re-measure every frame.
     private static var charWidthCache: [CGFloat: CGFloat] = [:]
 
+    #if os(iOS)
+    static func uiMonospaceFont(fontSize: CGFloat, bold: Bool = false) -> UIFont {
+        let name = bold ? "JetBrainsMono-Bold" : "JetBrainsMono-Regular"
+        if let custom = UIFont(name: name, size: fontSize) {
+            return custom
+        }
+        return UIFont.monospacedSystemFont(
+            ofSize: fontSize,
+            weight: bold ? .bold : .regular
+        )
+    }
+    #endif
+
     private static func measureMonospaceCharWidth(fontSize: CGFloat) -> CGFloat {
         if let cached = charWidthCache[fontSize] { return cached }
         #if os(iOS)
-        let font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let font = uiMonospaceFont(fontSize: fontSize)
         let width = ("M" as NSString).size(withAttributes: [.font: font]).width
         #elseif os(macOS)
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)

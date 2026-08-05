@@ -22,8 +22,7 @@ public actor NomadNetBrowserService {
 
     // MARK: - Dependencies
 
-    private let backend: any RnsBackend
-    private let localIdentity: Identity
+    private let backend: any RnsNomadnet
 
     // MARK: - Page Cache
 
@@ -44,7 +43,10 @@ public actor NomadNetBrowserService {
 
     public init(backend: any RnsBackend, identity: Identity) {
         self.backend = backend
-        self.localIdentity = identity
+    }
+
+    init(backend: any RnsNomadnet) {
+        self.backend = backend
     }
 
     // MARK: - Page Fetching
@@ -103,24 +105,19 @@ public actor NomadNetBrowserService {
         return (document, markup)
     }
 
-    /// Submit form data to a NomadNet node page.
-    public func submitForm(
+    /// Submit already encoded request fields and variables to a page.
+    public func submitRequest(
         destinationHash: Data,
         path: String,
-        fields: [String: String]
+        requestData: [String: String]
     ) async throws -> (MicronDocument, String) {
         statusMessage = "Submitting form..."
-
-        // NomadNet's node app expects form fields keyed with a "field_"
-        // prefix. The Python bridge msgpack-packs the dict on its side.
-        var prefixed: [String: String] = [:]
-        for (k, v) in fields { prefixed["field_\(k)"] = v }
 
         let result = try await backend.fetchNomadNetPage(
             destHashHex: destinationHash.toHex(),
             path: path,
             timeout: 30.0,
-            formFields: prefixed
+            formFields: requestData
         )
         try ensureSuccess(result)
 

@@ -20,9 +20,9 @@ public struct MicronDocument: Sendable, Equatable {
 public struct MicronPageHeaders: Sendable, Equatable {
     /// Cache duration in seconds. nil = default (12h), 0 = no cache.
     public var cacheSeconds: Int?
-    /// Background color as 3-digit hex (e.g. "222").
+    /// Background color as legacy 3-digit hex (for example, "222").
     public var backgroundColor: String?
-    /// Foreground color as 3-digit hex (e.g. "fff").
+    /// Foreground color as legacy 3-digit hex (for example, "fff").
     public var foregroundColor: String?
 
     public init(cacheSeconds: Int? = nil, backgroundColor: String? = nil, foregroundColor: String? = nil) {
@@ -44,10 +44,23 @@ public struct MicronPageHeaders: Sendable, Equatable {
 public enum MicronElement: Sendable, Equatable {
     case heading(level: Int, spans: [MicronSpan], alignment: MicronAlignment)
     case paragraph(spans: [MicronSpan], alignment: MicronAlignment, indentLevel: Int)
-    case divider(character: Character?)
-    case literalBlock(text: String)
-    case formField(MicronFormField)
-    case partial(MicronPartial)
+    case divider(character: Character?, indentLevel: Int)
+    case literalBlock(text: String, indentLevel: Int)
+    case formField(MicronFormField, indentLevel: Int)
+    case partial(MicronPartial, indentLevel: Int)
+
+    public var sectionIndent: Int {
+        switch self {
+        case .heading(let level, _, _):
+            return max(0, (level - 1) * 2)
+        case .paragraph(_, _, let indentLevel),
+             .divider(_, let indentLevel),
+             .literalBlock(_, let indentLevel),
+             .formField(_, let indentLevel),
+             .partial(_, let indentLevel):
+            return indentLevel
+        }
+    }
 }
 
 // MARK: - Partials
@@ -147,13 +160,25 @@ public enum MicronURL: Sendable, Equatable, Hashable {
 // MARK: - Color Helpers
 
 extension MicronTextStyle {
-    /// Expand 3-digit hex to Color (each digit doubled: "d2f" → #DD22FF).
+    /// Convert a legacy Micron 3-digit color to a SwiftUI Color.
     public static func colorFrom3Hex(_ hex: String) -> Color? {
         guard hex.count == 3 else { return nil }
-        let chars = Array(hex)
-        guard let r = Int(String(repeating: chars[0], count: 2), radix: 16),
-              let g = Int(String(repeating: chars[1], count: 2), radix: 16),
-              let b = Int(String(repeating: chars[2], count: 2), radix: 16) else { return nil }
+        return colorFromExpandedHex(hex.map { String(repeating: $0, count: 2) }.joined())
+    }
+
+    /// Convert a parsed inline style color, including `FT`/`BT` true color.
+    public static func colorFromStyleHex(_ hex: String) -> Color? {
+        if hex.count == 3 { return colorFrom3Hex(hex) }
+        guard hex.count == 6 else { return nil }
+        return colorFromExpandedHex(hex)
+    }
+
+    private static func colorFromExpandedHex(_ expanded: String) -> Color? {
+        guard expanded.allSatisfy(\.isHexDigit),
+              let value = UInt32(expanded, radix: 16) else { return nil }
+        let r = (value >> 16) & 0xFF
+        let g = (value >> 8) & 0xFF
+        let b = value & 0xFF
         return Color(
             red: Double(r) / 255.0,
             green: Double(g) / 255.0,

@@ -12,8 +12,9 @@ import Foundation
 public protocol RnsNomadnet: AnyObject, Sendable {
 
     /// One-shot NomadNet page fetch over a fresh RNS Link. `formFields`, when
-    /// present, are submitted as the request's MessagePack map (caller prefixes
-    /// `field_` per NomadNet's node-app convention).
+    /// present, are submitted as the request's MessagePack map. Callers provide
+    /// exact NomadNet keys: `field_` for user-entered fields and `var_` for
+    /// inline request variables.
     func fetchNomadNetPage(
         destHashHex: String,
         path: String,
