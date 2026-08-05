@@ -269,6 +269,18 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertEqual(1, len(router.handled))
         self.assertEqual("no-propagation-node", self.delivery_events(events)[0]["reason"])
 
+    def test_missing_propagation_node_preserves_actual_primary_method(self):
+        router = FakeRouter(propagation_node=False)
+        events = []
+        message = self.queue(router, events, method="direct")
+
+        message.failed_callback(message)
+
+        self.assertEqual(1, len(router.handled))
+        delivery = self.delivery_events(events)
+        self.assertEqual("no-propagation-node", delivery[0]["reason"])
+        self.assertEqual("direct", delivery[0]["method"])
+
     def test_propagated_enqueue_failure_is_terminal_and_does_not_loop(self):
         router = FakeRouter(reject_propagated=True)
         events = []
@@ -344,9 +356,12 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         rns_backend = (ROOT / "Sources/RNSAPI/Protocols/RnsBackend.swift").read_text()
         python_backend = (ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift").read_text()
         app_services = (ROOT / "Sources/ColumbaApp/Services/AppServices.swift").read_text()
+        messaging_view = (ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift").read_text()
         for source in (python_bridge, rns_backend, python_backend):
             self.assertIn("method:", source)
         self.assertIn("method: acceptedMethod", app_services)
+        self.assertIn('"deliveryMethod": acceptedMethod?.rawValue ?? ""', app_services)
+        self.assertIn("viewModel?.messages.first(where:", messaging_view)
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
