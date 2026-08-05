@@ -32,12 +32,12 @@ public struct MicronParser {
         }
 
         // Process remaining lines
-        while lineIndex < lines.count {
-            let line = lines[lineIndex]
+        lineLoop: while lineIndex < lines.count {
+            var line = lines[lineIndex]
             lineIndex += 1
 
             // Literal block toggle
-            if line.hasPrefix("`=") {
+            if line == "`=" {
                 if inLiteral {
                     elements.append(.literalBlock(text: literalLines.joined(separator: "\n")))
                     literalLines = []
@@ -59,6 +59,16 @@ public struct MicronParser {
                 continue
             }
 
+            // `<` resets section depth, then canonical NomadNet recursively
+            // classifies the remainder of the same line. rngit relies on this
+            // when its template's trailing `<` is joined directly to a README
+            // heading, producing lines such as `<>Title`.
+            while line.first == "<" {
+                currentIndent = 0
+                line.removeFirst()
+                if line.isEmpty { continue lineLoop }
+            }
+
             let firstChar = line.first!
 
             // Comment
@@ -66,19 +76,27 @@ public struct MicronParser {
                 continue
             }
 
+            // A heading containing fields is treated as a regular content line
+            // by canonical NomadNet so heading styling cannot interfere with
+            // interactive controls.
+            if firstChar == ">" && line.contains("`<") {
+                line.removeFirst(line.prefix(while: { $0 == ">" }).count)
+            }
+
             // Heading
-            if firstChar == ">" {
+            if line.first == ">" {
                 let level = line.prefix(while: { $0 == ">" }).count
-                let headingLevel = min(level, 3)
-                currentIndent = headingLevel
-                let content = String(line.dropFirst(level)).trimmingCharacters(in: .whitespaces)
+                currentIndent = level
+                let content = String(line.dropFirst(level))
                 if content.isEmpty {
                     continue
                 }
-                let (spans, alignment, fields, updatedStyle) = parseInline(content, currentStyle: currentStyle, currentAlignment: currentAlignment)
-                currentStyle = updatedStyle
+                // Heading palette state is temporary in NomadNet. Inline
+                // formatting may style the heading and change alignment, but
+                // it must not inherit or mutate document text formatting.
+                let (spans, alignment, fields, _) = parseInline(content, currentStyle: .plain, currentAlignment: currentAlignment)
                 if let alignment = alignment { currentAlignment = alignment }
-                elements.append(.heading(level: headingLevel, spans: spans, alignment: currentAlignment))
+                elements.append(.heading(level: level, spans: spans, alignment: currentAlignment))
                 for field in fields { elements.append(.formField(field)) }
                 continue
             }
@@ -86,25 +104,14 @@ public struct MicronParser {
             // Divider
             if firstChar == "-" {
                 let rest = line.dropFirst()
-                let divChar: Character? = rest.isEmpty ? nil : rest.first
-                elements.append(.divider(character: divChar))
-                continue
-            }
-
-            // Reset indent — also resets formatting state to plain, matching
-            // python NomadNet's `<` semantics where the line restarts parsing
-            // from a default state.
-            if firstChar == "<" {
-                currentIndent = 0
-                currentStyle = .plain
-                let rest = String(line.dropFirst())
-                if !rest.isEmpty {
-                    let (spans, alignment, fields, updatedStyle) = parseInline(rest, currentStyle: currentStyle, currentAlignment: currentAlignment)
-                    currentStyle = updatedStyle
-                    if let alignment = alignment { currentAlignment = alignment }
-                    elements.append(.paragraph(spans: spans, alignment: currentAlignment, indentLevel: currentIndent))
-                    for field in fields { elements.append(.formField(field)) }
+                let requested = line.count == 2 ? rest.first : nil
+                let divChar: Character?
+                if let requested, requested.asciiValue.map({ $0 < 32 }) != true {
+                    divChar = requested
+                } else {
+                    divChar = nil
                 }
+                elements.append(.divider(character: divChar))
                 continue
             }
 

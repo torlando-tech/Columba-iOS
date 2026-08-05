@@ -5,6 +5,7 @@ import RNSAPI
 /// Renders a parsed MicronDocument as SwiftUI views.
 @available(iOS 17.0, macOS 14.0, *)
 struct MicronDocumentView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let document: MicronDocument
     @Binding var formFields: [String: String]
     @Binding var checkboxFields: [String: Bool]
@@ -49,6 +50,7 @@ struct MicronDocumentView: View {
     private func renderElement(_ element: MicronElement, index: Int) -> some View {
         switch element {
         case .heading(let level, let spans, let alignment):
+            let palette = MicronHeadingPalette.style(level: level, colorScheme: colorScheme)
             if isScrollMode {
                 // UIKit-backed line with strict paragraph line-height so block chars stack tight
                 MonospaceLineView(
@@ -57,14 +59,18 @@ struct MicronDocumentView: View {
                     cellHeight: cellHeight,
                     alignment: alignment,
                     bold: true,
+                    defaultForegroundColor: palette.foreground,
                     onLinkTapped: onLinkTapped
                 )
                 .frame(minWidth: viewportWidth, alignment: alignment.swiftUI)
+                .background(palette.background)
             } else {
                 renderSpans(spans, onLinkTapped: onLinkTapped)
                     .font(headingFont(level: level))
                     .bold()
+                    .foregroundStyle(palette.foreground)
                     .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
+                    .background(palette.background)
                     .padding(.top, level == 1 ? 12 : 8)
                     .padding(.bottom, 4)
             }
@@ -266,16 +272,20 @@ private struct MicronPartialView: View {
 /// Simplified element renderer for partial content (no form fields or nested partials).
 @available(iOS 17.0, macOS 14.0, *)
 private struct MicronSimpleElementView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let element: MicronElement
     var onLinkTapped: ((MicronLink) -> Void)?
 
     var body: some View {
         switch element {
-        case .heading(_, let spans, let alignment):
+        case .heading(let level, let spans, let alignment):
+            let palette = MicronHeadingPalette.style(level: level, colorScheme: colorScheme)
             renderSpans(spans, onLinkTapped: onLinkTapped)
                 .font(.headline)
                 .bold()
+                .foregroundStyle(palette.foreground)
                 .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
+                .background(palette.background)
         case .paragraph(let spans, let alignment, let indentLevel):
             renderSpans(spans, onLinkTapped: onLinkTapped)
                 .font(.system(.body, design: .monospaced))
@@ -292,6 +302,27 @@ private struct MicronSimpleElementView: View {
         case .formField, .partial:
             EmptyView()
         }
+    }
+}
+
+private enum MicronHeadingPalette {
+    static func style(level: Int, colorScheme: ColorScheme) -> (foreground: Color, background: Color) {
+        let paletteLevel = min(max(level, 1), 3)
+        let foregroundHex: String
+        let backgroundHex: String
+
+        if colorScheme == .dark {
+            foregroundHex = ["222", "111", "000"][paletteLevel - 1]
+            backgroundHex = ["bbb", "999", "777"][paletteLevel - 1]
+        } else {
+            foregroundHex = ["000", "111", "222"][paletteLevel - 1]
+            backgroundHex = ["777", "aaa", "ccc"][paletteLevel - 1]
+        }
+
+        return (
+            MicronTextStyle.colorFrom3Hex(foregroundHex) ?? .primary,
+            MicronTextStyle.colorFrom3Hex(backgroundHex) ?? .clear
+        )
     }
 }
 

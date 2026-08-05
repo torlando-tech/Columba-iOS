@@ -20,6 +20,7 @@ struct MonospaceLineView: View {
     let cellHeight: CGFloat
     let alignment: MicronAlignment
     let bold: Bool
+    var defaultForegroundColor: Color? = nil
     /// Force the UIKit label to be at least this wide so center/right alignment
     /// resolves against the visible viewport, not just the text's intrinsic width.
     /// Pass 0 to opt out (label sizes to its own intrinsic only).
@@ -92,6 +93,8 @@ struct MonospaceLineView: View {
                 if let fg = style.foregroundColor,
                    let color = MicronTextStyle.colorFromStyleHex(fg) {
                     attrs[.foregroundColor] = UIColor(color)
+                } else if let defaultForegroundColor {
+                    attrs[.foregroundColor] = UIColor(defaultForegroundColor)
                 } else {
                     attrs[.foregroundColor] = UIColor.label
                 }
