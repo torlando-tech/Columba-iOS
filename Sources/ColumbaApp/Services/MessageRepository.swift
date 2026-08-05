@@ -125,6 +125,7 @@ public actor MessageRepository {
         self.database = try LXMFSwift.LXMFDatabase(path: grdbPath, readonly: false)
         var config = Configuration()
         config.defaultTransactionKind = .immediate
+        config.foreignKeysEnabled = true
         config.observesSuspensionNotifications = true
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA busy_timeout=5000")
@@ -231,9 +232,10 @@ public actor MessageRepository {
         try await database.setUnreadCount(hash: conversationHash, count: count)
     }
 
-    /// Delete conversation and all its messages (cascades via FK).
+    /// Delete a conversation, its messages, and its app-owned draft.
     public func deleteConversation(_ conversationHash: Data) async throws {
         try await database.deleteConversation(hash: conversationHash)
+        try clearDraftAndNotify(for: conversationHash)
     }
 
     /// Delete a single message by its ID hash.

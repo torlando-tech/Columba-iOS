@@ -178,15 +178,24 @@ final class DraftMessageTests: XCTestCase {
     func testDeletingConversationCascadesToDraft() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }
-        let repository = try MessageRepository(grdbPath: databaseURL.path)
         let conversationHash = Data(repeating: 0x77, count: 16)
 
-        try await repository.ensureConversation(conversationHash, displayName: nil)
-        try await repository.saveDraft("temporary", for: conversationHash)
-        try await repository.deleteConversation(conversationHash)
+        do {
+            let repository = try MessageRepository(grdbPath: databaseURL.path)
+            try await repository.ensureConversation(conversationHash, displayName: nil)
+            try await repository.saveDraft("temporary", for: conversationHash)
+            try await repository.deleteConversation(conversationHash)
+        }
 
-        let storedDraft = try await repository.fetchDraft(for: conversationHash)
-        XCTAssertNil(storedDraft)
+        do {
+            let reopenedRepository = try MessageRepository(grdbPath: databaseURL.path)
+            let draftAfterReopen = try await reopenedRepository.fetchDraft(for: conversationHash)
+            XCTAssertNil(draftAfterReopen)
+
+            try await reopenedRepository.ensureConversation(conversationHash, displayName: nil)
+            let draftAfterRecreatingConversation = try await reopenedRepository.fetchDraft(for: conversationHash)
+            XCTAssertNil(draftAfterRecreatingConversation)
+        }
     }
 
     func testNotificationIsPostedAfterCommittedDraftIsReadable() async throws {
