@@ -109,14 +109,12 @@ struct MonospaceLineView: View {
                 result.append(NSAttributedString(string: text, attributes: attrs))
 
             case .link(let link):
-                var attrs: [NSAttributedString.Key: Any] = [
+                let attrs: [NSAttributedString.Key: Any] = [
                     .font: baseFont,
                     .paragraphStyle: paragraph,
                     .foregroundColor: UIColor(linkForegroundColor ?? .accentColor),
                     .underlineStyle: NSUnderlineStyle.single.rawValue,
-                    .link: "columba-micron://link/\(result.length)",
                 ]
-                _ = attrs // mark the attribute so we can map back to MicronLink
                 result.append(NSAttributedString(string: link.label, attributes: attrs))
             }
         }
