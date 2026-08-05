@@ -672,6 +672,7 @@ final class MicronParserTests: XCTestCase {
 
         XCTAssertGreaterThan(pixelCount(in: image, near: (0x99, 0x99, 0x99), tolerance: 4), 500)
         XCTAssertGreaterThan(pixelCount(in: image, near: (0x11, 0x11, 0x11), tolerance: 8), 5)
+        XCTAssertLessThan(pixelCount(in: image, near: (0x3a, 0x82, 0xf7), tolerance: 4), 5)
 
         let attachment = XCTAttachment(image: image)
         attachment.name = "nomadnet-monospace-heading-link"
