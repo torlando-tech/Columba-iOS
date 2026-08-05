@@ -789,11 +789,12 @@ final class MicronParserTests: XCTestCase {
         viewModel.formFields["password"] = "never-share-this"
 
         await viewModel.handleLinkTap(MicronLink(
-            text: "reticulum",
+            label: "reticulum",
             url: .samePage(path: "/page/group.mu"),
             fieldNames: ["g=reticulum", "password"]
         ))
-        XCTAssertEqual((await backend.requests()).last?.requestData, [
+        var requests = await backend.requests()
+        XCTAssertEqual(requests.last?.requestData, [
             "var_g": "reticulum",
             "field_password": "never-share-this",
         ])
@@ -804,13 +805,15 @@ final class MicronParserTests: XCTestCase {
         XCTAssertFalse(viewModel.shareableAddress.contains("never-share-this"))
 
         await viewModel.refresh()
-        XCTAssertEqual((await backend.requests()).last?.requestData?["var_g"], "reticulum")
+        requests = await backend.requests()
+        XCTAssertEqual(requests.last?.requestData?["var_g"], "reticulum")
 
-        await viewModel.navigateTo(url: .samePage(path: "/page/index.mu"))
+        await viewModel.navigateTo(url: MicronURL.samePage(path: "/page/index.mu"))
         viewModel.goBack()
         await viewModel.refresh()
-        XCTAssertEqual((await backend.requests()).last?.path, "/page/group.mu")
-        XCTAssertEqual((await backend.requests()).last?.requestData?["var_g"], "reticulum")
+        requests = await backend.requests()
+        XCTAssertEqual(requests.last?.path, "/page/group.mu")
+        XCTAssertEqual(requests.last?.requestData?["var_g"], "reticulum")
 
         let reopened = NomadNetBrowserViewModel(
             nodeHash: hash,
@@ -819,8 +822,9 @@ final class MicronParserTests: XCTestCase {
             browserService: service
         )
         await reopened.loadPage()
-        XCTAssertEqual((await backend.requests()).last?.path, "/page/repo.mu")
-        XCTAssertEqual((await backend.requests()).last?.requestData, [
+        requests = await backend.requests()
+        XCTAssertEqual(requests.last?.path, "/page/repo.mu")
+        XCTAssertEqual(requests.last?.requestData, [
             "var_g": "reticulum",
             "var_r": "lxmf",
             "var_path": "docs%2Fmanual",
