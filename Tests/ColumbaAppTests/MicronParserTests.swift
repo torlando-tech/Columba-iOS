@@ -562,7 +562,7 @@ final class MicronParserTests: XCTestCase {
         >>Key Features
         >>>Installation
         """)
-        let size = CGSize(width: 340, height: 180)
+        let size = CGSize(width: 340, height: 360)
         let host = UIHostingController(
             rootView: MicronDocumentView(
                 document: document,
