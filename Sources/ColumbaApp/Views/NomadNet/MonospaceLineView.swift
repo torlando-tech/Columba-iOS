@@ -90,13 +90,13 @@ struct MonospaceLineView: View {
                     .paragraphStyle: paragraph,
                 ]
                 if let fg = style.foregroundColor,
-                   let color = MicronTextStyle.colorFrom3Hex(fg) {
+                   let color = MicronTextStyle.colorFromHex(fg) {
                     attrs[.foregroundColor] = UIColor(color)
                 } else {
                     attrs[.foregroundColor] = UIColor.label
                 }
                 if let bg = style.backgroundColor,
-                   let color = MicronTextStyle.colorFrom3Hex(bg) {
+                   let color = MicronTextStyle.colorFromHex(bg) {
                     attrs[.backgroundColor] = UIColor(color)
                 }
                 if style.underline {

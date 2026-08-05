@@ -169,7 +169,7 @@ struct NomadNetBrowserView: View {
     @ViewBuilder
     private var pageBackground: some View {
         if let bgHex = viewModel.currentDocument?.headers.backgroundColor,
-           let color = MicronTextStyle.colorFrom3Hex(bgHex) {
+           let color = MicronTextStyle.colorFromHex(bgHex) {
             color
         } else {
             Color.platformSystemBackground

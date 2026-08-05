@@ -15,7 +15,7 @@ public struct MicronParser {
         var currentIndent = 0
         var currentAlignment: MicronAlignment = .left
         // Formatting state persists across lines (matches python NomadNet's
-        // MicronParser, where `!/`*/`_/`Fxxx/`Bxxx are document-scoped until
+        // MicronParser, where `!/`*/`_/`Fxxx/`FTxxxxxx/`Bxxx/`BTxxxxxx are document-scoped until
         // toggled off or reset). Without this the chat-room page's
         // `F0ff`B52f preamble drops its colors before the ASCII art.
         var currentStyle: MicronTextStyle = .plain
@@ -233,26 +233,27 @@ public struct MicronParser {
                     continue
                 }
 
-                // Foreground color
+                // Foreground color: Fxxx (3-digit) or FTxxxxxx (true color)
                 if cmd == "F" || cmd == "f" {
                     flushBuffer()
                     if cmd == "f" {
                         style.foregroundColor = nil
                         i = text.index(after: next)
                     } else {
-                        // Read 3 hex digits
                         let colorStart = text.index(after: next)
-                        if let colorEnd = text.index(colorStart, offsetBy: 3, limitedBy: text.endIndex) {
-                            style.foregroundColor = String(text[colorStart..<colorEnd])
-                            i = colorEnd
+                        if let parsed = parseColor(in: text, from: colorStart) {
+                            style.foregroundColor = parsed.value
+                            i = parsed.endIndex
                         } else {
-                            i = text.index(after: next)
+                            // Consume only the command. Preserve malformed or
+                            // truncated payload text and leave the style intact.
+                            i = colorStart
                         }
                     }
                     continue
                 }
 
-                // Background color
+                // Background color: Bxxx (3-digit) or BTxxxxxx (true color)
                 if cmd == "B" || cmd == "b" {
                     flushBuffer()
                     if cmd == "b" {
@@ -260,11 +261,11 @@ public struct MicronParser {
                         i = text.index(after: next)
                     } else {
                         let colorStart = text.index(after: next)
-                        if let colorEnd = text.index(colorStart, offsetBy: 3, limitedBy: text.endIndex) {
-                            style.backgroundColor = String(text[colorStart..<colorEnd])
-                            i = colorEnd
+                        if let parsed = parseColor(in: text, from: colorStart) {
+                            style.backgroundColor = parsed.value
+                            i = parsed.endIndex
                         } else {
-                            i = text.index(after: next)
+                            i = colorStart
                         }
                     }
                     continue
@@ -337,6 +338,29 @@ public struct MicronParser {
 
         flushBuffer()
         return (spans, alignment, formFields, style)
+    }
+
+    private struct ParsedColor {
+        let value: String
+        let endIndex: String.Index
+    }
+
+    /// Parse a Micron color payload starting immediately after F/B.
+    /// `T` selects six-digit true color; otherwise the legacy three-digit
+    /// form is used. Invalid payloads are rejected without consuming them.
+    private static func parseColor(in text: String, from start: String.Index) -> ParsedColor? {
+        guard start < text.endIndex else { return nil }
+
+        let isTrueColor = text[start] == "T"
+        let valueStart = isTrueColor ? text.index(after: start) : start
+        let length = isTrueColor ? 6 : 3
+        guard let valueEnd = text.index(valueStart, offsetBy: length, limitedBy: text.endIndex) else {
+            return nil
+        }
+
+        let value = String(text[valueStart..<valueEnd])
+        guard value.count == length, value.allSatisfy(\.isHexDigit) else { return nil }
+        return ParsedColor(value: value.lowercased(), endIndex: valueEnd)
     }
 
     // MARK: - Form Field Parsing
