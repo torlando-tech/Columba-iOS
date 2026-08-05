@@ -292,58 +292,54 @@ final class MessageDetailAliasTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenDetailFollowsNormalPersistenceAndBufferedPropagatedProof() async throws {
+    func testPublicSendBuffersProofBeforeAliasAndRefreshesOpenDetail() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }
         let repository = try MessageRepository(grdbPath: databaseURL.path)
         let destination = Data(repeating: 0x41, count: 16)
         let canonicalHash = Data(repeating: 0x42, count: 32)
         let canonicalID = canonicalHash.map { String(format: "%02x", $0) }.joined()
-        let selected = Message(
-            id: "optimistic",
-            content: "hello",
-            isFromMe: true,
-            deliveryStatus: .sending
-        )
-        let viewModel = MessagingViewModel(
+        var viewModel: MessagingViewModel!
+        var selected: Message?
+
+        viewModel = MessagingViewModel(
             conversationHash: destination,
             repository: repository,
-            appServices: AppServices()
-        )
-        viewModel.messages = [selected]
-        viewModel.registerPendingOutboundAlias(
-            canonicalHash: canonicalHash,
-            optimisticID: selected.id
+            appServices: AppServices(),
+            identity: Identity(),
+            outboundSendOperation: { _ in
+                selected = viewModel.messages.last
+                NotificationCenter.default.post(
+                    name: Notification.Name("ColumbaPythonDelivery"),
+                    object: nil,
+                    userInfo: [
+                        "messageHash": canonicalHash,
+                        "state": "delivered",
+                        "persisted": false,
+                        "deliveryMethod": "propagated",
+                    ]
+                )
+                for _ in 0..<1_000 {
+                    if viewModel.hasPendingDeliveryProof(for: canonicalHash) { break }
+                    await Task.yield()
+                }
+                guard viewModel.hasPendingDeliveryProof(for: canonicalHash) else {
+                    throw NSError(domain: "MessageDetailAliasTests", code: 1)
+                }
+                return .queued(messageHash: canonicalID)
+            }
         )
 
-        NotificationCenter.default.post(
-            name: Notification.Name("ColumbaPythonDelivery"),
-            object: nil,
-            userInfo: [
-                "messageHash": canonicalHash,
-                "state": "delivered",
-                "persisted": false,
-                "deliveryMethod": "propagated",
-            ]
+        let sent = await viewModel.sendMessage(
+            text: "hello",
+            imageData: nil,
+            imageFormat: nil,
+            attachments: nil
         )
-        for _ in 0..<10 { await Task.yield() }
 
-        try await repository.ensureConversation(destination, displayName: nil)
-        let canonical = RNSAPI.LXMessage(
-            destinationHash: destination,
-            sourceIdentity: nil,
-            content: Data("hello".utf8),
-            desiredMethod: .opportunistic
-        )
-        canonical.hash = canonicalHash
-        canonical.state = .sent
-        canonical.method = .opportunistic
-        try await repository.saveMessage(canonical)
-
-        await viewModel.reconcilePendingDeliveryProof(for: canonicalHash)
-        await viewModel.loadMessages()
-
-        let resolved = viewModel.currentMessage(for: selected)
+        XCTAssertTrue(sent)
+        let openSelection = try XCTUnwrap(selected)
+        let resolved = viewModel.currentMessage(for: openSelection)
         XCTAssertEqual(resolved.id, canonicalID)
         XCTAssertEqual(resolved.deliveryStatus, .delivered)
         XCTAssertEqual(resolved.deliveryMethod, "propagated")

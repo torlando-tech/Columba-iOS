@@ -514,6 +514,7 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         message_repository = (
             ROOT / "Sources/ColumbaApp/Services/MessageRepository.swift"
         ).read_text()
+        ci_workflow = (ROOT / ".github/workflows/tests.yml").read_text()
         for source in (python_bridge, rns_backend, python_backend):
             self.assertIn("method:", source)
         self.assertIn("method: acceptedMethod", app_services)
@@ -522,8 +523,12 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertIn("recordCanonicalAlias", messaging_view_model)
         self.assertIn("PendingDeliveryProof", messaging_view_model)
         self.assertIn("method: proof.method", messaging_view_model)
+        self.assertIn("outboundSendOperation", messaging_view_model)
+        self.assertIn("if !proofPersisted", messaging_view_model)
+        self.assertNotIn("if wasAliased && !proofPersisted", messaging_view_model)
         self.assertNotIn("(proof == .delivered) ? .delivered : .failed", messaging_view_model)
         self.assertIn("monotonicDeliveryState", message_repository)
+        self.assertIn("Tests.static.test_async_propagation_fallback", ci_workflow)
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
