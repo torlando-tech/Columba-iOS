@@ -568,8 +568,9 @@ struct MessagingView: View {
             .presentationDragIndicator(.visible)
         }
         .sheet(item: $detailMessage) { message in
+            let currentMessage = viewModel?.messages.first(where: { $0.id == message.id }) ?? message
             MessageDetailView(
-                message: message,
+                message: currentMessage,
                 destinationHash: conversation.destinationHash,
                 pathTable: appServices.pathTable
             )

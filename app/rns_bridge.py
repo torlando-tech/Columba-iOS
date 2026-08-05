@@ -1494,27 +1494,28 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
         callback_lock = threading.Lock()
         callback_state = {"terminal": False, "fallback_started": False}
 
+        def _effective_method_name(m: "LXMF.LXMessage") -> str:
+            method_value = getattr(m, "method", None)
+            if method_value == LXMF.LXMessage.OPPORTUNISTIC:
+                return "opportunistic"
+            if method_value == LXMF.LXMessage.DIRECT:
+                return "direct"
+            if method_value == LXMF.LXMessage.PROPAGATED:
+                return "propagated"
+            return ""
+
         def _emit_terminal(m: "LXMF.LXMessage", state: str, reason: str) -> None:
             with callback_lock:
                 if callback_state["terminal"]:
                     return
                 callback_state["terminal"] = True
             try:
-                method_value = getattr(m, "method", None)
-                if method_value == LXMF.LXMessage.OPPORTUNISTIC:
-                    effective_method = "opportunistic"
-                elif method_value == LXMF.LXMessage.DIRECT:
-                    effective_method = "direct"
-                elif method_value == LXMF.LXMessage.PROPAGATED:
-                    effective_method = "propagated"
-                else:
-                    effective_method = ""
                 _put(
                     "delivery",
                     message_hash=m.hash.hex(),
                     state=state,
                     reason=reason,
-                    method=effective_method,
+                    method=_effective_method_name(m),
                 )
             except Exception:
                 pass
@@ -1591,7 +1592,7 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                         message_hash=m.hash.hex(),
                         state="failed",
                         reason="no-propagation-node",
-                        method="opportunistic",
+                        method=_effective_method_name(m),
                     )
                 except Exception:
                     pass

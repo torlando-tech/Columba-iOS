@@ -2926,7 +2926,7 @@ public final class AppServices {
                 userInfo: [
                     "messageHash": hashData,
                     "state": state,
-                    "deliveryMethod": acceptedMethod == .propagated ? "propagated" : "",
+                    "deliveryMethod": acceptedMethod?.rawValue ?? "",
                     "persisted": proofPersisted,
                 ]
             )
