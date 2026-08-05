@@ -73,7 +73,11 @@ enum MessageLinkParser {
 
     static func target(for url: URL) -> MessageLinkTarget? {
         if url.scheme?.lowercased() == "nomadnetwork" {
-            return target(for: url.absoluteString.removingPercentEncoding ?? url.absoluteString)
+            guard let host = url.host,
+                  let hash = Data(hexString: host),
+                  hash.count == 16,
+                  url.path.hasPrefix("/") else { return nil }
+            return .nomadNet(nodeHash: hash, path: url.path)
         }
         return target(for: url.absoluteString)
     }
