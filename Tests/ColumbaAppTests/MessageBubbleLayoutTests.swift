@@ -38,6 +38,19 @@ final class MessageLinkParserTests: XCTestCase {
         XCTAssertNil(MessageLinkParser.target(for: URL(string: "data:text/plain,secret")!))
     }
 
+    func testSharedNomadNetAddressPreservesEncodedRequestVariables() throws {
+        let address = "nomadnetwork://\(nodeHash):/page/group.mu`g=reticulum|topic=hello+world"
+        let url = try XCTUnwrap(URL(string: address))
+
+        XCTAssertEqual(
+            MessageLinkParser.target(for: url),
+            .nomadNet(
+                nodeHash: Data(hexString: nodeHash)!,
+                path: "/page/group.mu`g=reticulum|topic=hello+world"
+            )
+        )
+    }
+
     func testBareHashWithoutNomadNetPathIsNotLinkified() {
         XCTAssertTrue(MessageLinkParser.matches(in: "identity \(nodeHash)").isEmpty)
     }

@@ -678,6 +678,12 @@ final class MicronParserTests: XCTestCase {
             location.shareableAddress,
             "nomadnetwork://abababababababababababababababab:/page/group.mu`g=reticulum|topic=hello+world"
         )
+
+        let reopened = NomadNetLocation(
+            nodeHash: location.nodeHash,
+            addressPath: "/page/group.mu`g=reticulum|topic=hello+world"
+        )
+        XCTAssertEqual(reopened, location)
     }
 
     func testLinkWithSurroundingText() {
