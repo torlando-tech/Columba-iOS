@@ -579,7 +579,8 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
 
         let applied = try await repository.applyDeliveryProof(
             canonicalHash: canonicalHash,
-            state: .delivered
+            state: .delivered,
+            method: .propagated
         )
 
         XCTAssertTrue(applied)
@@ -588,6 +589,8 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         let storedDelivered = try await repository.getMessageRecord(id: canonicalHash)
         let delivered = try XCTUnwrap(storedDelivered)
         XCTAssertEqual(delivered.state, LXMessageState.delivered.rawValue)
+        XCTAssertEqual(delivered.method, LXMFSwift.LXDeliveryMethod.propagated.rawValue)
+        XCTAssertEqual(Message(from: delivered, localHash: Data()).deliveryMethod, "propagated")
         XCTAssertNil(delivered.receivingInterface)
         let stillHasUncertainRetry = try await repository.hasUncertainRetry(for: destination)
         XCTAssertFalse(stillHasUncertainRetry)

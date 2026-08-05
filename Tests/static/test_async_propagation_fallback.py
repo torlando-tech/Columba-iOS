@@ -324,6 +324,30 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
             self.delivery_events(events)[0]["reason"],
         )
 
+    def test_delivered_fallback_carries_effective_propagated_method_across_swift_seam(self):
+        router = FakeRouter()
+        events = []
+        primary = self.queue(router, events)
+
+        primary.failed_callback(primary)
+        self.assertTrue(router.wait_for_handled_count(2))
+        retry = router.handled[1]
+        retry.state = FakeMessage.DELIVERED
+        retry.delivery_callback(retry)
+
+        delivered = self.delivery_events(events)
+        self.assertEqual(1, len(delivered))
+        self.assertEqual("delivered", delivered[0]["state"])
+        self.assertEqual("propagated", delivered[0]["method"])
+
+        python_bridge = (ROOT / "Sources/PythonBridge/PythonBridge.swift").read_text()
+        rns_backend = (ROOT / "Sources/RNSAPI/Protocols/RnsBackend.swift").read_text()
+        python_backend = (ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift").read_text()
+        app_services = (ROOT / "Sources/ColumbaApp/Services/AppServices.swift").read_text()
+        for source in (python_bridge, rns_backend, python_backend):
+            self.assertIn("method:", source)
+        self.assertIn("method: acceptedMethod", app_services)
+
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
         backend = (ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift").read_text()
