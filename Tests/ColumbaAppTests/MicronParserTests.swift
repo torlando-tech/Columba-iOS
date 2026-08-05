@@ -850,6 +850,13 @@ final class MicronParserTests: XCTestCase {
         }
     }
 
+    func testScrollMetricsUseRenderedMonospaceFont() {
+        let style = MicronRenderStyle.monospaceScroll
+        let font = MicronRenderStyle.uiMonospaceFont(fontSize: style.fontSize)
+        let renderedWidth = ("M" as NSString).size(withAttributes: [.font: font]).width
+        XCTAssertEqual(style.approxCharWidth, renderedWidth, accuracy: 0.001)
+    }
+
     @MainActor
     func testZeroViewportScrollDividerKeepsIntrinsicFallbackWidth() {
         let document = MicronDocument(elements: [.divider(character: "=", indentLevel: 2)])
