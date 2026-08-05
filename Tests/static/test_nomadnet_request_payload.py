@@ -57,7 +57,8 @@ class NomadNetRequestPayloadTests(unittest.TestCase):
             @classmethod
             def sleep(cls, seconds):
                 cls.now += seconds
-                resolution["ready"] = True
+                if FakeTransport.requests > 0:
+                    resolution["ready"] = True
 
         class FakeDestination:
             OUT = 1
@@ -67,7 +68,10 @@ class NomadNetRequestPayloadTests(unittest.TestCase):
                 pass
 
         class FakeLink:
-            last_request_data = None
+            unrequested = object()
+            last_request_data = unrequested
+            last_request_path = None
+            request_count = 0
 
             def __init__(self, _destination, established_callback, closed_callback):
                 established_callback(self)
@@ -77,13 +81,15 @@ class NomadNetRequestPayloadTests(unittest.TestCase):
 
             def request(
                 self,
-                _path,
+                path,
                 data,
                 response_callback,
                 failed_callback,
                 timeout,
             ):
                 del failed_callback, timeout
+                type(self).request_count += 1
+                type(self).last_request_path = path
                 type(self).last_request_data = data
                 response_callback(types.SimpleNamespace(response=b"ok"))
                 return object()
@@ -151,6 +157,8 @@ class NomadNetRequestPayloadTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual("ok", result["status"])
         self.assertEqual(1, fake_transport.requests)
+        self.assertEqual(1, fake_link.request_count)
+        self.assertEqual("/page/index.mu", fake_link.last_request_path)
         self.assertIsNone(fake_link.last_request_data)
 
 
