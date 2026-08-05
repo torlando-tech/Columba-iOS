@@ -136,6 +136,42 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(text, "The Non-linear Task Manager")
     }
 
+    func testSectionIndentUsesCanonicalTwoCellsPerNestedLevel() {
+        let doc = MicronParser.parse("""
+        >Top
+        top body
+        >>Nested
+        nested body
+        >>>>Deep
+        deep body
+        """)
+
+        let paragraphIndents = doc.elements.compactMap { element -> Int? in
+            guard case .paragraph(_, _, let indent) = element else { return nil }
+            return indent
+        }
+        XCTAssertEqual(paragraphIndents, [0, 2, 6])
+    }
+
+    func testSectionResetEscapedRemainderPreservesFormattingState() {
+        let doc = MicronParser.parse("`!bold\n<\\>literal")
+
+        guard case .paragraph(let spans, _, let indent) = doc.elements.last,
+              case .text(let text, let style) = spans.first else {
+            XCTFail("Expected escaped reset remainder")
+            return
+        }
+
+        XCTAssertEqual(text, ">literal")
+        XCTAssertEqual(indent, 0)
+        XCTAssertTrue(style.bold)
+    }
+
+    func testFieldBearingHeadingSanitizationRestartsBlockClassification() {
+        let doc = MicronParser.parse(">># hidden `<name`value>")
+        XCTAssertTrue(doc.elements.isEmpty)
+    }
+
     // MARK: - Dividers
 
     func testDefaultDivider() {
@@ -601,6 +637,89 @@ final class MicronParserTests: XCTestCase {
         attachment.name = "nomadnet-canonical-dark-section-headings"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    func testMonospaceHeadingLinkInheritsCanonicalForeground() {
+        let document = MicronParser.parse(">>`[Key Features`:/page/features.mu]")
+        let size = CGSize(width: 340, height: 100)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                style: .monospaceScroll,
+                viewportWidth: 320
+            )
+            .frame(width: 320, alignment: .leading)
+            .environment(\.colorScheme, .dark)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.black)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x99, 0x99, 0x99), tolerance: 4), 500)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x11, 0x11, 0x11), tolerance: 8), 5)
+
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "nomadnet-monospace-heading-link"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    func testLightPartialHeadingUsesCanonicalPalette() {
+        let partial = MicronPartial(
+            url: "/page/partial.mu",
+            refreshInterval: nil,
+            partialId: nil,
+            fieldNames: nil
+        )
+        let document = MicronDocument(elements: [.partial(partial)])
+        let partialDocument = MicronParser.parse(">>Partial Heading")
+        let size = CGSize(width: 340, height: 120)
+        let host = UIHostingController(
+            rootView: MicronDocumentView(
+                document: document,
+                formFields: .constant([:]),
+                checkboxFields: .constant([:]),
+                radioFields: .constant([:]),
+                partialDocuments: [partial.url: partialDocument],
+                style: .proportional,
+                viewportWidth: 320
+            )
+            .frame(width: 320, alignment: .leading)
+            .environment(\.colorScheme, .light)
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(Color.white)
+            .ignoresSafeArea()
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0xaa, 0xaa, 0xaa), tolerance: 4), 500)
+        XCTAssertGreaterThan(pixelCount(in: image, near: (0x11, 0x11, 0x11), tolerance: 8), 5)
     }
 
     private func pixelCount(
