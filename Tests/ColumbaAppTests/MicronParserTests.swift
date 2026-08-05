@@ -809,7 +809,7 @@ final class MicronParserTests: XCTestCase {
         XCTAssertEqual(requests.last?.requestData?["var_g"], "reticulum")
 
         await viewModel.navigateTo(url: MicronURL.samePage(path: "/page/index.mu"))
-        viewModel.goBack()
+        await viewModel.goBack()
         await viewModel.refresh()
         requests = await backend.requests()
         XCTAssertEqual(requests.last?.path, "/page/group.mu")
