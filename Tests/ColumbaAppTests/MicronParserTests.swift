@@ -574,7 +574,7 @@ final class MicronParserTests: XCTestCase {
             )
             .frame(width: 320, alignment: .leading)
             .background(Color.black)
-            .preferredColorScheme(.dark)
+            .environment(\.colorScheme, .dark)
             .padding(10)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .background(Color.black)
