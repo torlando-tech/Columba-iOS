@@ -684,7 +684,7 @@ final class MicronParserTests: XCTestCase {
                 in: image,
                 near: (0x00, 0x00, 0x00),
                 tolerance: 4,
-                inside: level3Background
+                inside: level3Background.insetBy(dx: 30, dy: 4)
             )
             XCTAssertNotNil(level1Text)
             XCTAssertNotNil(level2Text)
