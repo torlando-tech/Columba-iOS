@@ -4,6 +4,39 @@ import RNSAPI
 @testable import ColumbaApp
 
 final class DraftMessageTests: XCTestCase {
+    private actor CanonicalDeleteGate {
+        private var reachedCanonicalDelete = false
+        private var released = false
+        private var reachedWaiters: [CheckedContinuation<Void, Never>] = []
+        private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+        func pauseAfterCanonicalDelete() async {
+            reachedCanonicalDelete = true
+            let waiters = reachedWaiters
+            reachedWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+
+            guard !released else { return }
+            await withCheckedContinuation { continuation in
+                releaseWaiters.append(continuation)
+            }
+        }
+
+        func waitUntilCanonicalDelete() async {
+            guard !reachedCanonicalDelete else { return }
+            await withCheckedContinuation { continuation in
+                reachedWaiters.append(continuation)
+            }
+        }
+
+        func resumeCleanup() {
+            released = true
+            let waiters = releaseWaiters
+            releaseWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
+    }
+
     private enum DraftSnapshot: Equatable {
         case missing
         case present(String)
@@ -196,6 +229,44 @@ final class DraftMessageTests: XCTestCase {
             let draftAfterRecreatingConversation = try await reopenedRepository.fetchDraft(for: conversationHash)
             XCTAssertNil(draftAfterRecreatingConversation)
         }
+    }
+
+    func testDeletingConversationPreservesDraftSavedAfterSameConversationIsRecreated() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let deletingRepository = try MessageRepository(grdbPath: databaseURL.path)
+        let recreatingRepository = try MessageRepository(grdbPath: databaseURL.path)
+        let conversationHash = Data(repeating: 0x78, count: 16)
+        let recreatedDraft = "  exact recreated draft  \n"
+        let gate = CanonicalDeleteGate()
+
+        try await deletingRepository.ensureConversation(conversationHash, displayName: nil)
+        try await deletingRepository.saveDraft("obsolete", for: conversationHash)
+
+        let deletion = Task {
+            try await deletingRepository.deleteConversation(
+                conversationHash,
+                afterCanonicalDelete: {
+                    await gate.pauseAfterCanonicalDelete()
+                }
+            )
+        }
+
+        await gate.waitUntilCanonicalDelete()
+        do {
+            try await recreatingRepository.ensureConversation(conversationHash, displayName: "Recreated")
+            try await recreatingRepository.saveDraft(recreatedDraft, for: conversationHash)
+        } catch {
+            await gate.resumeCleanup()
+            _ = try? await deletion.value
+            throw error
+        }
+        await gate.resumeCleanup()
+        try await deletion.value
+
+        let storedDraft = try await recreatingRepository.fetchDraft(for: conversationHash)
+        XCTAssertEqual(storedDraft?.conversationHash, conversationHash)
+        XCTAssertEqual(storedDraft?.content, recreatedDraft)
     }
 
     func testNotificationIsPostedAfterCommittedDraftIsReadable() async throws {

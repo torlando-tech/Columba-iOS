@@ -234,8 +234,20 @@ public actor MessageRepository {
 
     /// Delete a conversation, its messages, and its app-owned draft.
     public func deleteConversation(_ conversationHash: Data) async throws {
+        try await deleteConversation(conversationHash, afterCanonicalDelete: nil)
+    }
+
+    /// Internal deterministic seam for coordinating work after the canonical
+    /// deletion commits. Production passes no hook and does not suspend here.
+    func deleteConversation(
+        _ conversationHash: Data,
+        afterCanonicalDelete: (@Sendable () async -> Void)?
+    ) async throws {
         try await database.deleteConversation(hash: conversationHash)
-        try clearDraftAndNotify(for: conversationHash)
+        if let afterCanonicalDelete {
+            await afterCanonicalDelete()
+        }
+        try clearOrphanedDraftAndNotify(for: conversationHash)
     }
 
     /// Delete a single message by its ID hash.
@@ -316,6 +328,30 @@ public actor MessageRepository {
             try db.execute(
                 sql: "DELETE FROM columba_drafts WHERE conversation_hash = ?",
                 arguments: [conversationHash]
+            )
+            return db.changesCount > 0
+        }
+        if deleted {
+            postDraftChanged(for: conversationHash)
+        }
+    }
+
+    /// Delete only a draft that is still orphaned after canonical deletion.
+    /// The parent check and deletion share one SQLite statement, so recreation
+    /// and cleanup serialize in commit order across repository instances.
+    private func clearOrphanedDraftAndNotify(for conversationHash: Data) throws {
+        let deleted = try Self.writeDraftSynchronously(to: replacementPool) { db in
+            try db.execute(
+                sql: """
+                    DELETE FROM columba_drafts
+                    WHERE conversation_hash = ?
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM conversations
+                          WHERE destination_hash = ?
+                      )
+                    """,
+                arguments: [conversationHash, conversationHash]
             )
             return db.changesCount > 0
         }
