@@ -41,11 +41,7 @@ struct MicronDocumentView: View {
     private var cellHeight: CGFloat { style.approxCharWidth * 2 }
 
     private var bodyFont: Font {
-        if style.usesMonospace {
-            return .system(size: style.fontSize, design: .monospaced)
-        } else {
-            return .system(size: style.fontSize)
-        }
+        style.swiftUIFont
     }
 
     @ViewBuilder
@@ -129,7 +125,7 @@ struct MicronDocumentView: View {
                 .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else if let ch = character {
                 Text(String(repeating: ch, count: 40))
-                    .font(.system(size: style.fontSize, design: .monospaced))
+                    .font(bodyFont)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -159,7 +155,7 @@ struct MicronDocumentView: View {
                 .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else {
                 Text(text)
-                    .font(.system(size: style.fontSize, design: .monospaced))
+                    .font(bodyFont)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.platformSystemGray6)
@@ -174,7 +170,7 @@ struct MicronDocumentView: View {
                 .padding(.horizontal, indentationWidth(columns: indentLevel))
 
         case .partial(let partial, let indentLevel):
-            renderPartial(partial)
+            renderPartial(partial, indentLevel: indentLevel)
                 .padding(.horizontal, indentationWidth(columns: indentLevel))
         }
     }
@@ -182,7 +178,7 @@ struct MicronDocumentView: View {
     // MARK: - Partial Rendering
 
     @ViewBuilder
-    private func renderPartial(_ partial: MicronPartial) -> some View {
+    private func renderPartial(_ partial: MicronPartial, indentLevel: Int) -> some View {
         let key = partial.partialId ?? partial.url
         if let partialDocument = partialDocuments[key], !partialAncestry.contains(key) {
             AnyView(
@@ -195,7 +191,7 @@ struct MicronDocumentView: View {
                     loadingPartials: loadingPartials,
                     onLinkTapped: onLinkTapped,
                     style: style,
-                    viewportWidth: viewportWidth,
+                    viewportWidth: sectionViewportWidth(columns: indentLevel),
                     appliesDocumentPadding: false,
                     partialAncestry: partialAncestry.union([key])
                 )
@@ -205,12 +201,7 @@ struct MicronDocumentView: View {
                 ProgressView()
                     .scaleEffect(0.7)
                 Text("Loading...")
-                    .font(
-                        .system(
-                            size: style.fontSize,
-                            design: style.usesMonospace ? .monospaced : .default
-                        )
-                    )
+                    .font(bodyFont)
                     .foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
@@ -397,13 +388,10 @@ struct MicronSpansText: View {
 
     private func styledAttributed(_ content: String, style: MicronTextStyle) -> AttributedString {
         var piece = AttributedString(content)
-        if style.bold && style.italic {
-            piece.font = .body.bold().italic()
-        } else if style.bold {
-            piece.font = .body.bold()
-        } else if style.italic {
-            piece.font = .body.italic()
-        }
+        var intents: InlinePresentationIntent = []
+        if style.bold { intents.insert(.stronglyEmphasized) }
+        if style.italic { intents.insert(.emphasized) }
+        if !intents.isEmpty { piece.inlinePresentationIntent = intents }
         if style.underline { piece.underlineStyle = .single }
         if let fg = style.foregroundColor, let color = MicronTextStyle.colorFromStyleHex(fg) {
             piece.foregroundColor = color

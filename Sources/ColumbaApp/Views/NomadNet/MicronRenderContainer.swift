@@ -156,6 +156,19 @@ public enum MicronRenderStyle: Sendable, Equatable {
         }
     }
 
+    var swiftUIFont: Font {
+        guard usesMonospace else {
+            return .system(size: fontSize)
+        }
+        #if os(iOS)
+        let resolved = Self.uiMonospaceFont(fontSize: fontSize)
+        if resolved.fontName.hasPrefix("JetBrainsMono") {
+            return .custom(resolved.fontName, size: fontSize)
+        }
+        #endif
+        return .system(size: fontSize, design: .monospaced)
+    }
+
     /// Measured width of a single character in the monospace font at this style's font size.
     /// Used to compute square line height for block-drawing characters (▀▄█ etc.).
     public var approxCharWidth: CGFloat {
