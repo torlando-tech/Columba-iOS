@@ -82,5 +82,7 @@ class AttachmentPreviewContractTests < Minitest::Test
     assert_includes timeline, 'setReactionMode(messageID: reactionModeMessageID)'
     assert_includes timeline, 'reactionModeMessageID = message.id'
     assert_includes timeline, 'self.reactionModeMessageID != messageID'
+    assert_includes timeline, 'routeMessageLink(messageID: message.id, target: target)'
+    assert_includes messaging, 'guard reactionModeMessage?.id != message.id else { return }'
   end
 end

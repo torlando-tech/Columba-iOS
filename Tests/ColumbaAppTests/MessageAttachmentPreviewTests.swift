@@ -212,6 +212,24 @@ final class MessageAttachmentRoutingTests: XCTestCase {
         controller.routeReplyPreviewForTesting(messageID: "replying", replyID: "original")
         await drainMainQueue()
         XCTAssertEqual(controller.replyPreviewNavigationCountForTesting, 1)
+
+        let link = MessageLinkTarget.web(URL(string: "https://example.com")!)
+        var openedLink: MessageLinkTarget?
+        controller.onOpenLink = { openedLink = $0 }
+
+        controller.routeMessageLinkForTesting(messageID: "replying", target: link)
+        controller.setReactionMode(messageID: "replying")
+        await drainMainQueue()
+        XCTAssertNil(openedLink)
+
+        controller.routeMessageLinkForTesting(messageID: "replying", target: link)
+        await drainMainQueue()
+        XCTAssertNil(openedLink)
+
+        controller.setReactionMode(messageID: nil)
+        controller.routeMessageLinkForTesting(messageID: "replying", target: link)
+        await drainMainQueue()
+        XCTAssertEqual(openedLink, link)
     }
 
     @MainActor

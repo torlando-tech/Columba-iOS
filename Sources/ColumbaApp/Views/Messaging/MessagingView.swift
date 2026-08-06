@@ -317,7 +317,12 @@ struct MessagingView: View {
                                                 reactionModeMessage = message
                                             }
                                         },
-                                        onOpenLink: openMessageLink,
+                                        onOpenLink: { target in
+                                            DispatchQueue.main.async {
+                                                guard reactionModeMessage?.id != message.id else { return }
+                                                openMessageLink(target)
+                                            }
+                                        },
                                         onOpenImage: { openImageAttachment(message) },
                                         onOpenFileAttachment: { index in
                                             openFileAttachment(message, index: index)

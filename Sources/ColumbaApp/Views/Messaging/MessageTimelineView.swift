@@ -330,7 +330,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
                         self?.onLongPress?(message)
                     },
                     onOpenLink: { [weak self] target in
-                        self?.onOpenLink?(target)
+                        self?.routeMessageLink(messageID: message.id, target: target)
                     },
                     onOpenImage: { [weak self] in
                         self?.onOpenImage?(message)
@@ -360,6 +360,17 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
 
     func routeReplyPreviewForTesting(messageID: String, replyID: String) {
         routeReplyPreview(messageID: messageID, replyID: replyID)
+    }
+
+    private func routeMessageLink(messageID: String, target: MessageLinkTarget) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.reactionModeMessageID != messageID else { return }
+            self.onOpenLink?(target)
+        }
+    }
+
+    func routeMessageLinkForTesting(messageID: String, target: MessageLinkTarget) {
+        routeMessageLink(messageID: messageID, target: target)
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
