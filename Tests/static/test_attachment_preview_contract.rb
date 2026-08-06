@@ -84,5 +84,9 @@ class AttachmentPreviewContractTests < Minitest::Test
     assert_includes timeline, 'self.reactionModeMessageID != messageID'
     assert_includes timeline, 'routeMessageLink(messageID: message.id, target: target)'
     assert_includes messaging, 'guard reactionModeMessage?.id != message.id else { return }'
+
+    message_body = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessageBody.swift'))
+    assert_includes message_body, 'MessageBodyLinkDispatcher(onOpenLink: onOpenLink).open(url)'
+    refute_includes message_body, '.systemAction(url)'
   end
 end

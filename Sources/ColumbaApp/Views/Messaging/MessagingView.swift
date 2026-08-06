@@ -173,6 +173,7 @@ struct MessagingView: View {
     @StateObject private var attachmentPreviewStore = MessageAttachmentPreviewStore()
     @State private var attachmentPreviewError: String?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
 
     // MARK: - Body
@@ -908,8 +909,12 @@ struct MessagingView: View {
     }
 
     private func openMessageLink(_ target: MessageLinkTarget) {
-        guard case .nomadNet = target else { return }
-        nomadNetLinkTarget = target
+        switch target {
+        case .nomadNet:
+            nomadNetLinkTarget = target
+        case .web(let url), .external(let url):
+            openURL(url)
+        }
     }
 
     private func exitAttachmentInteractionState() {
