@@ -78,29 +78,6 @@ final class MessageAttachmentPreviewItemTests: XCTestCase {
     }
 }
 
-final class BubbleReplyPreviewPolicyTests: XCTestCase {
-    func testRecentLongPressSuppressesReplyNavigation() {
-        let now = Date(timeIntervalSinceReferenceDate: 1_000)
-        XCTAssertFalse(
-            BubbleReplyPreviewPolicy.shouldNavigate(
-                lastLongPressAt: now.addingTimeInterval(-0.05),
-                now: now
-            )
-        )
-    }
-
-    func testOrdinaryTapAllowsReplyNavigation() {
-        let now = Date(timeIntervalSinceReferenceDate: 1_000)
-        XCTAssertTrue(BubbleReplyPreviewPolicy.shouldNavigate(lastLongPressAt: nil, now: now))
-        XCTAssertTrue(
-            BubbleReplyPreviewPolicy.shouldNavigate(
-                lastLongPressAt: now.addingTimeInterval(-1),
-                now: now
-            )
-        )
-    }
-}
-
 @MainActor
 final class MessageAttachmentPreviewStoreTests: XCTestCase {
     func testReplacementDismissalAndConversationExitCleanOnlyOwnedItems() throws {
@@ -218,6 +195,33 @@ final class MessageAttachmentRoutingTests: XCTestCase {
     }
 
     @MainActor
+    func testReactionModeSuppressesDeferredReplyNavigationUntilDismissed() async {
+        let controller = MessageTimelineViewController()
+        controller.loadViewIfNeeded()
+
+        controller.routeReplyPreviewForTesting(messageID: "replying", replyID: "original")
+        controller.setReactionMode(messageID: "replying")
+        await drainMainQueue()
+        XCTAssertEqual(controller.replyPreviewNavigationCountForTesting, 0)
+
+        controller.routeReplyPreviewForTesting(messageID: "replying", replyID: "original")
+        await drainMainQueue()
+        XCTAssertEqual(controller.replyPreviewNavigationCountForTesting, 0)
+
+        controller.setReactionMode(messageID: nil)
+        controller.routeReplyPreviewForTesting(messageID: "replying", replyID: "original")
+        await drainMainQueue()
+        XCTAssertEqual(controller.replyPreviewNavigationCountForTesting, 1)
+    }
+
+    @MainActor
+    private func drainMainQueue() async {
+        let drained = expectation(description: "main queue drained")
+        DispatchQueue.main.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 1)
+    }
+
+    @MainActor
     func testAttachmentBubbleProducesVisualEvidenceForInteractiveControls() throws {
         let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 64)).pngData { context in
             UIColor.systemRed.setFill()
@@ -332,6 +336,7 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             messageTextScale: 1,
             isLoadingMore: false,
             allMessagesLoaded: true,
+            reactionModeMessageID: nil,
             onLoadOlder: { false },
             onReply: { _ in },
             onToggleReaction: { _, _ in },

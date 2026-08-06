@@ -77,6 +77,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
     let messageTextScale: Double
     let isLoadingMore: Bool
     let allMessagesLoaded: Bool
+    let reactionModeMessageID: String?
     let onLoadOlder: @MainActor () async -> Bool
     let onReply: (Message) -> Void
     let onToggleReaction: (Message, String) -> Void
@@ -93,6 +94,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
         controller.onOpenLink = onOpenLink
+        controller.setReactionMode(messageID: reactionModeMessageID)
         applyAttachmentCallbacks(to: controller)
         return controller
     }
@@ -103,6 +105,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
         controller.onOpenLink = onOpenLink
+        controller.setReactionMode(messageID: reactionModeMessageID)
         applyAttachmentCallbacks(to: controller)
         controller.update(
             conversationID: conversationID,
@@ -139,7 +142,9 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     private var hasCompletedInitialPositioning = false
     private var previousViewportSize = CGSize.zero
     private var shouldFollowBottomAcrossResize = false
+    private var reactionModeMessageID: String?
     private(set) var timelineReloadCountForTesting = 0
+    private(set) var replyPreviewNavigationCountForTesting = 0
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewCompositionalLayout { _, _ in
@@ -318,9 +323,10 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
                         self?.onToggleReaction?(message, emoji)
                     },
                     onTapReplyPreview: { [weak self] replyID in
-                        self?.scrollToMessage(id: replyID)
+                        self?.routeReplyPreview(messageID: message.id, replyID: replyID)
                     },
                     onLongPress: { [weak self] in
+                        self?.reactionModeMessageID = message.id
                         self?.onLongPress?(message)
                     },
                     onOpenLink: { [weak self] target in
@@ -338,6 +344,22 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
         .margins(.all, 0)
 
         return cell
+    }
+
+    func setReactionMode(messageID: String?) {
+        reactionModeMessageID = messageID
+    }
+
+    private func routeReplyPreview(messageID: String, replyID: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.reactionModeMessageID != messageID else { return }
+            self.replyPreviewNavigationCountForTesting += 1
+            self.scrollToMessage(id: replyID)
+        }
+    }
+
+    func routeReplyPreviewForTesting(messageID: String, replyID: String) {
+        routeReplyPreview(messageID: messageID, replyID: replyID)
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

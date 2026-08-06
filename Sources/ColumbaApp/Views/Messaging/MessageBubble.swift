@@ -15,15 +15,6 @@ import UIKit
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "MessageBubble")
 
-enum BubbleReplyPreviewPolicy {
-    private static let longPressSuppressionInterval: TimeInterval = 0.25
-
-    static func shouldNavigate(lastLongPressAt: Date?, now: Date = Date()) -> Bool {
-        guard let lastLongPressAt else { return true }
-        return now.timeIntervalSince(lastLongPressAt) >= longPressSuppressionInterval
-    }
-}
-
 /// Individual message bubble view.
 ///
 /// Layout:
@@ -37,7 +28,6 @@ struct MessageBubble: View {
     let message: Message
     var messageTextScale: Double = SettingsRepository.MessageTextScale.defaultValue
     @ScaledMetric(relativeTo: .body) private var bodyFontSize: CGFloat = 17
-    @State private var lastLongPressAt: Date?
 
     /// Callback for tapping a reaction chip to toggle own reaction.
     var onToggleReaction: ((String) -> Void)?
@@ -69,12 +59,7 @@ struct MessageBubble: View {
                     if let replyPreview = message.replyToPreview {
                         Button {
                             if let replyId = message.replyToId {
-                                DispatchQueue.main.async {
-                                    guard BubbleReplyPreviewPolicy.shouldNavigate(
-                                        lastLongPressAt: lastLongPressAt
-                                    ) else { return }
-                                    onTapReplyPreview?(replyId)
-                                }
+                                onTapReplyPreview?(replyId)
                             }
                         } label: {
                             Text(replyPreview)
@@ -161,7 +146,6 @@ struct MessageBubble: View {
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.4)
                         .onEnded { _ in
-                            lastLongPressAt = Date()
                             #if canImport(UIKit)
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             #endif

@@ -187,6 +187,7 @@ struct MessagingView: View {
                     messageTextScale: messageTextScale,
                     isLoadingMore: vm.isLoadingMore,
                     allMessagesLoaded: vm.allMessagesLoaded,
+                    reactionModeMessageID: reactionModeMessage?.id,
                     onLoadOlder: {
                         await vm.loadMoreMessages()
                     },
@@ -303,8 +304,11 @@ struct MessagingView: View {
                                             }
                                         },
                                         onTapReplyPreview: { replyId in
-                                            withAnimation {
-                                                proxy.scrollTo(replyId, anchor: .center)
+                                            DispatchQueue.main.async {
+                                                guard reactionModeMessage?.id != message.id else { return }
+                                                withAnimation {
+                                                    proxy.scrollTo(replyId, anchor: .center)
+                                                }
                                             }
                                         },
                                         onLongPress: {

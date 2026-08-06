@@ -61,8 +61,7 @@ class AttachmentPreviewContractTests < Minitest::Test
     assert_operator bubble.scan('.buttonStyle(.plain)').length, :>=, 3
     assert_includes bubble, '.simultaneousGesture('
     assert_includes bubble, 'LongPressGesture(minimumDuration: 0.4)'
-    assert_includes bubble, 'BubbleReplyPreviewPolicy.shouldNavigate'
-    assert_includes bubble, 'DispatchQueue.main.async'
+    refute_includes bubble, 'BubbleReplyPreviewPolicy'
     refute_includes bubble, 'PrimitiveButtonStyle'
     refute_includes bubble, '.exclusively(before: TapGesture())'
 
@@ -74,5 +73,11 @@ class AttachmentPreviewContractTests < Minitest::Test
     messaging = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessagingView.swift'))
     assert_operator messaging.scan('attachmentPreviewStore.beginReactionMode()').length, :>=, 2
     assert_includes messaging, 'attachmentPreviewStore.endReactionMode()'
+    assert_includes messaging, 'reactionModeMessageID: reactionModeMessage?.id'
+
+    timeline = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessageTimelineView.swift'))
+    assert_includes timeline, 'setReactionMode(messageID: reactionModeMessageID)'
+    assert_includes timeline, 'reactionModeMessageID = message.id'
+    assert_includes timeline, 'self.reactionModeMessageID != messageID'
   end
 end
