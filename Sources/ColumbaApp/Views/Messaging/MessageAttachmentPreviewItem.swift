@@ -87,7 +87,8 @@ final class MessageAttachmentPreviewItem: Identifiable {
             if let imageData,
                let source = CGImageSourceCreateWithData(imageData as CFData, nil),
                let identifier = CGImageSourceGetType(source),
-               let detected = UTType(identifier as String).preferredFilenameExtension {
+               let detectedType = UTType(identifier as String),
+               let detected = detectedType.preferredFilenameExtension {
                 return sanitizedExtension(detected)
             }
             guard let declaredImageFormat else { return nil }
