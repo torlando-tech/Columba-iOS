@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import SwiftUI
 @testable import ColumbaApp
 
 final class MessageAttachmentPreviewItemTests: XCTestCase {
@@ -110,7 +111,10 @@ final class MessageAttachmentRoutingTests: XCTestCase {
 
     @MainActor
     func testAttachmentBubbleProducesVisualEvidenceAndTapCallbacks() throws {
-        let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).pngData()
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).pngData { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        }
         let message = Message(
             content: "Attachments",
             isFromMe: false,
