@@ -228,23 +228,32 @@ final class MessageAttachmentRoutingTests: XCTestCase {
     }
 
     private func dominantColorCounts(in image: UIImage) -> (red: Int, green: Int, blue: Int) {
-        guard let cgImage = image.cgImage,
-              let data = cgImage.dataProvider?.data,
-              let bytes = CFDataGetBytePtr(data) else {
+        guard let cgImage = image.cgImage else { return (0, 0, 0) }
+        let width = cgImage.width
+        let height = cgImage.height
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
             return (0, 0, 0)
         }
-        let bytesPerPixel = max(1, cgImage.bitsPerPixel / 8)
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
         var counts = (red: 0, green: 0, blue: 0)
-        for y in 0..<cgImage.height {
-            for x in 0..<cgImage.width {
-                let offset = y * cgImage.bytesPerRow + x * bytesPerPixel
-                let red = Int(bytes[offset])
-                let green = Int(bytes[offset + 1])
-                let blue = Int(bytes[offset + 2])
-                if red > green * 2, red > blue * 2 { counts.red += 1 }
-                if green > red * 2, green > blue * 2 { counts.green += 1 }
-                if blue > red * 2, blue > green * 2 { counts.blue += 1 }
-            }
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let red = Int(pixels[offset])
+            let green = Int(pixels[offset + 1])
+            let blue = Int(pixels[offset + 2])
+            if red > green * 2, red > blue * 2 { counts.red += 1 }
+            if green > red * 2, green > blue * 2 { counts.green += 1 }
+            if blue > red * 2, blue > green * 2 { counts.blue += 1 }
         }
         return counts
     }
