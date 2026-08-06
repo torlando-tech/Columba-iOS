@@ -347,11 +347,10 @@ final class MessageDetailAliasTests: XCTestCase {
         XCTAssertEqual(resolved.id, canonicalID)
         XCTAssertEqual(resolved.deliveryStatus, .delivered)
         XCTAssertEqual(resolved.deliveryMethod, "propagated")
-        let stored = try XCTUnwrap(
-            try await repository.getMessageRecord(id: canonicalHash)
-        )
+        let storedRecord = try await repository.getMessageRecord(id: canonicalHash)
+        let stored = try XCTUnwrap(storedRecord)
         XCTAssertEqual(stored.state, LXMessageState.delivered.rawValue)
-        XCTAssertEqual(stored.method, LXMFSwift.LXDeliveryMethod.propagated.rawValue)
+        XCTAssertEqual(stored.method, RNSAPI.LXDeliveryMethod.propagated.rawValue)
     }
 }
 
@@ -665,7 +664,7 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         let storedDelivered = try await repository.getMessageRecord(id: canonicalHash)
         let delivered = try XCTUnwrap(storedDelivered)
         XCTAssertEqual(delivered.state, LXMessageState.delivered.rawValue)
-        XCTAssertEqual(delivered.method, LXMFSwift.LXDeliveryMethod.propagated.rawValue)
+        XCTAssertEqual(delivered.method, RNSAPI.LXDeliveryMethod.propagated.rawValue)
         XCTAssertEqual(Message(from: delivered, localHash: Data()).deliveryMethod, "propagated")
         XCTAssertNil(delivered.receivingInterface)
 
@@ -675,11 +674,10 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
             method: .opportunistic
         )
         XCTAssertTrue(staleSentApplied)
-        let afterStaleSent = try XCTUnwrap(
-            try await repository.getMessageRecord(id: canonicalHash)
-        )
+        let staleSentRecord = try await repository.getMessageRecord(id: canonicalHash)
+        let afterStaleSent = try XCTUnwrap(staleSentRecord)
         XCTAssertEqual(afterStaleSent.state, LXMessageState.delivered.rawValue)
-        XCTAssertEqual(afterStaleSent.method, LXMFSwift.LXDeliveryMethod.propagated.rawValue)
+        XCTAssertEqual(afterStaleSent.method, RNSAPI.LXDeliveryMethod.propagated.rawValue)
 
         let stillHasUncertainRetry = try await repository.hasUncertainRetry(for: destination)
         XCTAssertFalse(stillHasUncertainRetry)
