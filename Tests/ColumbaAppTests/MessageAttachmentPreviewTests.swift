@@ -252,9 +252,9 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             let red = Int(pixels[offset])
             let green = Int(pixels[offset + 1])
             let blue = Int(pixels[offset + 2])
-            if red > green * 2, red > blue * 2 { counts.red += 1 }
-            if green > red * 2, green > blue * 2 { counts.green += 1 }
-            if blue > red * 2, blue > green * 2 { counts.blue += 1 }
+            if red > green + 40, red > blue + 40 { counts.red += 1 }
+            if green > red + 40, green > blue + 40 { counts.green += 1 }
+            if blue > red + 40, blue > green + 40 { counts.blue += 1 }
         }
         return counts
     }
