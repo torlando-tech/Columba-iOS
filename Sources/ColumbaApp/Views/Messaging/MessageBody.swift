@@ -142,6 +142,19 @@ struct PlainMessageText: View {
     }
 }
 
+struct MessageBodyLinkDispatcher {
+    let onOpenLink: ((MessageLinkTarget) -> Void)?
+
+    func open(_ url: URL) -> OpenURLAction.Result {
+        guard let target = MessageLinkParser.target(for: url),
+              let onOpenLink else {
+            return .discarded
+        }
+        onOpenLink(target)
+        return .handled
+    }
+}
+
 struct MessageBody: View {
     let content: String
     let renderer: MessageRenderer
@@ -172,17 +185,7 @@ struct MessageBody: View {
         }
         .accessibilityIdentifier("bubble_text")
         .environment(\.openURL, OpenURLAction { url in
-            guard let target = MessageLinkParser.target(for: url) else {
-                return .discarded
-            }
-            switch target {
-            case .web, .external:
-                return .systemAction(url)
-            case .nomadNet:
-                guard let onOpenLink else { return .discarded }
-                onOpenLink(target)
-                return .handled
-            }
+            MessageBodyLinkDispatcher(onOpenLink: onOpenLink).open(url)
         })
     }
 

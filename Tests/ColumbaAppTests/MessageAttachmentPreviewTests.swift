@@ -78,36 +78,6 @@ final class MessageAttachmentPreviewItemTests: XCTestCase {
     }
 }
 
-final class BubbleActionRouterTests: XCTestCase {
-    func testTapInvokesOnlyTapCallback() {
-        var taps = 0
-        var longPresses = 0
-
-        BubbleActionRouter.perform(
-            .tap,
-            onTap: { taps += 1 },
-            onLongPress: { longPresses += 1 }
-        )
-
-        XCTAssertEqual(taps, 1)
-        XCTAssertEqual(longPresses, 0)
-    }
-
-    func testLongPressInvokesOnlyLongPressCallback() {
-        var taps = 0
-        var longPresses = 0
-
-        BubbleActionRouter.perform(
-            .longPress,
-            onTap: { taps += 1 },
-            onLongPress: { longPresses += 1 }
-        )
-
-        XCTAssertEqual(taps, 0)
-        XCTAssertEqual(longPresses, 1)
-    }
-}
-
 @MainActor
 final class MessageAttachmentPreviewStoreTests: XCTestCase {
     func testReplacementDismissalAndConversationExitCleanOnlyOwnedItems() throws {
@@ -145,6 +115,37 @@ final class MessageAttachmentPreviewStoreTests: XCTestCase {
         store.exitConversation()
         XCTAssertFalse(FileManager.default.fileExists(atPath: third.directoryURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.url.path))
+    }
+
+    func testReactionModeWinsRegardlessOfPreviewCallbackOrdering() throws {
+        let tapThenLongPress = MessageAttachmentPreviewStore()
+        let first = try MessageAttachmentPreviewItem(
+            data: Data("first".utf8),
+            suggestedFilename: "first.bin"
+        )
+        tapThenLongPress.present(first)
+        tapThenLongPress.beginReactionMode()
+        XCTAssertNil(tapThenLongPress.item)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.directoryURL.path))
+
+        let longPressThenTap = MessageAttachmentPreviewStore()
+        let blocked = try MessageAttachmentPreviewItem(
+            data: Data("blocked".utf8),
+            suggestedFilename: "blocked.bin"
+        )
+        longPressThenTap.beginReactionMode()
+        longPressThenTap.present(blocked)
+        XCTAssertNil(longPressThenTap.item)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: blocked.directoryURL.path))
+
+        let allowed = try MessageAttachmentPreviewItem(
+            data: Data("allowed".utf8),
+            suggestedFilename: "allowed.bin"
+        )
+        longPressThenTap.endReactionMode()
+        longPressThenTap.present(allowed)
+        XCTAssertEqual(longPressThenTap.item?.id, allowed.id)
+        longPressThenTap.dismiss()
     }
 }
 
@@ -191,6 +192,55 @@ final class MessageAttachmentRoutingTests: XCTestCase {
         XCTAssertEqual(selected?.1, Data("second".utf8))
         XCTAssertEqual(selected?.2, 1)
         XCTAssertEqual(controller.timelineReloadCountForTesting, reloadCount)
+    }
+
+    @MainActor
+    func testReactionModeSuppressesDeferredReplyNavigationUntilDismissed() async {
+        let controller = MessageTimelineViewController()
+        controller.loadViewIfNeeded()
+
+        controller.routeReplyPreviewForTesting(messageID: "replying", replyID: "original")
+        controller.setReactionMode(messageID: "replying")
+        await drainMainQueue()
+        XCTAssertEqual(controller.replyPreviewNavigationCountForTesting, 0)
+
+        controller.routeReplyPreviewForTesting(messageID: "replying", replyID: "original")
+        await drainMainQueue()
+        XCTAssertEqual(controller.replyPreviewNavigationCountForTesting, 0)
+
+        controller.setReactionMode(messageID: nil)
+        controller.routeReplyPreviewForTesting(messageID: "replying", replyID: "original")
+        await drainMainQueue()
+        XCTAssertEqual(controller.replyPreviewNavigationCountForTesting, 1)
+
+        let linkURL = URL(string: "https://example.com")!
+        let link = MessageLinkTarget.web(linkURL)
+        var openedLink: MessageLinkTarget?
+        controller.onOpenLink = { openedLink = $0 }
+        let dispatcher = MessageBodyLinkDispatcher { target in
+            controller.routeMessageLinkForTesting(messageID: "replying", target: target)
+        }
+
+        _ = dispatcher.open(linkURL)
+        controller.setReactionMode(messageID: "replying")
+        await drainMainQueue()
+        XCTAssertNil(openedLink)
+
+        _ = dispatcher.open(linkURL)
+        await drainMainQueue()
+        XCTAssertNil(openedLink)
+
+        controller.setReactionMode(messageID: nil)
+        _ = dispatcher.open(linkURL)
+        await drainMainQueue()
+        XCTAssertEqual(openedLink, link)
+    }
+
+    @MainActor
+    private func drainMainQueue() async {
+        let drained = expectation(description: "main queue drained")
+        DispatchQueue.main.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 1)
     }
 
     @MainActor
@@ -308,6 +358,7 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             messageTextScale: 1,
             isLoadingMore: false,
             allMessagesLoaded: true,
+            reactionModeMessageID: nil,
             onLoadOlder: { false },
             onReply: { _ in },
             onToggleReaction: { _, _ in },

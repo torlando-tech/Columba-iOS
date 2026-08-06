@@ -173,6 +173,7 @@ struct MessagingView: View {
     @StateObject private var attachmentPreviewStore = MessageAttachmentPreviewStore()
     @State private var attachmentPreviewError: String?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
 
     // MARK: - Body
@@ -187,6 +188,7 @@ struct MessagingView: View {
                     messageTextScale: messageTextScale,
                     isLoadingMore: vm.isLoadingMore,
                     allMessagesLoaded: vm.allMessagesLoaded,
+                    reactionModeMessageID: reactionModeMessage?.id,
                     onLoadOlder: {
                         await vm.loadMoreMessages()
                     },
@@ -208,6 +210,7 @@ struct MessagingView: View {
                         }
                     },
                     onLongPress: { message in
+                        attachmentPreviewStore.beginReactionMode()
                         withAnimation(.easeInOut(duration: 0.2)) {
                             reactionModeMessage = message
                         }
@@ -302,16 +305,25 @@ struct MessagingView: View {
                                             }
                                         },
                                         onTapReplyPreview: { replyId in
-                                            withAnimation {
-                                                proxy.scrollTo(replyId, anchor: .center)
+                                            DispatchQueue.main.async {
+                                                guard reactionModeMessage?.id != message.id else { return }
+                                                withAnimation {
+                                                    proxy.scrollTo(replyId, anchor: .center)
+                                                }
                                             }
                                         },
                                         onLongPress: {
+                                            attachmentPreviewStore.beginReactionMode()
                                             withAnimation(.easeInOut(duration: 0.2)) {
                                                 reactionModeMessage = message
                                             }
                                         },
-                                        onOpenLink: openMessageLink,
+                                        onOpenLink: { target in
+                                            DispatchQueue.main.async {
+                                                guard reactionModeMessage?.id != message.id else { return }
+                                                openMessageLink(target)
+                                            }
+                                        },
                                         onOpenImage: { openImageAttachment(message) },
                                         onOpenFileAttachment: { index in
                                             openFileAttachment(message, index: index)
@@ -495,6 +507,7 @@ struct MessagingView: View {
                         emojiPickerTargetMessage = msg
                     },
                     onDismiss: {
+                        attachmentPreviewStore.endReactionMode()
                         withAnimation(.easeInOut(duration: 0.2)) {
                             reactionModeMessage = nil
                         }
@@ -656,7 +669,7 @@ struct MessagingView: View {
         .onDisappear {
             flushDraft(for: .navigation)
             NotificationService.activeConversationThreadId = nil
-            attachmentPreviewStore.exitConversation()
+            exitAttachmentInteractionState()
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             guard oldPhase == .active, newPhase != .active else { return }
@@ -896,8 +909,17 @@ struct MessagingView: View {
     }
 
     private func openMessageLink(_ target: MessageLinkTarget) {
-        guard case .nomadNet = target else { return }
-        nomadNetLinkTarget = target
+        switch target {
+        case .nomadNet:
+            nomadNetLinkTarget = target
+        case .web(let url), .external(let url):
+            openURL(url)
+        }
+    }
+
+    private func exitAttachmentInteractionState() {
+        reactionModeMessage = nil
+        attachmentPreviewStore.exitConversation()
     }
 
     private func openImageAttachment(_ message: Message) {
