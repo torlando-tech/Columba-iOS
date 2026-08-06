@@ -965,6 +965,24 @@
     },
     "%lld percent": {
       "comment": "VoiceOver value announcing the selected message text-size percentage."
+    },
+    "Image attachment": {
+      "comment": "VoiceOver label for an image attached to a chat message."
+    },
+    "File attachment: %@": {
+      "comment": "VoiceOver label for a file attached to a chat message. The placeholder is the sender-provided display name."
+    },
+    "Opens attachment preview": {
+      "comment": "VoiceOver hint for tappable image and file attachment controls."
+    },
+    "Share Attachment": {
+      "comment": "Button that opens the native export and share sheet for a previewed attachment."
+    },
+    "Unable to Open Attachment": {
+      "comment": "Error alert title when a message attachment cannot be prepared for preview."
+    },
+    "The attachment could not be prepared for preview.": {
+      "comment": "Privacy-safe error text shown when temporary attachment export fails."
     }
   },
   "version": "1.0"

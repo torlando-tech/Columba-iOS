@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
 import os.log
 #if canImport(UIKit)
 import UIKit
+import QuickLook
 #endif
 #if canImport(AppKit)
 import AppKit
@@ -171,6 +172,8 @@ struct MessagingView: View {
     @State private var showTextSizePicker = false
     @State private var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     @State private var nomadNetLinkTarget: MessageLinkTarget?
+    @State private var attachmentPreviewItem: MessageAttachmentPreviewItem?
+    @State private var attachmentPreviewError: String?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
@@ -211,7 +214,9 @@ struct MessagingView: View {
                             reactionModeMessage = message
                         }
                     },
-                    onOpenLink: openMessageLink
+                    onOpenLink: openMessageLink,
+                    onOpenImage: openImageAttachment,
+                    onOpenFileAttachment: openFileAttachment
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     MessageInputBar(
@@ -635,9 +640,25 @@ struct MessagingView: View {
             .presentationDetents([.height(460), .large])
             .presentationDragIndicator(.visible)
         }
+        #if os(iOS)
+        .fullScreenCover(item: $attachmentPreviewItem, onDismiss: cleanupAttachmentPreview) { item in
+            AttachmentPreviewScreen(item: item) {
+                attachmentPreviewItem = nil
+            }
+        }
+        .alert("Unable to Open Attachment", isPresented: Binding(
+            get: { attachmentPreviewError != nil },
+            set: { if !$0 { attachmentPreviewError = nil } }
+        )) {
+            Button("OK", role: .cancel) { attachmentPreviewError = nil }
+        } message: {
+            Text(attachmentPreviewError ?? "")
+        }
+        #endif
         .onDisappear {
             flushDraft(for: .navigation)
             NotificationService.activeConversationThreadId = nil
+            cleanupAttachmentPreview()
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             guard oldPhase == .active, newPhase != .active else { return }
@@ -866,6 +887,48 @@ struct MessagingView: View {
     private func openMessageLink(_ target: MessageLinkTarget) {
         guard case .nomadNet = target else { return }
         nomadNetLinkTarget = target
+    }
+
+    private func openImageAttachment(_ message: Message) {
+        guard let data = message.imageData else { return }
+        prepareAttachmentPreview(
+            data: data,
+            suggestedFilename: "image",
+            declaredImageFormat: message.imageFormat,
+            isImage: true
+        )
+    }
+
+    private func openFileAttachment(_ message: Message, index: Int) {
+        guard let attachments = message.attachments, attachments.indices.contains(index) else { return }
+        let attachment = attachments[index]
+        prepareAttachmentPreview(data: attachment.data, suggestedFilename: attachment.name)
+    }
+
+    private func prepareAttachmentPreview(
+        data: Data,
+        suggestedFilename: String,
+        declaredImageFormat: String? = nil,
+        isImage: Bool = false
+    ) {
+        cleanupAttachmentPreview()
+        do {
+            attachmentPreviewItem = try MessageAttachmentPreviewItem(
+                data: data,
+                suggestedFilename: suggestedFilename,
+                declaredImageFormat: declaredImageFormat,
+                isImage: isImage
+            )
+        } catch {
+            attachmentPreviewError = String(
+                localized: "The attachment could not be prepared for preview."
+            )
+        }
+    }
+
+    private func cleanupAttachmentPreview() {
+        attachmentPreviewItem?.cleanup()
+        attachmentPreviewItem = nil
     }
 
     @ViewBuilder
@@ -1431,6 +1494,73 @@ private struct LocationShareSheet: View {
             .padding(.horizontal)
 
             Spacer()
+        }
+    }
+}
+#endif
+
+#if os(iOS)
+@available(iOS 17.0, *)
+private struct AttachmentPreviewScreen: View {
+    let item: MessageAttachmentPreviewItem
+    let onClose: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            AttachmentQuickLookPreview(url: item.url)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle(item.url.lastPathComponent)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Close", action: onClose)
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ShareLink(item: item.url) {
+                            Label("Share Attachment", systemImage: "square.and.arrow.up")
+                        }
+                        .accessibilityIdentifier("attachment_share_button")
+                    }
+                }
+        }
+        .accessibilityIdentifier("attachment_preview")
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AttachmentQuickLookPreview: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(url: url)
+    }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {
+        guard context.coordinator.url != url else { return }
+        context.coordinator.url = url
+        controller.reloadData()
+    }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        var url: URL
+
+        init(url: URL) {
+            self.url = url
+        }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+        func previewController(
+            _ controller: QLPreviewController,
+            previewItemAt index: Int
+        ) -> QLPreviewItem {
+            url as NSURL
         }
     }
 }

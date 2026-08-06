@@ -21,6 +21,8 @@
 		011 /* ContactCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011 /* ContactCard.swift */; };
 		012 /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012 /* NetworkAnnouncesTab.swift */; };
 		013 /* MessagingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013 /* MessagingView.swift */; };
+		APV002 /* MessageAttachmentPreviewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = APV001 /* MessageAttachmentPreviewItem.swift */; };
+		APV003 /* MessageAttachmentPreviewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = APV001 /* MessageAttachmentPreviewItem.swift */; };
 		TSP002 /* TextSizePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSP001 /* TextSizePickerSheet.swift */; };
 		A41F10000000000000000001 /* MessageTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A41F10000000000000000003 /* MessageTimelineView.swift */; };
 		014 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014 /* MessageBubble.swift */; };
@@ -233,6 +235,7 @@
 		92DDF4AE0AB493CC2AA0BA20 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6000D5CED2C3C89F74999BC1 /* LXSTSwift */; };
 		9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */; };
 		A1B2C3D4E5F60718293A4B5E /* MessageBubbleLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */; };
+		APVT002 /* MessageAttachmentPreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = APVT001 /* MessageAttachmentPreviewTests.swift */; };
 		9673457897893BF9DE512A0F /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006 /* SettingsViewModel.swift */; };
 		973B4BBFD50C0935D1525F8E /* NomadNetBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F081 /* NomadNetBrowserView.swift */; };
 		97FCC1B1FF91DD6EF2706B04 /* LoRaPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F045 /* LoRaPresets.swift */; };
@@ -450,6 +453,7 @@
 		B68384C48BFF8F5294340EDB /* PttButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PttButton.swift; sourceTree = "<group>"; };
 		BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageFormattedTimeTests.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageBubbleLayoutTests.swift; sourceTree = "<group>"; };
+		APVT001 /* MessageAttachmentPreviewTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageAttachmentPreviewTests.swift; sourceTree = "<group>"; };
 		BF48C97880B30682DC35613C /* CeaseTelemetry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CeaseTelemetry.swift; sourceTree = "<group>"; };
 		BGTF /* BackgroundTransportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTransportView.swift; sourceTree = "<group>"; };
 		BKF002 /* BackendFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFactory.swift; sourceTree = "<group>"; };
@@ -482,6 +486,7 @@
 		TSP001 /* TextSizePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSizePickerSheet.swift; sourceTree = "<group>"; };
 		A41F10000000000000000003 /* MessageTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageTimelineView.swift; sourceTree = "<group>"; };
 		F014 /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
+		APV001 /* MessageAttachmentPreviewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageAttachmentPreviewItem.swift; sourceTree = "<group>"; };
 		MDB003 /* MessageBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBody.swift; sourceTree = "<group>"; };
 		F015 /* MessageInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageInputBar.swift; sourceTree = "<group>"; };
 		F016 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -863,6 +868,7 @@
 				TSP001 /* TextSizePickerSheet.swift */,
 				A41F10000000000000000003 /* MessageTimelineView.swift */,
 				F014 /* MessageBubble.swift */,
+				APV001 /* MessageAttachmentPreviewItem.swift */,
 				MDB003 /* MessageBody.swift */,
 				F015 /* MessageInputBar.swift */,
 				F073 /* MessageDetailView.swift */,
@@ -1022,6 +1028,7 @@
 				30A79B9ECDB4166F8A36A670 /* CallManagerCallKitTests.swift */,
 				BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */,
 				A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */,
+				APVT001 /* MessageAttachmentPreviewTests.swift */,
 				ACT01 /* AnnounceClassificationTests.swift */,
 				DRAFT001 /* DraftMessageTests.swift */,
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
@@ -1398,6 +1405,7 @@
 				BED8754AAD30B1CB58755EF8 /* MessagingView.swift in Sources */,
 				TSP003 /* TextSizePickerSheet.swift in Sources */,
 				A41F10000000000000000002 /* MessageTimelineView.swift in Sources */,
+				APV003 /* MessageAttachmentPreviewItem.swift in Sources */,
 				C204F5778ABB560C1FD4DC60 /* MessageBubble.swift in Sources */,
 				MDB002 /* MessageBody.swift in Sources */,
 				D93546FFCB0106CF3F68B2C5 /* MessageDetailView.swift in Sources */,
@@ -1580,6 +1588,7 @@
 				013 /* MessagingView.swift in Sources */,
 				TSP002 /* TextSizePickerSheet.swift in Sources */,
 				A41F10000000000000000001 /* MessageTimelineView.swift in Sources */,
+				APV002 /* MessageAttachmentPreviewItem.swift in Sources */,
 				014 /* MessageBubble.swift in Sources */,
 				MDB001 /* MessageBody.swift in Sources */,
 				073 /* MessageDetailView.swift in Sources */,
@@ -1703,6 +1712,7 @@
 				E49B977D311DA1C9ACE14CAB /* CallManagerCallKitTests.swift in Sources */,
 				9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5E /* MessageBubbleLayoutTests.swift in Sources */,
+				APVT002 /* MessageAttachmentPreviewTests.swift in Sources */,
 				ACT02 /* AnnounceClassificationTests.swift in Sources */,
 				DRAFT002 /* DraftMessageTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,

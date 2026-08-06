@@ -82,6 +82,8 @@ struct MessageTimelineView: UIViewControllerRepresentable {
     let onToggleReaction: (Message, String) -> Void
     let onLongPress: (Message) -> Void
     let onOpenLink: (MessageLinkTarget) -> Void
+    let onOpenImage: (Message) -> Void
+    let onOpenFileAttachment: (Message, Int) -> Void
 
     func makeUIViewController(context: Context) -> MessageTimelineViewController {
         let controller = MessageTimelineViewController()
@@ -91,6 +93,8 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
         controller.onOpenLink = onOpenLink
+        controller.onOpenImage = onOpenImage
+        controller.onOpenFileAttachment = onOpenFileAttachment
         return controller
     }
 
@@ -100,6 +104,8 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
         controller.onOpenLink = onOpenLink
+        controller.onOpenImage = onOpenImage
+        controller.onOpenFileAttachment = onOpenFileAttachment
         controller.update(
             conversationID: conversationID,
             messages: messages,
@@ -117,6 +123,8 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     var onToggleReaction: ((Message, String) -> Void)?
     var onLongPress: ((Message) -> Void)?
     var onOpenLink: ((MessageLinkTarget) -> Void)?
+    var onOpenImage: ((Message) -> Void)?
+    var onOpenFileAttachment: ((Message, Int) -> Void)?
 
     private var messages: [Message] = []
     private var conversationID: String?
@@ -314,6 +322,12 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
                     },
                     onOpenLink: { [weak self] target in
                         self?.onOpenLink?(target)
+                    },
+                    onOpenImage: { [weak self] in
+                        self?.onOpenImage?(message)
+                    },
+                    onOpenFileAttachment: { [weak self] index in
+                        self?.routeFileAttachment(message: message, index: index)
                     }
                 )
             }
@@ -469,6 +483,16 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
 
     var visibleMessageCellCount: Int {
         collectionView.indexPathsForVisibleItems.count
+    }
+
+    func openFileAttachmentForTesting(messageID: String, index: Int) {
+        guard let message = messages.first(where: { $0.id == messageID }) else { return }
+        routeFileAttachment(message: message, index: index)
+    }
+
+    private func routeFileAttachment(message: Message, index: Int) {
+        guard let attachments = message.attachments, attachments.indices.contains(index) else { return }
+        onOpenFileAttachment?(message, index)
     }
 
     struct ViewportSnapshot: Equatable {
