@@ -186,7 +186,7 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             .padding()
             .padding(.bottom, 32)
             .background(Color.black)
-            .preferredColorScheme(.dark)
+            .environment(\.colorScheme, .dark)
         )
         renderer.scale = 3
         let screenshot = try XCTUnwrap(renderer.uiImage)
