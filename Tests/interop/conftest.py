@@ -534,7 +534,14 @@ class Simulator:
             ]
             export_action = "Save Image"
         else:
-            lines += [f"- tapOn: {{ id: \"bubble_file_chip_{file_index}\" }}"]
+            # The filename is unique to this delivered message. Index scopes
+            # duplicate names within that message without colliding with old
+            # retained bubbles that carry the same indexed control ID.
+            lines += [
+                "- tapOn:",
+                f"    text: \"{_yaml_escape(file_name or '')}\"",
+                f"    index: {file_index}",
+            ]
             export_action = "Save to Files"
         lines += ["- waitForAnimationToEnd: { timeout: 2000 }"]
         if expected_preview_text is not None:

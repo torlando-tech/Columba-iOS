@@ -261,8 +261,9 @@ def test_file_sideband_to_ios(sim, sideband):
     """Sideband sends a small file; iOS persists it AND the bubble renders
     a file chip whose label carries the filename."""
     payload = file_bytes(b"reverse-file-interop\n")
-    name = "from-sideband.txt"
-    body = f"file-from-sideband-{int(time.time()*1000)}"
+    stamp = int(time.time() * 1000)
+    name = f"from-sideband-{stamp}.txt"
+    body = f"file-from-sideband-{stamp}"
     assert sideband.send_file(
         dest_hex=sim.lxmf_delivery_hex,
         content=body,
@@ -281,10 +282,11 @@ def test_file_sideband_to_ios(sim, sideband):
 
 def test_multiple_files_sideband_to_ios_selects_second(sim, sideband):
     """Duplicate names remain independently selectable by attachment index."""
-    body = f"multi-file-from-sideband-{int(time.time()*1000)}"
+    stamp = int(time.time() * 1000)
+    body = f"multi-file-from-sideband-{stamp}"
     first = file_bytes(b"first-file-payload\n")
     second = file_bytes(b"second-file-payload\n")
-    name = "duplicate.txt"
+    name = f"duplicate-{stamp}.txt"
     assert sideband.send_files(
         dest_hex=sim.lxmf_delivery_hex,
         content=body,
