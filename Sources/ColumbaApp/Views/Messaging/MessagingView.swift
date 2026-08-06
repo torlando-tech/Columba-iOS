@@ -208,6 +208,7 @@ struct MessagingView: View {
                         }
                     },
                     onLongPress: { message in
+                        attachmentPreviewStore.beginReactionMode()
                         withAnimation(.easeInOut(duration: 0.2)) {
                             reactionModeMessage = message
                         }
@@ -307,6 +308,7 @@ struct MessagingView: View {
                                             }
                                         },
                                         onLongPress: {
+                                            attachmentPreviewStore.beginReactionMode()
                                             withAnimation(.easeInOut(duration: 0.2)) {
                                                 reactionModeMessage = message
                                             }
@@ -495,6 +497,7 @@ struct MessagingView: View {
                         emojiPickerTargetMessage = msg
                     },
                     onDismiss: {
+                        attachmentPreviewStore.endReactionMode()
                         withAnimation(.easeInOut(duration: 0.2)) {
                             reactionModeMessage = nil
                         }

@@ -78,36 +78,6 @@ final class MessageAttachmentPreviewItemTests: XCTestCase {
     }
 }
 
-final class BubbleActionRouterTests: XCTestCase {
-    func testTapInvokesOnlyTapCallback() {
-        var taps = 0
-        var longPresses = 0
-
-        BubbleActionRouter.perform(
-            .tap,
-            onTap: { taps += 1 },
-            onLongPress: { longPresses += 1 }
-        )
-
-        XCTAssertEqual(taps, 1)
-        XCTAssertEqual(longPresses, 0)
-    }
-
-    func testLongPressInvokesOnlyLongPressCallback() {
-        var taps = 0
-        var longPresses = 0
-
-        BubbleActionRouter.perform(
-            .longPress,
-            onTap: { taps += 1 },
-            onLongPress: { longPresses += 1 }
-        )
-
-        XCTAssertEqual(taps, 0)
-        XCTAssertEqual(longPresses, 1)
-    }
-}
-
 @MainActor
 final class MessageAttachmentPreviewStoreTests: XCTestCase {
     func testReplacementDismissalAndConversationExitCleanOnlyOwnedItems() throws {
@@ -145,6 +115,37 @@ final class MessageAttachmentPreviewStoreTests: XCTestCase {
         store.exitConversation()
         XCTAssertFalse(FileManager.default.fileExists(atPath: third.directoryURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.url.path))
+    }
+
+    func testReactionModeWinsRegardlessOfPreviewCallbackOrdering() throws {
+        let tapThenLongPress = MessageAttachmentPreviewStore()
+        let first = try MessageAttachmentPreviewItem(
+            data: Data("first".utf8),
+            suggestedFilename: "first.bin"
+        )
+        tapThenLongPress.present(first)
+        tapThenLongPress.beginReactionMode()
+        XCTAssertNil(tapThenLongPress.item)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.directoryURL.path))
+
+        let longPressThenTap = MessageAttachmentPreviewStore()
+        let blocked = try MessageAttachmentPreviewItem(
+            data: Data("blocked".utf8),
+            suggestedFilename: "blocked.bin"
+        )
+        longPressThenTap.beginReactionMode()
+        longPressThenTap.present(blocked)
+        XCTAssertNil(longPressThenTap.item)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: blocked.directoryURL.path))
+
+        let allowed = try MessageAttachmentPreviewItem(
+            data: Data("allowed".utf8),
+            suggestedFilename: "allowed.bin"
+        )
+        longPressThenTap.endReactionMode()
+        longPressThenTap.present(allowed)
+        XCTAssertEqual(longPressThenTap.item?.id, allowed.id)
+        longPressThenTap.dismiss()
     }
 }
 

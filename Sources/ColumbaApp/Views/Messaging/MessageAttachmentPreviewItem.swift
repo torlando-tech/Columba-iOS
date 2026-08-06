@@ -131,12 +131,27 @@ final class MessageAttachmentPreviewStore: ObservableObject {
         }
     }
 
+    private(set) var isReactionModeActive = false
+
     init(item: MessageAttachmentPreviewItem? = nil) {
         self.item = item
     }
 
     func present(_ item: MessageAttachmentPreviewItem) {
+        guard !isReactionModeActive else {
+            item.cleanup()
+            return
+        }
         self.item = item
+    }
+
+    func beginReactionMode() {
+        isReactionModeActive = true
+        item = nil
+    }
+
+    func endReactionMode() {
+        isReactionModeActive = false
     }
 
     func dismiss() {
@@ -145,5 +160,6 @@ final class MessageAttachmentPreviewStore: ObservableObject {
 
     func exitConversation() {
         item = nil
+        isReactionModeActive = false
     }
 }

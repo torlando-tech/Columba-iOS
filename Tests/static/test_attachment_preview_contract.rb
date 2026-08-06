@@ -56,12 +56,21 @@ class AttachmentPreviewContractTests < Minitest::Test
     assert_includes bubble, '.accessibilityIdentifier("bubble_file_chip_\(index)")'
   end
 
-  def test_attachment_controls_exclusively_route_tap_or_long_press
+  def test_attachment_controls_use_native_buttons_and_owner_arbitrates_reactions
     bubble = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessageBubble.swift'))
-    assert_includes bubble, 'PrimitiveButtonStyle'
-    assert_includes bubble, '.exclusively(before: TapGesture())'
-    assert_operator bubble.scan('.buttonStyle(BubbleActionButtonStyle').length, :>=, 3
-    assert_includes bubble, 'BubbleActionRouter.perform'
-    refute_includes bubble, '.onLongPressGesture(minimumDuration: 0.4)'
+    assert_operator bubble.scan('.buttonStyle(.plain)').length, :>=, 3
+    assert_includes bubble, '.simultaneousGesture('
+    assert_includes bubble, 'LongPressGesture(minimumDuration: 0.4)'
+    refute_includes bubble, 'PrimitiveButtonStyle'
+    refute_includes bubble, '.exclusively(before: TapGesture())'
+
+    preview = File.read(File.join(ROOT, PREVIEW_SOURCE))
+    assert_includes preview, 'beginReactionMode()'
+    assert_includes preview, 'endReactionMode()'
+    assert_includes preview, 'guard !isReactionModeActive'
+
+    messaging = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessagingView.swift'))
+    assert_operator messaging.scan('attachmentPreviewStore.beginReactionMode()').length, :>=, 2
+    assert_includes messaging, 'attachmentPreviewStore.endReactionMode()'
   end
 end
