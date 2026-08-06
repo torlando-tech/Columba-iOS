@@ -61,6 +61,8 @@ class AttachmentPreviewContractTests < Minitest::Test
     assert_operator bubble.scan('.buttonStyle(.plain)').length, :>=, 3
     assert_includes bubble, '.simultaneousGesture('
     assert_includes bubble, 'LongPressGesture(minimumDuration: 0.4)'
+    assert_includes bubble, 'BubbleReplyPreviewPolicy.shouldNavigate'
+    assert_includes bubble, 'DispatchQueue.main.async'
     refute_includes bubble, 'PrimitiveButtonStyle'
     refute_includes bubble, '.exclusively(before: TapGesture())'
 

@@ -78,6 +78,29 @@ final class MessageAttachmentPreviewItemTests: XCTestCase {
     }
 }
 
+final class BubbleReplyPreviewPolicyTests: XCTestCase {
+    func testRecentLongPressSuppressesReplyNavigation() {
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        XCTAssertFalse(
+            BubbleReplyPreviewPolicy.shouldNavigate(
+                lastLongPressAt: now.addingTimeInterval(-0.05),
+                now: now
+            )
+        )
+    }
+
+    func testOrdinaryTapAllowsReplyNavigation() {
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        XCTAssertTrue(BubbleReplyPreviewPolicy.shouldNavigate(lastLongPressAt: nil, now: now))
+        XCTAssertTrue(
+            BubbleReplyPreviewPolicy.shouldNavigate(
+                lastLongPressAt: now.addingTimeInterval(-1),
+                now: now
+            )
+        )
+    }
+}
+
 @MainActor
 final class MessageAttachmentPreviewStoreTests: XCTestCase {
     func testReplacementDismissalAndConversationExitCleanOnlyOwnedItems() throws {
