@@ -145,7 +145,7 @@ class QRContactSendPathContractTests(unittest.TestCase):
         )
         repository = self._read("Sources/ColumbaApp/Services/MessageRepository.swift")
         stage = send.index("lxMessage.state = .sending")
-        wire_send = send.index("backend.lxmf.sendLxmfMessage")
+        wire_send = send.index("sendOutbound(")
         self.assertLess(stage, wire_send)
         self.assertIn("repository.stageRetry(lxMessage, replacing: storedHash)", send)
         self.assertIn("config.observesSuspensionNotifications = true", repository)

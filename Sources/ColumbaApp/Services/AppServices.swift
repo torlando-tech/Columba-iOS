@@ -2890,18 +2890,32 @@ public final class AppServices {
         case .state(let value, _):
             DiagLog.log("[RNS] state \(value)")
             logger.info("Python state: \(value, privacy: .public)")
-        case .delivery(let messageHash, let state, _):
+        case .delivery(let messageHash, let state, let method, _):
             DiagLog.log("[RNS] delivery \(messageHash.prefix(16)) state=\(state)")
             guard let hashData = Data(hexString: messageHash) else { return }
-            let newState: LXMessageState = (state == "delivered") ? .delivered : .failed
+            let newState: LXMessageState
+            switch state {
+            case "sent": newState = .sent
+            case "delivered": newState = .delivered
+            case "failed": newState = .failed
+            default:
+                logger.warning("Ignoring unknown delivery state: \(state, privacy: .public)")
+                return
+            }
             // Update the GRDB canonical store (where outbound messages are
             // persisted and the UI reads from), via the shared repository's
             // RNSAPI-typed method — not the Compat `database`.
             var proofPersisted = false
+            // Transport and lifecycle are independent. A propagated fallback
+            // can report recipient proof without a separately observed `sent`
+            // event, so persist the backend's effective method on every state.
+            // Retain the old sent-state inference for legacy event producers.
+            let acceptedMethod = method ?? ((state == "sent") ? .propagated : nil)
             if let repo = self.messageRepository {
                 proofPersisted = (try? await repo.applyDeliveryProof(
                     canonicalHash: hashData,
-                    state: newState
+                    state: newState,
+                    method: acceptedMethod
                 )) ?? false
             }
             // Notify the open chat so it can flip the bubble's indicator
@@ -2912,6 +2926,7 @@ public final class AppServices {
                 userInfo: [
                     "messageHash": hashData,
                     "state": state,
+                    "deliveryMethod": acceptedMethod?.rawValue ?? "",
                     "persisted": proofPersisted,
                 ]
             )

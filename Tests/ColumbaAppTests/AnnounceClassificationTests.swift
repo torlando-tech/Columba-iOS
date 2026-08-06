@@ -279,6 +279,81 @@ final class AnnounceClassificationTests: XCTestCase {
     }
 }
 
+final class MessageDetailAliasTests: XCTestCase {
+    private func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-detail-alias-\(UUID().uuidString).sqlite")
+    }
+
+    private func removeDatabase(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(atPath: url.path + "-shm")
+        try? FileManager.default.removeItem(atPath: url.path + "-wal")
+    }
+
+    @MainActor
+    func testPublicSendBuffersProofBeforeAliasAndRefreshesOpenDetail() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x41, count: 16)
+        let canonicalHash = Data(repeating: 0x42, count: 32)
+        let canonicalID = canonicalHash.map { String(format: "%02x", $0) }.joined()
+        var viewModel: MessagingViewModel!
+        var selected: Message?
+
+        viewModel = MessagingViewModel(
+            conversationHash: destination,
+            repository: repository,
+            appServices: AppServices(),
+            identity: Identity(),
+            outboundSendOperation: { _ in
+                selected = viewModel.messages.last
+                NotificationCenter.default.post(
+                    name: Notification.Name("ColumbaPythonDelivery"),
+                    object: nil,
+                    userInfo: [
+                        "messageHash": canonicalHash,
+                        "state": "delivered",
+                        "persisted": false,
+                        "deliveryMethod": "propagated",
+                    ]
+                )
+                for _ in 0..<1_000 {
+                    if viewModel.hasPendingDeliveryProof(for: canonicalHash) { break }
+                    await Task.yield()
+                }
+                guard viewModel.hasPendingDeliveryProof(for: canonicalHash) else {
+                    throw NSError(domain: "MessageDetailAliasTests", code: 1)
+                }
+                await viewModel.loadMessages()
+                guard viewModel.hasPendingDeliveryProof(for: canonicalHash) else {
+                    throw NSError(domain: "MessageDetailAliasTests", code: 2)
+                }
+                return .queued(messageHash: canonicalID)
+            }
+        )
+
+        let sent = await viewModel.sendMessage(
+            text: "hello",
+            imageData: nil,
+            imageFormat: nil,
+            attachments: nil
+        )
+
+        XCTAssertTrue(sent)
+        let openSelection = try XCTUnwrap(selected)
+        let resolved = viewModel.currentMessage(for: openSelection)
+        XCTAssertEqual(resolved.id, canonicalID)
+        XCTAssertEqual(resolved.deliveryStatus, .delivered)
+        XCTAssertEqual(resolved.deliveryMethod, "propagated")
+        let storedRecord = try await repository.getMessageRecord(id: canonicalHash)
+        let stored = try XCTUnwrap(storedRecord)
+        XCTAssertEqual(stored.state, LXMessageState.delivered.rawValue)
+        XCTAssertEqual(stored.method, RNSAPI.LXDeliveryMethod.propagated.rawValue)
+    }
+}
+
 final class MessageRepositoryAtomicReplacementTests: XCTestCase {
     private func temporaryDatabaseURL() -> URL {
         FileManager.default.temporaryDirectory
@@ -579,7 +654,8 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
 
         let applied = try await repository.applyDeliveryProof(
             canonicalHash: canonicalHash,
-            state: .delivered
+            state: .delivered,
+            method: .propagated
         )
 
         XCTAssertTrue(applied)
@@ -588,7 +664,21 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         let storedDelivered = try await repository.getMessageRecord(id: canonicalHash)
         let delivered = try XCTUnwrap(storedDelivered)
         XCTAssertEqual(delivered.state, LXMessageState.delivered.rawValue)
+        XCTAssertEqual(delivered.method, RNSAPI.LXDeliveryMethod.propagated.rawValue)
+        XCTAssertEqual(Message(from: delivered, localHash: Data()).deliveryMethod, "propagated")
         XCTAssertNil(delivered.receivingInterface)
+
+        let staleSentApplied = try await repository.applyDeliveryProof(
+            canonicalHash: canonicalHash,
+            state: .sent,
+            method: .opportunistic
+        )
+        XCTAssertTrue(staleSentApplied)
+        let staleSentRecord = try await repository.getMessageRecord(id: canonicalHash)
+        let afterStaleSent = try XCTUnwrap(staleSentRecord)
+        XCTAssertEqual(afterStaleSent.state, LXMessageState.delivered.rawValue)
+        XCTAssertEqual(afterStaleSent.method, RNSAPI.LXDeliveryMethod.propagated.rawValue)
+
         let stillHasUncertainRetry = try await repository.hasUncertainRetry(for: destination)
         XCTAssertFalse(stillHasUncertainRetry)
     }

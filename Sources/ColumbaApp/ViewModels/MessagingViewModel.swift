@@ -19,6 +19,27 @@ import os.log
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
 public final class MessagingViewModel {
+    struct OutboundSendRequest {
+        let destHashHex: String
+        let content: String
+        let method: RNSAPI.LXDeliveryMethod
+        let failureFallbackMethod: RNSAPI.LXDeliveryMethod?
+        let imageData: Data?
+        let imageFormat: String?
+        let fileAttachments: [RnsFileAttachment]?
+        let iconAppearance: IconAppearance?
+        let replyToMessageHashHex: String?
+        let replyQuotedContent: String?
+        let extraFields: [UInt8: Data]?
+    }
+
+    typealias OutboundSendOperation = @MainActor (OutboundSendRequest) async throws -> SendOutcome
+
+    struct PendingDeliveryProof: Equatable {
+        let state: LXMessageState
+        let method: RNSAPI.LXDeliveryMethod?
+    }
+
     // MARK: - Published Properties
 
     /// List of messages in chronological order (oldest first).
@@ -52,6 +73,8 @@ public final class MessagingViewModel {
     private let appServices: AppServices
     private let settingsRepository = SettingsRepository()
     private let displayName: String?
+    private var identityOverride: Identity?
+    private var outboundSendOperation: OutboundSendOperation?
     private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingViewModel")
 
     /// Observation token for incoming message notifications.
@@ -63,7 +86,8 @@ public final class MessagingViewModel {
     private var unsavedFailedOutboundIDs: Set<String> = []
     private var stagedRetryRecoveryHashes: [String: Data] = [:]
     private var pendingOutboundAliases: [String: String] = [:]
-    private var pendingDeliveryProofs: [String: LXMessageState] = [:]
+    private var canonicalizedOutboundAliases: [String: String] = [:]
+    private var pendingDeliveryProofs: [String: PendingDeliveryProof] = [:]
 
     // MARK: - Initialization
 
@@ -113,16 +137,29 @@ public final class MessagingViewModel {
                   let hashData = notification.userInfo?["messageHash"] as? Data,
                   let state = notification.userInfo?["state"] as? String else { return }
             let proofPersisted = notification.userInfo?["persisted"] as? Bool ?? false
+            let deliveryMethod = notification.userInfo?["deliveryMethod"] as? String
             let hashHex = hashData.map { String(format: "%02x", $0) }.joined()
             Task { @MainActor in
-                let proofState: LXMessageState = (state == "delivered") ? .delivered : .failed
+                let proofState: LXMessageState
+                switch state {
+                case "sent": proofState = .sent
+                case "delivered": proofState = .delivered
+                case "failed": proofState = .failed
+                default:
+                    self.logger.warning("[MSG_VM] Ignoring unknown delivery state: \(state, privacy: .public)")
+                    return
+                }
+                let proofMethod = Self.deliveryMethod(from: deliveryMethod)
                 let wasAliased = self.pendingOutboundAliases[hashHex] != nil
                 let visibleID = Self.visibleMessageID(
                     for: hashHex,
                     aliases: self.pendingOutboundAliases
                 )
-                if wasAliased && !proofPersisted {
-                    self.pendingDeliveryProofs[hashHex] = proofState
+                if !proofPersisted {
+                    self.pendingDeliveryProofs[hashHex] = PendingDeliveryProof(
+                        state: proofState,
+                        method: proofMethod
+                    )
                 }
                 guard let index = self.messages.firstIndex(where: { $0.id == visibleID }) else { return }
                 if wasAliased && proofPersisted {
@@ -131,14 +168,40 @@ public final class MessagingViewModel {
                         canonicalHash: hashData,
                         proofState: proofState
                     )
-                    self.pendingOutboundAliases.removeValue(forKey: hashHex)
+                    if let deliveryMethod, !deliveryMethod.isEmpty {
+                        self.messages[index].deliveryMethod = deliveryMethod
+                    }
+                    Self.recordCanonicalAlias(
+                        canonicalID: hashHex,
+                        pendingAliases: &self.pendingOutboundAliases,
+                        canonicalizedAliases: &self.canonicalizedOutboundAliases
+                    )
                     self.pendingDeliveryProofs.removeValue(forKey: hashHex)
                     await self.invalidatePaginationAndRefresh()
                 } else {
-                    self.messages[index].deliveryStatus = (proofState == .delivered) ? .delivered : .failed
+                    self.messages[index].deliveryStatus = Self.deliveryStatus(for: proofState)
+                    if let deliveryMethod, !deliveryMethod.isEmpty {
+                        self.messages[index].deliveryMethod = deliveryMethod
+                    }
                 }
             }
         }
+    }
+
+    convenience init(
+        conversationHash: Data,
+        repository: MessageRepository,
+        appServices: AppServices,
+        identity: Identity,
+        outboundSendOperation: @escaping OutboundSendOperation
+    ) {
+        self.init(
+            conversationHash: conversationHash,
+            repository: repository,
+            appServices: appServices
+        )
+        self.identityOverride = identity
+        self.outboundSendOperation = outboundSendOperation
     }
 
     deinit {
@@ -226,12 +289,15 @@ public final class MessagingViewModel {
                    canonicalHash != resolvedMessages[i].storageHash {
                     pendingOutboundAliases[Self.hexString(canonicalHash)] = resolvedMessages[i].id
                 }
-                if let proof = Self.pendingProof(
+                if let proof = Self.pendingProofDetails(
                     forVisibleID: resolvedMessages[i].id,
                     aliases: pendingOutboundAliases,
                     proofs: pendingDeliveryProofs
                 ) {
-                    resolvedMessages[i].deliveryStatus = (proof == .delivered) ? .delivered : .failed
+                    resolvedMessages[i].deliveryStatus = Self.deliveryStatus(for: proof.state)
+                    if let method = proof.method {
+                        resolvedMessages[i].deliveryMethod = method.rawValue
+                    }
                 }
             }
             await reconcileAliasedDeliveryProofs(in: resolvedMessages)
@@ -353,13 +419,23 @@ public final class MessagingViewModel {
     }
 
     @MainActor
-    private func reconcilePendingDeliveryProof(for hash: Data) async {
+    func reconcilePendingDeliveryProof(for hash: Data) async {
         let hashHex = Self.hexString(hash)
-        pendingOutboundAliases.removeValue(forKey: hashHex)
+        Self.recordCanonicalAlias(
+            canonicalID: hashHex,
+            pendingAliases: &pendingOutboundAliases,
+            canonicalizedAliases: &canonicalizedOutboundAliases
+        )
         guard let proof = pendingDeliveryProofs[hashHex] else { return }
         do {
-            try await repository.updateMessageState(id: hash, state: proof)
-            pendingDeliveryProofs.removeValue(forKey: hashHex)
+            let rowUpdated = try await repository.updateMessageState(
+                id: hash,
+                state: proof.state,
+                method: proof.method
+            )
+            if rowUpdated, pendingDeliveryProofs[hashHex] == proof {
+                pendingDeliveryProofs.removeValue(forKey: hashHex)
+            }
         } catch {
             logger.error("[MSG_VM] failed to persist delivery proof: \(error.localizedDescription)")
         }
@@ -371,8 +447,12 @@ public final class MessagingViewModel {
             guard pendingOutboundAliases[hashHex] == nil,
                   let hash = Self.hexToData(hashHex) else { continue }
             do {
-                try await repository.updateMessageState(id: hash, state: proof)
-                if pendingDeliveryProofs[hashHex] == proof {
+                let rowUpdated = try await repository.updateMessageState(
+                    id: hash,
+                    state: proof.state,
+                    method: proof.method
+                )
+                if rowUpdated, pendingDeliveryProofs[hashHex] == proof {
                     pendingDeliveryProofs.removeValue(forKey: hashHex)
                 }
             } catch {
@@ -388,8 +468,13 @@ public final class MessagingViewModel {
                   let storageHash = message.storageHash,
                   let proof = pendingDeliveryProofs[Self.hexString(canonicalHash)] else { continue }
             do {
-                try await repository.updateMessageState(id: storageHash, state: proof)
-                if pendingDeliveryProofs[Self.hexString(canonicalHash)] == proof {
+                let rowUpdated = try await repository.updateMessageState(
+                    id: storageHash,
+                    state: proof.state,
+                    method: proof.method
+                )
+                if rowUpdated,
+                   pendingDeliveryProofs[Self.hexString(canonicalHash)] == proof {
                     pendingDeliveryProofs.removeValue(forKey: Self.hexString(canonicalHash))
                 }
             } catch {
@@ -399,7 +484,11 @@ public final class MessagingViewModel {
     }
 
     @MainActor
-    private func pendingDeliveryProof(for hash: Data) -> LXMessageState? {
+    func hasPendingDeliveryProof(for hash: Data) -> Bool {
+        pendingDeliveryProofs[Self.hexString(hash)] != nil
+    }
+
+    private func pendingDeliveryProof(for hash: Data) -> PendingDeliveryProof? {
         let hashHex = Self.hexString(hash)
         return pendingDeliveryProofs[hashHex]
     }
@@ -413,6 +502,7 @@ public final class MessagingViewModel {
             pendingOutboundAliases.removeValue(forKey: hash)
             pendingDeliveryProofs.removeValue(forKey: hash)
         }
+        canonicalizedOutboundAliases.removeValue(forKey: visibleID)
     }
 
     private static func hexString(_ data: Data) -> String {
@@ -424,6 +514,67 @@ public final class MessagingViewModel {
         aliases: [String: String]
     ) -> String {
         aliases[realID] ?? realID
+    }
+
+    static func recordCanonicalAlias(
+        canonicalID: String,
+        pendingAliases: inout [String: String],
+        canonicalizedAliases: inout [String: String]
+    ) {
+        guard let optimisticID = pendingAliases.removeValue(forKey: canonicalID) else { return }
+        canonicalizedAliases[optimisticID] = canonicalID
+    }
+
+    @MainActor
+    func registerPendingOutboundAlias(canonicalHash: Data, optimisticID: String) {
+        pendingOutboundAliases[Self.hexString(canonicalHash)] = optimisticID
+    }
+
+    private static func deliveryMethod(from value: String?) -> RNSAPI.LXDeliveryMethod? {
+        switch value {
+        case "opportunistic": return .opportunistic
+        case "direct": return .direct
+        case "propagated": return .propagated
+        default: return nil
+        }
+    }
+
+    func currentMessage(for selected: Message) -> Message {
+        Self.resolveCurrentMessage(
+            selected,
+            messages: messages,
+            pendingAliases: pendingOutboundAliases,
+            canonicalizedAliases: canonicalizedOutboundAliases
+        )
+    }
+
+    static func resolveCurrentMessage(
+        _ selected: Message,
+        messages: [Message],
+        pendingAliases: [String: String],
+        canonicalizedAliases: [String: String]
+    ) -> Message {
+        if let exact = messages.first(where: { $0.id == selected.id }) {
+            return exact
+        }
+        let canonicalID = canonicalizedAliases[selected.id]
+            ?? pendingAliases.first(where: { $0.value == selected.id })?.key
+        guard let canonicalID else { return selected }
+        return messages.first(where: { $0.id == canonicalID }) ?? selected
+    }
+
+    private static func pendingProofDetails(
+        forVisibleID visibleID: String,
+        aliases: [String: String],
+        proofs: [String: PendingDeliveryProof]
+    ) -> PendingDeliveryProof? {
+        if let direct = proofs[visibleID] { return direct }
+        guard let canonicalID = aliases.first(where: {
+            $0.value == visibleID && proofs[$0.key] != nil
+        })?.key else {
+            return nil
+        }
+        return proofs[canonicalID]
     }
 
     static func pendingProof(
@@ -450,7 +601,7 @@ public final class MessagingViewModel {
             content: message.content,
             timestamp: message.timestamp,
             isFromMe: message.isFromMe,
-            deliveryStatus: proofState == .delivered ? .delivered : .failed,
+            deliveryStatus: deliveryStatus(for: proofState),
             imageData: message.imageData,
             imageFormat: message.imageFormat,
             attachments: message.attachments,
@@ -466,6 +617,15 @@ public final class MessagingViewModel {
         canonical.snr = message.snr
         canonical.receivedInterface = nil
         return canonical
+    }
+
+    static func deliveryStatus(for state: LXMessageState) -> DeliveryStatus {
+        switch state {
+        case .sent: return .sent
+        case .delivered: return .delivered
+        case .failed: return .failed
+        default: return .sent
+        }
     }
 
     static func mergingPendingOutbound(
@@ -538,6 +698,32 @@ public final class MessagingViewModel {
         )
     }
 
+    @MainActor
+    private func sendOutbound(
+        _ request: OutboundSendRequest,
+        backend: (any RnsBackend)?
+    ) async throws -> SendOutcome {
+        if let outboundSendOperation {
+            return try await outboundSendOperation(request)
+        }
+        guard let backend else {
+            throw NSError(domain: "MessagingViewModel", code: 1)
+        }
+        return try await backend.lxmf.sendLxmfMessage(
+            destHashHex: request.destHashHex,
+            content: request.content,
+            method: request.method,
+            failureFallbackMethod: request.failureFallbackMethod,
+            imageData: request.imageData,
+            imageFormat: request.imageFormat,
+            fileAttachments: request.fileAttachments,
+            iconAppearance: request.iconAppearance,
+            replyToMessageHashHex: request.replyToMessageHashHex,
+            replyQuotedContent: request.replyQuotedContent,
+            extraFields: request.extraFields
+        )
+    }
+
     private static func failureCategory(_ error: Error) -> String {
         (error as? SendFailure)?.category ?? "backend-error"
     }
@@ -580,12 +766,13 @@ public final class MessagingViewModel {
             return false
         }
 
-        guard let identity = appServices.identity else {
+        guard let identity = identityOverride ?? appServices.identity else {
             errorMessage = "Identity not initialized"
             return false
         }
 
-        guard let backend = appServices.backend else {
+        let backend = appServices.backend
+        guard backend != nil || outboundSendOperation != nil else {
             errorMessage = "Backend not initialized"
             return false
         }
@@ -597,6 +784,7 @@ public final class MessagingViewModel {
         // On failure, retry-via-relay handles the final propagated fallback.
         let settingsMethod = await settingsRepository.getDefaultDeliveryMethod()
         let fallbackForLargeMessages: LXDeliveryMethod = (settingsMethod == "propagated") ? .propagated : .direct
+        let retryViaRelay = await settingsRepository.getRetryViaRelay()
 
         // Resolve icon once — passed to the typed backend send below and also
         // stashed in the local Compat.LXMessage fields for persistence/display.
@@ -700,17 +888,31 @@ public final class MessagingViewModel {
             // Compat router + sendHook path, which dropped all fields on the
             // wire.) Nothing persists the outbound message to the local DB, so
             // we save explicitly below once `lxMessage.hash` is stamped.
-            let outcome = try await backend.lxmf.sendLxmfMessage(
-                destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
-                content: trimmedText, method: .opportunistic,
-                imageData: imageData, imageFormat: imageFormat,
-                fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
-                iconAppearance: icon,
-                replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
+            let outcome = try await sendOutbound(
+                OutboundSendRequest(
+                    destHashHex: Self.hexString(conversationHash),
+                    content: trimmedText,
+                    method: .opportunistic,
+                    failureFallbackMethod: retryViaRelay ? .propagated : nil,
+                    imageData: imageData,
+                    imageFormat: imageFormat,
+                    fileAttachments: attachments?.map {
+                        RnsFileAttachment(name: $0.name, data: $0.data)
+                    },
+                    iconAppearance: icon,
+                    replyToMessageHashHex: replyToId,
+                    replyQuotedContent: replyPreview,
+                    extraFields: nil
+                ),
+                backend: backend
+            )
             let sentHash = try Self.queuedHash(from: outcome)
             lxMessage.hash = sentHash
             lxMessage.state = .sent
-            pendingOutboundAliases[Self.hexString(sentHash)] = optimisticId
+            registerPendingOutboundAlias(
+                canonicalHash: sentHash,
+                optimisticID: optimisticId
+            )
 
             // Persist so a subsequent loadMessages() doesn't wipe it.
             do {
@@ -738,7 +940,7 @@ public final class MessagingViewModel {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
                 if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                     messages[index].messageHash = sentHash
-                    messages[index].deliveryStatus = (proof == .delivered) ? .delivered : .failed
+                    messages[index].deliveryStatus = proof.map { Self.deliveryStatus(for: $0.state) } ?? .failed
                 }
                 errorMessage = "Message was sent, but local confirmation could not be saved. Verify whether it arrived before retrying."
             }
@@ -747,7 +949,6 @@ public final class MessagingViewModel {
         } catch {
             var failure: Error = error
             // Retry via relay if enabled
-            let retryViaRelay = await settingsRepository.getRetryViaRelay()
             if retryViaRelay {
                 logger.info("[MSG_VM] Delivery failed, retrying via relay")
 
@@ -770,18 +971,32 @@ public final class MessagingViewModel {
 
                 do {
                     // Relay retry through the neutral facet (propagated method).
-                    let retryOutcome = try await backend.lxmf.sendLxmfMessage(
-                        destHashHex: conversationHash.map { String(format: "%02x", $0) }.joined(),
-                        content: trimmedText, method: .propagated,
-                        imageData: imageData, imageFormat: imageFormat,
-                        fileAttachments: attachments?.map { RnsFileAttachment(name: $0.name, data: $0.data) },
-                        iconAppearance: icon,
-                        replyToMessageHashHex: replyToId, replyQuotedContent: replyPreview, extraFields: nil)
+                    let retryOutcome = try await sendOutbound(
+                        OutboundSendRequest(
+                            destHashHex: Self.hexString(conversationHash),
+                            content: trimmedText,
+                            method: .propagated,
+                            failureFallbackMethod: nil,
+                            imageData: imageData,
+                            imageFormat: imageFormat,
+                            fileAttachments: attachments?.map {
+                                RnsFileAttachment(name: $0.name, data: $0.data)
+                            },
+                            iconAppearance: icon,
+                            replyToMessageHashHex: replyToId,
+                            replyQuotedContent: replyPreview,
+                            extraFields: nil
+                        ),
+                        backend: backend
+                    )
                     let retryHash = try Self.queuedHash(from: retryOutcome)
                     retryMessage.hash = retryHash
                     retryMessage.state = .sent
                     retryMessage.method = .propagated
-                    pendingOutboundAliases[Self.hexString(retryHash)] = optimisticId
+                    registerPendingOutboundAlias(
+                        canonicalHash: retryHash,
+                        optimisticID: optimisticId
+                    )
                     do {
                         try await persistMessage(retryMessage, replacing: localRetryHash)
                         await reconcilePendingDeliveryProof(for: retryHash)
@@ -807,7 +1022,7 @@ public final class MessagingViewModel {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                         if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                             messages[index].messageHash = retryHash
-                            messages[index].deliveryStatus = (proof == .delivered) ? .delivered : .failed
+                            messages[index].deliveryStatus = proof.map { Self.deliveryStatus(for: $0.state) } ?? .failed
                         }
                         errorMessage = "Message was relayed, but local confirmation could not be saved. Verify whether it arrived before retrying."
                     }

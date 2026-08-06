@@ -104,6 +104,35 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         replyQuotedContent: String?,
         extraFields: [UInt8: Data]?
     ) async throws -> SendOutcome {
+        try await sendLxmfMessage(
+            destHashHex: destHashHex,
+            content: content,
+            method: method,
+            failureFallbackMethod: nil,
+            imageData: imageData,
+            imageFormat: imageFormat,
+            fileAttachments: fileAttachments,
+            iconAppearance: iconAppearance,
+            replyToMessageHashHex: replyToMessageHashHex,
+            replyQuotedContent: replyQuotedContent,
+            extraFields: extraFields
+        )
+    }
+
+    @discardableResult
+    public func sendLxmfMessage(
+        destHashHex: String,
+        content: String,
+        method: LXDeliveryMethod,
+        failureFallbackMethod: LXDeliveryMethod?,
+        imageData: Data?,
+        imageFormat: String?,
+        fileAttachments: [RnsFileAttachment]?,
+        iconAppearance: IconAppearance?,
+        replyToMessageHashHex: String?,
+        replyQuotedContent: String?,
+        extraFields: [UInt8: Data]?
+    ) async throws -> SendOutcome {
         // Browse/add/open remain passive. Only an actual non-propagated send
         // actively resolves the recipient path, with one request and a bounded
         // wait in Python. Propagated sends need the retained identity but do not
@@ -133,9 +162,18 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         case .propagated: methodString = "propagated"
         default: methodString = "opportunistic"
         }
+        let failureFallbackString: String
+        switch failureFallbackMethod {
+        case .propagated?: failureFallbackString = "propagated"
+        default: failureFallbackString = ""
+        }
         return Self.map(try await bridge.sendOpportunistic(
-            destHashHex: destHashHex, content: content,
-            fieldsHex: fieldsHex, method: methodString))
+            destHashHex: destHashHex,
+            content: content,
+            fieldsHex: fieldsHex,
+            method: methodString,
+            failureFallbackMethod: failureFallbackString
+        ))
     }
 
     @discardableResult
@@ -338,8 +376,15 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
             return .inbound(sourceHash: s, messageHash: mh, content: c, title: ti, fieldsPacked: (try? fh.hexToData()) ?? Data(), t: t)
         case let .state(s, t):
             return .state(s, t: t)
-        case let .delivery(m, s, t):
-            return .delivery(messageHash: m, state: s, t: t)
+        case let .delivery(m, s, method, t):
+            let effectiveMethod: LXDeliveryMethod?
+            switch method {
+            case "opportunistic": effectiveMethod = .opportunistic
+            case "direct": effectiveMethod = .direct
+            case "propagated": effectiveMethod = .propagated
+            default: effectiveMethod = nil
+            }
+            return .delivery(messageHash: m, state: s, method: effectiveMethod, t: t)
         case let .linkState(l, s, r, i, t):
             return .linkState(linkId: l, state: s, reason: r, inbound: i, t: t)
         case let .linkPacket(l, dat, t):

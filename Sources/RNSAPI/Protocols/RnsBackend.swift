@@ -65,9 +65,9 @@ public enum BackendEvent: Equatable, Sendable {
     /// attachments / reactions / replies / icon / cease through the seam.
     case inbound(sourceHash: String, messageHash: String, content: String, title: String, fieldsPacked: Data, t: Date)
     case state(String, t: Date)
-    /// Delivery / failure proof for an outbound message, keyed by its LXMF
-    /// message hash hex. `state` is "delivered" or "failed".
-    case delivery(messageHash: String, state: String, t: Date)
+    /// Delivery lifecycle event for an outbound message. `method` is the
+    /// effective transport used for this attempt and is independent of state.
+    case delivery(messageHash: String, state: String, method: LXDeliveryMethod?, t: Date)
     // RNS.Link events — consumed by lxst-swift for voice calls.
     case linkState(linkId: Int, state: String, reason: String, inbound: Bool, t: Date)
     case linkPacket(linkId: Int, data: Data, t: Date)

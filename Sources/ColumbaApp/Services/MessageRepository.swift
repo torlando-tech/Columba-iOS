@@ -718,29 +718,82 @@ public actor MessageRepository {
         try await database.hasMessage(id: id)
     }
 
-    /// Update message delivery state.
-    public func updateMessageState(id: Data, state: RNSAPI.LXMessageState) async throws {
-        try await database.updateMessageState(id: id, state: Self.mapStateToGRDB(state))
+    /// Update message delivery state and optional effective transport without
+    /// allowing stale evidence to downgrade authoritative recipient delivery.
+    @discardableResult
+    public func updateMessageState(
+        id: Data,
+        state: RNSAPI.LXMessageState,
+        method: RNSAPI.LXDeliveryMethod? = nil
+    ) async throws -> Bool {
+        try await replacementPool.write { db in
+            let incomingState = Int(Self.mapStateToGRDB(state).rawValue)
+            let existingState = try Int.fetchOne(
+                db,
+                sql: "SELECT state FROM messages WHERE message_id = ?",
+                arguments: [id]
+            )
+            let persistedState = Self.monotonicDeliveryState(
+                existing: existingState,
+                incoming: incomingState
+            )
+            let persistedMethod = persistedState == incomingState
+                ? method.map { Self.mapMethodToGRDB($0).rawValue }
+                : nil
+            try db.execute(
+                sql: """
+                    UPDATE messages
+                    SET state = ?, method = COALESCE(?, method), updated_at = ?
+                    WHERE message_id = ?
+                    """,
+                arguments: [
+                    persistedState,
+                    persistedMethod,
+                    Date().timeIntervalSince1970,
+                    id,
+                ]
+            )
+            return db.changesCount > 0
+        }
     }
 
     /// Persist an authoritative backend delivery proof. If canonical message
     /// persistence previously failed during a retry, atomically resolve the
     /// durable storage-key row through its canonical uncertainty marker and
     /// rekey it to the wire hash. This path works without an open chat view.
+    static func monotonicDeliveryState(existing: Int?, incoming: Int) -> Int {
+        guard let existing else { return incoming }
+        let delivered = Int(LXMFSwift.LXMessageState.delivered.rawValue)
+        return existing == delivered ? existing : incoming
+    }
+
     @discardableResult
     public func applyDeliveryProof(
         canonicalHash: Data,
-        state: RNSAPI.LXMessageState
+        state: RNSAPI.LXMessageState,
+        method: RNSAPI.LXDeliveryMethod? = nil
     ) async throws -> Bool {
         try await replacementPool.write { db in
-            let mappedState = Self.mapStateToGRDB(state).rawValue
+            let incomingState = Int(Self.mapStateToGRDB(state).rawValue)
+            let mappedMethod = method.map { Self.mapMethodToGRDB($0).rawValue }
             let now = Date().timeIntervalSince1970
+            let existingCanonicalState = try Int.fetchOne(
+                db,
+                sql: "SELECT state FROM messages WHERE message_id = ?",
+                arguments: [canonicalHash]
+            )
+            let canonicalState = Self.monotonicDeliveryState(
+                existing: existingCanonicalState,
+                incoming: incomingState
+            )
+            let canonicalMethod = canonicalState == incomingState ? mappedMethod : nil
             try db.execute(
                 sql: """
-                    UPDATE messages SET state = ?, updated_at = ?
+                    UPDATE messages
+                    SET state = ?, method = COALESCE(?, method), updated_at = ?
                     WHERE message_id = ?
                     """,
-                arguments: [mappedState, now, canonicalHash]
+                arguments: [canonicalState, canonicalMethod, now, canonicalHash]
             )
             if db.changesCount == 1 {
                 try db.execute(
@@ -757,18 +810,31 @@ public actor MessageRepository {
                 return true
             }
 
+            let uncertaintyMarker = Self.uncertainRetryMarker(canonicalHash: canonicalHash)
+            let existingAliasState = try Int.fetchOne(
+                db,
+                sql: "SELECT state FROM messages WHERE incoming = 0 AND receiving_interface = ?",
+                arguments: [uncertaintyMarker]
+            )
+            let aliasState = Self.monotonicDeliveryState(
+                existing: existingAliasState,
+                incoming: incomingState
+            )
+            let aliasMethod = aliasState == incomingState ? mappedMethod : nil
             try db.execute(
                 sql: """
                     UPDATE messages
-                    SET message_id = ?, state = ?, receiving_interface = NULL,
+                    SET message_id = ?, state = ?, method = COALESCE(?, method),
+                        receiving_interface = NULL,
                         updated_at = ?
                     WHERE incoming = 0 AND receiving_interface = ?
                     """,
                 arguments: [
                     canonicalHash,
-                    mappedState,
+                    aliasState,
+                    aliasMethod,
                     now,
-                    Self.uncertainRetryMarker(canonicalHash: canonicalHash),
+                    uncertaintyMarker,
                 ]
             )
             return db.changesCount == 1
