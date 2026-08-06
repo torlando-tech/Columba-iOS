@@ -566,9 +566,12 @@ class Simulator:
                 "- tapOn: \"Save\"",
                 "- waitForAnimationToEnd: { timeout: 2000 }",
             ]
-        # Dismiss native Quick Look and return to the message thread. `back`
-        # avoids depending on Quick Look's hidden/shown chrome state.
-        lines += ["- back", "- waitForAnimationToEnd: { timeout: 1000 }"]
+        # Native Quick Look returns with its chrome visible after the save
+        # action, so dismiss through its upper-right close control.
+        lines += [
+            "- tapOn: { point: \"91%,9%\" }",
+            "- waitForAnimationToEnd: { timeout: 1000 }",
+        ]
         flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_preview_{os.getpid()}.yaml"
         flow_path.write_text("\n".join(lines) + "\n")
         try:

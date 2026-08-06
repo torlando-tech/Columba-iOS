@@ -290,7 +290,7 @@ def test_multiple_files_sideband_to_ios_selects_second(sim, sideband):
         content=body,
         attachments=[(name, first), (name, second)],
     )
-    sim.wait_for_log(body, timeout=20)
+    _wait_for_diag_inbound(sim, content=body)
     sim.assert_bubble_visible(content=body, has_file_name=name, timeout=30)
     sim.assert_attachment_preview_and_export(
         file_name=name,
