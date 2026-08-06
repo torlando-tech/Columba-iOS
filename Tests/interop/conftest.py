@@ -521,7 +521,14 @@ class Simulator:
         lines = ["appId: " + BUNDLE_ID, "---"]
         if image:
             lines += [
-                "- tapOn: { id: \"bubble_image\" }",
+                "- tapOn:",
+                "    id: \"bubble_image\"",
+                "    index: 1",
+                "    optional: true",
+                "- tapOn:",
+                "    id: \"bubble_image\"",
+                "    index: 0",
+                "    optional: true",
                 "- waitForAnimationToEnd: { timeout: 2000 }",
                 "- assertVisible: \"image.png\"",
             ]
@@ -547,9 +554,10 @@ class Simulator:
         try:
             _sh(["maestro", "--device", self.udid, "test", str(flow_path)], timeout=timeout + 30)
         except subprocess.CalledProcessError as e:
+            details = "\n".join(part for part in (e.stdout, e.stderr) if part)
             pytest.fail(
                 f"attachment preview/export failed (image={image}, file_name={file_name!r}). "
-                f"Maestro stderr:\n{e.stderr or e.stdout}"
+                f"Maestro output:\n{details}"
             )
         finally:
             flow_path.unlink(missing_ok=True)
