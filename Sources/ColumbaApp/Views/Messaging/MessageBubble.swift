@@ -143,12 +143,15 @@ struct MessageBubble: View {
                 .background(bubbleBackground)
                 .clipShape(bubbleShape)
                 .contentShape(bubbleShape)
-                .onLongPressGesture(minimumDuration: 0.4) {
-                    #if canImport(UIKit)
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    #endif
-                    onLongPress?()
-                }
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.4)
+                        .onEnded { _ in
+                            #if canImport(UIKit)
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            #endif
+                            onLongPress?()
+                        }
+                )
 
                 // Reaction chips (below bubble)
                 if !message.reactions.isEmpty {

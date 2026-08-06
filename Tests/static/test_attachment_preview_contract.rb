@@ -55,4 +55,11 @@ class AttachmentPreviewContractTests < Minitest::Test
     assert_includes bubble, '.accessibilityIdentifier("bubble_file_chip")'
     assert_includes bubble, '.accessibilityIdentifier("bubble_file_chip_\(index)")'
   end
+
+  def test_parent_reaction_gesture_preserves_physical_attachment_taps
+    bubble = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessageBubble.swift'))
+    assert_includes bubble, '.simultaneousGesture('
+    assert_includes bubble, 'LongPressGesture(minimumDuration: 0.4)'
+    refute_includes bubble, '.onLongPressGesture(minimumDuration: 0.4)'
+  end
 end
