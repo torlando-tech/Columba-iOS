@@ -146,8 +146,4 @@ final class MessageAttachmentPreviewStore: ObservableObject {
     func exitConversation() {
         item = nil
     }
-
-    deinit {
-        item?.cleanup()
-    }
 }
