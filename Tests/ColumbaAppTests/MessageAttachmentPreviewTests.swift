@@ -165,9 +165,13 @@ final class MessageAttachmentRoutingTests: XCTestCase {
 
     @MainActor
     func testAttachmentBubbleProducesVisualEvidenceForInteractiveControls() throws {
-        let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).pngData { context in
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 64)).pngData { context in
+            UIColor.systemRed.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 48, height: 64))
             UIColor.systemBlue.setFill()
-            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+            context.fill(CGRect(x: 48, y: 0, width: 48, height: 64))
+            UIColor.systemGreen.setFill()
+            context.fill(CGRect(x: 0, y: 27, width: 96, height: 10))
         }
         let message = Message(
             content: "Attachments",
@@ -176,23 +180,78 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             imageFormat: "png",
             attachments: [FileAttachment(name: "document.txt", data: Data("contents".utf8))]
         )
+        let screenshot = try renderBubble(message, width: 320, dynamicTypeSize: .large)
+        let colors = dominantColorCounts(in: screenshot)
+        XCTAssertGreaterThan(colors.red, 1_000)
+        XCTAssertGreaterThan(colors.green, 1_000)
+        XCTAssertGreaterThan(colors.blue, 1_000)
+        retainScreenshot(screenshot, name: "interactive-image-and-file-attachment-controls")
+    }
+
+    @MainActor
+    func testOutgoingMultiFileBubbleAtAccessibilitySizeProducesUnclippedEvidence() throws {
+        let message = Message(
+            content: "Two independently selectable files",
+            isFromMe: true,
+            attachments: [
+                FileAttachment(name: "duplicate.txt", data: Data("first".utf8)),
+                FileAttachment(name: "duplicate.txt", data: Data("second payload".utf8)),
+            ]
+        )
+        let screenshot = try renderBubble(message, width: 280, dynamicTypeSize: .accessibility3)
+        XCTAssertGreaterThan(screenshot.size.height, 250)
+        XCTAssertEqual(screenshot.size.width, 312, accuracy: 1)
+        retainScreenshot(screenshot, name: "outgoing-multi-file-accessibility-controls")
+    }
+
+    @MainActor
+    private func renderBubble(
+        _ message: Message,
+        width: CGFloat,
+        dynamicTypeSize: DynamicTypeSize
+    ) throws -> UIImage {
         let renderer = ImageRenderer(content:
             MessageBubble(
                 message: message,
                 onOpenImage: {},
                 onOpenFileAttachment: { _ in }
             )
-            .frame(width: 320)
+            .frame(width: width)
             .padding()
             .padding(.bottom, 32)
             .background(Color.black)
             .environment(\.colorScheme, .dark)
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
         )
         renderer.scale = 3
-        let screenshot = try XCTUnwrap(renderer.uiImage)
-        XCTAssertGreaterThan(screenshot.size.height, 80)
-        let attachment = XCTAttachment(image: screenshot)
-        attachment.name = "interactive-image-and-file-attachment-controls"
+        return try XCTUnwrap(renderer.uiImage)
+    }
+
+    private func dominantColorCounts(in image: UIImage) -> (red: Int, green: Int, blue: Int) {
+        guard let cgImage = image.cgImage,
+              let data = cgImage.dataProvider?.data,
+              let bytes = CFDataGetBytePtr(data) else {
+            return (0, 0, 0)
+        }
+        let bytesPerPixel = max(1, cgImage.bitsPerPixel / 8)
+        var counts = (red: 0, green: 0, blue: 0)
+        for y in 0..<cgImage.height {
+            for x in 0..<cgImage.width {
+                let offset = y * cgImage.bytesPerRow + x * bytesPerPixel
+                let red = Int(bytes[offset])
+                let green = Int(bytes[offset + 1])
+                let blue = Int(bytes[offset + 2])
+                if red > green * 2, red > blue * 2 { counts.red += 1 }
+                if green > red * 2, green > blue * 2 { counts.green += 1 }
+                if blue > red * 2, blue > green * 2 { counts.blue += 1 }
+            }
+        }
+        return counts
+    }
+
+    private func retainScreenshot(_ image: UIImage, name: String) {
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
     }

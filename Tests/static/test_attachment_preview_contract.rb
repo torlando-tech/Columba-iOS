@@ -44,7 +44,15 @@ class AttachmentPreviewContractTests < Minitest::Test
 
     messaging = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessagingView.swift'))
     assert_includes messaging, '@StateObject private var attachmentPreviewStore'
-    assert_includes messaging, 'onDismiss: attachmentPreviewStore.dismiss'
+    assert_includes messaging, '.quickLookPreview(attachmentPreviewURLBinding)'
     assert_includes messaging, 'attachmentPreviewStore.exitConversation()'
+    refute_includes messaging, 'QLPreviewController'
+    refute_includes messaging, 'ShareLink(item: item.url)'
+    assert_operator messaging.scan('onOpenImage:').length, :>=, 2
+    assert_operator messaging.scan('onOpenFileAttachment:').length, :>=, 2
+
+    bubble = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessageBubble.swift'))
+    assert_includes bubble, '.accessibilityIdentifier("bubble_file_chip")'
+    assert_includes bubble, '.accessibilityIdentifier("bubble_file_chip_\(index)")'
   end
 end

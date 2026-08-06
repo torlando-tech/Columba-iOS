@@ -26,7 +26,7 @@ import pytest
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE / "fixtures"))
-from make_test_image import png_bytes, jpeg_bytes, file_bytes  # noqa: E402
+from make_test_image import file_bytes, jpeg_bytes, png_bytes, preview_png_bytes  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -239,7 +239,7 @@ def test_image_sideband_to_ios(sim, sideband):
     `Message.imageData`, AND the SwiftUI message bubble must render the
     image view. Pins both halves of the inbound stack — the prior
     diag.log heuristic only proved the LXMRouter callback fired."""
-    img = png_bytes()
+    img = preview_png_bytes()
     body = f"img-from-sideband-{int(time.time()*1000)}"
     assert sideband.send_image(
         dest_hex=sim.lxmf_delivery_hex,

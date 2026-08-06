@@ -126,9 +126,10 @@ struct MessageBubble: View {
                                     onOpenFileAttachment?(index)
                                 } label: {
                                     fileChip(name: attachment.name, size: attachment.data.count)
+                                        .accessibilityIdentifier("bubble_file_chip")
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityIdentifier("bubble_file_chip")
+                                .accessibilityIdentifier("bubble_file_chip_\(index)")
                                 .accessibilityLabel(
                                     String(localized: "File attachment: \(attachment.name)")
                                 )

@@ -975,9 +975,6 @@
     "Opens attachment preview": {
       "comment": "VoiceOver hint for tappable image and file attachment controls."
     },
-    "Share Attachment": {
-      "comment": "Button that opens the native export and share sheet for a previewed attachment."
-    },
     "Unable to Open Attachment": {
       "comment": "Error alert title when a message attachment cannot be prepared for preview."
     },

@@ -10,8 +10,6 @@ import SwiftUI
 import RNSAPI
 import PhotosUI
 import UniformTypeIdentifiers
-#if os(iOS)
-#endif
 import os.log
 #if canImport(UIKit)
 import UIKit
@@ -313,7 +311,11 @@ struct MessagingView: View {
                                                 reactionModeMessage = message
                                             }
                                         },
-                                        onOpenLink: openMessageLink
+                                        onOpenLink: openMessageLink,
+                                        onOpenImage: { openImageAttachment(message) },
+                                        onOpenFileAttachment: { index in
+                                            openFileAttachment(message, index: index)
+                                        }
                                     )
                                 }
                                 .id(message.id)
@@ -641,11 +643,7 @@ struct MessagingView: View {
             .presentationDragIndicator(.visible)
         }
         #if os(iOS)
-        .fullScreenCover(item: $attachmentPreviewStore.item, onDismiss: attachmentPreviewStore.dismiss) { item in
-            AttachmentPreviewScreen(item: item) {
-                attachmentPreviewStore.dismiss()
-            }
-        }
+        .quickLookPreview(attachmentPreviewURLBinding)
         .alert("Unable to Open Attachment", isPresented: Binding(
             get: { attachmentPreviewError != nil },
             set: { if !$0 { attachmentPreviewError = nil } }
@@ -865,6 +863,19 @@ struct MessagingView: View {
             }
         )
     }
+
+    #if os(iOS)
+    private var attachmentPreviewURLBinding: Binding<URL?> {
+        Binding(
+            get: { attachmentPreviewStore.item?.url },
+            set: { newURL in
+                if newURL == nil {
+                    attachmentPreviewStore.dismiss()
+                }
+            }
+        )
+    }
+    #endif
 
     private enum DraftFlushBoundary {
         case navigation
@@ -1489,73 +1500,6 @@ private struct LocationShareSheet: View {
             .padding(.horizontal)
 
             Spacer()
-        }
-    }
-}
-#endif
-
-#if os(iOS)
-@available(iOS 17.0, *)
-private struct AttachmentPreviewScreen: View {
-    let item: MessageAttachmentPreviewItem
-    let onClose: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            AttachmentQuickLookPreview(url: item.url)
-                .ignoresSafeArea(edges: .bottom)
-                .navigationTitle(item.url.lastPathComponent)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Close", action: onClose)
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        ShareLink(item: item.url) {
-                            Label("Share Attachment", systemImage: "square.and.arrow.up")
-                        }
-                        .accessibilityIdentifier("attachment_share_button")
-                    }
-                }
-        }
-        .accessibilityIdentifier("attachment_preview")
-    }
-}
-
-@available(iOS 17.0, *)
-private struct AttachmentQuickLookPreview: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(url: url)
-    }
-
-    func makeUIViewController(context: Context) -> QLPreviewController {
-        let controller = QLPreviewController()
-        controller.dataSource = context.coordinator
-        return controller
-    }
-
-    func updateUIViewController(_ controller: QLPreviewController, context: Context) {
-        guard context.coordinator.url != url else { return }
-        context.coordinator.url = url
-        controller.reloadData()
-    }
-
-    final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        var url: URL
-
-        init(url: URL) {
-            self.url = url
-        }
-
-        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-
-        func previewController(
-            _ controller: QLPreviewController,
-            previewItemAt index: Int
-        ) -> QLPreviewItem {
-            url as NSURL
         }
     }
 }
