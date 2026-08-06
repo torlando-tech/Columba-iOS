@@ -513,9 +513,11 @@ class Simulator:
         *,
         image: bool = False,
         file_name: Optional[str] = None,
+        file_index: int = 0,
+        expected_preview_text: Optional[str] = None,
         timeout: float = 30.0,
     ) -> None:
-        """Tap the rendered attachment and prove native preview plus export UI."""
+        """Tap the rendered attachment and complete the native Quick Look save action."""
         if image == (file_name is not None):
             raise ValueError("select exactly one attachment kind")
         lines = ["appId: " + BUNDLE_ID, "---"]
@@ -529,26 +531,44 @@ class Simulator:
                 "    id: \"bubble_image\"",
                 "    index: 0",
                 "    optional: true",
-                "- waitForAnimationToEnd: { timeout: 2000 }",
-                "- assertVisible: \"image.png\"",
             ]
             export_action = "Save Image"
         else:
-            lines += [
-                f"- tapOn: \"{_yaml_escape(file_name or '')}\"",
-                "- waitForAnimationToEnd: { timeout: 2000 }",
-                f"- assertVisible: \"{_yaml_escape(file_name or '')}\"",
-            ]
+            lines += [f"- tapOn: {{ id: \"bubble_file_chip_{file_index}\" }}"]
             export_action = "Save to Files"
+        lines += ["- waitForAnimationToEnd: { timeout: 2000 }"]
+        if expected_preview_text is not None:
+            lines += [f"- assertVisible: \"{_yaml_escape(expected_preview_text)}\""]
         lines += [
-            "- assertVisible: \"Share Attachment\"",
-            "- tapOn: \"Share Attachment\"",
+            # SwiftUI Quick Look initially hides its chrome. A center tap reveals
+            # the native close, markup, and share controls without activating
+            # the previewed item.
+            "- tapOn: { point: \"50%,50%\" }",
+            # Quick Look's native share button is the lower-right circular
+            # control. iOS 26 does not expose its label through the Maestro
+            # accessibility hierarchy, so target the system-owned control by
+            # its stable location and prove the resulting named save action.
+            "- tapOn: { point: \"88%,94%\" }",
             "- waitForAnimationToEnd: { timeout: 2000 }",
             f"- assertVisible: \"{export_action}\"",
-            "- tapOn: { point: \"50%,80%\" }",
-            "- waitForAnimationToEnd: { timeout: 1000 }",
-            "- tapOn: \"Close\"",
+            f"- tapOn: \"{export_action}\"",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
         ]
+        if image:
+            lines += [
+                "- tapOn: { text: \"Allow Full Access\", optional: true }",
+                "- tapOn: { text: \"Allow\", optional: true }",
+                "- waitForAnimationToEnd: { timeout: 1000 }",
+            ]
+        else:
+            lines += [
+                "- assertVisible: \"Save\"",
+                "- tapOn: \"Save\"",
+                "- waitForAnimationToEnd: { timeout: 2000 }",
+            ]
+        # Dismiss native Quick Look and return to the message thread. `back`
+        # avoids depending on Quick Look's hidden/shown chrome state.
+        lines += ["- back", "- waitForAnimationToEnd: { timeout: 1000 }"]
         flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_preview_{os.getpid()}.yaml"
         flow_path.write_text("\n".join(lines) + "\n")
         try:

@@ -273,7 +273,30 @@ def test_file_sideband_to_ios(sim, sideband):
     _wait_for_diag_inbound(sim, content=body)
 
     sim.assert_bubble_visible(content=body, has_file_name=name)
-    sim.assert_attachment_preview_and_export(file_name=name)
+    sim.assert_attachment_preview_and_export(
+        file_name=name,
+        expected_preview_text="reverse-file-interop",
+    )
+
+
+def test_multiple_files_sideband_to_ios_selects_second(sim, sideband):
+    """Duplicate names remain independently selectable by attachment index."""
+    body = f"multi-file-from-sideband-{int(time.time()*1000)}"
+    first = file_bytes(b"first-file-payload\n")
+    second = file_bytes(b"second-file-payload\n")
+    name = "duplicate.txt"
+    assert sideband.send_files(
+        dest_hex=sim.lxmf_delivery_hex,
+        content=body,
+        attachments=[(name, first), (name, second)],
+    )
+    sim.wait_for_log(body, timeout=20)
+    sim.assert_bubble_visible(content=body, has_file_name=name, timeout=30)
+    sim.assert_attachment_preview_and_export(
+        file_name=name,
+        file_index=1,
+        expected_preview_text="second-file-payload",
+    )
 
 
 def _wait_for_diag_inbound(sim, *, content: str, timeout: float = 30.0) -> None:
