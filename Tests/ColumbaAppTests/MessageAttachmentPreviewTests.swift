@@ -78,9 +78,49 @@ final class MessageAttachmentPreviewItemTests: XCTestCase {
     }
 }
 
+@MainActor
+final class MessageAttachmentPreviewStoreTests: XCTestCase {
+    func testReplacementDismissalAndConversationExitCleanOnlyOwnedItems() throws {
+        let sibling = try MessageAttachmentPreviewItem(
+            data: Data("sibling".utf8),
+            suggestedFilename: "sibling.bin"
+        )
+        defer { sibling.cleanup() }
+        let first = try MessageAttachmentPreviewItem(
+            data: Data("first".utf8),
+            suggestedFilename: "first.bin"
+        )
+        let second = try MessageAttachmentPreviewItem(
+            data: Data("second".utf8),
+            suggestedFilename: "second.bin"
+        )
+        let third = try MessageAttachmentPreviewItem(
+            data: Data("third".utf8),
+            suggestedFilename: "third.bin"
+        )
+        let store = MessageAttachmentPreviewStore(item: first)
+
+        store.present(second)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.directoryURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.url.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.url.path))
+
+        store.dismiss()
+        store.dismiss()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: second.directoryURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.url.path))
+
+        store.present(third)
+        store.exitConversation()
+        store.exitConversation()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: third.directoryURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.url.path))
+    }
+}
+
 final class MessageAttachmentRoutingTests: XCTestCase {
     @MainActor
-    func testFileSelectionRoutesStableIndexAndFreshCallbackWithoutReload() throws {
+    func testRepresentableRefreshesImageAndFileCallbacksWithoutReload() throws {
         let attachments = [
             FileAttachment(name: "first.txt", data: Data("first".utf8)),
             FileAttachment(name: "second.txt", data: Data("second".utf8)),
@@ -92,17 +132,31 @@ final class MessageAttachmentRoutingTests: XCTestCase {
         controller.update(messages: [message], isLoadingMore: false, allMessagesLoaded: true)
         let reloadCount = controller.timelineReloadCountForTesting
 
-        var staleIndex: Int?
-        controller.onOpenFileAttachment = { _, index in staleIndex = index }
+        var staleImageID: String?
+        var staleFileIndex: Int?
+        makeTimeline(
+            message: message,
+            onOpenImage: { staleImageID = $0.id },
+            onOpenFile: { _, index in staleFileIndex = index }
+        ).applyAttachmentCallbacks(to: controller)
+
+        var selectedImageID: String?
         var selected: (String, Data, Int)?
-        controller.onOpenFileAttachment = { routedMessage, index in
-            let attachment = routedMessage.attachments![index]
-            selected = (attachment.name, attachment.data, index)
-        }
+        makeTimeline(
+            message: message,
+            onOpenImage: { selectedImageID = $0.id },
+            onOpenFile: { routedMessage, index in
+                let attachment = routedMessage.attachments![index]
+                selected = (attachment.name, attachment.data, index)
+            }
+        ).applyAttachmentCallbacks(to: controller)
         controller.update(messages: [message], isLoadingMore: false, allMessagesLoaded: true)
+        controller.openImageAttachmentForTesting(messageID: message.id)
         controller.openFileAttachmentForTesting(messageID: message.id, index: 1)
 
-        XCTAssertNil(staleIndex)
+        XCTAssertNil(staleImageID)
+        XCTAssertNil(staleFileIndex)
+        XCTAssertEqual(selectedImageID, message.id)
         XCTAssertEqual(selected?.0, "second.txt")
         XCTAssertEqual(selected?.1, Data("second".utf8))
         XCTAssertEqual(selected?.2, 1)
@@ -110,7 +164,7 @@ final class MessageAttachmentRoutingTests: XCTestCase {
     }
 
     @MainActor
-    func testAttachmentBubbleProducesVisualEvidenceAndTapCallbacks() throws {
+    func testAttachmentBubbleProducesVisualEvidenceForInteractiveControls() throws {
         let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).pngData { context in
             UIColor.systemBlue.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
@@ -122,17 +176,16 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             imageFormat: "png",
             attachments: [FileAttachment(name: "document.txt", data: Data("contents".utf8))]
         )
-        var imageTapCount = 0
-        var fileIndex: Int?
         let renderer = ImageRenderer(content:
             MessageBubble(
                 message: message,
-                onOpenImage: { imageTapCount += 1 },
-                onOpenFileAttachment: { fileIndex = $0 }
+                onOpenImage: {},
+                onOpenFileAttachment: { _ in }
             )
             .frame(width: 320)
             .padding()
             .background(Color.black)
+            .preferredColorScheme(.dark)
         )
         renderer.scale = 3
         let screenshot = try XCTUnwrap(renderer.uiImage)
@@ -141,15 +194,27 @@ final class MessageAttachmentRoutingTests: XCTestCase {
         attachment.name = "interactive-image-and-file-attachment-controls"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
 
-        let bubble = MessageBubble(
-            message: message,
-            onOpenImage: { imageTapCount += 1 },
-            onOpenFileAttachment: { fileIndex = $0 }
+    @MainActor
+    private func makeTimeline(
+        message: Message,
+        onOpenImage: @escaping (Message) -> Void,
+        onOpenFile: @escaping (Message, Int) -> Void
+    ) -> MessageTimelineView {
+        MessageTimelineView(
+            conversationID: "attachment-callback-test",
+            messages: [message],
+            messageTextScale: 1,
+            isLoadingMore: false,
+            allMessagesLoaded: true,
+            onLoadOlder: { false },
+            onReply: { _ in },
+            onToggleReaction: { _, _ in },
+            onLongPress: { _ in },
+            onOpenLink: { _ in },
+            onOpenImage: onOpenImage,
+            onOpenFileAttachment: onOpenFile
         )
-        bubble.onOpenImage?()
-        bubble.onOpenFileAttachment?(0)
-        XCTAssertEqual(imageTapCount, 1)
-        XCTAssertEqual(fileIndex, 0)
     }
 }

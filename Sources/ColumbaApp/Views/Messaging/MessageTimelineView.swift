@@ -93,8 +93,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
         controller.onOpenLink = onOpenLink
-        controller.onOpenImage = onOpenImage
-        controller.onOpenFileAttachment = onOpenFileAttachment
+        applyAttachmentCallbacks(to: controller)
         return controller
     }
 
@@ -104,8 +103,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
         controller.onOpenLink = onOpenLink
-        controller.onOpenImage = onOpenImage
-        controller.onOpenFileAttachment = onOpenFileAttachment
+        applyAttachmentCallbacks(to: controller)
         controller.update(
             conversationID: conversationID,
             messages: messages,
@@ -113,6 +111,11 @@ struct MessageTimelineView: UIViewControllerRepresentable {
             isLoadingMore: isLoadingMore,
             allMessagesLoaded: allMessagesLoaded
         )
+    }
+
+    func applyAttachmentCallbacks(to controller: MessageTimelineViewController) {
+        controller.onOpenImage = onOpenImage
+        controller.onOpenFileAttachment = onOpenFileAttachment
     }
 }
 
@@ -488,6 +491,11 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     func openFileAttachmentForTesting(messageID: String, index: Int) {
         guard let message = messages.first(where: { $0.id == messageID }) else { return }
         routeFileAttachment(message: message, index: index)
+    }
+
+    func openImageAttachmentForTesting(messageID: String) {
+        guard let message = messages.first(where: { $0.id == messageID }) else { return }
+        onOpenImage?(message)
     }
 
     private func routeFileAttachment(message: Message, index: Int) {

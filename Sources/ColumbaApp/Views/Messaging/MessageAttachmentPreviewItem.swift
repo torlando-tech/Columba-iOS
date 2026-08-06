@@ -1,6 +1,7 @@
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
+import Combine
 
 /// A byte-preserving temporary file prepared for native attachment preview and export.
 /// Each item owns one isolated UUID directory and removes only that directory.
@@ -116,5 +117,37 @@ final class MessageAttachmentPreviewItem: Identifiable {
         let filtered = value.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
         guard !filtered.isEmpty, filtered.utf8.count <= 16 else { return nil }
         return filtered
+    }
+}
+
+/// Owns the current preview item and synchronously cleans up the outgoing item
+/// whenever SwiftUI replaces or dismisses the full-screen presentation.
+@MainActor
+final class MessageAttachmentPreviewStore: ObservableObject {
+    @Published var item: MessageAttachmentPreviewItem? {
+        willSet {
+            guard item?.id != newValue?.id else { return }
+            item?.cleanup()
+        }
+    }
+
+    init(item: MessageAttachmentPreviewItem? = nil) {
+        self.item = item
+    }
+
+    func present(_ item: MessageAttachmentPreviewItem) {
+        self.item = item
+    }
+
+    func dismiss() {
+        item = nil
+    }
+
+    func exitConversation() {
+        item = nil
+    }
+
+    deinit {
+        item?.cleanup()
     }
 }

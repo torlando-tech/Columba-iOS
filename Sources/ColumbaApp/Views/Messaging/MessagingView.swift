@@ -172,7 +172,7 @@ struct MessagingView: View {
     @State private var showTextSizePicker = false
     @State private var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     @State private var nomadNetLinkTarget: MessageLinkTarget?
-    @State private var attachmentPreviewItem: MessageAttachmentPreviewItem?
+    @StateObject private var attachmentPreviewStore = MessageAttachmentPreviewStore()
     @State private var attachmentPreviewError: String?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -641,9 +641,9 @@ struct MessagingView: View {
             .presentationDragIndicator(.visible)
         }
         #if os(iOS)
-        .fullScreenCover(item: $attachmentPreviewItem, onDismiss: cleanupAttachmentPreview) { item in
+        .fullScreenCover(item: $attachmentPreviewStore.item, onDismiss: attachmentPreviewStore.dismiss) { item in
             AttachmentPreviewScreen(item: item) {
-                attachmentPreviewItem = nil
+                attachmentPreviewStore.dismiss()
             }
         }
         .alert("Unable to Open Attachment", isPresented: Binding(
@@ -658,7 +658,7 @@ struct MessagingView: View {
         .onDisappear {
             flushDraft(for: .navigation)
             NotificationService.activeConversationThreadId = nil
-            cleanupAttachmentPreview()
+            attachmentPreviewStore.exitConversation()
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             guard oldPhase == .active, newPhase != .active else { return }
@@ -911,24 +911,19 @@ struct MessagingView: View {
         declaredImageFormat: String? = nil,
         isImage: Bool = false
     ) {
-        cleanupAttachmentPreview()
         do {
-            attachmentPreviewItem = try MessageAttachmentPreviewItem(
+            let item = try MessageAttachmentPreviewItem(
                 data: data,
                 suggestedFilename: suggestedFilename,
                 declaredImageFormat: declaredImageFormat,
                 isImage: isImage
             )
+            attachmentPreviewStore.present(item)
         } catch {
             attachmentPreviewError = String(
                 localized: "The attachment could not be prepared for preview."
             )
         }
-    }
-
-    private func cleanupAttachmentPreview() {
-        attachmentPreviewItem?.cleanup()
-        attachmentPreviewItem = nil
     }
 
     @ViewBuilder

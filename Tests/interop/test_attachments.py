@@ -254,6 +254,7 @@ def test_image_sideband_to_ios(sim, sideband):
     _wait_for_diag_inbound(sim, content=body)
 
     sim.assert_bubble_visible(content=body, has_image=True)
+    sim.assert_attachment_preview_and_export(image=True)
 
 
 def test_file_sideband_to_ios(sim, sideband):
@@ -272,6 +273,7 @@ def test_file_sideband_to_ios(sim, sideband):
     _wait_for_diag_inbound(sim, content=body)
 
     sim.assert_bubble_visible(content=body, has_file_name=name)
+    sim.assert_attachment_preview_and_export(file_name=name)
 
 
 def _wait_for_diag_inbound(sim, *, content: str, timeout: float = 30.0) -> None:

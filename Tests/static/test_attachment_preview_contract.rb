@@ -32,5 +32,19 @@ class AttachmentPreviewContractTests < Minitest::Test
     assert_includes source, '.atomic'
     assert_includes source, 'CGImageSourceGetType'
     assert_includes source, 'removeItem(at: directoryURL)'
+    assert_includes source, 'final class MessageAttachmentPreviewStore'
+    assert_includes source, 'item?.cleanup()'
+  end
+
+  def test_representable_update_and_screen_lifecycle_use_attachment_owners
+    timeline = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessageTimelineView.swift'))
+    update = timeline.split('func updateUIViewController', 2).fetch(1)
+                     .split('func applyAttachmentCallbacks', 2).fetch(0)
+    assert_includes update, 'applyAttachmentCallbacks(to: controller)'
+
+    messaging = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessagingView.swift'))
+    assert_includes messaging, '@StateObject private var attachmentPreviewStore'
+    assert_includes messaging, 'onDismiss: attachmentPreviewStore.dismiss'
+    assert_includes messaging, 'attachmentPreviewStore.exitConversation()'
   end
 end

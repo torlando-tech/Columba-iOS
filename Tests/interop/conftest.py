@@ -457,11 +457,15 @@ class Simulator:
             "- tapOn: { text: \"Allow\", optional: true }",
             "- tapOn: { text: \"Don't Allow\", optional: true }",
             "- waitForAnimationToEnd: { timeout: 1500 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
             "- tapOn:",
             "    text: \"Chats\"",
             "    optional: true",
             "- waitForAnimationToEnd: { timeout: 2000 }",
-            f"- tapOn: \"{_yaml_escape(peer_display_name)}\"",
+            f"- tapOn: \"{_yaml_escape(content or peer_display_name)}\"",
             "- waitForAnimationToEnd: { timeout: 2500 }",
         ]
         if content is not None:
@@ -492,6 +496,52 @@ class Simulator:
                 f"content={content!r}, has_image={has_image}, "
                 f"has_file_name={has_file_name!r}). Maestro stderr:\n"
                 f"{e.stderr or e.stdout}"
+            )
+        finally:
+            flow_path.unlink(missing_ok=True)
+
+    def assert_attachment_preview_and_export(
+        self,
+        *,
+        image: bool = False,
+        file_name: Optional[str] = None,
+        timeout: float = 30.0,
+    ) -> None:
+        """Tap the rendered attachment and prove native preview plus export UI."""
+        if image == (file_name is not None):
+            raise ValueError("select exactly one attachment kind")
+        lines = ["appId: " + BUNDLE_ID, "---"]
+        if image:
+            lines += [
+                "- tapOn: { id: \"bubble_image\" }",
+                "- waitForAnimationToEnd: { timeout: 2000 }",
+                "- assertVisible: \"image.png\"",
+            ]
+            export_action = "Save Image"
+        else:
+            lines += [
+                f"- tapOn: \"{_yaml_escape(file_name or '')}\"",
+                "- waitForAnimationToEnd: { timeout: 2000 }",
+                f"- assertVisible: \"{_yaml_escape(file_name or '')}\"",
+            ]
+            export_action = "Save to Files"
+        lines += [
+            "- assertVisible: \"Share Attachment\"",
+            "- tapOn: \"Share Attachment\"",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            f"- assertVisible: \"{export_action}\"",
+            "- tapOn: { point: \"50%,80%\" }",
+            "- waitForAnimationToEnd: { timeout: 1000 }",
+            "- tapOn: \"Close\"",
+        ]
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_preview_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        try:
+            _sh(["maestro", "--device", self.udid, "test", str(flow_path)], timeout=timeout + 30)
+        except subprocess.CalledProcessError as e:
+            pytest.fail(
+                f"attachment preview/export failed (image={image}, file_name={file_name!r}). "
+                f"Maestro stderr:\n{e.stderr or e.stdout}"
             )
         finally:
             flow_path.unlink(missing_ok=True)
