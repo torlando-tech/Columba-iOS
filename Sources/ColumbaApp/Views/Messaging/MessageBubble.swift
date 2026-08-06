@@ -15,6 +15,58 @@ import UIKit
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "MessageBubble")
 
+enum BubbleAction {
+    case tap
+    case longPress
+}
+
+enum BubbleActionRouter {
+    static func perform(
+        _ action: BubbleAction,
+        onTap: () -> Void,
+        onLongPress: (() -> Void)?
+    ) {
+        switch action {
+        case .tap:
+            onTap()
+        case .longPress:
+            #if canImport(UIKit)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            #endif
+            onLongPress?()
+        }
+    }
+}
+
+private struct BubbleActionButtonStyle: PrimitiveButtonStyle {
+    let onLongPress: (() -> Void)?
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .gesture(
+                LongPressGesture(minimumDuration: 0.4)
+                    .exclusively(before: TapGesture())
+                    .onEnded { outcome in
+                        switch outcome {
+                        case .first:
+                            BubbleActionRouter.perform(
+                                .longPress,
+                                onTap: configuration.trigger,
+                                onLongPress: onLongPress
+                            )
+                        case .second:
+                            BubbleActionRouter.perform(
+                                .tap,
+                                onTap: configuration.trigger,
+                                onLongPress: onLongPress
+                            )
+                        }
+                    }
+            )
+    }
+}
+
 /// Individual message bubble view.
 ///
 /// Layout:
@@ -76,7 +128,7 @@ struct MessageBubble: View {
                                 }
                                 .padding(.vertical, 4)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(BubbleActionButtonStyle(onLongPress: onLongPress))
                     }
 
                     // Inline image
@@ -91,7 +143,7 @@ struct MessageBubble: View {
                                 .frame(maxWidth: 250)
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(BubbleActionButtonStyle(onLongPress: onLongPress))
                         // Stable handle for the Tests/interop/ harness:
                         // `assertVisible: { id: "bubble_image" }` confirms an
                         // inbound image actually rendered (vs the bubble
@@ -128,7 +180,7 @@ struct MessageBubble: View {
                                     fileChip(name: attachment.name, size: attachment.data.count)
                                         .accessibilityIdentifier("bubble_file_chip")
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(BubbleActionButtonStyle(onLongPress: onLongPress))
                                 .accessibilityIdentifier("bubble_file_chip_\(index)")
                                 .accessibilityLabel(
                                     String(localized: "File attachment: \(attachment.name)")
@@ -140,18 +192,22 @@ struct MessageBubble: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(bubbleBackground)
+                .background {
+                    bubbleBackground
+                        .contentShape(bubbleShape)
+                        .gesture(
+                            LongPressGesture(minimumDuration: 0.4)
+                                .onEnded { _ in
+                                    BubbleActionRouter.perform(
+                                        .longPress,
+                                        onTap: {},
+                                        onLongPress: onLongPress
+                                    )
+                                }
+                        )
+                }
                 .clipShape(bubbleShape)
                 .contentShape(bubbleShape)
-                .simultaneousGesture(
-                    LongPressGesture(minimumDuration: 0.4)
-                        .onEnded { _ in
-                            #if canImport(UIKit)
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            #endif
-                            onLongPress?()
-                        }
-                )
 
                 // Reaction chips (below bubble)
                 if !message.reactions.isEmpty {

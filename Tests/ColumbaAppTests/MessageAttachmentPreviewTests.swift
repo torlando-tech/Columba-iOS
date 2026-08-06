@@ -78,6 +78,36 @@ final class MessageAttachmentPreviewItemTests: XCTestCase {
     }
 }
 
+final class BubbleActionRouterTests: XCTestCase {
+    func testTapInvokesOnlyTapCallback() {
+        var taps = 0
+        var longPresses = 0
+
+        BubbleActionRouter.perform(
+            .tap,
+            onTap: { taps += 1 },
+            onLongPress: { longPresses += 1 }
+        )
+
+        XCTAssertEqual(taps, 1)
+        XCTAssertEqual(longPresses, 0)
+    }
+
+    func testLongPressInvokesOnlyLongPressCallback() {
+        var taps = 0
+        var longPresses = 0
+
+        BubbleActionRouter.perform(
+            .longPress,
+            onTap: { taps += 1 },
+            onLongPress: { longPresses += 1 }
+        )
+
+        XCTAssertEqual(taps, 0)
+        XCTAssertEqual(longPresses, 1)
+    }
+}
+
 @MainActor
 final class MessageAttachmentPreviewStoreTests: XCTestCase {
     func testReplacementDismissalAndConversationExitCleanOnlyOwnedItems() throws {

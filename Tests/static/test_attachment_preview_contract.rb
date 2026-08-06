@@ -56,10 +56,12 @@ class AttachmentPreviewContractTests < Minitest::Test
     assert_includes bubble, '.accessibilityIdentifier("bubble_file_chip_\(index)")'
   end
 
-  def test_parent_reaction_gesture_preserves_physical_attachment_taps
+  def test_attachment_controls_exclusively_route_tap_or_long_press
     bubble = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessageBubble.swift'))
-    assert_includes bubble, '.simultaneousGesture('
-    assert_includes bubble, 'LongPressGesture(minimumDuration: 0.4)'
+    assert_includes bubble, 'PrimitiveButtonStyle'
+    assert_includes bubble, '.exclusively(before: TapGesture())'
+    assert_operator bubble.scan('.buttonStyle(BubbleActionButtonStyle').length, :>=, 3
+    assert_includes bubble, 'BubbleActionRouter.perform'
     refute_includes bubble, '.onLongPressGesture(minimumDuration: 0.4)'
   end
 end
