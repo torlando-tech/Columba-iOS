@@ -253,26 +253,34 @@ class Simulator:
     @property
     def identity_hex(self) -> str:
         """Local RNS identity hash hex (the `[RNS] started identity=…` line)."""
-        if self._cached_identity_hex is not None:
-            return self._cached_identity_hex
-        for line in self._tail_diag(LOG_TAIL_LINES * 4):
-            m = re.search(r"\[RNS\] started identity=([0-9a-f]+)\s+destination=", line)
-            if m:
-                self._cached_identity_hex = m.group(1)
-                return self._cached_identity_hex
-        pytest.fail("Couldn't find `[RNS] started identity=…` in diag.log")
+        if self._cached_identity_hex is None:
+            self._wait_for_started_destinations()
+        assert self._cached_identity_hex is not None
+        return self._cached_identity_hex
 
     @property
     def lxmf_delivery_hex(self) -> str:
         """Local LXMF delivery-destination hash hex (the `destination=…` half)."""
-        if self._cached_lxmf_delivery_hex is not None:
-            return self._cached_lxmf_delivery_hex
-        for line in self._tail_diag(LOG_TAIL_LINES * 4):
-            m = re.search(r"\[RNS\] started identity=[0-9a-f]+\s+destination=([0-9a-f]+)", line)
-            if m:
-                self._cached_lxmf_delivery_hex = m.group(1)
-                return self._cached_lxmf_delivery_hex
-        pytest.fail("Couldn't find `destination=…` in diag.log")
+        if self._cached_lxmf_delivery_hex is None:
+            self._wait_for_started_destinations()
+        assert self._cached_lxmf_delivery_hex is not None
+        return self._cached_lxmf_delivery_hex
+
+    def _wait_for_started_destinations(self, timeout: float = 30.0) -> None:
+        """Wait for async backend startup instead of racing the first config log line."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for line in reversed(self._tail_diag(LOG_TAIL_LINES * 4)):
+                match = re.search(
+                    r"\[RNS\] started identity=([0-9a-f]+)\s+destination=([0-9a-f]+)",
+                    line,
+                )
+                if match:
+                    self._cached_identity_hex = match.group(1)
+                    self._cached_lxmf_delivery_hex = match.group(2)
+                    return
+            time.sleep(0.25)
+        pytest.fail("Couldn't find `[RNS] started identity=… destination=…` in diag.log")
 
     # ---- propagation-node helpers ----
 
@@ -457,11 +465,15 @@ class Simulator:
             "- tapOn: { text: \"Allow\", optional: true }",
             "- tapOn: { text: \"Don't Allow\", optional: true }",
             "- waitForAnimationToEnd: { timeout: 1500 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
             "- tapOn:",
             "    text: \"Chats\"",
             "    optional: true",
             "- waitForAnimationToEnd: { timeout: 2000 }",
-            f"- tapOn: \"{_yaml_escape(peer_display_name)}\"",
+            f"- tapOn: \"{_yaml_escape(content or peer_display_name)}\"",
             "- waitForAnimationToEnd: { timeout: 2500 }",
         ]
         if content is not None:
@@ -495,6 +507,106 @@ class Simulator:
             )
         finally:
             flow_path.unlink(missing_ok=True)
+
+    def assert_attachment_preview_and_export(
+        self,
+        *,
+        image: bool = False,
+        file_name: Optional[str] = None,
+        file_index: int = 0,
+        expected_preview_text: Optional[str] = None,
+        expected_bytes: Optional[bytes] = None,
+        timeout: float = 30.0,
+    ) -> None:
+        """Tap the rendered attachment and complete the native Quick Look save action."""
+        if image == (file_name is not None):
+            raise ValueError("select exactly one attachment kind")
+        lines = ["appId: " + BUNDLE_ID, "---"]
+        if image:
+            lines += [
+                "- tapOn:",
+                "    id: \"bubble_image\"",
+                "    index: 1",
+                "    optional: true",
+                "- tapOn:",
+                "    id: \"bubble_image\"",
+                "    index: 0",
+                "    optional: true",
+            ]
+            export_action = "Save Image"
+        else:
+            # The filename is unique to this delivered message. Index scopes
+            # duplicate names within that message without colliding with old
+            # retained bubbles that carry the same indexed control ID.
+            lines += [
+                "- tapOn:",
+                f"    text: \"{_yaml_escape(file_name or '')}\"",
+                f"    index: {file_index}",
+            ]
+            export_action = "Save to Files"
+        lines += ["- waitForAnimationToEnd: { timeout: 2000 }"]
+        if expected_preview_text is not None:
+            lines += [f"- assertVisible: \"{_yaml_escape(expected_preview_text)}\""]
+        if image:
+            # Image Quick Look starts with its chrome hidden after the opening
+            # animation, so reveal the native controls before sharing.
+            lines += [
+                "- tapOn: { point: \"50%,50%\" }",
+                "- waitForAnimationToEnd: { timeout: 1000 }",
+            ]
+        lines += [
+            # Quick Look's native share button is the lower-right circular
+            # control. iOS 26 does not expose its label through the Maestro
+            # accessibility hierarchy, so target the system-owned control by
+            # its stable location and prove the resulting named save action.
+            "- tapOn: { point: \"88%,94%\" }",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            f"- assertVisible: \"{export_action}\"",
+            f"- tapOn: \"{export_action}\"",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+        ]
+        if image:
+            lines += [
+                "- tapOn: { text: \"Allow Full Access\", optional: true }",
+                "- tapOn: { text: \"Allow\", optional: true }",
+                "- waitForAnimationToEnd: { timeout: 1000 }",
+            ]
+        elif expected_preview_text is not None:
+            # iOS 26 Simulator returns directly to Quick Look after accepting
+            # Save to Files, without exposing a second picker-level Save button.
+            lines += [f"- assertVisible: \"{_yaml_escape(expected_preview_text)}\""]
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_preview_{os.getpid()}.yaml"
+        close_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_preview_close_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        close_path.write_text("\n".join([
+            "appId: " + BUNDLE_ID,
+            "---",
+            "- tapOn: { point: \"91%,9%\" }",
+            "- waitForAnimationToEnd: { timeout: 1000 }",
+        ]) + "\n")
+        started_at = time.time()
+        try:
+            _sh(["maestro", "--device", self.udid, "test", str(flow_path)], timeout=timeout + 30)
+            if expected_bytes is not None:
+                tmp_root = _app_data_container(self.udid) / "tmp"
+                matches = [
+                    item for item in tmp_root.glob("*/*")
+                    if item.is_file()
+                    and item.stat().st_mtime >= started_at - 1
+                    and item.read_bytes() == expected_bytes
+                ]
+                if not matches:
+                    pytest.fail("active Quick Look export did not match source attachment bytes")
+            _sh(["maestro", "--device", self.udid, "test", str(close_path)], timeout=timeout + 30)
+        except subprocess.CalledProcessError as e:
+            details = "\n".join(part for part in (e.stdout, e.stderr) if part)
+            pytest.fail(
+                f"attachment preview/export failed (image={image}, file_name={file_name!r}). "
+                f"Maestro output:\n{details}"
+            )
+        finally:
+            flow_path.unlink(missing_ok=True)
+            close_path.unlink(missing_ok=True)
 
     def assert_bubble_visible_via_network(
         self,

@@ -26,7 +26,7 @@ import pytest
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE / "fixtures"))
-from make_test_image import png_bytes, jpeg_bytes, file_bytes  # noqa: E402
+from make_test_image import file_bytes, jpeg_bytes, png_bytes, preview_png_bytes  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -239,7 +239,7 @@ def test_image_sideband_to_ios(sim, sideband):
     `Message.imageData`, AND the SwiftUI message bubble must render the
     image view. Pins both halves of the inbound stack — the prior
     diag.log heuristic only proved the LXMRouter callback fired."""
-    img = png_bytes()
+    img = preview_png_bytes()
     body = f"img-from-sideband-{int(time.time()*1000)}"
     assert sideband.send_image(
         dest_hex=sim.lxmf_delivery_hex,
@@ -254,14 +254,16 @@ def test_image_sideband_to_ios(sim, sideband):
     _wait_for_diag_inbound(sim, content=body)
 
     sim.assert_bubble_visible(content=body, has_image=True)
+    sim.assert_attachment_preview_and_export(image=True, expected_bytes=img)
 
 
 def test_file_sideband_to_ios(sim, sideband):
     """Sideband sends a small file; iOS persists it AND the bubble renders
     a file chip whose label carries the filename."""
     payload = file_bytes(b"reverse-file-interop\n")
-    name = "from-sideband.txt"
-    body = f"file-from-sideband-{int(time.time()*1000)}"
+    stamp = int(time.time() * 1000)
+    name = f"from-sideband-{stamp}.txt"
+    body = f"file-from-sideband-{stamp}"
     assert sideband.send_file(
         dest_hex=sim.lxmf_delivery_hex,
         content=body,
@@ -272,6 +274,33 @@ def test_file_sideband_to_ios(sim, sideband):
     _wait_for_diag_inbound(sim, content=body)
 
     sim.assert_bubble_visible(content=body, has_file_name=name)
+    sim.assert_attachment_preview_and_export(
+        file_name=name,
+        expected_preview_text="reverse-file-interop",
+        expected_bytes=payload,
+    )
+
+
+def test_multiple_files_sideband_to_ios_selects_second(sim, sideband):
+    """Duplicate names remain independently selectable by attachment index."""
+    stamp = int(time.time() * 1000)
+    body = f"multi-file-from-sideband-{stamp}"
+    first = file_bytes(b"first-file-payload\n")
+    second = file_bytes(b"second-file-payload\n")
+    name = f"duplicate-{stamp}.txt"
+    assert sideband.send_files(
+        dest_hex=sim.lxmf_delivery_hex,
+        content=body,
+        attachments=[(name, first), (name, second)],
+    )
+    _wait_for_diag_inbound(sim, content=body)
+    sim.assert_bubble_visible(content=body, has_file_name=name, timeout=30)
+    sim.assert_attachment_preview_and_export(
+        file_name=name,
+        file_index=1,
+        expected_preview_text="second-file-payload",
+        expected_bytes=second,
+    )
 
 
 def _wait_for_diag_inbound(sim, *, content: str, timeout: float = 30.0) -> None:

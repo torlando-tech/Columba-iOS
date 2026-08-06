@@ -332,6 +332,25 @@ class SidebandPeer:
             attachment=[filename.encode("utf-8"), data],
         )
 
+    def send_files(
+        self,
+        dest_hex: str,
+        content: str,
+        attachments: list[tuple[str, bytes]],
+    ) -> bool:
+        """Send one LXMF message containing multiple ordered file attachments."""
+        import LXMF
+
+        return self.send_with_fields(
+            dest_hex,
+            content,
+            fields={
+                LXMF.FIELD_FILE_ATTACHMENTS: [
+                    [name.encode("utf-8"), data] for name, data in attachments
+                ]
+            },
+        )
+
     def send_audio(
         self,
         dest_hex: str,

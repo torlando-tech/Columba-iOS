@@ -10,11 +10,10 @@ import SwiftUI
 import RNSAPI
 import PhotosUI
 import UniformTypeIdentifiers
-#if os(iOS)
-#endif
 import os.log
 #if canImport(UIKit)
 import UIKit
+import QuickLook
 #endif
 #if canImport(AppKit)
 import AppKit
@@ -171,6 +170,8 @@ struct MessagingView: View {
     @State private var showTextSizePicker = false
     @State private var messageTextScale = SettingsRepository.MessageTextScale.defaultValue
     @State private var nomadNetLinkTarget: MessageLinkTarget?
+    @StateObject private var attachmentPreviewStore = MessageAttachmentPreviewStore()
+    @State private var attachmentPreviewError: String?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
@@ -211,7 +212,9 @@ struct MessagingView: View {
                             reactionModeMessage = message
                         }
                     },
-                    onOpenLink: openMessageLink
+                    onOpenLink: openMessageLink,
+                    onOpenImage: openImageAttachment,
+                    onOpenFileAttachment: openFileAttachment
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     MessageInputBar(
@@ -308,7 +311,11 @@ struct MessagingView: View {
                                                 reactionModeMessage = message
                                             }
                                         },
-                                        onOpenLink: openMessageLink
+                                        onOpenLink: openMessageLink,
+                                        onOpenImage: { openImageAttachment(message) },
+                                        onOpenFileAttachment: { index in
+                                            openFileAttachment(message, index: index)
+                                        }
                                     )
                                 }
                                 .id(message.id)
@@ -635,9 +642,21 @@ struct MessagingView: View {
             .presentationDetents([.height(460), .large])
             .presentationDragIndicator(.visible)
         }
+        #if os(iOS)
+        .quickLookPreview(attachmentPreviewURLBinding)
+        .alert("Unable to Open Attachment", isPresented: Binding(
+            get: { attachmentPreviewError != nil },
+            set: { if !$0 { attachmentPreviewError = nil } }
+        )) {
+            Button("OK", role: .cancel) { attachmentPreviewError = nil }
+        } message: {
+            Text(attachmentPreviewError ?? "")
+        }
+        #endif
         .onDisappear {
             flushDraft(for: .navigation)
             NotificationService.activeConversationThreadId = nil
+            attachmentPreviewStore.exitConversation()
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             guard oldPhase == .active, newPhase != .active else { return }
@@ -845,6 +864,19 @@ struct MessagingView: View {
         )
     }
 
+    #if os(iOS)
+    private var attachmentPreviewURLBinding: Binding<URL?> {
+        Binding(
+            get: { attachmentPreviewStore.item?.url },
+            set: { newURL in
+                if newURL == nil {
+                    attachmentPreviewStore.dismiss()
+                }
+            }
+        )
+    }
+    #endif
+
     private enum DraftFlushBoundary {
         case navigation
         case background
@@ -866,6 +898,43 @@ struct MessagingView: View {
     private func openMessageLink(_ target: MessageLinkTarget) {
         guard case .nomadNet = target else { return }
         nomadNetLinkTarget = target
+    }
+
+    private func openImageAttachment(_ message: Message) {
+        guard let data = message.imageData else { return }
+        prepareAttachmentPreview(
+            data: data,
+            suggestedFilename: "image",
+            declaredImageFormat: message.imageFormat,
+            isImage: true
+        )
+    }
+
+    private func openFileAttachment(_ message: Message, index: Int) {
+        guard let attachments = message.attachments, attachments.indices.contains(index) else { return }
+        let attachment = attachments[index]
+        prepareAttachmentPreview(data: attachment.data, suggestedFilename: attachment.name)
+    }
+
+    private func prepareAttachmentPreview(
+        data: Data,
+        suggestedFilename: String,
+        declaredImageFormat: String? = nil,
+        isImage: Bool = false
+    ) {
+        do {
+            let item = try MessageAttachmentPreviewItem(
+                data: data,
+                suggestedFilename: suggestedFilename,
+                declaredImageFormat: declaredImageFormat,
+                isImage: isImage
+            )
+            attachmentPreviewStore.present(item)
+        } catch {
+            attachmentPreviewError = String(
+                localized: "The attachment could not be prepared for preview."
+            )
+        }
     }
 
     @ViewBuilder

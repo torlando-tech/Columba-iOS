@@ -15,6 +15,58 @@ import UIKit
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "MessageBubble")
 
+enum BubbleAction {
+    case tap
+    case longPress
+}
+
+enum BubbleActionRouter {
+    static func perform(
+        _ action: BubbleAction,
+        onTap: () -> Void,
+        onLongPress: (() -> Void)?
+    ) {
+        switch action {
+        case .tap:
+            onTap()
+        case .longPress:
+            #if canImport(UIKit)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            #endif
+            onLongPress?()
+        }
+    }
+}
+
+private struct BubbleActionButtonStyle: PrimitiveButtonStyle {
+    let onLongPress: (() -> Void)?
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .gesture(
+                LongPressGesture(minimumDuration: 0.4)
+                    .exclusively(before: TapGesture())
+                    .onEnded { outcome in
+                        switch outcome {
+                        case .first:
+                            BubbleActionRouter.perform(
+                                .longPress,
+                                onTap: configuration.trigger,
+                                onLongPress: onLongPress
+                            )
+                        case .second:
+                            BubbleActionRouter.perform(
+                                .tap,
+                                onTap: configuration.trigger,
+                                onLongPress: onLongPress
+                            )
+                        }
+                    }
+            )
+    }
+}
+
 /// Individual message bubble view.
 ///
 /// Layout:
@@ -37,6 +89,10 @@ struct MessageBubble: View {
     var onLongPress: (() -> Void)?
     /// Callback for validated in-app message links such as NomadNet pages.
     var onOpenLink: ((MessageLinkTarget) -> Void)?
+    /// Callback for opening the message's inline image attachment.
+    var onOpenImage: (() -> Void)?
+    /// Callback for opening a file attachment by its stable message-local index.
+    var onOpenFileAttachment: ((Int) -> Void)?
 
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
@@ -72,23 +128,29 @@ struct MessageBubble: View {
                                 }
                                 .padding(.vertical, 4)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(BubbleActionButtonStyle(onLongPress: onLongPress))
                     }
 
                     // Inline image
                     if let imageData = message.imageData,
                        let uiImage = UIImage(data: imageData) {
-                        Image(platformImage: uiImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: 250)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            // Stable handle for the Tests/interop/ harness:
-                            // `assertVisible: { id: "bubble_image" }` confirms an
-                            // inbound image actually rendered (vs the bubble
-                            // existing without an image).
-                            .accessibilityIdentifier("bubble_image")
-                            .accessibilityLabel("Image attachment")
+                        Button {
+                            onOpenImage?()
+                        } label: {
+                            Image(platformImage: uiImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(maxWidth: 250)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(BubbleActionButtonStyle(onLongPress: onLongPress))
+                        // Stable handle for the Tests/interop/ harness:
+                        // `assertVisible: { id: "bubble_image" }` confirms an
+                        // inbound image actually rendered (vs the bubble
+                        // existing without an image).
+                        .accessibilityIdentifier("bubble_image")
+                        .accessibilityLabel(String(localized: "Image attachment"))
+                        .accessibilityHint(String(localized: "Opens attachment preview"))
                     }
 
                     // Text content (show if non-empty)
@@ -111,23 +173,41 @@ struct MessageBubble: View {
                     // File attachment chips
                     if let attachments = message.attachments, !attachments.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
-                            ForEach(Array(attachments.enumerated()), id: \.offset) { _, attachment in
-                                fileChip(name: attachment.name, size: attachment.data.count)
+                            ForEach(Array(attachments.enumerated()), id: \.offset) { index, attachment in
+                                Button {
+                                    onOpenFileAttachment?(index)
+                                } label: {
+                                    fileChip(name: attachment.name, size: attachment.data.count)
+                                        .accessibilityIdentifier("bubble_file_chip")
+                                }
+                                .buttonStyle(BubbleActionButtonStyle(onLongPress: onLongPress))
+                                .accessibilityIdentifier("bubble_file_chip_\(index)")
+                                .accessibilityLabel(
+                                    String(localized: "File attachment: \(attachment.name)")
+                                )
+                                .accessibilityHint(String(localized: "Opens attachment preview"))
                             }
                         }
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(bubbleBackground)
+                .background {
+                    bubbleBackground
+                        .contentShape(bubbleShape)
+                        .gesture(
+                            LongPressGesture(minimumDuration: 0.4)
+                                .onEnded { _ in
+                                    BubbleActionRouter.perform(
+                                        .longPress,
+                                        onTap: {},
+                                        onLongPress: onLongPress
+                                    )
+                                }
+                        )
+                }
                 .clipShape(bubbleShape)
                 .contentShape(bubbleShape)
-                .onLongPressGesture(minimumDuration: 0.4) {
-                    #if canImport(UIKit)
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    #endif
-                    onLongPress?()
-                }
 
                 // Reaction chips (below bubble)
                 if !message.reactions.isEmpty {
@@ -215,13 +295,7 @@ struct MessageBubble: View {
         .padding(.vertical, 6)
         .background(Color.white.opacity(0.1))
         .clipShape(Capsule())
-        // a11y for Tests/interop/ harness: pin "file attachment chip with
-        // exactly this filename rendered" — the chip's own Text(name) is
-        // also findable on its own, but tagging the whole capsule lets a
-        // future test count chips or query their size labels.
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("bubble_file_chip")
-        .accessibilityLabel("File: \(name)")
     }
 
     private static func formatFileSize(_ bytes: Int) -> String {

@@ -44,6 +44,38 @@ def png_bytes() -> bytes:
     return sig + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
 
 
+def preview_png_bytes() -> bytes:
+    """Distinctive 96x64 RGB PNG for native bubble and Quick Look evidence."""
+    sig = b"\x89PNG\r\n\x1a\n"
+
+    def chunk(tag: bytes, body: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(body))
+            + tag
+            + body
+            + struct.pack(">I", zlib.crc32(tag + body))
+        )
+
+    width, height = 96, 64
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)
+        for x in range(width):
+            if 27 <= y < 37:
+                rows.extend((30, 220, 90))
+            elif x < width // 2:
+                rows.extend((235, 55, 70))
+            else:
+                rows.extend((45, 115, 245))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        sig
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(bytes(rows), level=9))
+        + chunk(b"IEND", b"")
+    )
+
+
 def jpeg_bytes() -> bytes:
     """A minimal JPEG. ~125 B — small enough that hex-encoded stays under 300 chars."""
     # Hard-coded valid JPEG: SOI + APP0 (JFIF) + small DQT + minimal SOF0 + DHT (huffman tables
