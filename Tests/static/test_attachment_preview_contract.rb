@@ -74,6 +74,9 @@ class AttachmentPreviewContractTests < Minitest::Test
     assert_operator messaging.scan('attachmentPreviewStore.beginReactionMode()').length, :>=, 2
     assert_includes messaging, 'attachmentPreviewStore.endReactionMode()'
     assert_includes messaging, 'reactionModeMessageID: reactionModeMessage?.id'
+    assert_includes messaging, 'private func exitAttachmentInteractionState()'
+    assert_includes messaging, "reactionModeMessage = nil\n        attachmentPreviewStore.exitConversation()"
+    assert_includes messaging, 'exitAttachmentInteractionState()'
 
     timeline = File.read(File.join(ROOT, 'Sources/ColumbaApp/Views/Messaging/MessageTimelineView.swift'))
     assert_includes timeline, 'setReactionMode(messageID: reactionModeMessageID)'

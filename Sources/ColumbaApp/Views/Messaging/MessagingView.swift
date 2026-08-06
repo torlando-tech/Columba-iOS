@@ -663,7 +663,7 @@ struct MessagingView: View {
         .onDisappear {
             flushDraft(for: .navigation)
             NotificationService.activeConversationThreadId = nil
-            attachmentPreviewStore.exitConversation()
+            exitAttachmentInteractionState()
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             guard oldPhase == .active, newPhase != .active else { return }
@@ -905,6 +905,11 @@ struct MessagingView: View {
     private func openMessageLink(_ target: MessageLinkTarget) {
         guard case .nomadNet = target else { return }
         nomadNetLinkTarget = target
+    }
+
+    private func exitAttachmentInteractionState() {
+        reactionModeMessage = nil
+        attachmentPreviewStore.exitConversation()
     }
 
     private func openImageAttachment(_ message: Message) {
