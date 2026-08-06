@@ -41,7 +41,7 @@ final class MessageAttachmentPreviewItemTests: XCTestCase {
         )
         defer { item.cleanup() }
 
-        XCTAssertEqual(item.url.pathExtension.lowercased(), "jpg")
+        XCTAssertEqual(item.url.pathExtension.lowercased(), "jpeg")
         XCTAssertEqual(try Data(contentsOf: item.url), bytes)
     }
 
