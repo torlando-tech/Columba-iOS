@@ -184,6 +184,7 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             )
             .frame(width: 320)
             .padding()
+            .padding(.bottom, 32)
             .background(Color.black)
             .preferredColorScheme(.dark)
         )
