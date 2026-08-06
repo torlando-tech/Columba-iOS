@@ -544,6 +544,7 @@ class Simulator:
             # the native close, markup, and share controls without activating
             # the previewed item.
             "- tapOn: { point: \"50%,50%\" }",
+            "- waitForAnimationToEnd: { timeout: 1000 }",
             # Quick Look's native share button is the lower-right circular
             # control. iOS 26 does not expose its label through the Maestro
             # accessibility hierarchy, so target the system-owned control by
