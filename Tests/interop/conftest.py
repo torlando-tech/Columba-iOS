@@ -539,12 +539,14 @@ class Simulator:
         lines += ["- waitForAnimationToEnd: { timeout: 2000 }"]
         if expected_preview_text is not None:
             lines += [f"- assertVisible: \"{_yaml_escape(expected_preview_text)}\""]
+        if image:
+            # Image Quick Look starts with its chrome hidden after the opening
+            # animation, so reveal the native controls before sharing.
+            lines += [
+                "- tapOn: { point: \"50%,50%\" }",
+                "- waitForAnimationToEnd: { timeout: 1000 }",
+            ]
         lines += [
-            # SwiftUI Quick Look initially hides its chrome. A center tap reveals
-            # the native close, markup, and share controls without activating
-            # the previewed item.
-            "- tapOn: { point: \"50%,50%\" }",
-            "- waitForAnimationToEnd: { timeout: 1000 }",
             # Quick Look's native share button is the lower-right circular
             # control. iOS 26 does not expose its label through the Maestro
             # accessibility hierarchy, so target the system-owned control by
