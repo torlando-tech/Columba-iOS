@@ -253,26 +253,34 @@ class Simulator:
     @property
     def identity_hex(self) -> str:
         """Local RNS identity hash hex (the `[RNS] started identity=…` line)."""
-        if self._cached_identity_hex is not None:
-            return self._cached_identity_hex
-        for line in self._tail_diag(LOG_TAIL_LINES * 4):
-            m = re.search(r"\[RNS\] started identity=([0-9a-f]+)\s+destination=", line)
-            if m:
-                self._cached_identity_hex = m.group(1)
-                return self._cached_identity_hex
-        pytest.fail("Couldn't find `[RNS] started identity=…` in diag.log")
+        if self._cached_identity_hex is None:
+            self._wait_for_started_destinations()
+        assert self._cached_identity_hex is not None
+        return self._cached_identity_hex
 
     @property
     def lxmf_delivery_hex(self) -> str:
         """Local LXMF delivery-destination hash hex (the `destination=…` half)."""
-        if self._cached_lxmf_delivery_hex is not None:
-            return self._cached_lxmf_delivery_hex
-        for line in self._tail_diag(LOG_TAIL_LINES * 4):
-            m = re.search(r"\[RNS\] started identity=[0-9a-f]+\s+destination=([0-9a-f]+)", line)
-            if m:
-                self._cached_lxmf_delivery_hex = m.group(1)
-                return self._cached_lxmf_delivery_hex
-        pytest.fail("Couldn't find `destination=…` in diag.log")
+        if self._cached_lxmf_delivery_hex is None:
+            self._wait_for_started_destinations()
+        assert self._cached_lxmf_delivery_hex is not None
+        return self._cached_lxmf_delivery_hex
+
+    def _wait_for_started_destinations(self, timeout: float = 30.0) -> None:
+        """Wait for async backend startup instead of racing the first config log line."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for line in reversed(self._tail_diag(LOG_TAIL_LINES * 4)):
+                match = re.search(
+                    r"\[RNS\] started identity=([0-9a-f]+)\s+destination=([0-9a-f]+)",
+                    line,
+                )
+                if match:
+                    self._cached_identity_hex = match.group(1)
+                    self._cached_lxmf_delivery_hex = match.group(2)
+                    return
+            time.sleep(0.25)
+        pytest.fail("Couldn't find `[RNS] started identity=… destination=…` in diag.log")
 
     # ---- propagation-node helpers ----
 
