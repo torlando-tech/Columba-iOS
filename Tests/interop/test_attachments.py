@@ -254,7 +254,7 @@ def test_image_sideband_to_ios(sim, sideband):
     _wait_for_diag_inbound(sim, content=body)
 
     sim.assert_bubble_visible(content=body, has_image=True)
-    sim.assert_attachment_preview_and_export(image=True)
+    sim.assert_attachment_preview_and_export(image=True, expected_bytes=img)
 
 
 def test_file_sideband_to_ios(sim, sideband):
@@ -277,6 +277,7 @@ def test_file_sideband_to_ios(sim, sideband):
     sim.assert_attachment_preview_and_export(
         file_name=name,
         expected_preview_text="reverse-file-interop",
+        expected_bytes=payload,
     )
 
 
@@ -298,6 +299,7 @@ def test_multiple_files_sideband_to_ios_selects_second(sim, sideband):
         file_name=name,
         file_index=1,
         expected_preview_text="second-file-payload",
+        expected_bytes=second,
     )
 
 

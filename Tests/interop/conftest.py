@@ -515,6 +515,7 @@ class Simulator:
         file_name: Optional[str] = None,
         file_index: int = 0,
         expected_preview_text: Optional[str] = None,
+        expected_bytes: Optional[bytes] = None,
         timeout: float = 30.0,
     ) -> None:
         """Tap the rendered attachment and complete the native Quick Look save action."""
@@ -570,22 +571,33 @@ class Simulator:
                 "- tapOn: { text: \"Allow\", optional: true }",
                 "- waitForAnimationToEnd: { timeout: 1000 }",
             ]
-        else:
-            lines += [
-                "- assertVisible: \"Save\"",
-                "- tapOn: \"Save\"",
-                "- waitForAnimationToEnd: { timeout: 2000 }",
-            ]
-        # Native Quick Look returns with its chrome visible after the save
-        # action, so dismiss through its upper-right close control.
-        lines += [
+        elif expected_preview_text is not None:
+            # iOS 26 Simulator returns directly to Quick Look after accepting
+            # Save to Files, without exposing a second picker-level Save button.
+            lines += [f"- assertVisible: \"{_yaml_escape(expected_preview_text)}\""]
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_preview_{os.getpid()}.yaml"
+        close_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_preview_close_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        close_path.write_text("\n".join([
+            "appId: " + BUNDLE_ID,
+            "---",
             "- tapOn: { point: \"91%,9%\" }",
             "- waitForAnimationToEnd: { timeout: 1000 }",
-        ]
-        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_preview_{os.getpid()}.yaml"
-        flow_path.write_text("\n".join(lines) + "\n")
+        ]) + "\n")
+        started_at = time.time()
         try:
             _sh(["maestro", "--device", self.udid, "test", str(flow_path)], timeout=timeout + 30)
+            if expected_bytes is not None:
+                tmp_root = _app_data_container(self.udid) / "tmp"
+                matches = [
+                    item for item in tmp_root.glob("*/*")
+                    if item.is_file()
+                    and item.stat().st_mtime >= started_at - 1
+                    and item.read_bytes() == expected_bytes
+                ]
+                if not matches:
+                    pytest.fail("active Quick Look export did not match source attachment bytes")
+            _sh(["maestro", "--device", self.udid, "test", str(close_path)], timeout=timeout + 30)
         except subprocess.CalledProcessError as e:
             details = "\n".join(part for part in (e.stdout, e.stderr) if part)
             pytest.fail(
@@ -594,6 +606,7 @@ class Simulator:
             )
         finally:
             flow_path.unlink(missing_ok=True)
+            close_path.unlink(missing_ok=True)
 
     def assert_bubble_visible_via_network(
         self,
