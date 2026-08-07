@@ -142,7 +142,7 @@ enum BackgroundPropagationRefreshScheduler {
     static let taskIdentifier = "network.columba.Columba.sync"
 
     static func register() {
-        BGTaskScheduler.shared.register(
+        let registered = BGTaskScheduler.shared.register(
             forTaskWithIdentifier: taskIdentifier,
             using: nil
         ) { task in
@@ -151,10 +151,12 @@ enum BackgroundPropagationRefreshScheduler {
                 return
             }
             Task { @MainActor in
+                DiagLog.log("[BG-SYNC] system task delivered")
                 scheduleFromCurrentSettings()
                 BackgroundRefreshTaskCoordinator.shared.receive(refreshTask)
             }
         }
+        DiagLog.log("[BG-SYNC] registration success=\(registered)")
     }
 
     @MainActor
@@ -172,6 +174,7 @@ enum BackgroundPropagationRefreshScheduler {
             userInterval: interval
         ) else {
             backgroundPropagationLogger.info("Background propagation sync disabled")
+            DiagLog.log("[BG-SYNC] scheduling disabled; pending request cancelled")
             return
         }
 
@@ -182,10 +185,12 @@ enum BackgroundPropagationRefreshScheduler {
             backgroundPropagationLogger.info(
                 "Scheduled background propagation sync no earlier than \(Int(delay), privacy: .public)s"
             )
+            DiagLog.log("[BG-SYNC] scheduled earliest delay=\(Int(delay))s")
         } catch {
             backgroundPropagationLogger.error(
                 "Failed to schedule background propagation sync: \(error.localizedDescription, privacy: .public)"
             )
+            DiagLog.log("[BG-SYNC] scheduling failed: \(error.localizedDescription)")
         }
     }
 }
