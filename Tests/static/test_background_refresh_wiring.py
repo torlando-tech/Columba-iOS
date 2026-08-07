@@ -28,6 +28,12 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         self.assertIn("await backend.stop()", start)
         self.assertIn("self?.backend = nil", start)
         self.assertIn("PropagationNodeRestoreReadiness.validate", start)
+        self.assertEqual(services.count("InitializationLifecycleActivation.run("), 2)
+        for segment in services.split("InitializationLifecycleActivation.run(")[1:]:
+            self.assertLess(
+                segment.index("startPythonBackend("),
+                segment.index("propManager.startListening()"),
+            )
 
     def test_service_initialization_cannot_erase_cold_launch_evidence(self):
         source = (APP / "Services" / "AppServices.swift").read_text()

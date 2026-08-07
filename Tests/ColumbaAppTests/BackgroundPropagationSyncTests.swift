@@ -222,23 +222,30 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertEqual(afterRelease, ["normal"])
     }
 
-    func testFailedPropagationNodeRestoreRollsBackBeforeEveryInitializationRetry() async {
+    func testFailedPropagationNodeRestoreRollsBackBeforeLifecycleActivationAndRetry() async {
         var backendRunning = false
         var starts = 0
         var rollbacks = 0
+        var lifecycleActivations = 0
 
         for _ in 0..<5 {
-            if !backendRunning {
-                backendRunning = true
-                starts += 1
-            }
-
             do {
-                try await PropagationNodeRestoreReadiness.validate(
-                    reapplied: false,
-                    rollback: {
-                        backendRunning = false
-                        rollbacks += 1
+                try await InitializationLifecycleActivation.run(
+                    readiness: {
+                        if !backendRunning {
+                            backendRunning = true
+                            starts += 1
+                        }
+                        try await PropagationNodeRestoreReadiness.validate(
+                            reapplied: false,
+                            rollback: {
+                                backendRunning = false
+                                rollbacks += 1
+                            }
+                        )
+                    },
+                    activate: {
+                        lifecycleActivations += 1
                     }
                 )
                 XCTFail("Failed propagation-node restoration must not report readiness")
@@ -246,10 +253,32 @@ final class BackgroundPropagationSyncTests: XCTestCase {
                 XCTAssertEqual(error as? AppServicesError, .propagationNodeRestoreFailed)
             }
             XCTAssertFalse(backendRunning)
+            XCTAssertEqual(lifecycleActivations, 0)
         }
 
-        XCTAssertEqual(starts, 5)
+        try? await InitializationLifecycleActivation.run(
+            readiness: {
+                if !backendRunning {
+                    backendRunning = true
+                    starts += 1
+                }
+                try await PropagationNodeRestoreReadiness.validate(
+                    reapplied: true,
+                    rollback: {
+                        backendRunning = false
+                        rollbacks += 1
+                    }
+                )
+            },
+            activate: {
+                lifecycleActivations += 1
+            }
+        )
+
+        XCTAssertTrue(backendRunning)
+        XCTAssertEqual(starts, 6)
         XCTAssertEqual(rollbacks, 5)
+        XCTAssertEqual(lifecycleActivations, 1)
     }
 
     func testWorkflowNotifiesEachMessageInsertedDuringSuccessfulSync() async {

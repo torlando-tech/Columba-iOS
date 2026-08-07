@@ -1308,30 +1308,33 @@ public final class AppServices {
         // Start monitoring interface state for UI updates
         startStateObserver()
 
-        // 10. Initialize propagation node manager
-        // IMPORTANT: loadPreferences() MUST run before startListening() so that
-        // the saved relay selection (selectedNodeHash, autoSelectEnabled) is restored
-        // before the listening task processes path entries and calls autoSelectBestNode().
-        // Otherwise the default autoSelectEnabled=true can overwrite the user's manual selection.
+        // 10. Restore propagation preferences before backend startup. Listener,
+        // periodic, and auto-announce tasks are activated only after the backend
+        // and persisted propagation node are ready, so a failed retry cannot leak
+        // initialization-owned tasks.
         let propManager = PropagationNodeManager(appServices: self)
         self.propagationManager = propManager
         await propManager.loadPreferences()
-        propManager.startListening()
-        propManager.startPeriodicSync()
 
-        // 11. Initialize auto-announce manager
-        let announceManager = AutoAnnounceManager(appServices: self)
-        self.autoAnnounceManager = announceManager
-        announceManager.start()
-
-        // 12. Start Python RNS backend. The Compat-layer LXMRouter / Transport
-        //     are stubs; the real network I/O happens through PythonBridge.
-        try await startPythonBackend(
-            identity: newIdentity,
-            identityHashHex: newIdentity.hexHash,
-            router: newRouter,
-            interfaces: InterfaceRepository().getEnabledInterfaces(),
-            displayName: ""
+        try await InitializationLifecycleActivation.run(
+            readiness: {
+                // The Compat-layer LXMRouter / Transport are stubs; real network
+                // I/O happens through PythonBridge.
+                try await self.startPythonBackend(
+                    identity: newIdentity,
+                    identityHashHex: newIdentity.hexHash,
+                    router: newRouter,
+                    interfaces: InterfaceRepository().getEnabledInterfaces(),
+                    displayName: ""
+                )
+            },
+            activate: {
+                propManager.startListening()
+                propManager.startPeriodicSync()
+                let announceManager = AutoAnnounceManager(appServices: self)
+                self.autoAnnounceManager = announceManager
+                announceManager.start()
+            }
         )
 
         // On-device test instrumentation: listen for the test-announce Darwin
@@ -3201,18 +3204,11 @@ public final class AppServices {
 
         startStateObserver()
 
-        // 10. Initialize propagation node manager
-        // IMPORTANT: loadPreferences() MUST run before startListening() — see first overload.
+        // 10. Restore propagation preferences now; activate listener,
+        // periodic, and auto-announce tasks only after backend readiness.
         let propManager = PropagationNodeManager(appServices: self)
         self.propagationManager = propManager
         await propManager.loadPreferences()
-        propManager.startListening()
-        propManager.startPeriodicSync()
-
-        // 11. Initialize auto-announce manager
-        let announceManager = AutoAnnounceManager(appServices: self)
-        self.autoAnnounceManager = announceManager
-        announceManager.start()
 
         // Dump all registered destinations and link callbacks for diagnostics.
         // Registered destinations now come from the active backend's neutral
@@ -3255,13 +3251,24 @@ public final class AppServices {
         await ensureTunnelManager()
         #endif
 
-        // Start Python RNS backend on the multi-identity path too.
-        try await startPythonBackend(
-            identity: identity,
-            identityHashHex: identityHash,
-            router: newRouter,
-            interfaces: InterfaceRepository().getEnabledInterfaces(),
-            displayName: ""
+        // Start the backend, then activate initialization-owned manager tasks.
+        try await InitializationLifecycleActivation.run(
+            readiness: {
+                try await self.startPythonBackend(
+                    identity: identity,
+                    identityHashHex: identityHash,
+                    router: newRouter,
+                    interfaces: InterfaceRepository().getEnabledInterfaces(),
+                    displayName: ""
+                )
+            },
+            activate: {
+                propManager.startListening()
+                propManager.startPeriodicSync()
+                let announceManager = AutoAnnounceManager(appServices: self)
+                self.autoAnnounceManager = announceManager
+                announceManager.start()
+            }
         )
 
         // On-device test instrumentation: listen for the test-announce Darwin
@@ -4997,6 +5004,19 @@ public final class AppServices {
         } catch {
             DiagLog.log("[AUTO_ANNOUNCE] failed: \(error.localizedDescription)")
         }
+    }
+}
+
+// MARK: - Initialization Lifecycle Activation
+
+@MainActor
+enum InitializationLifecycleActivation {
+    static func run(
+        readiness: @MainActor () async throws -> Void,
+        activate: @MainActor () -> Void
+    ) async throws {
+        try await readiness()
+        activate()
     }
 }
 
