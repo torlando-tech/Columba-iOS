@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BGPSYNCBUILD001 /* BackgroundPropagationSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGPSYNCREF001 /* BackgroundPropagationSync.swift */; };
+		BGPSYNCTESTBUILD001 /* BackgroundPropagationSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGPSYNCTESTREF001 /* BackgroundPropagationSyncTests.swift */; };
 		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* ColumbaApp.swift */; };
 		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
 		003 /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* ChatsViewModel.swift */; };
@@ -407,6 +409,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BGPSYNCREF001 /* BackgroundPropagationSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundPropagationSync.swift; sourceTree = "<group>"; };
+		BGPSYNCTESTREF001 /* BackgroundPropagationSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundPropagationSyncTests.swift; sourceTree = "<group>"; };
 		00A8D344945F752C18EF2D9E /* AudioManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 		11D4DB375C0C7BB62E8A8B23 /* ColumbaPython-Bridging-Header.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = "ColumbaPython-Bridging-Header.h"; sourceTree = "<group>"; };
 		1F7375908681A4DF99F125C7 /* CallKitManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
@@ -981,6 +985,7 @@
 		GSVC /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				BGPSYNCREF001 /* BackgroundPropagationSync.swift */,
 				F024 /* AppServices.swift */,
 				BKF002 /* BackendFactory.swift */,
 				F025 /* MessageRepository.swift */,
@@ -1021,6 +1026,7 @@
 		GTESTS /* ColumbaAppTests */ = {
 			isa = PBXGroup;
 			children = (
+				BGPSYNCTESTREF001 /* BackgroundPropagationSyncTests.swift */,
 				FT03 /* MicronParserTests.swift */,
 				DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */,
 				FBDT /* BLESeamDriverTests.swift */,
@@ -1572,6 +1578,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BGPSYNCBUILD001 /* BackgroundPropagationSync.swift in Sources */,
 				001 /* ColumbaApp.swift in Sources */,
 				002 /* Theme.swift in Sources */,
 				003 /* ChatsViewModel.swift in Sources */,
@@ -1706,6 +1713,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BGPSYNCTESTBUILD001 /* BackgroundPropagationSyncTests.swift in Sources */,
 				T003 /* MicronParserTests.swift in Sources */,
 				2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */,
 				A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */,

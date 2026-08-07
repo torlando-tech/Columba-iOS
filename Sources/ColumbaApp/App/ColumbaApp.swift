@@ -9,7 +9,6 @@
 import SwiftUI
 import RNSAPI
 import UserNotifications
-import BackgroundTasks
 import SwiftBLEBridge
 import os
 #if canImport(CoreBluetooth)
@@ -20,6 +19,22 @@ private let logger = Logger(subsystem: "network.columba.Columba", category: "Col
 
 /// Main SwiftUI App entry point.
 ///
+#if os(iOS) && COLUMBA_RUNTIME_PYTHON
+@MainActor
+private final class BackgroundPropagationCancellation {
+    private var operation: Task<Void, Never>?
+
+    func request(_ cancel: @escaping @MainActor @Sendable () async -> Void) {
+        guard operation == nil else { return }
+        operation = Task { @MainActor in await cancel() }
+    }
+
+    func wait() async {
+        await operation?.value
+    }
+}
+#endif
+
 /// Creates MainTabView as the root navigation container.
 /// Handles service initialization via AppServices.
 @main
@@ -27,8 +42,8 @@ private let logger = Logger(subsystem: "network.columba.Columba", category: "Col
 struct ColumbaApp: App {
     // MARK: - Services
 
-    /// Settings repository for UserDefaults-backed configuration.
-    @State private var settingsRepository = SettingsRepository()
+    /// Launch-safe owner shared by BGTaskScheduler and SwiftUI.
+    @State private var applicationRuntime = ColumbaApplicationRuntime.shared
 
     /// Darwin notification observer for IPC from Network Extension.
     @State private var notificationObserver = NotificationObserver()
@@ -39,6 +54,14 @@ struct ColumbaApp: App {
     // MARK: - Init
 
     init() {
+        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+        // Register before starting embedded Python or any other potentially slow
+        // launch work. BGTaskScheduler requires every launch handler to be
+        // registered during application launch, including cold background launch.
+        BackgroundPropagationRefreshScheduler.register()
+        ColumbaApplicationRuntime.shared.installBackgroundHandler()
+        #endif
+
         #if COLUMBA_RUNTIME_PYTHON
         // Boot embedded CPython once, before anything else can touch it.
         // PythonBridge / PythonRNSBackend depend on this; without it
@@ -96,15 +119,6 @@ struct ColumbaApp: App {
         #endif
         #endif
 
-        #if os(iOS)
-        BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: "network.columba.Columba.sync",
-            using: nil
-        ) { task in
-            NotificationCenter.default.post(name: .columbaBackgroundSync, object: task)
-        }
-        #endif
-
         // Install notification delegate early so didReceive (notification tap) works
         UNUserNotificationCenter.current().delegate = NotificationService.delegate
 
@@ -119,7 +133,7 @@ struct ColumbaApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(
-                settingsRepository: settingsRepository,
+                applicationRuntime: applicationRuntime,
                 notificationObserver: notificationObserver,
                 pendingDeepLink: $pendingDeepLink
             )
@@ -458,268 +472,172 @@ private struct KeyboardDismissHelper: UIViewRepresentable {
 }
 #endif
 
-// MARK: - Root View
+// MARK: - Application Runtime
 
-/// Root view that handles async service initialization.
-///
-/// Separating initialization into a View (vs App) ensures the .task modifier
-/// runs correctly in the SwiftUI lifecycle.
+/// Launch-safe owner of the minimum identity/database/RNS/LXMF service graph.
+/// BGTaskScheduler delivery must not depend on a SwiftUI scene or View.task.
+@MainActor
+@Observable
 @available(iOS 17.0, macOS 14.0, *)
-struct RootView: View {
-    // MARK: - Dependencies
+final class ColumbaApplicationRuntime {
+    static let shared = ColumbaApplicationRuntime()
 
-    let settingsRepository: SettingsRepository
-    let notificationObserver: NotificationObserver
-    @Binding var pendingDeepLink: String?
-
-    // MARK: - Services
-
-    /// Central service layer owning Identity, Router, Transport, PathTable.
-    @State private var appServices = AppServices()
-
-    /// Multi-identity manager.
-    @State private var identityManager = IdentityManager()
-
-    // MARK: - Internal State
-
-    @State private var database: LXMFDatabase?
-    @State private var messageRepository: MessageRepository?
-    @State private var incomingMessageHandler: IncomingMessageHandler?
+    let settingsRepository = SettingsRepository()
+    let appServices = AppServices()
+    let identityManager = IdentityManager()
+    var database: LXMFDatabase?
+    var messageRepository: MessageRepository?
+    var incomingMessageHandler: IncomingMessageHandler?
     #if COLUMBA_RUNTIME_MODEL_B
-    @State private var modelBInboundReplay: ModelBInboundReplay?
+    var modelBInboundReplay: ModelBInboundReplay?
     #endif
-    @State private var initError: String?
-    @State private var isInitialized = false
-    @State private var identitySwitchTrigger = UUID()
-    @State private var showOnboarding: Bool
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.colorScheme) private var colorScheme
+    var initError: String?
+    var isInitialized = false
+    private var serviceInitializationTask: Task<Bool, Never>?
+    private var backgroundHandlerInstalled = false
 
-    init(settingsRepository: SettingsRepository, notificationObserver: NotificationObserver, pendingDeepLink: Binding<String?>) {
-        self.settingsRepository = settingsRepository
-        self.notificationObserver = notificationObserver
-        self._pendingDeepLink = pendingDeepLink
-        // Migrate existing users so they skip onboarding
-        OnboardingViewModel.migrateExistingUsers()
-        #if DEBUG
-        let isScreenshotterLaunch = ProcessInfo.processInfo.arguments.contains("ui-screenshotter")
-        #else
-        let isScreenshotterLaunch = false
+    private init() {}
+
+    func installBackgroundHandler() {
+        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+        guard !backgroundHandlerInstalled else { return }
+        backgroundHandlerInstalled = true
+        BackgroundRefreshTaskCoordinator.shared.installHandler { [weak self] in
+            guard let self else { return false }
+            return await self.performBackgroundPropagationSync()
+        }
         #endif
-        // Maestro clears app state and Keychain before every screenshot. Its
-        // explicit DEBUG-only launch argument bypasses the interactive wizard;
-        // initializeServices() creates the disposable test identity below.
-        self._showOnboarding = State(
-            initialValue: !OnboardingViewModel.hasCompletedOnboarding && !isScreenshotterLaunch
+    }
+
+    func resetAfterIdentitySwitch() {
+        isInitialized = false
+        messageRepository = nil
+        incomingMessageHandler = nil
+        #if COLUMBA_RUNTIME_MODEL_B
+        modelBInboundReplay = nil
+        #endif
+        database = nil
+        initError = nil
+    }
+
+    #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+    // MARK: - Background Propagation Sync
+
+    /// Execute one system-granted refresh against the shipping embedded-Python
+    /// propagation path. A cold launch may deliver the task while normal service
+    /// initialization is still running, so wait briefly for that single startup
+    /// path rather than starting a competing identity/router initialization.
+    @MainActor
+    private func performBackgroundPropagationSync() async -> Bool {
+        BackgroundPropagationRefreshScheduler.logRuntime(context: "workflow-entered")
+        DiagLog.log("[BG-SYNC] workflow entered initialized=\(isInitialized)")
+        guard await settingsRepository.getPeriodicSyncEnabled() else {
+            DiagLog.log("[BG-SYNC] skipped: periodic sync disabled")
+            return true
+        }
+
+        guard await ensureServicesInitialized() else {
+            DiagLog.log("[BG-SYNC] failed: shared service initialization unsuccessful")
+            return false
+        }
+
+        guard isInitialized,
+              let repository = messageRepository,
+              let handler = incomingMessageHandler,
+              let propagationManager = appServices.propagationManager else {
+            DiagLog.log(
+                "[BG-SYNC] failed: services not ready initialized=\(isInitialized) "
+                    + "repository=\(messageRepository != nil) handler=\(incomingMessageHandler != nil) "
+                    + "propagationManager=\(appServices.propagationManager != nil)"
+            )
+            return false
+        }
+        DiagLog.log(
+            "[BG-SYNC] services ready backend=\(appServices.pythonBackend != nil) "
+                + "selectedNode=\(propagationManager.selectedNodeHash != nil)"
         )
-    }
 
-    // MARK: - Body
+        guard await appServices.beginExclusivePythonHostEventProcessing() else {
+            DiagLog.log("[BG-SYNC] cancelled before acquiring host event transaction")
+            return false
+        }
+        handler.setUserNotificationsSuppressed(true)
 
-    var body: some View {
-        Group {
-            if showOnboarding {
-                #if COLUMBA_ONBOARDING_ENABLED
-                OnboardingView(
-                    identityManager: identityManager,
-                    settingsRepository: settingsRepository,
-                    appServices: appServices,
-                    onComplete: {
-                        showOnboarding = false
-                        identitySwitchTrigger = UUID()
-                    }
-                )
-                #else
-                // Onboarding flow disabled in this build — bypass straight to main UI.
-                Color.clear.onAppear { showOnboarding = false }
-                #endif
-            } else if let error = initError {
-                errorView(error)
-            } else if isInitialized,
-                      let repo = messageRepository {
-                MainTabView(
-                    appServices: appServices,
-                    messageRepository: repo,
-                    settingsRepository: settingsRepository,
-                    notificationObserver: notificationObserver,
-                    identityManager: identityManager,
-                    pendingDeepLink: $pendingDeepLink,
-                    onIdentitySwitch: {
-                        // Reset state so RootView re-initializes
-                        isInitialized = false
-                        messageRepository = nil
-                        incomingMessageHandler = nil
-                        #if COLUMBA_RUNTIME_MODEL_B
-                        modelBInboundReplay = nil
-                        #endif
-                        database = nil
-                        initError = nil
-                        identitySwitchTrigger = UUID()
-                    }
-                )
-                // Voice / CallKit removed in the Python RNS migration (Phase 0).
-                // Will return in v2 once canonical Python LXST is ported to iOS audio.
-            } else {
-                // Not yet initialized. Under Model B, init suspends before the proxy
-                // backend starts until the NE/VPN tunnel is up; on first launch that
-                // means showing the background-delivery gate instead of an indefinite
-                // "Connecting to network…" spinner on a tunnel that doesn't exist yet.
-                #if COLUMBA_RUNTIME_MODEL_B
-                if appServices.needsBackgroundDeliveryApproval {
-                    BackgroundDeliveryGateView(appServices: appServices)
-                } else {
-                    loadingView
-                }
-                #else
-                loadingView
-                #endif
-            }
-        }
-        .onChange(of: colorScheme) { _, newScheme in
-            ThemeManager.shared.systemColorScheme = newScheme
-        }
-        .onAppear {
-            ThemeManager.shared.systemColorScheme = colorScheme
-        }
-        .task(id: identitySwitchTrigger) {
-            if !showOnboarding {
-                await initializeServices()
-            }
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            let phaseValue = newPhase
-            if phaseValue == .active {
-                NotificationService.shared.clearBadge()
-                // Sync from propagation node when app becomes active,
-                // debounced to avoid rapid re-syncs on quick app switches
-                if let propManager = appServices.propagationManager,
-                   !propManager.isSyncing {
-                    let lastSync = propManager.lastSyncTime ?? .distantPast
-                    if Date().timeIntervalSince(lastSync) > 60 {
-                        Task { await propManager.syncNow() }
+        let syncOperationID = UUID()
+        let cancellation = BackgroundPropagationCancellation()
+        let workflow = BackgroundPropagationSyncWorkflow<LXMessage>(
+            captureInsertionCursor: {
+                try await repository.captureMessageInsertionCursor()
+            },
+            sync: {
+                let result = await withTaskCancellationHandler {
+                    await propagationManager.syncNow(
+                        timeout: 20.0,
+                        operationID: syncOperationID
+                    )
+                } onCancel: {
+                    // Promptly interrupt the blocking Python operation. The
+                    // structured path below also awaits this same task before the
+                    // BG task is reported complete.
+                    Task { @MainActor in
+                        cancellation.request {
+                            await propagationManager.cancelActiveSync(operationID: syncOperationID)
+                        }
                     }
                 }
-            }
-            #if os(iOS)
-            if newPhase == .background {
-                scheduleBackgroundSync()
-                // Flush RNS's path table + known destinations to disk now —
-                // iOS won't run RNS's clean-exit persist, so without this a
-                // cold start can't recall previously-heard peers.
-                appServices.persistRNSStateOnBackground()
-            }
-            appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
-            #endif
-        }
-        #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: .columbaBackgroundSync)) { note in
-            guard let task = note.object as? BGAppRefreshTask else { return }
-            handleBackgroundSync(task: task)
-        }
-        #endif
-    }
-
-    // MARK: - Loading View
-
-    private var loadingView: some View {
-        ZStack {
-            Theme.backgroundPrimary.ignoresSafeArea()
-
-            VStack(spacing: 20) {
-                ZStack {
-                    Circle()
-                        .fill(Theme.accentColor.opacity(0.2))
-                        .frame(width: 100, height: 100)
-
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 40))
-                        .foregroundStyle(Theme.accentColor)
-                }
-
-                Text("Columba")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(Theme.textPrimary)
-
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: Theme.accentColor))
-                    .scaleEffect(1.2)
-
-                Text("Connecting to network...")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-        }
-    }
-
-    // MARK: - Error View
-
-    private func errorView(_ message: String) -> some View {
-        ZStack {
-            Theme.backgroundPrimary.ignoresSafeArea()
-
-            VStack(spacing: 20) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 50))
-                    .foregroundStyle(.orange)
-
-                Text("Connection Failed")
-                    .font(.title2.bold())
-                    .foregroundStyle(Theme.textPrimary)
-
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-
-                Button {
-                    Task {
-                        initError = nil
-                        await initializeServices()
+                if Task.isCancelled {
+                    cancellation.request {
+                        await propagationManager.cancelActiveSync(operationID: syncOperationID)
                     }
-                } label: {
-                    HStack {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Retry")
-                    }
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 14)
-                    .background(Theme.accentColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    await cancellation.wait()
+                    return false
                 }
-                .padding(.top, 10)
+                return result
+            },
+            messagesInsertedAfter: { cursor in
+                try await repository.fetchIncomingMessagesInserted(after: cursor)
+            },
+            notify: { message in
+                await handler.postNotificationForNewlySyncedMessage(message)
             }
-        }
-    }
+        )
 
-    #if os(iOS)
-    // MARK: - Background Sync
-
-    private func scheduleBackgroundSync() {
-        let request = BGAppRefreshTaskRequest(identifier: "network.columba.Columba.sync")
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-        try? BGTaskScheduler.shared.submit(request)
-    }
-
-    private func handleBackgroundSync(task: BGAppRefreshTask) {
-        scheduleBackgroundSync() // always reschedule first
-        let syncTask = Task {
-            await appServices.propagationManager?.syncNow()
-            task.setTaskCompleted(success: true)
-        }
-        task.expirationHandler = {
-            syncTask.cancel()
-            task.setTaskCompleted(success: false)
-        }
+        let succeeded = await workflow.run()
+        handler.setUserNotificationsSuppressed(false)
+        await appServices.endExclusivePythonHostEventProcessing()
+        DiagLog.log("[BG-SYNC] completed success=\(succeeded)")
+        return succeeded
     }
     #endif
 
     // MARK: - Initialization
 
-    private func initializeServices() async {
+    /// Share one application-lifetime initialization operation between the SwiftUI
+    /// scene and a cold-delivered background refresh. This prevents duplicate
+    /// Reticulum identities/routers and avoids treating a fixed delay as readiness.
+    @MainActor
+    func ensureServicesInitialized() async -> Bool {
+        if isInitialized { return true }
+        if let serviceInitializationTask {
+            return await serviceInitializationTask.value
+        }
+
+        let task = Task { @MainActor in
+            await initializeServices()
+            return isInitialized
+        }
+        serviceInitializationTask = task
+        let succeeded = await task.value
+        serviceInitializationTask = nil
+        return succeeded
+    }
+
+    func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
+        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+        BackgroundPropagationRefreshScheduler.logRuntime(context: "initialize-services")
+        BackgroundPropagationRefreshScheduler.logPendingRequests(context: "initialize-services")
+        #endif
 
         #if COLUMBA_RUNTIME_MODEL_B
         // Surface the Network Extension's App-Group diagnostic log into Documents
@@ -871,6 +789,7 @@ struct RootView: View {
             if let router = appServices.router {
                 await router.setDelegate(handler)
             }
+            appServices.startPythonEventDrain()
 
             #if COLUMBA_RUNTIME_MODEL_B
             // Model B: the NE owns LXMF delivery, so the live `LXMRouter` delegate
@@ -978,6 +897,13 @@ struct RootView: View {
 
             self.isInitialized = true
 
+            #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+            // Submit after startup as well as on scene/settings transitions. This
+            // survives the startup diagnostic-log reset and ensures the first
+            // request is based on fully restored persisted settings.
+            BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+            #endif
+
             // DEBUG: Auto-trigger propagation sync on launch for testing
             if ProcessInfo.processInfo.arguments.contains("--auto-sync") {
                 let services = appServices
@@ -1028,10 +954,242 @@ struct RootView: View {
     }
 }
 
-// MARK: - Notification Names
+// MARK: - Root View
 
-extension Notification.Name {
-    static let columbaBackgroundSync = Notification.Name("network.columba.Columba.backgroundSync")
+/// Root view that handles async service initialization.
+///
+/// Separating initialization into a View (vs App) ensures the .task modifier
+/// runs correctly in the SwiftUI lifecycle.
+@available(iOS 17.0, macOS 14.0, *)
+struct RootView: View {
+    // MARK: - Dependencies
+
+    let applicationRuntime: ColumbaApplicationRuntime
+    let notificationObserver: NotificationObserver
+    @Binding var pendingDeepLink: String?
+
+    private var settingsRepository: SettingsRepository { applicationRuntime.settingsRepository }
+    private var appServices: AppServices { applicationRuntime.appServices }
+    private var identityManager: IdentityManager { applicationRuntime.identityManager }
+    private var database: LXMFDatabase? { applicationRuntime.database }
+    private var messageRepository: MessageRepository? { applicationRuntime.messageRepository }
+    private var initError: String? { applicationRuntime.initError }
+    private var isInitialized: Bool { applicationRuntime.isInitialized }
+
+    // MARK: - Internal State
+
+    @State private var identitySwitchTrigger = UUID()
+    @State private var showOnboarding: Bool
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(applicationRuntime: ColumbaApplicationRuntime, notificationObserver: NotificationObserver, pendingDeepLink: Binding<String?>) {
+        self.applicationRuntime = applicationRuntime
+        self.notificationObserver = notificationObserver
+        self._pendingDeepLink = pendingDeepLink
+        // Migrate existing users so they skip onboarding
+        OnboardingViewModel.migrateExistingUsers()
+        #if DEBUG
+        let isScreenshotterLaunch = ProcessInfo.processInfo.arguments.contains("ui-screenshotter")
+        #else
+        let isScreenshotterLaunch = false
+        #endif
+        // Maestro clears app state and Keychain before every screenshot. Its
+        // explicit DEBUG-only launch argument bypasses the interactive wizard;
+        // initializeServices() creates the disposable test identity below.
+        self._showOnboarding = State(
+            initialValue: !OnboardingViewModel.hasCompletedOnboarding && !isScreenshotterLaunch
+        )
+    }
+
+    // MARK: - Body
+
+    var body: some View {
+        Group {
+            if showOnboarding {
+                #if COLUMBA_ONBOARDING_ENABLED
+                OnboardingView(
+                    identityManager: identityManager,
+                    settingsRepository: settingsRepository,
+                    appServices: appServices,
+                    onComplete: {
+                        showOnboarding = false
+                        identitySwitchTrigger = UUID()
+                    }
+                )
+                #else
+                // Onboarding flow disabled in this build — bypass straight to main UI.
+                Color.clear.onAppear { showOnboarding = false }
+                #endif
+            } else if let error = initError {
+                errorView(error)
+            } else if isInitialized,
+                      let repo = messageRepository {
+                MainTabView(
+                    appServices: appServices,
+                    messageRepository: repo,
+                    settingsRepository: settingsRepository,
+                    notificationObserver: notificationObserver,
+                    identityManager: identityManager,
+                    pendingDeepLink: $pendingDeepLink,
+                    onIdentitySwitch: {
+                        applicationRuntime.resetAfterIdentitySwitch()
+                        identitySwitchTrigger = UUID()
+                    }
+                )
+                // Voice / CallKit removed in the Python RNS migration (Phase 0).
+                // Will return in v2 once canonical Python LXST is ported to iOS audio.
+            } else {
+                // Not yet initialized. Under Model B, init suspends before the proxy
+                // backend starts until the NE/VPN tunnel is up; on first launch that
+                // means showing the background-delivery gate instead of an indefinite
+                // "Connecting to network…" spinner on a tunnel that doesn't exist yet.
+                #if COLUMBA_RUNTIME_MODEL_B
+                if appServices.needsBackgroundDeliveryApproval {
+                    BackgroundDeliveryGateView(appServices: appServices)
+                } else {
+                    loadingView
+                }
+                #else
+                loadingView
+                #endif
+            }
+        }
+        .onChange(of: colorScheme) { _, newScheme in
+            ThemeManager.shared.systemColorScheme = newScheme
+        }
+        .onAppear {
+            ThemeManager.shared.systemColorScheme = colorScheme
+        }
+        .task(id: identitySwitchTrigger) {
+            if !showOnboarding {
+                _ = await applicationRuntime.ensureServicesInitialized()
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            let phaseValue = newPhase
+            #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+            let context = phaseValue == .active
+                ? "scene-active"
+                : (phaseValue == .background ? "scene-background" : "scene-inactive")
+            BackgroundPropagationRefreshScheduler.logRuntime(context: context)
+            BackgroundPropagationRefreshScheduler.logPendingRequests(context: context)
+            #endif
+            if phaseValue == .active {
+                if let repository = messageRepository {
+                    Task {
+                        await NotificationService.shared
+                            .synchronizeBadgeWithDurableUnreadCount(
+                                messageRepository: repository
+                            )
+                    }
+                }
+                // Sync from propagation node when app becomes active,
+                // debounced to avoid rapid re-syncs on quick app switches
+                if let propManager = appServices.propagationManager,
+                   !propManager.isSyncing {
+                    let lastSync = propManager.lastSyncTime ?? .distantPast
+                    if Date().timeIntervalSince(lastSync) > 60 {
+                        Task { await propManager.syncNow() }
+                    }
+                }
+            }
+            #if os(iOS)
+            if newPhase == .background {
+                #if COLUMBA_RUNTIME_PYTHON
+                BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+                #endif
+                // Flush RNS's path table + known destinations to disk now —
+                // iOS won't run RNS's clean-exit persist, so without this a
+                // cold start can't recall previously-heard peers.
+                appServices.persistRNSStateOnBackground()
+            }
+            appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
+            #endif
+        }
+        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+        .task {
+            BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+        }
+        #endif
+    }
+
+    // MARK: - Loading View
+
+    private var loadingView: some View {
+        ZStack {
+            Theme.backgroundPrimary.ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.accentColor.opacity(0.2))
+                        .frame(width: 100, height: 100)
+
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(Theme.accentColor)
+                }
+
+                Text("Columba")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: Theme.accentColor))
+                    .scaleEffect(1.2)
+
+                Text("Connecting to network...")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+    }
+
+    // MARK: - Error View
+
+    private func errorView(_ message: String) -> some View {
+        ZStack {
+            Theme.backgroundPrimary.ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 50))
+                    .foregroundStyle(.orange)
+
+                Text("Connection Failed")
+                    .font(.title2.bold())
+                    .foregroundStyle(Theme.textPrimary)
+
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+
+                Button {
+                    Task {
+                        applicationRuntime.initError = nil
+                        await applicationRuntime.initializeServices()
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Retry")
+                    }
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 14)
+                    .background(Theme.accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .padding(.top, 10)
+            }
+        }
+    }
+
+
 }
 
 // MARK: - Tab Enum

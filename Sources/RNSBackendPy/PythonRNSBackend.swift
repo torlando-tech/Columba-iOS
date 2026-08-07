@@ -1,6 +1,32 @@
 import Foundation
 import RNSAPI
 
+private actor PythonEventDrainGate {
+    private var transactionActive = false
+    private var normalDrainActive = false
+
+    func beginTransaction() async {
+        while transactionActive || normalDrainActive {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        transactionActive = true
+    }
+
+    func endTransaction() {
+        transactionActive = false
+    }
+
+    func beginNormalDrain() -> Bool {
+        guard !transactionActive, !normalDrainActive else { return false }
+        normalDrainActive = true
+        return true
+    }
+
+    func endNormalDrain() {
+        normalDrainActive = false
+    }
+}
+
 /// Python-backed `RnsBackend` (Android `:rns-backend-py` analog). Wraps
 /// `PythonBridge` (the raw CPython embedding) and adapts its Python-flavored raw
 /// results onto the neutral RNSAPI DTOs the host (`AppServices`) consumes. The
@@ -18,6 +44,7 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
     private let bridge = PythonBridge()
     private var eventDrainTask: Task<Void, Never>?
     private var eventContinuation: AsyncStream<BackendEvent>.Continuation?
+    private let eventDrainGate = PythonEventDrainGate()
 
     public private(set) var localInfo: LocalInfo?
 
@@ -208,6 +235,29 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         Self.map(try await bridge.propagationSync(timeout: timeout))
     }
 
+    /// Run one propagation sync while exclusively owning the Python event queue,
+    /// then return every event queued by that transfer for synchronous host-side
+    /// persistence before the caller computes its message insertion delta.
+    public func propagationSyncAndDrain(
+        timeout: TimeInterval = 60.0
+    ) async throws -> (result: PropagationSyncResult, events: [BackendEvent]) {
+        await eventDrainGate.beginTransaction()
+        do {
+            let result = Self.map(try await bridge.propagationSync(timeout: timeout))
+            let events = await bridge.drainEvents().map(Self.map)
+            await eventDrainGate.endTransaction()
+            return (result, events)
+        } catch {
+            await eventDrainGate.endTransaction()
+            throw error
+        }
+    }
+
+    /// Cancel a bounded propagation sync that is currently polling in Python.
+    public func cancelPropagationSync() async {
+        try? await bridge.cancelPropagationSync()
+    }
+
     // MARK: - Telemetry (RnsTelemetry)
     //
     // The send half routes through the same `sendLxmfMessage` path as text /
@@ -357,9 +407,12 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         eventDrainTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let events = await self.bridge.drainEvents()
-                for event in events {
-                    self.eventContinuation?.yield(Self.map(event))
+                if await self.eventDrainGate.beginNormalDrain() {
+                    let events = await self.bridge.drainEvents()
+                    await self.eventDrainGate.endNormalDrain()
+                    for event in events {
+                        self.eventContinuation?.yield(Self.map(event))
+                    }
                 }
                 try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
             }

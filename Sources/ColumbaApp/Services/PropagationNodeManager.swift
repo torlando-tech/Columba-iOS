@@ -99,6 +99,17 @@ public final class PropagationNodeManager {
     /// Task for periodic sync.
     private var periodicSyncTask: Task<Void, Never>?
 
+    /// Test seam proving that iOS does not run a second timer beside
+    /// BGAppRefreshTask. Other platforms still use the in-process timer.
+    var hasInProcessPeriodicSyncTaskForTesting: Bool {
+        periodicSyncTask != nil
+    }
+
+    /// Main-actor single-flight guard shared by user, periodic, foreground, and
+    /// BGAppRefreshTask synchronization requests.
+    private var syncInFlight = false
+    private var activeSyncOperationID: UUID?
+
     /// Observer token for the NE's propagation sync-state channel (Model B). The NE
     /// owns the router/sync, so live progress arrives as App-Group snapshots bridged
     /// to `propagationSyncStateChangedInApp`; we mirror them into `syncState`.
@@ -338,7 +349,26 @@ public final class PropagationNodeManager {
     ///   refresh button, pull-to-refresh, or a Sync Now action) — i.e. the cases that may
     ///   present the status sheet. Only these reset the displayed transfer state up front
     ///   (see below). Background, periodic, and on-foreground auto-syncs pass `false`.
-    public func syncNow(userInitiated: Bool = false) async {
+    @discardableResult
+    public func syncNow(
+        userInitiated: Bool = false,
+        timeout: TimeInterval = 60.0,
+        operationID: UUID = UUID()
+    ) async -> Bool {
+        guard !syncInFlight else {
+            logger.info("[SYNC] skipped overlapping propagation sync")
+            DiagLog.log("[SYNC] rejected: propagation sync already in flight")
+            return false
+        }
+        syncInFlight = true
+        activeSyncOperationID = operationID
+        defer {
+            if activeSyncOperationID == operationID {
+                activeSyncOperationID = nil
+                syncInFlight = false
+            }
+        }
+
         // For user-initiated syncs only, reset transfer state up front so a freshly-opened
         // status sheet shows THIS sync's progress from a clean "connecting" slate, not the
         // previous run's stale "Download complete / N new messages". Background / periodic
@@ -364,22 +394,23 @@ public final class PropagationNodeManager {
                 syncState.state = .noPath
                 syncState.errorDescription = "No propagation node available"
                 logger.warning("[SYNC] Model B: no propagation node, sync skipped")
-                return
+                return false
             }
             publishPropagationSeam() // ensure the NE has the latest PN + stamp cost
             syncState.state = .linking
             syncState.errorDescription = nil
             PropagationSeamConfig.postSyncNowNotification()
             logger.info("[SYNC] Model B: posted sync-now to NE")
-            return
+            return true
         }
         #elseif COLUMBA_RUNTIME_PYTHON
 
         guard let backend = appServices?.pythonBackend else {
             logger.error("[SYNC] Python backend not available")
+            DiagLog.log("[SYNC] failed: Python backend unavailable")
             syncState.state = .linkFailed
             syncState.errorDescription = "Backend not available"
-            return
+            return false
         }
 
         logger.info("[SYNC] syncNow called. knownNodes=\(self.knownNodes.count), selectedNodeHash=\(self.selectedNodeHash != nil ? "set" : "nil")")
@@ -399,7 +430,8 @@ public final class PropagationNodeManager {
             syncState.state = .noPath
             syncState.errorDescription = "No propagation node available"
             logger.warning("[SYNC] No propagation nodes discovered, sync skipped")
-            return
+            DiagLog.log("[SYNC] failed: no propagation node selected")
+            return false
         }
 
         let nodeHex = nodeHash.prefix(8).map { String(format: "%02x", $0) }.joined()
@@ -408,7 +440,9 @@ public final class PropagationNodeManager {
         syncState.errorDescription = nil
 
         do {
-            let result = try await backend.propagationSync(timeout: 60.0)
+            let transaction = try await backend.propagationSyncAndDrain(timeout: timeout)
+            await appServices?.processPythonEventsSynchronously(transaction.events)
+            let result = transaction.result
             syncState.state = Self.mapPythonState(result.state)
             syncState.receivedMessages = result.receivedMessages
             syncState.errorDescription = result.ok ? nil : result.reason
@@ -417,11 +451,54 @@ public final class PropagationNodeManager {
                 lastSyncTime = syncState.lastSync
             }
             logger.info("[SYNC] Sync \(result.ok ? "complete" : "failed"). state=\(result.state.rawValue) newMessages=\(result.receivedMessages)")
+            DiagLog.log(
+                "[SYNC] completed ok=\(result.ok) state=\(result.state.rawValue) "
+                    + "received=\(result.receivedMessages) reason=\(result.reason)"
+            )
+            return result.ok
         } catch {
             syncState.state = .transferFailed
             syncState.errorDescription = error.localizedDescription
             logger.error("[SYNC] Sync failed: \(error.localizedDescription)")
+            DiagLog.log("[SYNC] failed with error: \(error.localizedDescription)")
+            return false
         }
+        #endif
+    }
+
+    /// Interrupt an active shipping Python propagation sync. This is used by
+    /// BGAppRefreshTask expiration so Python does not continue polling after the
+    /// system revokes the refresh execution window.
+    public func cancelActiveSync(operationID: UUID) async {
+        guard activeSyncOperationID == operationID else {
+            logger.info("[SYNC] ignored cancellation for inactive propagation sync")
+            return
+        }
+        #if COLUMBA_RUNTIME_PYTHON
+        await appServices?.pythonBackend?.cancelPropagationSync()
+        #endif
+    }
+
+    /// Reapply the persisted relay after the embedded Python backend starts.
+    /// Preference restoration happens before backend startup on a cold launch,
+    /// so wiring only the Compat router leaves Python with no outbound node.
+    @discardableResult
+    public func reapplySelectedNodeToPythonBackend() async -> Bool {
+        #if COLUMBA_RUNTIME_PYTHON
+        guard let hash = selectedNodeHash,
+              let backend = appServices?.pythonBackend else { return false }
+        let hex = hash.map { String(format: "%02x", $0) }.joined()
+        do {
+            return try await backend.setPropagationNode(
+                destHashHex: hex,
+                stampCost: selectedNodeStampCost
+            )
+        } catch {
+            logger.error("[SYNC] Failed to reapply persisted propagation node: \(error.localizedDescription)")
+            return false
+        }
+        #else
+        return false
         #endif
     }
 
@@ -431,8 +508,11 @@ public final class PropagationNodeManager {
     private static func mapPythonState(_ state: PropagationSyncResult.State) -> PropagationTransferState.State {
         switch state {
         case .complete: return .complete
+        case .cancelled: return .transferFailed
         case .noPath: return .noPath
-        case .transferFailed: return .transferFailed
+        case .linkFailed: return .linkFailed
+        case .transferFailed, .noIdentityReceived, .noAccess, .failed:
+            return .transferFailed
         case .pathRequested, .linkEstablishing, .linkEstablished:
             return .linking
         case .requestSent, .receiving, .responseReceived:
@@ -452,6 +532,15 @@ public final class PropagationNodeManager {
         return
         #elseif COLUMBA_RUNTIME_PYTHON
 
+        #if os(iOS)
+        // BGAppRefreshTask is the only periodic scheduler on iOS. Keeping this
+        // sleeping task as well causes both operations to resume on the same
+        // system wake, and the shared single-flight guard rejects one of them.
+        periodicSyncTask?.cancel()
+        periodicSyncTask = nil
+        logger.info("[SYNC] in-process periodic timer disabled; BGAppRefreshTask owns iOS cadence")
+        return
+        #else
         guard periodicSyncEnabled else { return }
 
         periodicSyncTask?.cancel()
@@ -462,6 +551,7 @@ public final class PropagationNodeManager {
                 await syncNow()
             }
         }
+        #endif
         #endif
     }
 

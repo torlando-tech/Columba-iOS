@@ -231,6 +231,7 @@ public final class MessagingViewModel {
             // leave a stale badge behind after the conversation was viewed.
             try await repository.ensureConversation(conversationHash, displayName: displayName)
             try await repository.markConversationRead(conversationHash)
+            await synchronizeBadgeWithDurableUnreadCount()
             await retryPendingDeliveryProofs()
 
             // Preserve the current history depth when repository notifications
@@ -320,6 +321,7 @@ public final class MessagingViewModel {
             // Reconcile messages that arrived after the initial read reset but
             // were included in the page we just displayed.
             try await repository.markConversationRead(conversationHash)
+            await synchronizeBadgeWithDurableUnreadCount()
 
             errorMessage = hasInterruptedRetry
                 ? Self.interruptedRetryWarning
@@ -330,6 +332,15 @@ public final class MessagingViewModel {
 
         isLoading = false
         await runPendingRefreshIfNeeded()
+    }
+
+    @MainActor
+    private func synchronizeBadgeWithDurableUnreadCount() async {
+        #if os(iOS)
+        await NotificationService.shared.synchronizeBadgeWithDurableUnreadCount(
+            messageRepository: repository
+        )
+        #endif
     }
 
     /// Load older messages when scrolling up.

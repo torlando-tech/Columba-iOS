@@ -140,6 +140,28 @@ public actor MessageRepository {
                     updated_at DOUBLE NOT NULL
                 )
                 """)
+            // SQLite rowids can reuse the deleted highest value. Keep an app-owned,
+            // AUTOINCREMENT insertion ledger so a propagation transaction cannot miss
+            // a new row merely because its messages.rowid was reused. The trigger also
+            // observes writes performed directly by the embedded Python router.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS columba_message_insertions (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id BLOB NOT NULL UNIQUE
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS columba_track_message_insertion
+                AFTER INSERT ON messages
+                BEGIN
+                    INSERT OR IGNORE INTO columba_message_insertions (message_id)
+                    VALUES (NEW.message_id);
+                END
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO columba_message_insertions (message_id)
+                SELECT message_id FROM messages ORDER BY rowid ASC
+                """)
         }
     }
 
@@ -211,6 +233,19 @@ public actor MessageRepository {
     /// Fetch a single conversation by destination hash.
     public func fetchConversation(_ conversationHash: Data) async throws -> RNSAPI.ConversationRecord? {
         try await database.getConversation(hash: conversationHash).map(Self.mapConversation)
+    }
+
+    /// Return the durable unread-message total used for the application icon
+    /// badge. This is independent of Notification Center history, whose delivered
+    /// requests remain present after the icon badge itself is cleared.
+    public func totalUnreadCount() async throws -> Int {
+        let count = try await replacementPool.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COALESCE(SUM(unread_count), 0) FROM conversations"
+            ) ?? 0
+        }
+        return max(0, count)
     }
 
     private static func sortedUniqueHashes(_ hashes: [Data]) -> [Data] {
@@ -510,6 +545,38 @@ public actor MessageRepository {
     public func fetchMessageRecords(for conversationHash: Data, limit: Int = 50, offset: Int = 0) async throws -> [RNSAPI.MessageRecord] {
         try await database.getMessageRecords(forConversation: conversationHash, limit: limit, offset: offset)
             .map(Self.mapRecord)
+    }
+
+    /// Capture the current monotonic insertion boundary of the canonical message
+    /// table. `messages.rowid` is unsuitable because SQLite can reuse the deleted
+    /// highest rowid; the app-owned AUTOINCREMENT ledger cannot reuse sequences.
+    public func captureMessageInsertionCursor() async throws -> Int64 {
+        try await replacementPool.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: "SELECT COALESCE(MAX(sequence), 0) FROM columba_message_insertions"
+            ) ?? 0
+        }
+    }
+
+    /// Return inbound messages first inserted after a previously captured boundary.
+    /// Existing message IDs re-delivered by a propagation node retain their ledger
+    /// sequence and are excluded, so notifications describe new durable insertions.
+    public func fetchIncomingMessagesInserted(after cursor: Int64) async throws -> [RNSAPI.LXMessage] {
+        try await replacementPool.read { db in
+            try LXMFSwift.MessageRecord.fetchAll(
+                db,
+                sql: """
+                    SELECT messages.*
+                    FROM columba_message_insertions
+                    JOIN messages USING (message_id)
+                    WHERE columba_message_insertions.sequence > ?
+                      AND messages.incoming = 1
+                    ORDER BY columba_message_insertions.sequence ASC
+                    """,
+                arguments: [cursor]
+            ).map(Self.mapToLXMessage)
+        }
     }
 
     /// Save a message (outbound from the app, or Python-path inbound).

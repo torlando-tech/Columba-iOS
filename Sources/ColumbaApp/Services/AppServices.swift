@@ -30,10 +30,6 @@ enum DiagLog {
         return docs.appendingPathComponent("diag.log")
     }()
 
-    static func clear() {
-        try? "".write(to: fileURL, atomically: true, encoding: .utf8)
-    }
-
     static func log(_ message: String) {
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)\n"
@@ -86,6 +82,39 @@ enum DiagLog {
     }
     #endif
     #endif
+}
+
+actor PythonHostEventProcessingGate {
+    private var exclusiveActive = false
+    private var normalActive = false
+
+    func beginExclusive() async -> Bool {
+        while exclusiveActive || normalActive {
+            if Task.isCancelled { return false }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        guard !Task.isCancelled else { return false }
+        exclusiveActive = true
+        return true
+    }
+
+    func endExclusive() {
+        exclusiveActive = false
+    }
+
+    func beginNormal() async -> Bool {
+        while exclusiveActive || normalActive {
+            if Task.isCancelled { return false }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        guard !Task.isCancelled else { return false }
+        normalActive = true
+        return true
+    }
+
+    func endNormal() {
+        normalActive = false
+    }
 }
 
 /// Low-overhead, privacy-safe runtime instrumentation for physical-device soak tests.
@@ -571,6 +600,15 @@ public final class AppServices {
     /// Background task that drains Python events (announces, inbound
     /// messages) into Columba's existing UI plumbing.
     private var pythonEventTask: Task<Void, Never>?
+    private let pythonHostEventProcessingGate = PythonHostEventProcessingGate()
+
+    func beginExclusivePythonHostEventProcessing() async -> Bool {
+        await pythonHostEventProcessingGate.beginExclusive()
+    }
+
+    func endExclusivePythonHostEventProcessing() async {
+        await pythonHostEventProcessingGate.endExclusive()
+    }
 
     /// Tokens for the block-based NotificationCenter observers registered by
     /// `startPythonBackend()` (the lxma://test-* deep-link harness). Held so
@@ -1145,7 +1183,7 @@ public final class AppServices {
     }
 
     private func initializeUnlocked(tcpServerAddress: String) async throws {
-        DiagLog.clear()
+        DiagLog.log("[STARTUP] AppServices initialization beginning")
         let monitorLease = RuntimeActivityMonitor.shared.acquire()
         var initializationSucceeded = false
         defer {
@@ -1270,30 +1308,29 @@ public final class AppServices {
         // Start monitoring interface state for UI updates
         startStateObserver()
 
-        // 10. Initialize propagation node manager
-        // IMPORTANT: loadPreferences() MUST run before startListening() so that
-        // the saved relay selection (selectedNodeHash, autoSelectEnabled) is restored
-        // before the listening task processes path entries and calls autoSelectBestNode().
-        // Otherwise the default autoSelectEnabled=true can overwrite the user's manual selection.
+        // 10. Restore propagation preferences before backend startup. Listener,
+        // periodic, and auto-announce tasks are activated only after the backend
+        // and persisted propagation node are ready, so a failed retry cannot leak
+        // initialization-owned tasks.
         let propManager = PropagationNodeManager(appServices: self)
         self.propagationManager = propManager
         await propManager.loadPreferences()
-        propManager.startListening()
-        propManager.startPeriodicSync()
 
-        // 11. Initialize auto-announce manager
-        let announceManager = AutoAnnounceManager(appServices: self)
-        self.autoAnnounceManager = announceManager
-        announceManager.start()
-
-        // 12. Start Python RNS backend. The Compat-layer LXMRouter / Transport
-        //     are stubs; the real network I/O happens through PythonBridge.
-        await startPythonBackend(
-            identity: newIdentity,
-            identityHashHex: newIdentity.hexHash,
-            router: newRouter,
-            interfaces: InterfaceRepository().getEnabledInterfaces(),
-            displayName: ""
+        try await InitializationLifecycleActivation.run(
+            readiness: {
+                // The Compat-layer LXMRouter / Transport are stubs; real network
+                // I/O happens through PythonBridge.
+                try await self.startPythonBackend(
+                    identity: newIdentity,
+                    identityHashHex: newIdentity.hexHash,
+                    router: newRouter,
+                    interfaces: InterfaceRepository().getEnabledInterfaces(),
+                    displayName: ""
+                )
+            },
+            activate: {
+                self.activateInitializationManagers(propManager)
+            }
         )
 
         // On-device test instrumentation: listen for the test-announce Darwin
@@ -1457,7 +1494,7 @@ public final class AppServices {
         router: LXMRouter,
         interfaces: [InterfaceEntity],
         displayName: String
-    ) async {
+    ) async throws {
         DiagLog.log("[RNS] backend start entered with \(interfaces.count) interfaces")
         if backend != nil {
             DiagLog.log("[RNS] already started")
@@ -1580,10 +1617,24 @@ public final class AppServices {
             DiagLog.log("[RNS] start FAILED: \(error)")
             logger.error("Python backend start failed: \(error.localizedDescription, privacy: .public)")
             self.backend = nil
-            return
+            throw error
         }
 
         await applyIncomingMessageSizeLimitFromSettings()
+
+        #if COLUMBA_RUNTIME_PYTHON
+        if propagationManager?.selectedNodeHash != nil {
+            let reapplied = await propagationManager?.reapplySelectedNodeToPythonBackend() ?? false
+            DiagLog.log("[RNS] reapplied persisted propagation node to Python: \(reapplied)")
+            try await PropagationNodeRestoreReadiness.validate(
+                reapplied: reapplied,
+                rollback: { [weak self] in
+                    await backend.stop()
+                    self?.backend = nil
+                }
+            )
+        }
+        #endif
 
         // Outbound LXMF now goes directly through `backend.lxmf.sendLxmfMessage`
         // (MessagingViewModel + RnsLxmf) with TYPED fields, so the old Compat
@@ -1593,14 +1644,10 @@ public final class AppServices {
         // would require the LXMRouterDelegate protocol to drop its router param
         // (a separate, lower-value cleanup).
 
-        // Drain Python events into Columba's UI plumbing.
-        pythonEventTask?.cancel()
-        pythonEventTask = Task { [weak self, backend] in
-            for await event in backend.events {
-                guard let self else { break }
-                await self.handlePythonEvent(event)
-            }
-        }
+        // Event consumption intentionally starts only after ColumbaApp installs
+        // IncomingMessageHandler as the Compat router delegate. Backend events queue
+        // safely until startPythonEventDrain() is called; starting here would race
+        // cold-launch inbound side-channel processing against handler creation.
 
         // Seed Compat TCPInterface stubs for each enabled InterfaceEntity so
         // the InterfaceManagement UI has something to render against. Their
@@ -2178,6 +2225,24 @@ public final class AppServices {
             }
         }
         #endif // DEBUG — test-only deep-link observers
+    }
+
+    /// Begin consuming queued backend events only after the app has installed its
+    /// IncomingMessageHandler. Idempotent across repeated scene initialization.
+    func startPythonEventDrain() {
+        guard pythonEventTask == nil, let backend else {
+            DiagLog.log("[RNS] event drain start skipped active=\(pythonEventTask != nil) backend=\(backend != nil)")
+            return
+        }
+        DiagLog.log("[RNS] event drain started after incoming handler installation")
+        pythonEventTask = Task { [weak self, backend] in
+            for await event in backend.events {
+                guard let self else { break }
+                guard await self.pythonHostEventProcessingGate.beginNormal() else { break }
+                await self.handlePythonEvent(event)
+                await self.pythonHostEventProcessingGate.endNormal()
+            }
+        }
     }
 
     @MainActor
@@ -2770,6 +2835,15 @@ public final class AppServices {
         }
     }
 
+    /// Process a transaction-owned batch before a propagation sync reports
+    /// completion to its caller. The Python backend temporarily pauses its
+    /// normal drain loop while producing this batch.
+    func processPythonEventsSynchronously(_ events: [BackendEvent]) async {
+        for event in events {
+            await handlePythonEvent(event)
+        }
+    }
+
     private func handlePythonEvent(_ event: BackendEvent) async {
         switch event {
         case .announce(let destHash, let appDataHex, let aspect, let publicKeysHex, let interfaceName, let hops, let t):
@@ -2875,7 +2949,11 @@ public final class AppServices {
             // bridge plumbing lands; the Swift backend populates them now).
             if let saved = await persistInboundFromPython(sourceHash: data, messageHashHex: messageHash, content: content, title: title, fields: fields, timestamp: t),
                fields != nil, let router = self.router {
-                router.delegate?.router(router, didReceiveMessage: saved)
+                if let handler = router.delegate as? IncomingMessageHandler {
+                    _ = await handler.handleInbound(saved).value
+                } else {
+                    router.delegate?.router(router, didReceiveMessage: saved)
+                }
             }
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonInbound"),
@@ -3001,7 +3079,7 @@ public final class AppServices {
         identityHash: String,
         tcpServerAddress: String
     ) async throws {
-        DiagLog.clear()
+        DiagLog.log("[STARTUP] AppServices identity initialization beginning")
         let monitorLease = RuntimeActivityMonitor.shared.acquire()
         var initializationSucceeded = false
         defer {
@@ -3122,18 +3200,11 @@ public final class AppServices {
 
         startStateObserver()
 
-        // 10. Initialize propagation node manager
-        // IMPORTANT: loadPreferences() MUST run before startListening() — see first overload.
+        // 10. Restore propagation preferences now; activate listener,
+        // periodic, and auto-announce tasks only after backend readiness.
         let propManager = PropagationNodeManager(appServices: self)
         self.propagationManager = propManager
         await propManager.loadPreferences()
-        propManager.startListening()
-        propManager.startPeriodicSync()
-
-        // 11. Initialize auto-announce manager
-        let announceManager = AutoAnnounceManager(appServices: self)
-        self.autoAnnounceManager = announceManager
-        announceManager.start()
 
         // Dump all registered destinations and link callbacks for diagnostics.
         // Registered destinations now come from the active backend's neutral
@@ -3176,13 +3247,20 @@ public final class AppServices {
         await ensureTunnelManager()
         #endif
 
-        // Start Python RNS backend on the multi-identity path too.
-        await startPythonBackend(
-            identity: identity,
-            identityHashHex: identityHash,
-            router: newRouter,
-            interfaces: InterfaceRepository().getEnabledInterfaces(),
-            displayName: ""
+        // Start the backend, then activate initialization-owned manager tasks.
+        try await InitializationLifecycleActivation.run(
+            readiness: {
+                try await self.startPythonBackend(
+                    identity: identity,
+                    identityHashHex: identityHash,
+                    router: newRouter,
+                    interfaces: InterfaceRepository().getEnabledInterfaces(),
+                    displayName: ""
+                )
+            },
+            activate: {
+                self.activateInitializationManagers(propManager)
+            }
         )
 
         // On-device test instrumentation: listen for the test-announce Darwin
@@ -3287,6 +3365,16 @@ public final class AppServices {
         )
 
         logger.info("Identity switch complete: \(identityHash)")
+    }
+
+    /// Activate initialization-owned manager tasks only after backend and
+    /// persisted propagation-node readiness have both succeeded.
+    private func activateInitializationManagers(_ propManager: PropagationNodeManager) {
+        propManager.startListening()
+        propManager.startPeriodicSync()
+        let announceManager = AutoAnnounceManager(appServices: self)
+        self.autoAnnounceManager = announceManager
+        announceManager.start()
     }
 
     // MARK: - State Observation
@@ -4921,6 +5009,34 @@ public final class AppServices {
     }
 }
 
+// MARK: - Initialization Lifecycle Activation
+
+@MainActor
+enum InitializationLifecycleActivation {
+    static func run(
+        readiness: @MainActor () async throws -> Void,
+        activate: @MainActor () -> Void
+    ) async throws {
+        try await readiness()
+        activate()
+    }
+}
+
+// MARK: - Propagation Readiness
+
+@MainActor
+enum PropagationNodeRestoreReadiness {
+    static func validate(
+        reapplied: Bool,
+        rollback: @MainActor () async -> Void
+    ) async throws {
+        guard reapplied else {
+            await rollback()
+            throw AppServicesError.propagationNodeRestoreFailed
+        }
+    }
+}
+
 // MARK: - Errors
 
 /// Errors from AppServices operations.
@@ -4937,6 +5053,9 @@ public enum AppServicesError: Error, Equatable {
     /// Transport not connected
     case transportNotConnected
 
+    /// Persisted propagation node could not be restored into the embedded router
+    case propagationNodeRestoreFailed
+
 }
 
 // MARK: - CustomStringConvertible
@@ -4952,6 +5071,8 @@ extension AppServicesError: CustomStringConvertible {
             return "Router not initialized"
         case .transportNotConnected:
             return "Transport not connected"
+        case .propagationNodeRestoreFailed:
+            return "Persisted propagation node could not be restored"
         }
     }
 }

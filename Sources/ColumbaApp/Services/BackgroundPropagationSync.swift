@@ -1,0 +1,395 @@
+//
+//  BackgroundPropagationSync.swift
+//  ColumbaApp
+//
+//  Owns iOS BackgroundTasks scheduling and the cold-launch handoff for
+//  propagation-node synchronization in the shipping embedded-Python app.
+//
+
+#if os(iOS)
+import BackgroundTasks
+import Foundation
+import RNSAPI
+import UIKit
+import os
+
+private let backgroundPropagationLogger = Logger(
+    subsystem: "network.columba.Columba",
+    category: "BackgroundPropagationSync"
+)
+
+enum BackgroundPropagationSchedulePolicy {
+    static let minimumInterval: TimeInterval = 15 * 60
+    static let defaultInterval: TimeInterval = 60 * 60
+
+    static func nextDelay(
+        periodicSyncEnabled: Bool,
+        userInterval: TimeInterval
+    ) -> TimeInterval? {
+        guard periodicSyncEnabled else { return nil }
+        let requested = userInterval.isFinite && userInterval > 0
+            ? userInterval
+            : defaultInterval
+        return max(minimumInterval, requested)
+    }
+}
+
+struct PendingBackgroundRefreshRequestDiagnostic: Equatable {
+    let identifier: String
+    let earliestBeginDate: Date?
+}
+
+enum BackgroundRefreshDiagnosticFormatter {
+    static func pendingRequests(
+        _ requests: [PendingBackgroundRefreshRequestDiagnostic]
+    ) -> String {
+        let formatter = ISO8601DateFormatter()
+        let entries = requests
+            .sorted { $0.identifier < $1.identifier }
+            .map { request in
+                let earliest = request.earliestBeginDate.map(formatter.string(from:)) ?? "nil"
+                return "\(request.identifier) earliest=\(earliest)"
+            }
+        return "count=\(entries.count) [\(entries.joined(separator: ", "))]"
+    }
+
+    static func runtime(
+        processID: Int32,
+        backgroundRefreshStatus: String,
+        lowPowerModeEnabled: Bool,
+        thermalState: String,
+        protectedDataAvailable: Bool,
+        sceneStates: [String]
+    ) -> String {
+        let scenes = sceneStates.sorted().joined(separator: ",")
+        return "pid=\(processID) refresh=\(backgroundRefreshStatus) "
+            + "lowPower=\(lowPowerModeEnabled) thermal=\(thermalState) "
+            + "protectedData=\(protectedDataAvailable) scenes=\(scenes.isEmpty ? "none" : scenes)"
+    }
+}
+
+private extension UIBackgroundRefreshStatus {
+    var diagnosticValue: String {
+        switch self {
+        case .available: "available"
+        case .denied: "denied"
+        case .restricted: "restricted"
+        @unknown default: "unknown"
+        }
+    }
+}
+
+private extension ProcessInfo.ThermalState {
+    var diagnosticValue: String {
+        switch self {
+        case .nominal: "nominal"
+        case .fair: "fair"
+        case .serious: "serious"
+        case .critical: "critical"
+        @unknown default: "unknown"
+        }
+    }
+}
+
+private extension UIScene.ActivationState {
+    var diagnosticValue: String {
+        switch self {
+        case .unattached: "unattached"
+        case .foregroundActive: "foregroundActive"
+        case .foregroundInactive: "foregroundInactive"
+        case .background: "background"
+        @unknown default: "unknown"
+        }
+    }
+}
+
+protocol BackgroundRefreshTaskHandle: AnyObject {
+    var expirationHandler: (() -> Void)? { get set }
+    var isCompleted: Bool { get }
+    func setTaskCompleted(success: Bool)
+}
+
+private final class LaunchOwnedBackgroundRefreshTask: BackgroundRefreshTaskHandle, @unchecked Sendable {
+    private let task: BGAppRefreshTask
+    private let lock = NSLock()
+    private var storedExpirationHandler: (() -> Void)?
+    private var completed = false
+
+    init(task: BGAppRefreshTask) {
+        self.task = task
+        task.expirationHandler = { [weak self] in self?.expire() }
+    }
+
+    var expirationHandler: (() -> Void)? {
+        get { lock.withLock { storedExpirationHandler } }
+        set { lock.withLock { storedExpirationHandler = newValue } }
+    }
+
+    var isCompleted: Bool {
+        lock.withLock { completed }
+    }
+
+    func setTaskCompleted(success: Bool) {
+        let shouldComplete = lock.withLock {
+            guard !completed else { return false }
+            completed = true
+            storedExpirationHandler = nil
+            return true
+        }
+        if shouldComplete {
+            task.expirationHandler = nil
+            task.setTaskCompleted(success: success)
+        }
+    }
+
+    private func expire() {
+        if let handler = expirationHandler {
+            handler()
+        } else {
+            setTaskCompleted(success: false)
+        }
+    }
+}
+
+/// Retains a task delivered before SwiftUI has installed the service-backed
+/// handler. This closes the cold-launch race without relying on a lossy
+/// NotificationCenter post.
+@MainActor
+final class BackgroundRefreshTaskCoordinator {
+    typealias Handler = @MainActor @Sendable () async -> Bool
+
+    private final class TaskState {
+        let task: any BackgroundRefreshTaskHandle
+        var operation: Task<Void, Never>?
+        var completed = false
+
+        init(task: any BackgroundRefreshTaskHandle) {
+            self.task = task
+        }
+    }
+
+    static let shared = BackgroundRefreshTaskCoordinator()
+
+    private var handler: Handler?
+    private var states: [ObjectIdentifier: TaskState] = [:]
+
+    func installHandler(_ handler: @escaping Handler) {
+        self.handler = handler
+        DiagLog.log("[BG-SYNC] coordinator handler installed retained=\(states.count)")
+        for state in states.values where state.operation == nil && !state.completed {
+            start(state)
+        }
+    }
+
+    func receive(_ task: any BackgroundRefreshTaskHandle) {
+        guard !task.isCompleted else {
+            DiagLog.log("[BG-SYNC] coordinator ignored task already completed during launch handoff")
+            return
+        }
+        let identifier = ObjectIdentifier(task)
+        guard states[identifier] == nil else { return }
+
+        let state = TaskState(task: task)
+        states[identifier] = state
+        DiagLog.log("[BG-SYNC] coordinator received handlerReady=\(handler != nil)")
+        task.expirationHandler = { [weak self, weak state] in
+            Task { @MainActor in
+                guard let self, let state else { return }
+                DiagLog.log("[BG-SYNC] task expiration requested")
+                if let operation = state.operation {
+                    // Let the operation's structured completion path report failure
+                    // only after its Reticulum/Python cancellation cleanup returns.
+                    operation.cancel()
+                } else {
+                    self.complete(state, success: false)
+                }
+            }
+        }
+        guard !task.isCompleted else {
+            states.removeValue(forKey: identifier)
+            return
+        }
+
+        if handler != nil {
+            start(state)
+        }
+    }
+
+    private func start(_ state: TaskState) {
+        guard let handler, state.operation == nil, !state.completed else { return }
+        DiagLog.log("[BG-SYNC] coordinator starting workflow")
+        state.operation = Task { @MainActor [weak self, weak state] in
+            guard let self, let state else { return }
+            let success = await handler()
+            self.complete(state, success: success && !Task.isCancelled)
+        }
+    }
+
+    private func complete(_ state: TaskState, success: Bool) {
+        guard !state.completed else { return }
+        state.completed = true
+        DiagLog.log("[BG-SYNC] coordinator completing success=\(success)")
+        state.task.expirationHandler = nil
+        state.task.setTaskCompleted(success: success)
+        states.removeValue(forKey: ObjectIdentifier(state.task))
+    }
+}
+
+/// Small closure-based workflow that can be tested without constructing the
+/// embedded Python runtime or a system BGAppRefreshTask.
+@MainActor
+struct BackgroundPropagationSyncWorkflow<Message> {
+    let captureInsertionCursor: @MainActor () async throws -> Int64
+    let sync: @MainActor () async -> Bool
+    let messagesInsertedAfter: @MainActor (Int64) async throws -> [Message]
+    let notify: @MainActor (Message) async -> Void
+
+    func run() async -> Bool {
+        do {
+            let cursor = try await captureInsertionCursor()
+            guard !Task.isCancelled else { return false }
+            let syncSucceeded = await sync()
+
+            // A failed or expired propagation attempt can still drain and persist
+            // concurrent live inbound events while ordinary notifications are
+            // suppressed. Transfer notification ownership for every durable delta
+            // before suppression is released, even though task success stays false.
+            let messages = try await messagesInsertedAfter(cursor)
+            for message in messages {
+                await notify(message)
+            }
+            return syncSucceeded && !Task.isCancelled
+        } catch {
+            backgroundPropagationLogger.error(
+                "Background propagation sync workflow failed: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+    }
+}
+
+enum BackgroundPropagationRefreshScheduler {
+    static let taskIdentifier = "network.columba.Columba.sync"
+    @MainActor private static var schedulingReconciliationActive = false
+
+    @MainActor
+    static func register() {
+        logRuntime(context: "registration-attempt")
+        let registered = BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: taskIdentifier,
+            using: nil
+        ) { task in
+            guard let refreshTask = task as? BGAppRefreshTask else {
+                DiagLog.log("[BG-SYNC] delivered unexpected task type")
+                task.setTaskCompleted(success: false)
+                return
+            }
+            let launchOwnedTask = LaunchOwnedBackgroundRefreshTask(task: refreshTask)
+            backgroundPropagationLogger.info("System background propagation task launch handler entered")
+            Task { @MainActor in
+                DiagLog.log("[BG-SYNC] system task delivered")
+                logRuntime(context: "task-delivered")
+                scheduleFromCurrentSettings()
+                BackgroundRefreshTaskCoordinator.shared.receive(launchOwnedTask)
+            }
+        }
+        DiagLog.log("[BG-SYNC] registration success=\(registered)")
+        logPendingRequests(context: "after-registration")
+    }
+
+    @MainActor
+    static func scheduleFromCurrentSettings() {
+        let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
+        let enabled = defaults.bool(forKey: "periodicSyncEnabled")
+        let rawInterval = defaults.double(forKey: "syncIntervalSeconds")
+        let interval = rawInterval > 0
+            ? rawInterval
+            : BackgroundPropagationSchedulePolicy.defaultInterval
+
+        guard let delay = BackgroundPropagationSchedulePolicy.nextDelay(
+            periodicSyncEnabled: enabled,
+            userInterval: interval
+        ) else {
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+            backgroundPropagationLogger.info("Background propagation sync disabled")
+            DiagLog.log("[BG-SYNC] scheduling disabled; pending request cancelled")
+            logRuntime(context: "scheduling-disabled")
+            logPendingRequests(context: "after-cancel-disabled")
+            return
+        }
+
+        guard !schedulingReconciliationActive else {
+            DiagLog.log("[BG-SYNC] scheduling reconciliation already active")
+            return
+        }
+        schedulingReconciliationActive = true
+        BGTaskScheduler.shared.getPendingTaskRequests { requests in
+            Task { @MainActor in
+                defer { schedulingReconciliationActive = false }
+                if let existing = requests.first(where: { $0.identifier == taskIdentifier }) {
+                    let earliest = existing.earliestBeginDate.map {
+                        ISO8601DateFormatter().string(from: $0)
+                    } ?? "nil"
+                    DiagLog.log("[BG-SYNC] preserving existing pending request earliest=\(earliest)")
+                    return
+                }
+                submitNewRequest(delay: delay)
+            }
+        }
+    }
+
+    @MainActor
+    private static func submitNewRequest(delay: TimeInterval) {
+        let request = BGAppRefreshTaskRequest(identifier: taskIdentifier)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: delay)
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            backgroundPropagationLogger.info(
+                "Scheduled background propagation sync no earlier than \(Int(delay), privacy: .public)s"
+            )
+            let earliest = request.earliestBeginDate.map {
+                ISO8601DateFormatter().string(from: $0)
+            } ?? "nil"
+            DiagLog.log("[BG-SYNC] scheduled earliest delay=\(Int(delay))s date=\(earliest)")
+            logRuntime(context: "after-submit")
+            logPendingRequests(context: "after-submit")
+        } catch {
+            backgroundPropagationLogger.error(
+                "Failed to schedule background propagation sync: \(error.localizedDescription, privacy: .public)"
+            )
+            DiagLog.log("[BG-SYNC] scheduling failed: \(error.localizedDescription)")
+            logRuntime(context: "submit-failed")
+            logPendingRequests(context: "after-submit-failure")
+        }
+    }
+
+    @MainActor
+    static func logRuntime(context: String) {
+        let application = UIApplication.shared
+        let processInfo = ProcessInfo.processInfo
+        let summary = BackgroundRefreshDiagnosticFormatter.runtime(
+            processID: processInfo.processIdentifier,
+            backgroundRefreshStatus: application.backgroundRefreshStatus.diagnosticValue,
+            lowPowerModeEnabled: processInfo.isLowPowerModeEnabled,
+            thermalState: processInfo.thermalState.diagnosticValue,
+            protectedDataAvailable: application.isProtectedDataAvailable,
+            sceneStates: application.connectedScenes.map { $0.activationState.diagnosticValue }
+        )
+        DiagLog.log("[BG-SYNC] runtime context=\(context) \(summary)")
+    }
+
+    @MainActor
+    static func logPendingRequests(context: String) {
+        BGTaskScheduler.shared.getPendingTaskRequests { requests in
+            let snapshots = requests.map {
+                PendingBackgroundRefreshRequestDiagnostic(
+                    identifier: $0.identifier,
+                    earliestBeginDate: $0.earliestBeginDate
+                )
+            }
+            let summary = BackgroundRefreshDiagnosticFormatter.pendingRequests(snapshots)
+            DiagLog.log("[BG-SYNC] pending context=\(context) \(summary)")
+        }
+    }
+}
+#endif
