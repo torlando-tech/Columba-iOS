@@ -213,6 +213,19 @@ public actor MessageRepository {
         try await database.getConversation(hash: conversationHash).map(Self.mapConversation)
     }
 
+    /// Return the durable unread-message total used for the application icon
+    /// badge. This is independent of Notification Center history, whose delivered
+    /// requests remain present after the icon badge itself is cleared.
+    public func totalUnreadCount() async throws -> Int {
+        let count = try await replacementPool.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COALESCE(SUM(unread_count), 0) FROM conversations"
+            ) ?? 0
+        }
+        return max(0, count)
+    }
+
     private static func sortedUniqueHashes(_ hashes: [Data]) -> [Data] {
         Array(Set(hashes)).sorted { $0.lexicographicallyPrecedes($1) }
     }

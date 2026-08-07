@@ -158,6 +158,14 @@ public final class NotificationService: Sendable {
         return true
     }
 
+    /// Convert the canonical unread total into a badge value. A failed database
+    /// read yields no badge mutation rather than reviving stale Notification
+    /// Center history.
+    static func badgeValue(totalUnreadCount: Int?) -> NSNumber? {
+        guard let totalUnreadCount else { return nil }
+        return NSNumber(value: max(0, totalUnreadCount))
+    }
+
     /// Post a local notification for an incoming LXMF message.
     ///
     /// Respects user preferences for notifications, previews, and sounds.
@@ -167,17 +175,26 @@ public final class NotificationService: Sendable {
     ///   - message: The incoming LXMessage
     ///   - senderName: Display name of the sender (nil = show hash)
     ///   - database: Database for looking up conversation display name
+    ///   - totalUnreadCount: Canonical durable unread total for the icon badge
+    @discardableResult
     public func postMessageNotification(
         _ message: LXMessage,
         senderName: String?,
         database: LXMFDatabase?,
-        isFavorite: Bool = false
-    ) async {
+        isFavorite: Bool = false,
+        totalUnreadCount: Int?
+    ) async -> Bool {
         let defaults = UserDefaults.standard
-        guard Self.shouldPostMessageNotification(isFavorite: isFavorite, defaults: defaults) else { return }
+        guard Self.shouldPostMessageNotification(isFavorite: isFavorite, defaults: defaults) else {
+            DiagLog.log("[NOTIFICATION] skipped by message notification preferences")
+            return false
+        }
 
         // Check system permission
-        guard await isAuthorized() else { return }
+        guard await isAuthorized() else {
+            DiagLog.log("[NOTIFICATION] skipped: system authorization unavailable")
+            return false
+        }
 
         // Build sender display
         let senderDisplay: String
@@ -219,9 +236,9 @@ public final class NotificationService: Sendable {
         let playSound = defaults.bool(forKey: Keys.playSounds)
         content.sound = playSound ? .default : nil
 
-        // Badge: increment
-        let currentBadge = await UNUserNotificationCenter.current().deliveredNotifications().count
-        content.badge = NSNumber(value: currentBadge + 1)
+        // Badge: use canonical unread state, not retained Notification Center
+        // history. The latter survives clearBadge() and caused values such as 100.
+        content.badge = Self.badgeValue(totalUnreadCount: totalUnreadCount)
 
         // Store source hash in userInfo for navigation on tap
         content.userInfo = [
@@ -238,8 +255,13 @@ public final class NotificationService: Sendable {
 
         do {
             try await UNUserNotificationCenter.current().add(request)
+            DiagLog.log(
+                "[NOTIFICATION] submitted message request badge=\(totalUnreadCount.map(String.init) ?? "unchanged")"
+            )
+            return true
         } catch {
-            // Silently fail — notification is non-critical
+            DiagLog.log("[NOTIFICATION] submission failed: \(error.localizedDescription)")
+            return false
         }
     }
 

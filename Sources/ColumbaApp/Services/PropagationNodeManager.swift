@@ -99,6 +99,12 @@ public final class PropagationNodeManager {
     /// Task for periodic sync.
     private var periodicSyncTask: Task<Void, Never>?
 
+    /// Test seam proving that iOS does not run a second timer beside
+    /// BGAppRefreshTask. Other platforms still use the in-process timer.
+    var hasInProcessPeriodicSyncTaskForTesting: Bool {
+        periodicSyncTask != nil
+    }
+
     /// Main-actor single-flight guard shared by user, periodic, foreground, and
     /// BGAppRefreshTask synchronization requests.
     private var syncInFlight = false
@@ -351,6 +357,7 @@ public final class PropagationNodeManager {
     ) async -> Bool {
         guard !syncInFlight else {
             logger.info("[SYNC] skipped overlapping propagation sync")
+            DiagLog.log("[SYNC] rejected: propagation sync already in flight")
             return false
         }
         syncInFlight = true
@@ -400,6 +407,7 @@ public final class PropagationNodeManager {
 
         guard let backend = appServices?.pythonBackend else {
             logger.error("[SYNC] Python backend not available")
+            DiagLog.log("[SYNC] failed: Python backend unavailable")
             syncState.state = .linkFailed
             syncState.errorDescription = "Backend not available"
             return false
@@ -422,6 +430,7 @@ public final class PropagationNodeManager {
             syncState.state = .noPath
             syncState.errorDescription = "No propagation node available"
             logger.warning("[SYNC] No propagation nodes discovered, sync skipped")
+            DiagLog.log("[SYNC] failed: no propagation node selected")
             return false
         }
 
@@ -442,11 +451,16 @@ public final class PropagationNodeManager {
                 lastSyncTime = syncState.lastSync
             }
             logger.info("[SYNC] Sync \(result.ok ? "complete" : "failed"). state=\(result.state.rawValue) newMessages=\(result.receivedMessages)")
+            DiagLog.log(
+                "[SYNC] completed ok=\(result.ok) state=\(result.state.rawValue) "
+                    + "received=\(result.receivedMessages) reason=\(result.reason)"
+            )
             return result.ok
         } catch {
             syncState.state = .transferFailed
             syncState.errorDescription = error.localizedDescription
             logger.error("[SYNC] Sync failed: \(error.localizedDescription)")
+            DiagLog.log("[SYNC] failed with error: \(error.localizedDescription)")
             return false
         }
         #endif
@@ -516,6 +530,15 @@ public final class PropagationNodeManager {
         return
         #elseif COLUMBA_RUNTIME_PYTHON
 
+        #if os(iOS)
+        // BGAppRefreshTask is the only periodic scheduler on iOS. Keeping this
+        // sleeping task as well causes both operations to resume on the same
+        // system wake, and the shared single-flight guard rejects one of them.
+        periodicSyncTask?.cancel()
+        periodicSyncTask = nil
+        logger.info("[SYNC] in-process periodic timer disabled; BGAppRefreshTask owns iOS cadence")
+        return
+        #else
         guard periodicSyncEnabled else { return }
 
         periodicSyncTask?.cancel()
@@ -526,6 +549,7 @@ public final class PropagationNodeManager {
                 await syncNow()
             }
         }
+        #endif
         #endif
     }
 
