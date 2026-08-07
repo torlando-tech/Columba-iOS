@@ -1326,7 +1326,7 @@ public final class AppServices {
 
         // 12. Start Python RNS backend. The Compat-layer LXMRouter / Transport
         //     are stubs; the real network I/O happens through PythonBridge.
-        await startPythonBackend(
+        try await startPythonBackend(
             identity: newIdentity,
             identityHashHex: newIdentity.hexHash,
             router: newRouter,
@@ -1495,7 +1495,7 @@ public final class AppServices {
         router: LXMRouter,
         interfaces: [InterfaceEntity],
         displayName: String
-    ) async {
+    ) async throws {
         DiagLog.log("[RNS] backend start entered with \(interfaces.count) interfaces")
         if backend != nil {
             DiagLog.log("[RNS] already started")
@@ -1618,7 +1618,7 @@ public final class AppServices {
             DiagLog.log("[RNS] start FAILED: \(error)")
             logger.error("Python backend start failed: \(error.localizedDescription, privacy: .public)")
             self.backend = nil
-            return
+            throw error
         }
 
         await applyIncomingMessageSizeLimitFromSettings()
@@ -3249,7 +3249,7 @@ public final class AppServices {
         #endif
 
         // Start Python RNS backend on the multi-identity path too.
-        await startPythonBackend(
+        try await startPythonBackend(
             identity: identity,
             identityHashHex: identityHash,
             router: newRouter,

@@ -247,16 +247,18 @@ struct BackgroundPropagationSyncWorkflow<Message> {
     func run() async -> Bool {
         do {
             let cursor = try await captureInsertionCursor()
-            guard !Task.isCancelled, await sync(), !Task.isCancelled else {
-                return false
-            }
-            let messages = try await messagesInsertedAfter(cursor)
             guard !Task.isCancelled else { return false }
+            let syncSucceeded = await sync()
+
+            // A failed or expired propagation attempt can still drain and persist
+            // concurrent live inbound events while ordinary notifications are
+            // suppressed. Transfer notification ownership for every durable delta
+            // before suppression is released, even though task success stays false.
+            let messages = try await messagesInsertedAfter(cursor)
             for message in messages {
-                guard !Task.isCancelled else { return false }
                 await notify(message)
             }
-            return true
+            return syncSucceeded && !Task.isCancelled
         } catch {
             backgroundPropagationLogger.error(
                 "Background propagation sync workflow failed: \(error.localizedDescription, privacy: .public)"

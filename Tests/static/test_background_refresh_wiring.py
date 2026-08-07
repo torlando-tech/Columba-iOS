@@ -13,6 +13,19 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         python_start = source.index("PythonRuntime.shared.start()")
         self.assertLess(registration, python_start)
 
+    def test_launch_safe_runtime_installs_workflow_outside_root_view_task(self):
+        source = (APP / "App" / "ColumbaApp.swift").read_text()
+        app_init = source[source.index("struct ColumbaApp: App"):source.index("// MARK: - App Body")]
+        root_view = source[source.index("struct RootView: View"):]
+        self.assertIn("ColumbaApplicationRuntime.shared.installBackgroundHandler()", app_init)
+        self.assertNotIn("BackgroundRefreshTaskCoordinator.shared.installHandler", root_view)
+
+    def test_embedded_backend_start_failure_propagates_to_readiness(self):
+        services = (APP / "Services" / "AppServices.swift").read_text()
+        start = services[services.index("private func startPythonBackend("):]
+        self.assertIn(") async throws {", start[:500])
+        self.assertIn("self.backend = nil\n            throw error", start)
+
     def test_service_initialization_cannot_erase_cold_launch_evidence(self):
         source = (APP / "Services" / "AppServices.swift").read_text()
         self.assertNotIn("DiagLog.clear()", source)
@@ -66,8 +79,10 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
     def test_background_sync_uses_immediate_local_notification_and_badge(self):
         notifications = (APP / "Services" / "NotificationService.swift").read_text()
         incoming = (APP / "Services" / "IncomingMessageHandler.swift").read_text()
-        self.assertIn("trigger: nil // Deliver immediately", notifications)
+        self.assertIn("trigger: nil", notifications)
         self.assertIn("content.badge = Self.badgeValue(totalUnreadCount:", notifications)
+        self.assertIn("await acquireBadgeMutation()", notifications)
+        self.assertIn("messageRepository.totalUnreadCount()", notifications)
         self.assertIn("postNotificationForNewlySyncedMessage", incoming)
         self.assertNotIn("deliveredNotifications().count", notifications)
 

@@ -251,24 +251,24 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         )
     }
 
-    func testWorkflowDoesNotLoadOrNotifyWhenSyncFails() async {
+    func testWorkflowTransfersDurableDeltaNotificationsWhenSyncFails() async {
         var loaded = false
-        var notified = false
+        var notified: [String] = []
         let workflow = BackgroundPropagationSyncWorkflow<String>(
             captureInsertionCursor: { 7 },
             sync: { false },
             messagesInsertedAfter: { _ in
                 loaded = true
-                return ["unexpected"]
+                return ["concurrent-live"]
             },
-            notify: { _ in notified = true }
+            notify: { notified.append($0) }
         )
 
         let succeeded = await workflow.run()
 
         XCTAssertFalse(succeeded)
-        XCTAssertFalse(loaded)
-        XCTAssertFalse(notified)
+        XCTAssertTrue(loaded)
+        XCTAssertEqual(notified, ["concurrent-live"])
     }
 
     func testTaskReceivedBeforeHandlerRunsAfterHandlerInstallation() async {

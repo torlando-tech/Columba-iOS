@@ -337,9 +337,9 @@ public final class MessagingViewModel {
     @MainActor
     private func synchronizeBadgeWithDurableUnreadCount() async {
         #if os(iOS)
-        if let unread = try? await repository.totalUnreadCount() {
-            await NotificationService.shared.synchronizeBadgeWithDurableUnreadCount(unread)
-        }
+        await NotificationService.shared.synchronizeBadgeWithDurableUnreadCount(
+            messageRepository: repository
+        )
         #endif
     }
 

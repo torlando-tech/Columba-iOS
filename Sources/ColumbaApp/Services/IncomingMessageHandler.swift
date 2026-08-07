@@ -181,13 +181,12 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     public func postNotificationForNewlySyncedMessage(_ message: LXMessage) async {
         guard Self.isUserNotifiableMessage(message) else { return }
         let conversation = try? await messageRepository.fetchConversation(message.sourceHash)
-        let totalUnreadCount = try? await messageRepository.totalUnreadCount()
         await NotificationService.shared.postMessageNotification(
             message,
             senderName: conversation?.displayName,
             database: database,
             isFavorite: (conversation?.isFavorite ?? 0) != 0,
-            totalUnreadCount: totalUnreadCount
+            messageRepository: messageRepository
         )
     }
 
@@ -456,13 +455,12 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                     // over its own — now bypassed — Compat lookup).
                     let senderConversation = try? await self.messageRepository.fetchConversation(sourceHash)
                     let senderIsFavorite = (senderConversation?.isFavorite ?? 0) != 0
-                    let totalUnreadCount = try? await self.messageRepository.totalUnreadCount()
                     await NotificationService.shared.postMessageNotification(
                         message,
                         senderName: senderConversation?.displayName,
                         database: self.database,
                         isFavorite: senderIsFavorite,
-                        totalUnreadCount: totalUnreadCount
+                        messageRepository: self.messageRepository
                     )
                 }
             }

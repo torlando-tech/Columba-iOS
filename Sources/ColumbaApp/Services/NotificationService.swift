@@ -50,7 +50,26 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
 }
 
 @available(iOS 17.0, macOS 14.0, *)
-public final class NotificationService: Sendable {
+public actor NotificationService {
+
+    private var badgeMutationActive = false
+    private var badgeMutationWaiters: [CheckedContinuation<Void, Never>] = []
+
+    private func acquireBadgeMutation() async {
+        if badgeMutationActive {
+            await withCheckedContinuation { badgeMutationWaiters.append($0) }
+        } else {
+            badgeMutationActive = true
+        }
+    }
+
+    private func releaseBadgeMutation() {
+        if badgeMutationWaiters.isEmpty {
+            badgeMutationActive = false
+        } else {
+            badgeMutationWaiters.removeFirst().resume()
+        }
+    }
 
     // MARK: - Active Conversation Tracking
 
@@ -175,14 +194,14 @@ public final class NotificationService: Sendable {
     ///   - message: The incoming LXMessage
     ///   - senderName: Display name of the sender (nil = show hash)
     ///   - database: Database for looking up conversation display name
-    ///   - totalUnreadCount: Canonical durable unread total for the icon badge
+    ///   - messageRepository: Canonical durable unread authority for the icon badge
     @discardableResult
     public func postMessageNotification(
         _ message: LXMessage,
         senderName: String?,
         database: LXMFDatabase?,
         isFavorite: Bool = false,
-        totalUnreadCount: Int?
+        messageRepository: MessageRepository
     ) async -> Bool {
         let defaults = UserDefaults.standard
         guard Self.shouldPostMessageNotification(isFavorite: isFavorite, defaults: defaults) else {
@@ -236,21 +255,25 @@ public final class NotificationService: Sendable {
         let playSound = defaults.bool(forKey: Keys.playSounds)
         content.sound = playSound ? .default : nil
 
-        // Badge: use canonical unread state, not retained Notification Center
-        // history. The latter survives clearBadge() and caused values such as 100.
-        content.badge = Self.badgeValue(totalUnreadCount: totalUnreadCount)
-
         // Store source hash in userInfo for navigation on tap
         content.userInfo = [
             "sourceHash": message.sourceHash.map { String(format: "%02x", $0) }.joined()
         ]
 
-        // Create request with unique ID (message hash)
+        // Serialize the durable unread read and Notification Center mutation. This
+        // prevents a concurrent mark-read reconciliation from completing before a
+        // stale notification badge request that was already being assembled.
+        await acquireBadgeMutation()
+        defer { releaseBadgeMutation() }
+
+        let totalUnreadCount = try? await messageRepository.totalUnreadCount()
+        content.badge = Self.badgeValue(totalUnreadCount: totalUnreadCount)
+
         let requestId = message.hash.map { String(format: "%02x", $0) }.joined()
         let request = UNNotificationRequest(
             identifier: requestId,
             content: content,
-            trigger: nil // Deliver immediately
+            trigger: nil
         )
 
         do {
@@ -267,9 +290,18 @@ public final class NotificationService: Sendable {
 
     // MARK: - Badge Management
 
-    /// Reconcile the icon badge with canonical durable unread state. Notification
-    /// Center history is presentation state and is never used as an unread counter.
-    public func synchronizeBadgeWithDurableUnreadCount(_ totalUnreadCount: Int) async {
+    /// Reconcile the icon badge with canonical durable unread state at the
+    /// serialized Notification Center side-effect boundary.
+    public func synchronizeBadgeWithDurableUnreadCount(
+        messageRepository: MessageRepository
+    ) async {
+        await acquireBadgeMutation()
+        defer { releaseBadgeMutation() }
+
+        guard let totalUnreadCount = try? await messageRepository.totalUnreadCount() else {
+            DiagLog.log("[NOTIFICATION] badge unchanged: durable unread query failed")
+            return
+        }
         do {
             try await UNUserNotificationCenter.current().setBadgeCount(max(0, totalUnreadCount))
             DiagLog.log("[NOTIFICATION] badge synchronized unread=\(max(0, totalUnreadCount))")
