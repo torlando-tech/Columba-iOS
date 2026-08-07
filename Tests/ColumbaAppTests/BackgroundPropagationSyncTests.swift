@@ -106,7 +106,8 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         try await repository.saveMessage(makeMessage(idByte: 0x22, incoming: true))
         try await repository.saveMessage(makeMessage(idByte: 0x23, incoming: false))
 
-        XCTAssertEqual(try await repository.totalUnreadCount(), 2)
+        let unreadCount = try await repository.totalUnreadCount()
+        XCTAssertEqual(unreadCount, 2)
     }
 
     func testNotificationBadgeUsesDurableUnreadCount() {
