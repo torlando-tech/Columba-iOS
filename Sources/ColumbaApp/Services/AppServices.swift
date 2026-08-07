@@ -30,10 +30,6 @@ enum DiagLog {
         return docs.appendingPathComponent("diag.log")
     }()
 
-    static func clear() {
-        try? "".write(to: fileURL, atomically: true, encoding: .utf8)
-    }
-
     static func log(_ message: String) {
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)\n"
@@ -1145,7 +1141,7 @@ public final class AppServices {
     }
 
     private func initializeUnlocked(tcpServerAddress: String) async throws {
-        DiagLog.clear()
+        DiagLog.log("[STARTUP] AppServices initialization beginning")
         let monitorLease = RuntimeActivityMonitor.shared.acquire()
         var initializationSucceeded = false
         defer {
@@ -3021,7 +3017,7 @@ public final class AppServices {
         identityHash: String,
         tcpServerAddress: String
     ) async throws {
-        DiagLog.clear()
+        DiagLog.log("[STARTUP] AppServices identity initialization beginning")
         let monitorLease = RuntimeActivityMonitor.shared.acquire()
         var initializationSucceeded = false
         defer {
