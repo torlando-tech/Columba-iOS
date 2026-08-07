@@ -277,7 +277,8 @@ def _install_native_stamp_generator_unless_stopping() -> bool:
 
 
 _lock = threading.Lock()
-_propagation_sync_cancelled = threading.Event()
+_propagation_sync_cancellation_lock = threading.Lock()
+_active_propagation_sync_cancellation: threading.Event | None = None
 # Teardown publishes intent without waiting for `_lock`, allowing a start that
 # already owns it to reject or undo process-global callback registration.
 _runtime_teardown_requested = threading.Event()
@@ -687,69 +688,80 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
 
     Requires set_propagation_node() to have been called with a valid
     `lxmf.propagation` destination first."""
-    if _propagation_sync_cancelled.is_set():
-        _propagation_sync_cancelled.clear()
-        return {"ok": False, "state": "cancelled", "received_messages": 0, "reason": "cancelled"}
+    cancellation = threading.Event()
+    global _active_propagation_sync_cancellation
+    with _propagation_sync_cancellation_lock:
+        if _active_propagation_sync_cancellation is not None:
+            return {"ok": False, "state": "transfer-failed", "received_messages": 0, "reason": "sync-in-progress"}
+        _active_propagation_sync_cancellation = cancellation
 
-    with _lock:
-        if not _state["started"]:
-            return {"ok": False, "state": "not-started", "received_messages": 0, "reason": "not-started"}
-        router = _state["router"]
-        identity = _state["identity"]
-        if router is None or identity is None:
-            return {"ok": False, "state": "no-router", "received_messages": 0, "reason": "no-router"}
-        outbound = getattr(router, "outbound_propagation_node", None)
-        if outbound is None:
-            return {"ok": False, "state": "no-node", "received_messages": 0, "reason": "no-node-selected"}
+    try:
+        with _lock:
+            if not _state["started"]:
+                return {"ok": False, "state": "not-started", "received_messages": 0, "reason": "not-started"}
+            router = _state["router"]
+            identity = _state["identity"]
+            if router is None or identity is None:
+                return {"ok": False, "state": "no-router", "received_messages": 0, "reason": "no-router"}
+            outbound = getattr(router, "outbound_propagation_node", None)
+            if outbound is None:
+                return {"ok": False, "state": "no-node", "received_messages": 0, "reason": "no-node-selected"}
 
+            try:
+                router.request_messages_from_propagation_node(identity)
+            except Exception as e:
+                return {"ok": False, "state": "transfer-failed", "received_messages": 0, "reason": f"start-failed: {e}"}
+
+        # Poll the router state outside the lock so the router can update
+        # propagation_transfer_state from its own thread.
+        deadline = time.monotonic() + timeout
+        last_seen_state: Any = None
+        while time.monotonic() < deadline:
+            if cancellation.is_set():
+                return {"ok": False, "state": "cancelled", "received_messages": 0, "reason": "cancelled"}
+            try:
+                state_val = getattr(router, "propagation_transfer_state", None)
+                last_seen_state = state_val
+                # Only PR_COMPLETE / PR_NO_PATH / PR_TRANSFER_FAILED are
+                # truly terminal — link-established is intermediate.
+                real_terminal = {
+                    getattr(LXMF.LXMRouter, "PR_COMPLETE", 5),
+                    getattr(LXMF.LXMRouter, "PR_NO_PATH", 6),
+                    getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", 7),
+                }
+                if state_val in real_terminal:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        received = 0
         try:
-            router.request_messages_from_propagation_node(identity)
-        except Exception as e:
-            return {"ok": False, "state": "transfer-failed", "received_messages": 0, "reason": f"start-failed: {e}"}
-
-    # Poll the router state outside the lock so the router can update
-    # propagation_transfer_state from its own thread.
-    deadline = time.monotonic() + timeout
-    last_seen_state: Any = None
-    while time.monotonic() < deadline:
-        if _propagation_sync_cancelled.is_set():
-            _propagation_sync_cancelled.clear()
-            return {"ok": False, "state": "cancelled", "received_messages": 0, "reason": "cancelled"}
-        try:
-            state_val = getattr(router, "propagation_transfer_state", None)
-            last_seen_state = state_val
-            # Only PR_COMPLETE / PR_NO_PATH / PR_TRANSFER_FAILED are
-            # truly terminal — link-established is intermediate.
-            real_terminal = {
-                getattr(LXMF.LXMRouter, "PR_COMPLETE", 5),
-                getattr(LXMF.LXMRouter, "PR_NO_PATH", 6),
-                getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", 7),
-            }
-            if state_val in real_terminal:
-                break
+            received = int(getattr(router, "propagation_transfer_last_result", 0) or 0)
         except Exception:
             pass
-        time.sleep(0.5)
 
-    received = 0
-    try:
-        received = int(getattr(router, "propagation_transfer_last_result", 0) or 0)
-    except Exception:
-        pass
-
-    state_name = _propagation_state_name(last_seen_state)
-    ok = state_name == "complete"
-    return {
-        "ok": ok,
-        "state": state_name,
-        "received_messages": received,
-        "reason": "ok" if ok else state_name,
-    }
+        state_name = _propagation_state_name(last_seen_state)
+        ok = state_name == "complete"
+        return {
+            "ok": ok,
+            "state": state_name,
+            "received_messages": received,
+            "reason": "ok" if ok else state_name,
+        }
+    finally:
+        with _propagation_sync_cancellation_lock:
+            if _active_propagation_sync_cancellation is cancellation:
+                _active_propagation_sync_cancellation = None
 
 
 def cancel_propagation_sync() -> dict[str, Any]:
     """Cancel an active bounded propagation-node request and its polling loop."""
-    _propagation_sync_cancelled.set()
+    with _propagation_sync_cancellation_lock:
+        cancellation = _active_propagation_sync_cancellation
+        if cancellation is None:
+            return {"ok": True, "active": False, "router_cancelled": False}
+        cancellation.set()
     with _lock:
         router = _state.get("router")
     cancelled_router = False
@@ -761,7 +773,7 @@ def cancel_propagation_sync() -> dict[str, Any]:
                 cancelled_router = True
             except Exception:
                 pass
-    return {"ok": True, "router_cancelled": cancelled_router}
+    return {"ok": True, "active": True, "router_cancelled": cancelled_router}
 
 
 def _propagation_state_name(val: Any) -> str:

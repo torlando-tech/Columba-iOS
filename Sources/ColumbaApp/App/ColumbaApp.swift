@@ -722,16 +722,20 @@ struct RootView: View {
         handler.setUserNotificationsSuppressed(true)
         defer { handler.setUserNotificationsSuppressed(false) }
 
+        let syncOperationID = UUID()
         let workflow = BackgroundPropagationSyncWorkflow<LXMessage>(
             captureInsertionCursor: {
                 try await repository.captureMessageInsertionCursor()
             },
             sync: {
                 await withTaskCancellationHandler {
-                    await propagationManager.syncNow(timeout: 20.0)
+                    await propagationManager.syncNow(
+                        timeout: 20.0,
+                        operationID: syncOperationID
+                    )
                 } onCancel: {
                     Task { @MainActor in
-                        await propagationManager.cancelActiveSync()
+                        await propagationManager.cancelActiveSync(operationID: syncOperationID)
                     }
                 }
             },

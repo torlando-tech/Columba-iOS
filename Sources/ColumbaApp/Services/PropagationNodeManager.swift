@@ -102,6 +102,7 @@ public final class PropagationNodeManager {
     /// Main-actor single-flight guard shared by user, periodic, foreground, and
     /// BGAppRefreshTask synchronization requests.
     private var syncInFlight = false
+    private var activeSyncOperationID: UUID?
 
     /// Observer token for the NE's propagation sync-state channel (Model B). The NE
     /// owns the router/sync, so live progress arrives as App-Group snapshots bridged
@@ -345,14 +346,21 @@ public final class PropagationNodeManager {
     @discardableResult
     public func syncNow(
         userInitiated: Bool = false,
-        timeout: TimeInterval = 60.0
+        timeout: TimeInterval = 60.0,
+        operationID: UUID = UUID()
     ) async -> Bool {
         guard !syncInFlight else {
             logger.info("[SYNC] skipped overlapping propagation sync")
             return false
         }
         syncInFlight = true
-        defer { syncInFlight = false }
+        activeSyncOperationID = operationID
+        defer {
+            if activeSyncOperationID == operationID {
+                activeSyncOperationID = nil
+                syncInFlight = false
+            }
+        }
 
         // For user-initiated syncs only, reset transfer state up front so a freshly-opened
         // status sheet shows THIS sync's progress from a clean "connecting" slate, not the
@@ -447,7 +455,11 @@ public final class PropagationNodeManager {
     /// Interrupt an active shipping Python propagation sync. This is used by
     /// BGAppRefreshTask expiration so Python does not continue polling after the
     /// system revokes the refresh execution window.
-    public func cancelActiveSync() async {
+    public func cancelActiveSync(operationID: UUID) async {
+        guard activeSyncOperationID == operationID else {
+            logger.info("[SYNC] ignored cancellation for inactive propagation sync")
+            return
+        }
         #if COLUMBA_RUNTIME_PYTHON
         await appServices?.pythonBackend?.cancelPropagationSync()
         #endif
