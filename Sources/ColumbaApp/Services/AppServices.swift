@@ -1329,11 +1329,7 @@ public final class AppServices {
                 )
             },
             activate: {
-                propManager.startListening()
-                propManager.startPeriodicSync()
-                let announceManager = AutoAnnounceManager(appServices: self)
-                self.autoAnnounceManager = announceManager
-                announceManager.start()
+                self.activateInitializationManagers(propManager)
             }
         )
 
@@ -3263,11 +3259,7 @@ public final class AppServices {
                 )
             },
             activate: {
-                propManager.startListening()
-                propManager.startPeriodicSync()
-                let announceManager = AutoAnnounceManager(appServices: self)
-                self.autoAnnounceManager = announceManager
-                announceManager.start()
+                self.activateInitializationManagers(propManager)
             }
         )
 
@@ -3373,6 +3365,16 @@ public final class AppServices {
         )
 
         logger.info("Identity switch complete: \(identityHash)")
+    }
+
+    /// Activate initialization-owned manager tasks only after backend and
+    /// persisted propagation-node readiness have both succeeded.
+    private func activateInitializationManagers(_ propManager: PropagationNodeManager) {
+        propManager.startListening()
+        propManager.startPeriodicSync()
+        let announceManager = AutoAnnounceManager(appServices: self)
+        self.autoAnnounceManager = announceManager
+        announceManager.start()
     }
 
     // MARK: - State Observation
