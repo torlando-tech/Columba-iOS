@@ -115,6 +115,38 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertEqual(NotificationService.badgeValue(totalUnreadCount: -1), NSNumber(value: 0))
     }
 
+    func testPendingRequestDiagnosticsAreDeterministicAndPrivacySafe() {
+        let summary = BackgroundRefreshDiagnosticFormatter.pendingRequests(
+            [
+                .init(
+                    identifier: BackgroundPropagationRefreshScheduler.taskIdentifier,
+                    earliestBeginDate: Date(timeIntervalSince1970: 1_722_240_900)
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            summary,
+            "count=1 [network.columba.Columba.sync earliest=2024-07-29T08:15:00Z]"
+        )
+    }
+
+    func testRuntimeDiagnosticsIncludeSchedulingConditions() {
+        let summary = BackgroundRefreshDiagnosticFormatter.runtime(
+            processID: 42,
+            backgroundRefreshStatus: "denied",
+            lowPowerModeEnabled: true,
+            thermalState: "serious",
+            protectedDataAvailable: false,
+            sceneStates: ["background"]
+        )
+
+        XCTAssertEqual(
+            summary,
+            "pid=42 refresh=denied lowPower=true thermal=serious protectedData=false scenes=background"
+        )
+    }
+
     func testBackgroundNotificationClassifierRejectsTelemetryAndCeaseControls() {
         let normal = makeMessage(idByte: 0x11, incoming: true)
         let telemetry = makeMessage(
