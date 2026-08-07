@@ -38,6 +38,13 @@ struct ColumbaApp: App {
     // MARK: - Init
 
     init() {
+        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+        // Register before starting embedded Python or any other potentially slow
+        // launch work. BGTaskScheduler requires every launch handler to be
+        // registered during application launch, including cold background launch.
+        BackgroundPropagationRefreshScheduler.register()
+        #endif
+
         #if COLUMBA_RUNTIME_PYTHON
         // Boot embedded CPython once, before anything else can touch it.
         // PythonBridge / PythonRNSBackend depend on this; without it
@@ -93,10 +100,6 @@ struct ColumbaApp: App {
             ModelBRNodeService.shared.restore()
         }
         #endif
-        #endif
-
-        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-        BackgroundPropagationRefreshScheduler.register()
         #endif
 
         // Install notification delegate early so didReceive (notification tap) works
@@ -582,6 +585,13 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             let phaseValue = newPhase
+            #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+            let context = phaseValue == .active
+                ? "scene-active"
+                : (phaseValue == .background ? "scene-background" : "scene-inactive")
+            BackgroundPropagationRefreshScheduler.logRuntime(context: context)
+            BackgroundPropagationRefreshScheduler.logPendingRequests(context: context)
+            #endif
             if phaseValue == .active {
                 NotificationService.shared.clearBadge()
                 // Sync from propagation node when app becomes active,
@@ -701,6 +711,8 @@ struct RootView: View {
     /// path rather than starting a competing identity/router initialization.
     @MainActor
     private func performBackgroundPropagationSync() async -> Bool {
+        BackgroundPropagationRefreshScheduler.logRuntime(context: "workflow-entered")
+        DiagLog.log("[BG-SYNC] workflow entered initialized=\(isInitialized)")
         guard await settingsRepository.getPeriodicSyncEnabled() else {
             DiagLog.log("[BG-SYNC] skipped: periodic sync disabled")
             return true
@@ -715,9 +727,17 @@ struct RootView: View {
               let repository = messageRepository,
               let handler = incomingMessageHandler,
               let propagationManager = appServices.propagationManager else {
-            DiagLog.log("[BG-SYNC] failed: services not ready")
+            DiagLog.log(
+                "[BG-SYNC] failed: services not ready initialized=\(isInitialized) "
+                    + "repository=\(messageRepository != nil) handler=\(incomingMessageHandler != nil) "
+                    + "propagationManager=\(appServices.propagationManager != nil)"
+            )
             return false
         }
+        DiagLog.log(
+            "[BG-SYNC] services ready backend=\(appServices.pythonBackend != nil) "
+                + "selectedNode=\(propagationManager.selectedNodeHash != nil)"
+        )
 
         handler.setUserNotificationsSuppressed(true)
         defer { handler.setUserNotificationsSuppressed(false) }
@@ -757,6 +777,10 @@ struct RootView: View {
 
     private func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
+        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+        BackgroundPropagationRefreshScheduler.logRuntime(context: "initialize-services")
+        BackgroundPropagationRefreshScheduler.logPendingRequests(context: "initialize-services")
+        #endif
 
         #if COLUMBA_RUNTIME_MODEL_B
         // Surface the Network Extension's App-Group diagnostic log into Documents
