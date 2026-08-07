@@ -263,7 +263,7 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertEqual(task.completions, [true])
     }
 
-    func testExpirationCompletesTaskOnceAndSuppressesLateSuccess() async {
+    func testExpirationWaitsForOperationCleanupThenCompletesOnceAndSuppressesLateSuccess() async {
         let coordinator = BackgroundRefreshTaskCoordinator()
         let task = FakeBackgroundRefreshTask()
         let gate = AsyncGate()
@@ -275,8 +275,11 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         coordinator.receive(task)
 
         task.expirationHandler?()
-        await task.waitForCompletion()
+        await Task.yield()
+        XCTAssertTrue(task.completions.isEmpty)
+
         gate.open()
+        await task.waitForCompletion()
         await Task.yield()
 
         XCTAssertEqual(task.completions, [false])
