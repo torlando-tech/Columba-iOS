@@ -19,6 +19,15 @@ def strip_swift_noncode(source: str) -> str:
     block_depth = 0
     string_hashes = 0
     multiline = False
+
+    def is_escaped(position: int) -> bool:
+        backslashes = 0
+        position -= 1
+        while position >= 0 and source[position] == "\\":
+            backslashes += 1
+            position -= 1
+        return backslashes % 2 == 1
+
     while index < len(source):
         if state == "line_comment":
             if source[index] == "\n":
@@ -48,7 +57,9 @@ def strip_swift_noncode(source: str) -> str:
 
         if state == "string":
             delimiter = ('"""' if multiline else '"') + ("#" * string_hashes)
-            if source.startswith(delimiter, index):
+            if source.startswith(delimiter, index) and not (
+                multiline and string_hashes == 0 and is_escaped(index)
+            ):
                 for position in range(index, index + len(delimiter)):
                     blank(position)
                 index += len(delimiter)
@@ -163,6 +174,10 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         // self.activateInitializationManagers(propManager)
         "self.activateInitializationManagers(propManager)"
         #"self.activateInitializationManagers(propManager)"#
+        """
+        escaped delimiter: \"""
+        self.activateInitializationManagers(propManager)
+        """
         activate: { self.activateInitializationManagers(propManager) }
         '''
         stripped = strip_swift_noncode(fake)
