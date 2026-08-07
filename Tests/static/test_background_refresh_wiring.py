@@ -6,6 +6,103 @@ ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "Sources" / "ColumbaApp"
 
 
+def strip_swift_noncode(source: str) -> str:
+    """Blank Swift comments and string literals while preserving positions/newlines."""
+    output = list(source)
+
+    def blank(index: int):
+        if output[index] != "\n":
+            output[index] = " "
+
+    index = 0
+    state = "code"
+    block_depth = 0
+    string_hashes = 0
+    multiline = False
+    while index < len(source):
+        if state == "line_comment":
+            if source[index] == "\n":
+                state = "code"
+            else:
+                blank(index)
+            index += 1
+            continue
+
+        if state == "block_comment":
+            if source.startswith("/*", index):
+                blank(index)
+                blank(index + 1)
+                block_depth += 1
+                index += 2
+            elif source.startswith("*/", index):
+                blank(index)
+                blank(index + 1)
+                block_depth -= 1
+                index += 2
+                if block_depth == 0:
+                    state = "code"
+            else:
+                blank(index)
+                index += 1
+            continue
+
+        if state == "string":
+            delimiter = ('"""' if multiline else '"') + ("#" * string_hashes)
+            if source.startswith(delimiter, index):
+                for position in range(index, index + len(delimiter)):
+                    blank(position)
+                index += len(delimiter)
+                state = "code"
+            elif not multiline and string_hashes == 0 and source[index] == "\\":
+                blank(index)
+                index += 1
+                if index < len(source):
+                    blank(index)
+                    index += 1
+            else:
+                blank(index)
+                index += 1
+            continue
+
+        if source.startswith("//", index):
+            blank(index)
+            blank(index + 1)
+            state = "line_comment"
+            index += 2
+        elif source.startswith("/*", index):
+            blank(index)
+            blank(index + 1)
+            state = "block_comment"
+            block_depth = 1
+            index += 2
+        elif source[index] == '"':
+            multiline = source.startswith('"""', index)
+            length = 3 if multiline else 1
+            for position in range(index, index + length):
+                blank(position)
+            string_hashes = 0
+            state = "string"
+            index += length
+        elif source[index] == "#":
+            end = index
+            while end < len(source) and source[end] == "#":
+                end += 1
+            if end < len(source) and source[end] == '"':
+                string_hashes = end - index
+                multiline = source.startswith('"""', end)
+                length = string_hashes + (3 if multiline else 1)
+                for position in range(index, index + length):
+                    blank(position)
+                state = "string"
+                index += length
+            else:
+                index += 1
+        else:
+            index += 1
+
+    return "".join(output)
+
+
 class BackgroundRefreshWiringContractTests(unittest.TestCase):
     def test_registration_precedes_embedded_python_start(self):
         source = (APP / "App" / "ColumbaApp.swift").read_text()
@@ -21,7 +118,9 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         self.assertNotIn("BackgroundRefreshTaskCoordinator.shared.installHandler", root_view)
 
     def test_embedded_backend_start_failure_propagates_to_readiness(self):
-        services = (APP / "Services" / "AppServices.swift").read_text()
+        services = strip_swift_noncode(
+            (APP / "Services" / "AppServices.swift").read_text()
+        )
         start = services[services.index("private func startPythonBackend("):]
         self.assertIn(") async throws {", start[:500])
         self.assertIn("self.backend = nil\n            throw error", start)
@@ -49,13 +148,25 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
             self.assertNotIn("announceManager.start()", path)
 
         self.assertEqual(services.count("activateInitializationManagers(propManager)"), 2)
-        helper = services[helper_start:services.index("// MARK: - State Observation")]
+        helper_end = services.index("private func startStateObserver()")
+        helper = services[helper_start:helper_end]
         for activation in (
             "propManager.startListening()",
             "propManager.startPeriodicSync()",
             "announceManager.start()",
         ):
             self.assertEqual(helper.count(activation), 1)
+
+    def test_swift_noncode_stripping_rejects_fake_wiring(self):
+        fake = '''
+        /* activate: { self.activateInitializationManagers(propManager) } */
+        // self.activateInitializationManagers(propManager)
+        "self.activateInitializationManagers(propManager)"
+        #"self.activateInitializationManagers(propManager)"#
+        activate: { self.activateInitializationManagers(propManager) }
+        '''
+        stripped = strip_swift_noncode(fake)
+        self.assertEqual(stripped.count("activateInitializationManagers"), 1)
 
     def test_service_initialization_cannot_erase_cold_launch_evidence(self):
         source = (APP / "Services" / "AppServices.swift").read_text()
