@@ -1627,6 +1627,9 @@ public final class AppServices {
         if propagationManager?.selectedNodeHash != nil {
             let reapplied = await propagationManager?.reapplySelectedNodeToPythonBackend() ?? false
             DiagLog.log("[RNS] reapplied persisted propagation node to Python: \(reapplied)")
+            guard reapplied else {
+                throw AppServicesError.propagationNodeRestoreFailed
+            }
         }
         #endif
 
@@ -5009,6 +5012,9 @@ public enum AppServicesError: Error, Equatable {
     /// Transport not connected
     case transportNotConnected
 
+    /// Persisted propagation node could not be restored into the embedded router
+    case propagationNodeRestoreFailed
+
 }
 
 // MARK: - CustomStringConvertible
@@ -5024,6 +5030,8 @@ extension AppServicesError: CustomStringConvertible {
             return "Router not initialized"
         case .transportNotConnected:
             return "Transport not connected"
+        case .propagationNodeRestoreFailed:
+            return "Persisted propagation node could not be restored"
         }
     }
 }
