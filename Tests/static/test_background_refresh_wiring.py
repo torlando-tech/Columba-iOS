@@ -6,6 +6,20 @@ ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "Sources" / "ColumbaApp"
 
 
+def closure_body(source: str, marker: str, start: int = 0):
+    marker_index = source.index(marker, start)
+    open_brace = source.index("{", marker_index)
+    depth = 0
+    for index in range(open_brace, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[open_brace + 1:index], open_brace, index
+    raise AssertionError(f"Unterminated Swift closure after {marker}")
+
+
 class BackgroundRefreshWiringContractTests(unittest.TestCase):
     def test_registration_precedes_embedded_python_start(self):
         source = (APP / "App" / "ColumbaApp.swift").read_text()
@@ -28,11 +42,49 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         self.assertIn("await backend.stop()", start)
         self.assertIn("self?.backend = nil", start)
         self.assertIn("PropagationNodeRestoreReadiness.validate", start)
-        self.assertEqual(services.count("InitializationLifecycleActivation.run("), 2)
-        for segment in services.split("InitializationLifecycleActivation.run(")[1:]:
+        initialization = services[
+            services.index("private func initializeUnlocked(tcpServerAddress"):
+            services.index("// MARK: - State Observation")
+        ]
+        self.assertEqual(initialization.count("InitializationLifecycleActivation.run("), 2)
+
+        activation_ranges = []
+        search_from = 0
+        for _ in range(2):
+            run = initialization.index("InitializationLifecycleActivation.run(", search_from)
+            body, body_start, body_end = closure_body(initialization, "activate:", run)
+            readiness = initialization[run:initialization.index("activate:", run)]
             self.assertLess(
-                segment.index("startPythonBackend("),
-                segment.index("propManager.startListening()"),
+                readiness.index("startPythonBackend("),
+                initialization[run:body_start].index("activate:"),
+            )
+            for required in (
+                "propManager.startListening()",
+                "propManager.startPeriodicSync()",
+                "announceManager.start()",
+            ):
+                self.assertIn(required, body)
+            activation_ranges.append((body_start, body_end))
+            search_from = body_end
+
+        for activation in (
+            "propManager.startListening()",
+            "propManager.startPeriodicSync()",
+            "announceManager.start()",
+        ):
+            self.assertEqual(initialization.count(activation), 2)
+            positions = []
+            offset = 0
+            while True:
+                position = initialization.find(activation, offset)
+                if position < 0:
+                    break
+                positions.append(position)
+                offset = position + 1
+            self.assertTrue(
+                all(any(begin < position < end for begin, end in activation_ranges)
+                    for position in positions),
+                f"{activation} must occur only inside readiness-gated activation closures",
             )
 
     def test_service_initialization_cannot_erase_cold_launch_evidence(self):
