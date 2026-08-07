@@ -19,6 +19,22 @@ private let logger = Logger(subsystem: "network.columba.Columba", category: "Col
 
 /// Main SwiftUI App entry point.
 ///
+#if os(iOS) && COLUMBA_RUNTIME_PYTHON
+@MainActor
+private final class BackgroundPropagationCancellation {
+    private var operation: Task<Void, Never>?
+
+    func request(_ cancel: @escaping @MainActor @Sendable () async -> Void) {
+        guard operation == nil else { return }
+        operation = Task { @MainActor in await cancel() }
+    }
+
+    func wait() async {
+        await operation?.value
+    }
+}
+#endif
+
 /// Creates MainTabView as the root navigation container.
 /// Handles service initialization via AppServices.
 @main
@@ -487,6 +503,7 @@ struct RootView: View {
     #endif
     @State private var initError: String?
     @State private var isInitialized = false
+    @State private var serviceInitializationTask: Task<Bool, Never>?
     @State private var identitySwitchTrigger = UUID()
     @State private var showOnboarding: Bool
     @Environment(\.scenePhase) private var scenePhase
@@ -580,7 +597,7 @@ struct RootView: View {
         }
         .task(id: identitySwitchTrigger) {
             if !showOnboarding {
-                await initializeServices()
+                _ = await ensureServicesInitialized()
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -593,7 +610,14 @@ struct RootView: View {
             BackgroundPropagationRefreshScheduler.logPendingRequests(context: context)
             #endif
             if phaseValue == .active {
-                NotificationService.shared.clearBadge()
+                if let repository = messageRepository {
+                    Task {
+                        if let unread = try? await repository.totalUnreadCount() {
+                            await NotificationService.shared
+                                .synchronizeBadgeWithDurableUnreadCount(unread)
+                        }
+                    }
+                }
                 // Sync from propagation node when app becomes active,
                 // debounced to avoid rapid re-syncs on quick app switches
                 if let propManager = appServices.propagationManager,
@@ -718,9 +742,9 @@ struct RootView: View {
             return true
         }
 
-        for _ in 0..<100 where !isInitialized {
-            guard !Task.isCancelled else { return false }
-            try? await Task.sleep(for: .milliseconds(100))
+        guard await ensureServicesInitialized() else {
+            DiagLog.log("[BG-SYNC] failed: shared service initialization unsuccessful")
+            return false
         }
 
         guard isInitialized,
@@ -739,25 +763,42 @@ struct RootView: View {
                 + "selectedNode=\(propagationManager.selectedNodeHash != nil)"
         )
 
+        guard await appServices.beginExclusivePythonHostEventProcessing() else {
+            DiagLog.log("[BG-SYNC] cancelled before acquiring host event transaction")
+            return false
+        }
         handler.setUserNotificationsSuppressed(true)
-        defer { handler.setUserNotificationsSuppressed(false) }
 
         let syncOperationID = UUID()
+        let cancellation = BackgroundPropagationCancellation()
         let workflow = BackgroundPropagationSyncWorkflow<LXMessage>(
             captureInsertionCursor: {
                 try await repository.captureMessageInsertionCursor()
             },
             sync: {
-                await withTaskCancellationHandler {
+                let result = await withTaskCancellationHandler {
                     await propagationManager.syncNow(
                         timeout: 20.0,
                         operationID: syncOperationID
                     )
                 } onCancel: {
+                    // Promptly interrupt the blocking Python operation. The
+                    // structured path below also awaits this same task before the
+                    // BG task is reported complete.
                     Task { @MainActor in
-                        await propagationManager.cancelActiveSync(operationID: syncOperationID)
+                        cancellation.request {
+                            await propagationManager.cancelActiveSync(operationID: syncOperationID)
+                        }
                     }
                 }
+                if Task.isCancelled {
+                    cancellation.request {
+                        await propagationManager.cancelActiveSync(operationID: syncOperationID)
+                    }
+                    await cancellation.wait()
+                    return false
+                }
+                return result
             },
             messagesInsertedAfter: { cursor in
                 try await repository.fetchIncomingMessagesInserted(after: cursor)
@@ -768,12 +809,34 @@ struct RootView: View {
         )
 
         let succeeded = await workflow.run()
+        handler.setUserNotificationsSuppressed(false)
+        await appServices.endExclusivePythonHostEventProcessing()
         DiagLog.log("[BG-SYNC] completed success=\(succeeded)")
         return succeeded
     }
     #endif
 
     // MARK: - Initialization
+
+    /// Share one application-lifetime initialization operation between the SwiftUI
+    /// scene and a cold-delivered background refresh. This prevents duplicate
+    /// Reticulum identities/routers and avoids treating a fixed delay as readiness.
+    @MainActor
+    private func ensureServicesInitialized() async -> Bool {
+        if isInitialized { return true }
+        if let serviceInitializationTask {
+            return await serviceInitializationTask.value
+        }
+
+        let task = Task { @MainActor in
+            await initializeServices()
+            return isInitialized
+        }
+        serviceInitializationTask = task
+        let succeeded = await task.value
+        serviceInitializationTask = nil
+        return succeeded
+    }
 
     private func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
@@ -932,6 +995,7 @@ struct RootView: View {
             if let router = appServices.router {
                 await router.setDelegate(handler)
             }
+            appServices.startPythonEventDrain()
 
             #if COLUMBA_RUNTIME_MODEL_B
             // Model B: the NE owns LXMF delivery, so the live `LXMRouter` delegate

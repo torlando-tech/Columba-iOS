@@ -84,6 +84,39 @@ enum DiagLog {
     #endif
 }
 
+actor PythonHostEventProcessingGate {
+    private var exclusiveActive = false
+    private var normalActive = false
+
+    func beginExclusive() async -> Bool {
+        while exclusiveActive || normalActive {
+            if Task.isCancelled { return false }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        guard !Task.isCancelled else { return false }
+        exclusiveActive = true
+        return true
+    }
+
+    func endExclusive() {
+        exclusiveActive = false
+    }
+
+    func beginNormal() async -> Bool {
+        while exclusiveActive || normalActive {
+            if Task.isCancelled { return false }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        guard !Task.isCancelled else { return false }
+        normalActive = true
+        return true
+    }
+
+    func endNormal() {
+        normalActive = false
+    }
+}
+
 /// Low-overhead, privacy-safe runtime instrumentation for physical-device soak tests.
 ///
 /// Samples cumulative process CPU every 15 seconds, observes thermal-state changes,
@@ -567,6 +600,15 @@ public final class AppServices {
     /// Background task that drains Python events (announces, inbound
     /// messages) into Columba's existing UI plumbing.
     private var pythonEventTask: Task<Void, Never>?
+    private let pythonHostEventProcessingGate = PythonHostEventProcessingGate()
+
+    func beginExclusivePythonHostEventProcessing() async -> Bool {
+        await pythonHostEventProcessingGate.beginExclusive()
+    }
+
+    func endExclusivePythonHostEventProcessing() async {
+        await pythonHostEventProcessingGate.endExclusive()
+    }
 
     /// Tokens for the block-based NotificationCenter observers registered by
     /// `startPythonBackend()` (the lxma://test-* deep-link harness). Held so
@@ -1596,14 +1638,10 @@ public final class AppServices {
         // would require the LXMRouterDelegate protocol to drop its router param
         // (a separate, lower-value cleanup).
 
-        // Drain Python events into Columba's UI plumbing.
-        pythonEventTask?.cancel()
-        pythonEventTask = Task { [weak self, backend] in
-            for await event in backend.events {
-                guard let self else { break }
-                await self.handlePythonEvent(event)
-            }
-        }
+        // Event consumption intentionally starts only after ColumbaApp installs
+        // IncomingMessageHandler as the Compat router delegate. Backend events queue
+        // safely until startPythonEventDrain() is called; starting here would race
+        // cold-launch inbound side-channel processing against handler creation.
 
         // Seed Compat TCPInterface stubs for each enabled InterfaceEntity so
         // the InterfaceManagement UI has something to render against. Their
@@ -2181,6 +2219,24 @@ public final class AppServices {
             }
         }
         #endif // DEBUG — test-only deep-link observers
+    }
+
+    /// Begin consuming queued backend events only after the app has installed its
+    /// IncomingMessageHandler. Idempotent across repeated scene initialization.
+    func startPythonEventDrain() {
+        guard pythonEventTask == nil, let backend else {
+            DiagLog.log("[RNS] event drain start skipped active=\(pythonEventTask != nil) backend=\(backend != nil)")
+            return
+        }
+        DiagLog.log("[RNS] event drain started after incoming handler installation")
+        pythonEventTask = Task { [weak self, backend] in
+            for await event in backend.events {
+                guard let self else { break }
+                guard await self.pythonHostEventProcessingGate.beginNormal() else { break }
+                await self.handlePythonEvent(event)
+                await self.pythonHostEventProcessingGate.endNormal()
+            }
+        }
     }
 
     @MainActor

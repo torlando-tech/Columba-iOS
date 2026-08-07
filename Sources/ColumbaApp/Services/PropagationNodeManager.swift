@@ -510,7 +510,9 @@ public final class PropagationNodeManager {
         case .complete: return .complete
         case .cancelled: return .transferFailed
         case .noPath: return .noPath
-        case .transferFailed: return .transferFailed
+        case .linkFailed: return .linkFailed
+        case .transferFailed, .noIdentityReceived, .noAccess, .failed:
+            return .transferFailed
         case .pathRequested, .linkEstablishing, .linkEstablished:
             return .linking
         case .requestSent, .receiving, .responseReceived:

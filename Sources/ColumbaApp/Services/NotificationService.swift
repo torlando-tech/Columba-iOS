@@ -267,8 +267,14 @@ public final class NotificationService: Sendable {
 
     // MARK: - Badge Management
 
-    /// Clear the badge count (call when app becomes active).
-    public func clearBadge() {
-        UNUserNotificationCenter.current().setBadgeCount(0)
+    /// Reconcile the icon badge with canonical durable unread state. Notification
+    /// Center history is presentation state and is never used as an unread counter.
+    public func synchronizeBadgeWithDurableUnreadCount(_ totalUnreadCount: Int) async {
+        do {
+            try await UNUserNotificationCenter.current().setBadgeCount(max(0, totalUnreadCount))
+            DiagLog.log("[NOTIFICATION] badge synchronized unread=\(max(0, totalUnreadCount))")
+        } catch {
+            DiagLog.log("[NOTIFICATION] badge synchronization failed: \(error.localizedDescription)")
+        }
     }
 }

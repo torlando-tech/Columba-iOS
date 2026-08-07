@@ -201,6 +201,24 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertTrue(identifiers.contains(BackgroundPropagationRefreshScheduler.taskIdentifier))
     }
 
+    func testHostEventGateKeepsNormalDrainOutsideBackgroundTransaction() async {
+        let gate = PythonHostEventProcessingGate()
+        let events = EventRecorder()
+
+        XCTAssertTrue(await gate.beginExclusive())
+        let normalDrain = Task {
+            guard await gate.beginNormal() else { return }
+            await events.append("normal")
+            await gate.endNormal()
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(await events.values, [])
+
+        await gate.endExclusive()
+        await normalDrain.value
+        XCTAssertEqual(await events.values, ["normal"])
+    }
+
     func testWorkflowNotifiesEachMessageInsertedDuringSuccessfulSync() async {
         var events: [String] = []
         let workflow = BackgroundPropagationSyncWorkflow<String>(
@@ -309,11 +327,19 @@ final class BackgroundPropagationSyncTests: XCTestCase {
     }
 }
 
-@MainActor
+private actor EventRecorder {
+    private(set) var values: [String] = []
+
+    func append(_ value: String) {
+        values.append(value)
+    }
+}
+
 private final class FakeBackgroundRefreshTask: BackgroundRefreshTaskHandle {
     var expirationHandler: (() -> Void)?
     private(set) var completions: [Bool] = []
     private var continuation: CheckedContinuation<Void, Never>?
+    var isCompleted: Bool { !completions.isEmpty }
 
     func setTaskCompleted(success: Bool) {
         completions.append(success)

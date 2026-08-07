@@ -43,6 +43,7 @@ class PropagationSyncCancellationTests(unittest.TestCase):
             and node.name in {
                 "propagation_sync",
                 "cancel_propagation_sync",
+                "_cancel_router_propagation_request",
                 "_propagation_state_name",
             }
         ]
@@ -50,6 +51,10 @@ class PropagationSyncCancellationTests(unittest.TestCase):
             PR_COMPLETE=5,
             PR_NO_PATH=6,
             PR_TRANSFER_FAILED=7,
+            PR_LINK_FAILED=10,
+            PR_NO_IDENTITY_RCVD=11,
+            PR_NO_ACCESS=12,
+            PR_FAILED=13,
             PR_PATH_REQUESTED=1,
             PR_LINK_ESTABLISHING=2,
             PR_LINK_ESTABLISHED=3,
@@ -141,6 +146,36 @@ class PropagationSyncCancellationTests(unittest.TestCase):
         self.assertEqual(first_result["state"], "cancelled")
         self.assertTrue(next_result["ok"])
         self.assertEqual(router.requests, 2)
+
+    def test_timeout_cancels_router_before_releasing_operation_slot(self):
+        router = FakeRouter(state=0)
+        bridge = self.load_functions(router)
+
+        result = bridge["propagation_sync"](timeout=0.01)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "timeout")
+        self.assertEqual(router.cancelled, 1)
+        self.assertIsNone(bridge["_active_propagation_sync_cancellation"])
+
+    def test_all_pinned_failure_states_are_terminal(self):
+        states = {
+            6: "no_path",
+            7: "transfer_failed",
+            10: "link_failed",
+            11: "no_identity_received",
+            12: "no_access",
+            13: "failed",
+        }
+        for state, expected_name in states.items():
+            with self.subTest(state=state):
+                router = FakeRouter(state=state)
+                bridge = self.load_functions(router)
+                started = time.monotonic()
+                result = bridge["propagation_sync"](timeout=1.0)
+                self.assertLess(time.monotonic() - started, 0.5)
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["state"], expected_name)
 
     def test_swift_cancellation_is_scoped_to_the_originating_operation(self):
         manager = (

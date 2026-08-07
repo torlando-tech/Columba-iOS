@@ -140,6 +140,28 @@ public actor MessageRepository {
                     updated_at DOUBLE NOT NULL
                 )
                 """)
+            // SQLite rowids can reuse the deleted highest value. Keep an app-owned,
+            // AUTOINCREMENT insertion ledger so a propagation transaction cannot miss
+            // a new row merely because its messages.rowid was reused. The trigger also
+            // observes writes performed directly by the embedded Python router.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS columba_message_insertions (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id BLOB NOT NULL UNIQUE
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS columba_track_message_insertion
+                AFTER INSERT ON messages
+                BEGIN
+                    INSERT OR IGNORE INTO columba_message_insertions (message_id)
+                    VALUES (NEW.message_id);
+                END
+                """)
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO columba_message_insertions (message_id)
+                SELECT message_id FROM messages ORDER BY rowid ASC
+                """)
         }
     }
 
@@ -525,28 +547,32 @@ public actor MessageRepository {
             .map(Self.mapRecord)
     }
 
-    /// Capture the current insertion boundary of the canonical message table.
-    /// A later query can then identify rows that were not present before a
-    /// propagation-node synchronization, regardless of the sender's timestamp.
+    /// Capture the current monotonic insertion boundary of the canonical message
+    /// table. `messages.rowid` is unsuitable because SQLite can reuse the deleted
+    /// highest rowid; the app-owned AUTOINCREMENT ledger cannot reuse sequences.
     public func captureMessageInsertionCursor() async throws -> Int64 {
         try await replacementPool.read { db in
-            try Int64.fetchOne(db, sql: "SELECT COALESCE(MAX(rowid), 0) FROM messages") ?? 0
+            try Int64.fetchOne(
+                db,
+                sql: "SELECT COALESCE(MAX(sequence), 0) FROM columba_message_insertions"
+            ) ?? 0
         }
     }
 
-    /// Return inbound messages inserted after a previously captured boundary.
-    /// Existing rows re-delivered by a propagation node keep their original
-    /// rowid and are excluded, so notifications represent newly downloaded
-    /// device-local messages rather than historical wire timestamps.
+    /// Return inbound messages first inserted after a previously captured boundary.
+    /// Existing message IDs re-delivered by a propagation node retain their ledger
+    /// sequence and are excluded, so notifications describe new durable insertions.
     public func fetchIncomingMessagesInserted(after cursor: Int64) async throws -> [RNSAPI.LXMessage] {
         try await replacementPool.read { db in
             try LXMFSwift.MessageRecord.fetchAll(
                 db,
                 sql: """
-                    SELECT *
-                    FROM messages
-                    WHERE rowid > ? AND incoming = 1
-                    ORDER BY rowid ASC
+                    SELECT messages.*
+                    FROM columba_message_insertions
+                    JOIN messages USING (message_id)
+                    WHERE columba_message_insertions.sequence > ?
+                      AND messages.incoming = 1
+                    ORDER BY columba_message_insertions.sequence ASC
                     """,
                 arguments: [cursor]
             ).map(Self.mapToLXMessage)

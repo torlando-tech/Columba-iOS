@@ -676,6 +676,20 @@ def set_incoming_message_size_limit_kb(limit_kb: int) -> dict[str, Any]:
         return {"ok": True, "reason": "ok", "limit_kb": bounded}
 
 
+def _cancel_router_propagation_request(router: Any) -> bool:
+    """Synchronously tear down one router-owned propagation request."""
+    if router is None:
+        return False
+    cancel = getattr(router, "cancel_propagation_node_requests", None)
+    if not callable(cancel):
+        return False
+    try:
+        cancel()
+        return True
+    except Exception:
+        return False
+
+
 def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
     """Block until the current LXMF propagation-node sync finishes (or
     times out). Returns `{ok, state, received_messages, reason}`.
@@ -721,24 +735,38 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
         # propagation_transfer_state from its own thread.
         deadline = time.monotonic() + timeout
         last_seen_state: Any = None
+        terminal_reached = False
+        terminal_states = {
+            getattr(LXMF.LXMRouter, "PR_COMPLETE", 0x07),
+            getattr(LXMF.LXMRouter, "PR_NO_PATH", 0xF0),
+            getattr(LXMF.LXMRouter, "PR_LINK_FAILED", 0xF1),
+            getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", 0xF2),
+            getattr(LXMF.LXMRouter, "PR_NO_IDENTITY_RCVD", 0xF3),
+            getattr(LXMF.LXMRouter, "PR_NO_ACCESS", 0xF4),
+            getattr(LXMF.LXMRouter, "PR_FAILED", 0xFE),
+        }
         while time.monotonic() < deadline:
             if cancellation.is_set():
                 return {"ok": False, "state": "cancelled", "received_messages": 0, "reason": "cancelled"}
             try:
                 state_val = getattr(router, "propagation_transfer_state", None)
                 last_seen_state = state_val
-                # Only PR_COMPLETE / PR_NO_PATH / PR_TRANSFER_FAILED are
-                # truly terminal — link-established is intermediate.
-                real_terminal = {
-                    getattr(LXMF.LXMRouter, "PR_COMPLETE", 5),
-                    getattr(LXMF.LXMRouter, "PR_NO_PATH", 6),
-                    getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", 7),
-                }
-                if state_val in real_terminal:
+                if state_val in terminal_states:
+                    terminal_reached = True
                     break
             except Exception:
                 pass
             time.sleep(0.5)
+
+        if not terminal_reached:
+            cancellation.set()
+            _cancel_router_propagation_request(router)
+            return {
+                "ok": False,
+                "state": "transfer_failed",
+                "received_messages": 0,
+                "reason": "timeout",
+            }
 
         received = 0
         try:
@@ -773,15 +801,7 @@ def cancel_propagation_sync() -> dict[str, Any]:
         # request while this call is still about to tear down router propagation.
         with _lock:
             router = _state.get("router")
-        cancelled_router = False
-        if router is not None:
-            cancel = getattr(router, "cancel_propagation_node_requests", None)
-            if callable(cancel):
-                try:
-                    cancel()
-                    cancelled_router = True
-                except Exception:
-                    pass
+        cancelled_router = _cancel_router_propagation_request(router)
         return {"ok": True, "active": True, "router_cancelled": cancelled_router}
 
 
@@ -800,7 +820,11 @@ def _propagation_state_name(val: Any) -> str:
         getattr(LXMF.LXMRouter, "PR_RESPONSE_RECEIVED", -7): "response_received",
         getattr(LXMF.LXMRouter, "PR_COMPLETE", -8): "complete",
         getattr(LXMF.LXMRouter, "PR_NO_PATH", -9): "no_path",
-        getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", -10): "transfer_failed",
+        getattr(LXMF.LXMRouter, "PR_LINK_FAILED", -10): "link_failed",
+        getattr(LXMF.LXMRouter, "PR_TRANSFER_FAILED", -11): "transfer_failed",
+        getattr(LXMF.LXMRouter, "PR_NO_IDENTITY_RCVD", -12): "no_identity_received",
+        getattr(LXMF.LXMRouter, "PR_NO_ACCESS", -13): "no_access",
+        getattr(LXMF.LXMRouter, "PR_FAILED", -14): "failed",
     }
     return mapping.get(val, f"state_{val}")
 
