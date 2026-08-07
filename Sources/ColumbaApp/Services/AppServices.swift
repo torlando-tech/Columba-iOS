@@ -1627,9 +1627,13 @@ public final class AppServices {
         if propagationManager?.selectedNodeHash != nil {
             let reapplied = await propagationManager?.reapplySelectedNodeToPythonBackend() ?? false
             DiagLog.log("[RNS] reapplied persisted propagation node to Python: \(reapplied)")
-            guard reapplied else {
-                throw AppServicesError.propagationNodeRestoreFailed
-            }
+            try await PropagationNodeRestoreReadiness.validate(
+                reapplied: reapplied,
+                rollback: { [weak self] in
+                    await backend.stop()
+                    self?.backend = nil
+                }
+            )
         }
         #endif
 
@@ -4992,6 +4996,21 @@ public final class AppServices {
             DiagLog.log("[AUTO_ANNOUNCE] completed successfully")
         } catch {
             DiagLog.log("[AUTO_ANNOUNCE] failed: \(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - Propagation Readiness
+
+@MainActor
+enum PropagationNodeRestoreReadiness {
+    static func validate(
+        reapplied: Bool,
+        rollback: @MainActor () async -> Void
+    ) async throws {
+        guard reapplied else {
+            await rollback()
+            throw AppServicesError.propagationNodeRestoreFailed
         }
     }
 }

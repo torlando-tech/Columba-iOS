@@ -25,6 +25,9 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         start = services[services.index("private func startPythonBackend("):]
         self.assertIn(") async throws {", start[:500])
         self.assertIn("self.backend = nil\n            throw error", start)
+        self.assertIn("await backend.stop()", start)
+        self.assertIn("self?.backend = nil", start)
+        self.assertIn("PropagationNodeRestoreReadiness.validate", start)
 
     def test_service_initialization_cannot_erase_cold_launch_evidence(self):
         source = (APP / "Services" / "AppServices.swift").read_text()

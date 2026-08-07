@@ -222,6 +222,36 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertEqual(afterRelease, ["normal"])
     }
 
+    func testFailedPropagationNodeRestoreRollsBackBeforeEveryInitializationRetry() async {
+        var backendRunning = false
+        var starts = 0
+        var rollbacks = 0
+
+        for _ in 0..<5 {
+            if !backendRunning {
+                backendRunning = true
+                starts += 1
+            }
+
+            do {
+                try await PropagationNodeRestoreReadiness.validate(
+                    reapplied: false,
+                    rollback: {
+                        backendRunning = false
+                        rollbacks += 1
+                    }
+                )
+                XCTFail("Failed propagation-node restoration must not report readiness")
+            } catch {
+                XCTAssertEqual(error as? AppServicesError, .propagationNodeRestoreFailed)
+            }
+            XCTAssertFalse(backendRunning)
+        }
+
+        XCTAssertEqual(starts, 5)
+        XCTAssertEqual(rollbacks, 5)
+    }
+
     func testWorkflowNotifiesEachMessageInsertedDuringSuccessfulSync() async {
         var events: [String] = []
         let workflow = BackgroundPropagationSyncWorkflow<String>(
