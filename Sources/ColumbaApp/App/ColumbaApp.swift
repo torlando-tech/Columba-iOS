@@ -1011,6 +1011,13 @@ struct RootView: View {
 
             self.isInitialized = true
 
+            #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+            // Submit after startup as well as on scene/settings transitions. This
+            // survives the startup diagnostic-log reset and ensures the first
+            // request is based on fully restored persisted settings.
+            BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+            #endif
+
             // DEBUG: Auto-trigger propagation sync on launch for testing
             if ProcessInfo.processInfo.arguments.contains("--auto-sync") {
                 let services = appServices
