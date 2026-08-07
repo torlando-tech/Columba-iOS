@@ -92,6 +92,30 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertEqual(messages.map(\.hash), [newInbound.hash])
     }
 
+    func testRepositoryInsertionCursorSurvivesHighestRowDeletionAndRowIDReuse() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-bg-rowid-reuse-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+        }
+
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let first = makeMessage(idByte: 0x11, incoming: true)
+        let highest = makeMessage(idByte: 0x12, incoming: true)
+        try await repository.saveMessage(first)
+        try await repository.saveMessage(highest)
+        let cursor = try await repository.captureMessageInsertionCursor()
+
+        try await repository.deleteMessage(highest.hash)
+        let replacement = makeMessage(idByte: 0x13, incoming: true)
+        try await repository.saveMessage(replacement)
+
+        let messages = try await repository.fetchIncomingMessagesInserted(after: cursor)
+        XCTAssertEqual(messages.map(\.hash), [replacement.hash])
+    }
+
     func testRepositoryTotalUnreadCountIgnoresNotificationHistory() async throws {
         let databaseURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("columba-bg-badge-\(UUID().uuidString).sqlite")
