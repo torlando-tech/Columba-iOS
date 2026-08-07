@@ -19,6 +19,8 @@ class FakeRouter:
         self.requests = 0
         self.cancelled = 0
         self.requested = threading.Event()
+        self.cancel_entered = threading.Event()
+        self.cancel_release: threading.Event | None = None
 
     def request_messages_from_propagation_node(self, _identity):
         self.requests += 1
@@ -26,6 +28,9 @@ class FakeRouter:
 
     def cancel_propagation_node_requests(self):
         self.cancelled += 1
+        self.cancel_entered.set()
+        if self.cancel_release is not None:
+            self.cancel_release.wait(timeout=1.0)
 
 
 class PropagationSyncCancellationTests(unittest.TestCase):
@@ -58,7 +63,7 @@ class PropagationSyncCancellationTests(unittest.TestCase):
             "threading": threading,
             "time": time,
             "_lock": threading.Lock(),
-            "_propagation_sync_cancellation_lock": threading.Lock(),
+            "_propagation_sync_cancellation_lock": threading.Condition(),
             "_active_propagation_sync_cancellation": None,
             "_state": {"started": True, "router": router, "identity": object()},
         }
@@ -100,6 +105,42 @@ class PropagationSyncCancellationTests(unittest.TestCase):
 
         router.propagation_transfer_state = 5
         self.assertTrue(bridge["propagation_sync"]()["ok"])
+
+    def test_next_sync_waits_for_router_cancellation_to_finish(self):
+        router = FakeRouter(state=0)
+        router.cancel_release = threading.Event()
+        bridge = self.load_functions(router)
+        first_result = {}
+        first = threading.Thread(
+            target=lambda: first_result.update(bridge["propagation_sync"](timeout=2.0))
+        )
+        first.start()
+        self.assertTrue(router.requested.wait(timeout=1.0))
+
+        cancellation = threading.Thread(target=bridge["cancel_propagation_sync"])
+        cancellation.start()
+        self.assertTrue(router.cancel_entered.wait(timeout=1.0))
+
+        next_result = {}
+        successor = threading.Thread(
+            target=lambda: next_result.update(bridge["propagation_sync"](timeout=2.0))
+        )
+        successor.start()
+        time.sleep(0.1)
+        self.assertEqual(router.requests, 1)
+
+        router.propagation_transfer_state = 5
+        router.cancel_release.set()
+        cancellation.join(timeout=1.0)
+        first.join(timeout=1.0)
+        successor.join(timeout=1.0)
+
+        self.assertFalse(cancellation.is_alive())
+        self.assertFalse(first.is_alive())
+        self.assertFalse(successor.is_alive())
+        self.assertEqual(first_result["state"], "cancelled")
+        self.assertTrue(next_result["ok"])
+        self.assertEqual(router.requests, 2)
 
     def test_swift_cancellation_is_scoped_to_the_originating_operation(self):
         manager = (

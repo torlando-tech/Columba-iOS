@@ -277,7 +277,7 @@ def _install_native_stamp_generator_unless_stopping() -> bool:
 
 
 _lock = threading.Lock()
-_propagation_sync_cancellation_lock = threading.Lock()
+_propagation_sync_cancellation_lock = threading.Condition()
 _active_propagation_sync_cancellation: threading.Event | None = None
 # Teardown publishes intent without waiting for `_lock`, allowing a start that
 # already owns it to reject or undo process-global callback registration.
@@ -691,6 +691,11 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
     cancellation = threading.Event()
     global _active_propagation_sync_cancellation
     with _propagation_sync_cancellation_lock:
+        while (
+            _active_propagation_sync_cancellation is not None
+            and _active_propagation_sync_cancellation.is_set()
+        ):
+            _propagation_sync_cancellation_lock.wait()
         if _active_propagation_sync_cancellation is not None:
             return {"ok": False, "state": "transfer-failed", "received_messages": 0, "reason": "sync-in-progress"}
         _active_propagation_sync_cancellation = cancellation
@@ -753,6 +758,7 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
         with _propagation_sync_cancellation_lock:
             if _active_propagation_sync_cancellation is cancellation:
                 _active_propagation_sync_cancellation = None
+                _propagation_sync_cancellation_lock.notify_all()
 
 
 def cancel_propagation_sync() -> dict[str, Any]:
@@ -762,18 +768,21 @@ def cancel_propagation_sync() -> dict[str, Any]:
         if cancellation is None:
             return {"ok": True, "active": False, "router_cancelled": False}
         cancellation.set()
-    with _lock:
-        router = _state.get("router")
-    cancelled_router = False
-    if router is not None:
-        cancel = getattr(router, "cancel_propagation_node_requests", None)
-        if callable(cancel):
-            try:
-                cancel()
-                cancelled_router = True
-            except Exception:
-                pass
-    return {"ok": True, "active": True, "router_cancelled": cancelled_router}
+        # Keep the operation slot occupied until the router-wide cancellation has
+        # finished. Otherwise a successor can publish its fresh event and start a
+        # request while this call is still about to tear down router propagation.
+        with _lock:
+            router = _state.get("router")
+        cancelled_router = False
+        if router is not None:
+            cancel = getattr(router, "cancel_propagation_node_requests", None)
+            if callable(cancel):
+                try:
+                    cancel()
+                    cancelled_router = True
+                except Exception:
+                    pass
+        return {"ok": True, "active": True, "router_cancelled": cancelled_router}
 
 
 def _propagation_state_name(val: Any) -> str:
