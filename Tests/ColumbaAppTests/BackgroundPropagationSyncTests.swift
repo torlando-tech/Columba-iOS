@@ -205,18 +205,21 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         let gate = PythonHostEventProcessingGate()
         let events = EventRecorder()
 
-        XCTAssertTrue(await gate.beginExclusive())
+        let acquired = await gate.beginExclusive()
+        XCTAssertTrue(acquired)
         let normalDrain = Task {
             guard await gate.beginNormal() else { return }
             await events.append("normal")
             await gate.endNormal()
         }
         try? await Task.sleep(for: .milliseconds(20))
-        XCTAssertEqual(await events.values, [])
+        let beforeRelease = await events.snapshot()
+        XCTAssertEqual(beforeRelease, [])
 
         await gate.endExclusive()
         await normalDrain.value
-        XCTAssertEqual(await events.values, ["normal"])
+        let afterRelease = await events.snapshot()
+        XCTAssertEqual(afterRelease, ["normal"])
     }
 
     func testWorkflowNotifiesEachMessageInsertedDuringSuccessfulSync() async {
@@ -328,10 +331,14 @@ final class BackgroundPropagationSyncTests: XCTestCase {
 }
 
 private actor EventRecorder {
-    private(set) var values: [String] = []
+    private var values: [String] = []
 
     func append(_ value: String) {
         values.append(value)
+    }
+
+    func snapshot() -> [String] {
+        values
     }
 }
 
