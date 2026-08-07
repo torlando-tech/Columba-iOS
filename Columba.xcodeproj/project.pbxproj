@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BGPSYNCBUILD001 /* BackgroundPropagationSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGPSYNCREF001 /* BackgroundPropagationSync.swift */; };
 		BGPSYNCTESTBUILD001 /* BackgroundPropagationSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGPSYNCTESTREF001 /* BackgroundPropagationSyncTests.swift */; };
 		001 /* ColumbaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* ColumbaApp.swift */; };
 		002 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* Theme.swift */; };
@@ -408,6 +409,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BGPSYNCREF001 /* BackgroundPropagationSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundPropagationSync.swift; sourceTree = "<group>"; };
 		BGPSYNCTESTREF001 /* BackgroundPropagationSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundPropagationSyncTests.swift; sourceTree = "<group>"; };
 		00A8D344945F752C18EF2D9E /* AudioManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 		11D4DB375C0C7BB62E8A8B23 /* ColumbaPython-Bridging-Header.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = "ColumbaPython-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -983,6 +985,7 @@
 		GSVC /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				BGPSYNCREF001 /* BackgroundPropagationSync.swift */,
 				F024 /* AppServices.swift */,
 				BKF002 /* BackendFactory.swift */,
 				F025 /* MessageRepository.swift */,
@@ -1575,6 +1578,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BGPSYNCBUILD001 /* BackgroundPropagationSync.swift in Sources */,
 				001 /* ColumbaApp.swift in Sources */,
 				002 /* Theme.swift in Sources */,
 				003 /* ChatsViewModel.swift in Sources */,

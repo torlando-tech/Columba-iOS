@@ -312,6 +312,7 @@ public final class PythonBridge: @unchecked Sendable {
             case receiving
             case responseReceived = "response_received"
             case complete
+            case cancelled
             case noPath = "no_path"
             case transferFailed = "transfer_failed"
             case noRouter = "no-router"
@@ -421,6 +422,25 @@ public final class PythonBridge: @unchecked Sendable {
                 }()
                 let state = PropagationSyncResult.State(rawValue: stateStr) ?? .unknown
                 return PropagationSyncResult(ok: ok, state: state, receivedMessages: count, reason: reason)
+            }
+        }
+    }
+
+    /// Interrupt the Python propagation poll and ask LXMRouter to tear down its
+    /// active propagation request. Runs on the non-blocking bridge queue so it
+    /// can execute while `propagationSync` is sleeping on `blockingQueue`.
+    public func cancelPropagationSync() async throws {
+        try await runOnQueue { [self] in
+            try PythonRuntime.shared.withGIL { [self] in
+                guard let module = self.module else { return }
+                guard let fn = PyObject_GetAttrString(module, "cancel_propagation_sync") else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                defer { Py_DecRef(fn) }
+                guard let result = PyObject_CallNoArgs(fn) else {
+                    throw BridgeError.pythonException(currentPythonException())
+                }
+                Py_DecRef(result)
             }
         }
     }

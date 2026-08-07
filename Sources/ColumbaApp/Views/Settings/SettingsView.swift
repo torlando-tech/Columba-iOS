@@ -1384,6 +1384,8 @@ struct SettingsView: View {
                                 Task { await vm.saveDeliverySettings() }
                             }
                         )) {
+                            Text("15 minutes").tag(TimeInterval(900))
+                            Text("30 minutes").tag(TimeInterval(1800))
                             Text("1 hour").tag(TimeInterval(3600))
                             Text("3 hours").tag(TimeInterval(10800))
                             Text("6 hours").tag(TimeInterval(21600))
@@ -1392,6 +1394,11 @@ struct SettingsView: View {
                         .pickerStyle(.menu)
                         .tint(Theme.accentColor)
                     }
+
+                    Text("iOS treats this as the earliest requested refresh time. Actual background sync timing is system-controlled and may be later.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 // Sync Now button

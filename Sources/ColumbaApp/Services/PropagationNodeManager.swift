@@ -338,7 +338,11 @@ public final class PropagationNodeManager {
     ///   refresh button, pull-to-refresh, or a Sync Now action) — i.e. the cases that may
     ///   present the status sheet. Only these reset the displayed transfer state up front
     ///   (see below). Background, periodic, and on-foreground auto-syncs pass `false`.
-    public func syncNow(userInitiated: Bool = false) async {
+    @discardableResult
+    public func syncNow(
+        userInitiated: Bool = false,
+        timeout: TimeInterval = 60.0
+    ) async -> Bool {
         // For user-initiated syncs only, reset transfer state up front so a freshly-opened
         // status sheet shows THIS sync's progress from a clean "connecting" slate, not the
         // previous run's stale "Download complete / N new messages". Background / periodic
@@ -364,14 +368,14 @@ public final class PropagationNodeManager {
                 syncState.state = .noPath
                 syncState.errorDescription = "No propagation node available"
                 logger.warning("[SYNC] Model B: no propagation node, sync skipped")
-                return
+                return false
             }
             publishPropagationSeam() // ensure the NE has the latest PN + stamp cost
             syncState.state = .linking
             syncState.errorDescription = nil
             PropagationSeamConfig.postSyncNowNotification()
             logger.info("[SYNC] Model B: posted sync-now to NE")
-            return
+            return true
         }
         #elseif COLUMBA_RUNTIME_PYTHON
 
@@ -379,7 +383,7 @@ public final class PropagationNodeManager {
             logger.error("[SYNC] Python backend not available")
             syncState.state = .linkFailed
             syncState.errorDescription = "Backend not available"
-            return
+            return false
         }
 
         logger.info("[SYNC] syncNow called. knownNodes=\(self.knownNodes.count), selectedNodeHash=\(self.selectedNodeHash != nil ? "set" : "nil")")
@@ -399,7 +403,7 @@ public final class PropagationNodeManager {
             syncState.state = .noPath
             syncState.errorDescription = "No propagation node available"
             logger.warning("[SYNC] No propagation nodes discovered, sync skipped")
-            return
+            return false
         }
 
         let nodeHex = nodeHash.prefix(8).map { String(format: "%02x", $0) }.joined()
@@ -408,7 +412,7 @@ public final class PropagationNodeManager {
         syncState.errorDescription = nil
 
         do {
-            let result = try await backend.propagationSync(timeout: 60.0)
+            let result = try await backend.propagationSync(timeout: timeout)
             syncState.state = Self.mapPythonState(result.state)
             syncState.receivedMessages = result.receivedMessages
             syncState.errorDescription = result.ok ? nil : result.reason
@@ -417,11 +421,22 @@ public final class PropagationNodeManager {
                 lastSyncTime = syncState.lastSync
             }
             logger.info("[SYNC] Sync \(result.ok ? "complete" : "failed"). state=\(result.state.rawValue) newMessages=\(result.receivedMessages)")
+            return result.ok
         } catch {
             syncState.state = .transferFailed
             syncState.errorDescription = error.localizedDescription
             logger.error("[SYNC] Sync failed: \(error.localizedDescription)")
+            return false
         }
+        #endif
+    }
+
+    /// Interrupt an active shipping Python propagation sync. This is used by
+    /// BGAppRefreshTask expiration so Python does not continue polling after the
+    /// system revokes the refresh execution window.
+    public func cancelActiveSync() async {
+        #if COLUMBA_RUNTIME_PYTHON
+        await appServices?.pythonBackend?.cancelPropagationSync()
         #endif
     }
 
@@ -431,6 +446,7 @@ public final class PropagationNodeManager {
     private static func mapPythonState(_ state: PropagationSyncResult.State) -> PropagationTransferState.State {
         switch state {
         case .complete: return .complete
+        case .cancelled: return .transferFailed
         case .noPath: return .noPath
         case .transferFailed: return .transferFailed
         case .pathRequested, .linkEstablishing, .linkEstablished:

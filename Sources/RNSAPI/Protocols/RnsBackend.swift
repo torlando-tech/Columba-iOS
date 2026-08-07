@@ -85,6 +85,7 @@ public struct PropagationSyncResult: Sendable, Equatable {
         case receiving
         case responseReceived = "response_received"
         case complete
+        case cancelled
         case noPath = "no_path"
         case transferFailed = "transfer_failed"
         case noRouter = "no-router"

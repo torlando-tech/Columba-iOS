@@ -277,6 +277,7 @@ def _install_native_stamp_generator_unless_stopping() -> bool:
 
 
 _lock = threading.Lock()
+_propagation_sync_cancelled = threading.Event()
 # Teardown publishes intent without waiting for `_lock`, allowing a start that
 # already owns it to reject or undo process-global callback registration.
 _runtime_teardown_requested = threading.Event()
@@ -686,6 +687,10 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
 
     Requires set_propagation_node() to have been called with a valid
     `lxmf.propagation` destination first."""
+    if _propagation_sync_cancelled.is_set():
+        _propagation_sync_cancelled.clear()
+        return {"ok": False, "state": "cancelled", "received_messages": 0, "reason": "cancelled"}
+
     with _lock:
         if not _state["started"]:
             return {"ok": False, "state": "not-started", "received_messages": 0, "reason": "not-started"}
@@ -707,6 +712,9 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last_seen_state: Any = None
     while time.monotonic() < deadline:
+        if _propagation_sync_cancelled.is_set():
+            _propagation_sync_cancelled.clear()
+            return {"ok": False, "state": "cancelled", "received_messages": 0, "reason": "cancelled"}
         try:
             state_val = getattr(router, "propagation_transfer_state", None)
             last_seen_state = state_val
@@ -737,6 +745,23 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
         "received_messages": received,
         "reason": "ok" if ok else state_name,
     }
+
+
+def cancel_propagation_sync() -> dict[str, Any]:
+    """Cancel an active bounded propagation-node request and its polling loop."""
+    _propagation_sync_cancelled.set()
+    with _lock:
+        router = _state.get("router")
+    cancelled_router = False
+    if router is not None:
+        cancel = getattr(router, "cancel_propagation_node_requests", None)
+        if callable(cancel):
+            try:
+                cancel()
+                cancelled_router = True
+            except Exception:
+                pass
+    return {"ok": True, "router_cancelled": cancelled_router}
 
 
 def _propagation_state_name(val: Any) -> str:

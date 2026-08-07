@@ -512,6 +512,34 @@ public actor MessageRepository {
             .map(Self.mapRecord)
     }
 
+    /// Capture the current insertion boundary of the canonical message table.
+    /// A later query can then identify rows that were not present before a
+    /// propagation-node synchronization, regardless of the sender's timestamp.
+    public func captureMessageInsertionCursor() async throws -> Int64 {
+        try await replacementPool.read { db in
+            try Int64.fetchOne(db, sql: "SELECT COALESCE(MAX(rowid), 0) FROM messages") ?? 0
+        }
+    }
+
+    /// Return inbound messages inserted after a previously captured boundary.
+    /// Existing rows re-delivered by a propagation node keep their original
+    /// rowid and are excluded, so notifications represent newly downloaded
+    /// device-local messages rather than historical wire timestamps.
+    public func fetchIncomingMessagesInserted(after cursor: Int64) async throws -> [RNSAPI.LXMessage] {
+        try await replacementPool.read { db in
+            try LXMFSwift.MessageRecord.fetchAll(
+                db,
+                sql: """
+                    SELECT *
+                    FROM messages
+                    WHERE rowid > ? AND incoming = 1
+                    ORDER BY rowid ASC
+                    """,
+                arguments: [cursor]
+            ).map(Self.mapToLXMessage)
+        }
+    }
+
     /// Save a message (outbound from the app, or Python-path inbound).
     ///
     /// Bridges the RNSAPI `LXMessage` into the GRDB store via a synthetic

@@ -220,15 +220,16 @@ public actor SettingsRepository {
         defaults.set(enabled, forKey: Keys.periodicSyncEnabled)
     }
 
-    /// Get sync interval in seconds.
+    /// Get sync interval in seconds, clamped to the user-facing minimum.
     public func getSyncInterval() -> TimeInterval {
         let value = defaults.double(forKey: Keys.syncIntervalSeconds)
-        return value > 0 ? value : 3600 // Default 1 hour
+        let requested = value > 0 ? value : 3600
+        return max(15 * 60, requested)
     }
 
-    /// Set sync interval in seconds.
+    /// Set sync interval in seconds, clamped to the user-facing minimum.
     public func setSyncInterval(_ interval: TimeInterval) {
-        defaults.set(interval, forKey: Keys.syncIntervalSeconds)
+        defaults.set(max(15 * 60, interval), forKey: Keys.syncIntervalSeconds)
     }
 
     // MARK: - Incoming Message Size Limit

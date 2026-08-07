@@ -9,7 +9,6 @@
 import SwiftUI
 import RNSAPI
 import UserNotifications
-import BackgroundTasks
 import SwiftBLEBridge
 import os
 #if canImport(CoreBluetooth)
@@ -96,13 +95,8 @@ struct ColumbaApp: App {
         #endif
         #endif
 
-        #if os(iOS)
-        BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: "network.columba.Columba.sync",
-            using: nil
-        ) { task in
-            NotificationCenter.default.post(name: .columbaBackgroundSync, object: task)
-        }
+        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+        BackgroundPropagationRefreshScheduler.register()
         #endif
 
         // Install notification delegate early so didReceive (notification tap) works
@@ -602,7 +596,9 @@ struct RootView: View {
             }
             #if os(iOS)
             if newPhase == .background {
-                scheduleBackgroundSync()
+                #if COLUMBA_RUNTIME_PYTHON
+                BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+                #endif
                 // Flush RNS's path table + known destinations to disk now —
                 // iOS won't run RNS's clean-exit persist, so without this a
                 // cold start can't recall previously-heard peers.
@@ -611,10 +607,12 @@ struct RootView: View {
             appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
             #endif
         }
-        #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: .columbaBackgroundSync)) { note in
-            guard let task = note.object as? BGAppRefreshTask else { return }
-            handleBackgroundSync(task: task)
+        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+        .task {
+            BackgroundRefreshTaskCoordinator.shared.installHandler {
+                await performBackgroundPropagationSync()
+            }
+            BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
         }
         #endif
     }
@@ -694,25 +692,60 @@ struct RootView: View {
         }
     }
 
-    #if os(iOS)
-    // MARK: - Background Sync
+    #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+    // MARK: - Background Propagation Sync
 
-    private func scheduleBackgroundSync() {
-        let request = BGAppRefreshTaskRequest(identifier: "network.columba.Columba.sync")
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-        try? BGTaskScheduler.shared.submit(request)
-    }
+    /// Execute one system-granted refresh against the shipping embedded-Python
+    /// propagation path. A cold launch may deliver the task while normal service
+    /// initialization is still running, so wait briefly for that single startup
+    /// path rather than starting a competing identity/router initialization.
+    @MainActor
+    private func performBackgroundPropagationSync() async -> Bool {
+        guard await settingsRepository.getPeriodicSyncEnabled() else {
+            DiagLog.log("[BG-SYNC] skipped: periodic sync disabled")
+            return true
+        }
 
-    private func handleBackgroundSync(task: BGAppRefreshTask) {
-        scheduleBackgroundSync() // always reschedule first
-        let syncTask = Task {
-            await appServices.propagationManager?.syncNow()
-            task.setTaskCompleted(success: true)
+        for _ in 0..<100 where !isInitialized {
+            guard !Task.isCancelled else { return false }
+            try? await Task.sleep(for: .milliseconds(100))
         }
-        task.expirationHandler = {
-            syncTask.cancel()
-            task.setTaskCompleted(success: false)
+
+        guard isInitialized,
+              let repository = messageRepository,
+              let handler = incomingMessageHandler,
+              let propagationManager = appServices.propagationManager else {
+            DiagLog.log("[BG-SYNC] failed: services not ready")
+            return false
         }
+
+        handler.setUserNotificationsSuppressed(true)
+        defer { handler.setUserNotificationsSuppressed(false) }
+
+        let workflow = BackgroundPropagationSyncWorkflow<LXMessage>(
+            captureInsertionCursor: {
+                try await repository.captureMessageInsertionCursor()
+            },
+            sync: {
+                await withTaskCancellationHandler {
+                    await propagationManager.syncNow(timeout: 20.0)
+                } onCancel: {
+                    Task { @MainActor in
+                        await propagationManager.cancelActiveSync()
+                    }
+                }
+            },
+            messagesInsertedAfter: { cursor in
+                try await repository.fetchIncomingMessagesInserted(after: cursor)
+            },
+            notify: { message in
+                await handler.postNotificationForNewlySyncedMessage(message)
+            }
+        )
+
+        let succeeded = await workflow.run()
+        DiagLog.log("[BG-SYNC] completed success=\(succeeded)")
+        return succeeded
     }
     #endif
 
@@ -1026,12 +1059,6 @@ struct RootView: View {
             throw error
         }
     }
-}
-
-// MARK: - Notification Names
-
-extension Notification.Name {
-    static let columbaBackgroundSync = Notification.Name("network.columba.Columba.backgroundSync")
 }
 
 // MARK: - Tab Enum

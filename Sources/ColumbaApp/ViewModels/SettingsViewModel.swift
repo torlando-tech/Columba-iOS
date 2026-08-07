@@ -669,6 +669,9 @@ public final class SettingsViewModel {
         await settingsRepository.setAutoSelectRelay(autoSelectRelay)
         await settingsRepository.setPeriodicSyncEnabled(autoRetrieveEnabled)
         await settingsRepository.setSyncInterval(autoRetrieveInterval)
+        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
+        BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+        #endif
         await appServices.applyIncomingMessageSizeLimitFromSettings()
 
         // Update propagation manager

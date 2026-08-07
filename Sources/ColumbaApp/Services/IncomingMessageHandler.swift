@@ -166,6 +166,52 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     }
     #endif
 
+    #if os(iOS)
+    /// Suppress the router-delegate notification path while a background
+    /// propagation sync is active. The background workflow posts notifications
+    /// from the database insertion delta instead, so sender timestamps cannot
+    /// suppress a newly downloaded message or cause duplicate banners.
+    public func setUserNotificationsSuppressed(_ suppressed: Bool) {
+        suppressUserNotifications = suppressed
+    }
+
+    /// Post the same preference-aware local notification used for a live inbound
+    /// message, but only for a row proven to be newly inserted by the current
+    /// background propagation sync.
+    public func postNotificationForNewlySyncedMessage(_ message: LXMessage) async {
+        guard Self.isUserNotifiableMessage(message) else { return }
+        let conversation = try? await messageRepository.fetchConversation(message.sourceHash)
+        await NotificationService.shared.postMessageNotification(
+            message,
+            senderName: conversation?.displayName,
+            database: database,
+            isFavorite: (conversation?.isFavorite ?? 0) != 0
+        )
+    }
+
+    private static func isUserNotifiableMessage(_ message: LXMessage) -> Bool {
+        let isTelemetryOnly = message.content.isEmpty
+            && message.fields?[LXMessage.FIELD_TELEMETRY] != nil
+        guard !isTelemetryOnly else { return false }
+
+        guard let metaRaw = message.fields?[LXMessage.FIELD_COLUMBA_META] else {
+            return true
+        }
+        let metaData: Data?
+        if let data = metaRaw as? Data {
+            metaData = data
+        } else if let string = metaRaw as? String {
+            metaData = string.data(using: .utf8)
+        } else {
+            metaData = nil
+        }
+        guard let metaData else { return true }
+        let msgpackCease = ColumbaMetaCodec.unpack(metaData)?.cease == true
+        let jsonCease = String(data: metaData, encoding: .utf8)?.contains("\"cease\"") == true
+        return !msgpackCease && !jsonCease
+    }
+    #endif
+
     // MARK: - LXMRouterDelegate
 
     /// Called when a message is received and validated.

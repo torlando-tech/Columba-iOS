@@ -208,6 +208,11 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         Self.map(try await bridge.propagationSync(timeout: timeout))
     }
 
+    /// Cancel a bounded propagation sync that is currently polling in Python.
+    public func cancelPropagationSync() async {
+        try? await bridge.cancelPropagationSync()
+    }
+
     // MARK: - Telemetry (RnsTelemetry)
     //
     // The send half routes through the same `sendLxmfMessage` path as text /

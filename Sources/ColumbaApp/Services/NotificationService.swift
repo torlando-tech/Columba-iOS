@@ -146,6 +146,18 @@ public final class NotificationService: Sendable {
 
     // MARK: - Post Notification
 
+    static func shouldPostMessageNotification(
+        isFavorite: Bool,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard defaults.bool(forKey: Keys.notificationsEnabled) else { return false }
+        let notifyAll = defaults.object(forKey: Keys.notifyReceivedMessage) as? Bool ?? true
+        let notifyFavoriteOnly = defaults.bool(forKey: Keys.notifyReceivedMessageFavorite)
+        if notifyFavoriteOnly && !isFavorite { return false }
+        if !notifyAll && !notifyFavoriteOnly { return false }
+        return true
+    }
+
     /// Post a local notification for an incoming LXMF message.
     ///
     /// Respects user preferences for notifications, previews, and sounds.
@@ -161,18 +173,8 @@ public final class NotificationService: Sendable {
         database: LXMFDatabase?,
         isFavorite: Bool = false
     ) async {
-        // Check user preference
         let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: Keys.notificationsEnabled) else { return }
-
-        // Check per-type toggles
-        let notifyAll = defaults.object(forKey: Keys.notifyReceivedMessage) as? Bool ?? true
-        let notifyFavoriteOnly = defaults.bool(forKey: Keys.notifyReceivedMessageFavorite)
-
-        // If "favorite only" is on and this sender isn't a favorite, skip
-        if notifyFavoriteOnly && !isFavorite { return }
-        // If general message notifications are off (and not favorite-filtered), skip
-        if !notifyAll && !notifyFavoriteOnly { return }
+        guard Self.shouldPostMessageNotification(isFavorite: isFavorite, defaults: defaults) else { return }
 
         // Check system permission
         guard await isAuthorized() else { return }

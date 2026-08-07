@@ -4,6 +4,7 @@
 //
 
 import XCTest
+import RNSAPI
 @testable import ColumbaApp
 
 @MainActor
@@ -32,6 +33,52 @@ final class BackgroundPropagationSyncTests: XCTestCase {
             ),
             30 * 60
         )
+    }
+
+    func testNormalNotificationPolicyHonorsEnabledAndFavoritesOnlySettings() {
+        let suiteName = "BackgroundPropagationSyncTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(false, forKey: "notifications_enabled")
+        XCTAssertFalse(NotificationService.shouldPostMessageNotification(isFavorite: true, defaults: defaults))
+
+        defaults.set(true, forKey: "notifications_enabled")
+        defaults.set(true, forKey: "notify_received_message")
+        defaults.set(true, forKey: "notify_received_message_favorite")
+        XCTAssertFalse(NotificationService.shouldPostMessageNotification(isFavorite: false, defaults: defaults))
+        XCTAssertTrue(NotificationService.shouldPostMessageNotification(isFavorite: true, defaults: defaults))
+
+        defaults.set(false, forKey: "notify_received_message_favorite")
+        XCTAssertTrue(NotificationService.shouldPostMessageNotification(isFavorite: false, defaults: defaults))
+
+        defaults.set(false, forKey: "notify_received_message")
+        XCTAssertFalse(NotificationService.shouldPostMessageNotification(isFavorite: true, defaults: defaults))
+    }
+
+    func testRepositoryInsertionCursorReturnsOnlyNewInboundMessages() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-bg-sync-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+        }
+
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let oldMessage = makeMessage(idByte: 0x01, incoming: true)
+        try await repository.saveMessage(oldMessage)
+        let cursor = try await repository.captureMessageInsertionCursor()
+
+        try await repository.saveMessage(oldMessage)
+        let newInbound = makeMessage(idByte: 0x02, incoming: true)
+        let newOutbound = makeMessage(idByte: 0x03, incoming: false)
+        try await repository.saveMessage(newInbound)
+        try await repository.saveMessage(newOutbound)
+
+        let messages = try await repository.fetchIncomingMessagesInserted(after: cursor)
+
+        XCTAssertEqual(messages.map(\.hash), [newInbound.hash])
     }
 
     func testWorkflowNotifiesEachMessageInsertedDuringSuccessfulSync() async {
@@ -113,6 +160,24 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         await Task.yield()
 
         XCTAssertEqual(task.completions, [false])
+    }
+
+    private func makeMessage(idByte: UInt8, incoming: Bool) -> LXMessage {
+        let message = LXMessage(
+            destinationHash: Data(repeating: 0xDD, count: 16),
+            sourceIdentity: nil,
+            content: Data("message-\(idByte)".utf8),
+            title: Data(),
+            fields: nil,
+            desiredMethod: incoming ? .propagated : .direct
+        )
+        message.sourceHash = Data(repeating: 0xAA, count: 16)
+        message.hash = Data(repeating: idByte, count: 16)
+        message.timestamp = Date().timeIntervalSince1970
+        message.incoming = incoming
+        message.state = incoming ? .received : .sent
+        message.method = incoming ? .propagated : .direct
+        return message
     }
 }
 
