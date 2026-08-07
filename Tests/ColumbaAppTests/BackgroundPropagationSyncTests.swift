@@ -35,6 +35,17 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         )
     }
 
+    func testIOSBackgroundRefreshIsTheOnlyPeriodicSyncScheduler() {
+        let manager = PropagationNodeManager(appServices: AppServices())
+        manager.periodicSyncEnabled = true
+        manager.syncInterval = 900
+
+        manager.startPeriodicSync()
+        defer { manager.stopPeriodicSync() }
+
+        XCTAssertFalse(manager.hasInProcessPeriodicSyncTaskForTesting)
+    }
+
     func testNormalNotificationPolicyHonorsEnabledAndFavoritesOnlySettings() {
         let suiteName = "BackgroundPropagationSyncTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -79,6 +90,28 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         let messages = try await repository.fetchIncomingMessagesInserted(after: cursor)
 
         XCTAssertEqual(messages.map(\.hash), [newInbound.hash])
+    }
+
+    func testRepositoryTotalUnreadCountIgnoresNotificationHistory() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-bg-badge-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: databaseURL)
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-shm")
+            try? FileManager.default.removeItem(atPath: databaseURL.path + "-wal")
+        }
+
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        try await repository.saveMessage(makeMessage(idByte: 0x21, incoming: true))
+        try await repository.saveMessage(makeMessage(idByte: 0x22, incoming: true))
+        try await repository.saveMessage(makeMessage(idByte: 0x23, incoming: false))
+
+        XCTAssertEqual(try await repository.totalUnreadCount(), 2)
+    }
+
+    func testNotificationBadgeUsesDurableUnreadCount() {
+        XCTAssertEqual(NotificationService.badgeValue(totalUnreadCount: 3), NSNumber(value: 3))
+        XCTAssertEqual(NotificationService.badgeValue(totalUnreadCount: -1), NSNumber(value: 0))
     }
 
     func testBackgroundNotificationClassifierRejectsTelemetryAndCeaseControls() {
