@@ -1344,9 +1344,13 @@ struct SettingsView: View {
 
                     Spacer()
 
-                    Text(vm.selectedRelayName ?? "None")
+                    Text(appServices.propagationManager?.selectedNodeName ?? "None")
                         .font(.subheadline)
-                        .foregroundStyle(vm.selectedRelayName != nil ? Theme.textPrimary : Theme.textSecondary)
+                        .foregroundStyle(
+                            appServices.propagationManager?.selectedNodeName != nil
+                                ? Theme.textPrimary
+                                : Theme.textSecondary
+                        )
                 }
 
                 Divider()
