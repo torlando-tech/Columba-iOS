@@ -189,7 +189,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
         )
     }
 
-    private static func isUserNotifiableMessage(_ message: LXMessage) -> Bool {
+    static func isUserNotifiableMessage(_ message: LXMessage) -> Bool {
         let isTelemetryOnly = message.content.isEmpty
             && message.fields?[LXMessage.FIELD_TELEMETRY] != nil
         guard !isTelemetryOnly else { return false }

@@ -99,6 +99,10 @@ public final class PropagationNodeManager {
     /// Task for periodic sync.
     private var periodicSyncTask: Task<Void, Never>?
 
+    /// Main-actor single-flight guard shared by user, periodic, foreground, and
+    /// BGAppRefreshTask synchronization requests.
+    private var syncInFlight = false
+
     /// Observer token for the NE's propagation sync-state channel (Model B). The NE
     /// owns the router/sync, so live progress arrives as App-Group snapshots bridged
     /// to `propagationSyncStateChangedInApp`; we mirror them into `syncState`.
@@ -343,6 +347,13 @@ public final class PropagationNodeManager {
         userInitiated: Bool = false,
         timeout: TimeInterval = 60.0
     ) async -> Bool {
+        guard !syncInFlight else {
+            logger.info("[SYNC] skipped overlapping propagation sync")
+            return false
+        }
+        syncInFlight = true
+        defer { syncInFlight = false }
+
         // For user-initiated syncs only, reset transfer state up front so a freshly-opened
         // status sheet shows THIS sync's progress from a clean "connecting" slate, not the
         // previous run's stale "Download complete / N new messages". Background / periodic
@@ -412,7 +423,9 @@ public final class PropagationNodeManager {
         syncState.errorDescription = nil
 
         do {
-            let result = try await backend.propagationSync(timeout: timeout)
+            let transaction = try await backend.propagationSyncAndDrain(timeout: timeout)
+            await appServices?.processPythonEventsSynchronously(transaction.events)
+            let result = transaction.result
             syncState.state = Self.mapPythonState(result.state)
             syncState.receivedMessages = result.receivedMessages
             syncState.errorDescription = result.ok ? nil : result.reason
@@ -437,6 +450,29 @@ public final class PropagationNodeManager {
     public func cancelActiveSync() async {
         #if COLUMBA_RUNTIME_PYTHON
         await appServices?.pythonBackend?.cancelPropagationSync()
+        #endif
+    }
+
+    /// Reapply the persisted relay after the embedded Python backend starts.
+    /// Preference restoration happens before backend startup on a cold launch,
+    /// so wiring only the Compat router leaves Python with no outbound node.
+    @discardableResult
+    public func reapplySelectedNodeToPythonBackend() async -> Bool {
+        #if COLUMBA_RUNTIME_PYTHON
+        guard let hash = selectedNodeHash,
+              let backend = appServices?.pythonBackend else { return false }
+        let hex = hash.map { String(format: "%02x", $0) }.joined()
+        do {
+            return try await backend.setPropagationNode(
+                destHashHex: hex,
+                stampCost: selectedNodeStampCost
+            )
+        } catch {
+            logger.error("[SYNC] Failed to reapply persisted propagation node: \(error.localizedDescription)")
+            return false
+        }
+        #else
+        return false
         #endif
     }
 

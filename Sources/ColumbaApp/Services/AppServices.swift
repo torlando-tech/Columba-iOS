@@ -1585,6 +1585,13 @@ public final class AppServices {
 
         await applyIncomingMessageSizeLimitFromSettings()
 
+        #if COLUMBA_RUNTIME_PYTHON
+        if propagationManager?.selectedNodeHash != nil {
+            let reapplied = await propagationManager?.reapplySelectedNodeToPythonBackend() ?? false
+            DiagLog.log("[RNS] reapplied persisted propagation node to Python: \(reapplied)")
+        }
+        #endif
+
         // Outbound LXMF now goes directly through `backend.lxmf.sendLxmfMessage`
         // (MessagingViewModel + RnsLxmf) with TYPED fields, so the old Compat
         // router sendHook — which forwarded content only and dropped every field —
@@ -2770,6 +2777,15 @@ public final class AppServices {
         }
     }
 
+    /// Process a transaction-owned batch before a propagation sync reports
+    /// completion to its caller. The Python backend temporarily pauses its
+    /// normal drain loop while producing this batch.
+    func processPythonEventsSynchronously(_ events: [BackendEvent]) async {
+        for event in events {
+            await handlePythonEvent(event)
+        }
+    }
+
     private func handlePythonEvent(_ event: BackendEvent) async {
         switch event {
         case .announce(let destHash, let appDataHex, let aspect, let publicKeysHex, let interfaceName, let hops, let t):
@@ -2875,7 +2891,11 @@ public final class AppServices {
             // bridge plumbing lands; the Swift backend populates them now).
             if let saved = await persistInboundFromPython(sourceHash: data, messageHashHex: messageHash, content: content, title: title, fields: fields, timestamp: t),
                fields != nil, let router = self.router {
-                router.delegate?.router(router, didReceiveMessage: saved)
+                if let handler = router.delegate as? IncomingMessageHandler {
+                    _ = await handler.handleInbound(saved).value
+                } else {
+                    router.delegate?.router(router, didReceiveMessage: saved)
+                }
             }
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonInbound"),

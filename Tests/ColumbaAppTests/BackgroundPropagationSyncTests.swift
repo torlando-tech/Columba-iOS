@@ -81,6 +81,36 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertEqual(messages.map(\.hash), [newInbound.hash])
     }
 
+    func testBackgroundNotificationClassifierRejectsTelemetryAndCeaseControls() {
+        let normal = makeMessage(idByte: 0x11, incoming: true)
+        let telemetry = makeMessage(
+            idByte: 0x12,
+            incoming: true,
+            content: Data(),
+            fields: [LXMessage.FIELD_TELEMETRY: Data([0x01])]
+        )
+        let cease = makeMessage(
+            idByte: 0x13,
+            incoming: true,
+            content: Data(),
+            fields: [LXMessage.FIELD_COLUMBA_META: Data("{\"cease\":true}".utf8)]
+        )
+
+        XCTAssertTrue(IncomingMessageHandler.isUserNotifiableMessage(normal))
+        XCTAssertFalse(IncomingMessageHandler.isUserNotifiableMessage(telemetry))
+        XCTAssertFalse(IncomingMessageHandler.isUserNotifiableMessage(cease))
+    }
+
+    func testBuiltAppDeclaresBackgroundRefreshRequirements() throws {
+        let modes = try XCTUnwrap(Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])
+        let identifiers = try XCTUnwrap(
+            Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String]
+        )
+
+        XCTAssertTrue(modes.contains("fetch"))
+        XCTAssertTrue(identifiers.contains(BackgroundPropagationRefreshScheduler.taskIdentifier))
+    }
+
     func testWorkflowNotifiesEachMessageInsertedDuringSuccessfulSync() async {
         var events: [String] = []
         let workflow = BackgroundPropagationSyncWorkflow<String>(
@@ -162,13 +192,18 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertEqual(task.completions, [false])
     }
 
-    private func makeMessage(idByte: UInt8, incoming: Bool) -> LXMessage {
+    private func makeMessage(
+        idByte: UInt8,
+        incoming: Bool,
+        content: Data? = nil,
+        fields: [UInt8: Any]? = nil
+    ) -> LXMessage {
         let message = LXMessage(
             destinationHash: Data(repeating: 0xDD, count: 16),
             sourceIdentity: nil,
-            content: Data("message-\(idByte)".utf8),
+            content: content ?? Data("message-\(idByte)".utf8),
             title: Data(),
-            fields: nil,
+            fields: fields,
             desiredMethod: incoming ? .propagated : .direct
         )
         message.sourceHash = Data(repeating: 0xAA, count: 16)
