@@ -144,3 +144,133 @@ struct AddContactSheet: View {
         }
     }
 }
+
+/// Native manual-entry flow matching Android's add-contact affordance.
+/// Hash-only contacts are persisted passively; identity/path lookup remains
+/// owned by the existing send-time resolution gate.
+@available(iOS 17.0, macOS 14.0, *)
+struct ManualContactEntrySheet: View {
+    let viewModel: ContactsViewModel
+    let onDismiss: () -> Void
+
+    @State private var address = ""
+    @State private var nickname = ""
+    @State private var validationError: String?
+    @State private var isAdding = false
+    @State private var existingContactNotice: ExistingContactNotice?
+
+    private enum ExistingContactNotice: String, Identifiable {
+        case alreadyAdded
+        case identityUpdated
+
+        var id: String { rawValue }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("lxma://… or 32-character hash", text: $address, axis: .vertical)
+                        .lineLimit(2...4)
+                        .font(.system(.body, design: .monospaced))
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.asciiCapable)
+                        #endif
+                        .accessibilityLabel("Identity or Address")
+                        .onChange(of: address) { _, _ in
+                            validationError = nil
+                        }
+
+                    TextField("Nickname (optional)", text: $nickname)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.words)
+                        #endif
+                } header: {
+                    Text("Contact Address")
+                } footer: {
+                    Text("Enter a complete lxma:// identity or a 32-character LXMF destination hash. A hash-only contact is resolved when you send a message.")
+                }
+
+                if let message = validationError {
+                    Section {
+                        Text(message)
+                            .foregroundStyle(Theme.error)
+                            .accessibilityIdentifier("manual_contact_error")
+                    }
+                }
+            }
+            .navigationTitle("Add Contact")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onDismiss)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        addContact()
+                    }
+                    .disabled(isAdding || address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .interactiveDismissDisabled(isAdding)
+            .alert(item: $existingContactNotice) { notice in
+                switch notice {
+                case .alreadyAdded:
+                    Alert(
+                        title: Text("Contact Already Added"),
+                        message: Text("This address is already in your contacts."),
+                        dismissButton: .default(Text("OK"), action: onDismiss)
+                    )
+                case .identityUpdated:
+                    Alert(
+                        title: Text("Contact Updated"),
+                        message: Text("The LXMA identity was refreshed for this existing contact."),
+                        dismissButton: .default(Text("OK"), action: onDismiss)
+                    )
+                }
+            }
+        }
+    }
+
+    private func addContact() {
+        guard let parsed = ContactsViewModel.parseContactInput(address) else {
+            validationError = "Enter a valid lxma:// identity or 32-character hexadecimal destination hash."
+            return
+        }
+
+        let existed = viewModel.contactExists(parsed.destinationHash)
+        let trimmedNickname = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        isAdding = true
+
+        Task {
+            let succeeded: Bool
+            if let publicKey = parsed.publicKey {
+                succeeded = await viewModel.addContactFromQR(
+                    destinationHash: parsed.destinationHash,
+                    publicKey: publicKey,
+                    nickname: trimmedNickname.isEmpty ? nil : trimmedNickname
+                )
+            } else {
+                succeeded = await viewModel.addContactFromHash(
+                    destinationHash: parsed.destinationHash,
+                    nickname: trimmedNickname.isEmpty ? nil : trimmedNickname
+                )
+            }
+
+            isAdding = false
+            guard succeeded else {
+                validationError = viewModel.errorMessage ?? "The contact could not be added. Please try again."
+                return
+            }
+            if existed {
+                existingContactNotice = parsed.publicKey == nil ? .alreadyAdded : .identityUpdated
+            } else {
+                onDismiss()
+            }
+        }
+    }
+}

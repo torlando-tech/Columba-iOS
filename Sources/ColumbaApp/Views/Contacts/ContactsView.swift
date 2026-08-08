@@ -68,6 +68,12 @@ public struct ContactsView: View {
     /// Whether the QR scanner is shown.
     @State private var showQRScanner = false
 
+    /// Whether the native add-contact action menu is shown.
+    @State private var showAddContactOptions = false
+
+    /// Whether manual hash / LXMA entry is shown.
+    @State private var showManualContactEntry = false
+
     /// Contact scanned from QR code or deep link, shown in AddContactSheet.
     @State private var scannedContact: ScannedContact?
 
@@ -253,6 +259,28 @@ public struct ContactsView: View {
                 )
                 .presentationDetents([.medium, .large])
             }
+        }
+        .sheet(isPresented: $showManualContactEntry) {
+            if let vm = viewModel {
+                ManualContactEntrySheet(
+                    viewModel: vm,
+                    onDismiss: { showManualContactEntry = false }
+                )
+                .presentationDetents([.medium, .large])
+            }
+        }
+        .confirmationDialog("Add Contact", isPresented: $showAddContactOptions) {
+            #if os(iOS)
+            Button("Scan QR Code") {
+                showQRScanner = true
+            }
+            #endif
+            Button("Enter Address Manually") {
+                showManualContactEntry = true
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Scan a contact QR code or enter an LXMF address.")
         }
         .alert("Edit Nickname", isPresented: Binding(
             get: { editingContact != nil },
@@ -531,30 +559,17 @@ public struct ContactsView: View {
             .disabled(viewModel?.isAnnouncing == true)
             .help("Send Announce")
 
-            #if os(iOS)
-            // QR scan button
-            Button {
-                showQRScanner = true
-            } label: {
-                Image(systemName: "qrcode.viewfinder")
-                    .font(.title3)
-            }
-            #else
-            // Paste contact button (macOS — no camera)
-            Button {
-                if let str = NSPasteboard.general.string(forType: .string),
-                   let parsed = ContactsViewModel.parseLXMA(str) {
-                    scannedContact = ScannedContact(
-                        destinationHash: parsed.destinationHash,
-                        publicKey: parsed.publicKey
-                    )
+            if viewModel?.selectedTab == .myContacts {
+                Button {
+                    showAddContactOptions = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title3)
                 }
-            } label: {
-                Image(systemName: "doc.on.clipboard")
-                    .font(.title3)
+                .accessibilityLabel("Add Contact")
+                .accessibilityIdentifier("add_contact_button")
+                .help("Add Contact")
             }
-            .help("Add Contact from Clipboard")
-            #endif
 
             // Search button
             Button {

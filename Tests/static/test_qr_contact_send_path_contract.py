@@ -84,6 +84,27 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertNotIn("requestPath", details)
         self.assertNotIn("Tap an action to issue a path request", details)
 
+    def test_contacts_plus_menu_supports_passive_hash_only_add(self) -> None:
+        contacts_view = self._read("Sources/ColumbaApp/Views/Contacts/ContactsView.swift")
+        add_sheet = self._read("Sources/ColumbaApp/Views/Contacts/AddContactSheet.swift")
+        add_hash = self._swift_function(
+            "Sources/ColumbaApp/ViewModels/ContactsViewModel.swift",
+            "public func addContactFromHash(",
+            "/// Convert a hex string to Data",
+        )
+
+        self.assertIn('Image(systemName: "plus")', contacts_view)
+        self.assertIn('.accessibilityLabel("Add Contact")', contacts_view)
+        self.assertIn('Button("Scan QR Code")', contacts_view)
+        self.assertIn('Button("Enter Address Manually")', contacts_view)
+        self.assertIn("ManualContactEntrySheet(", contacts_view)
+        self.assertIn("struct ManualContactEntrySheet: View", add_sheet)
+        self.assertIn("ContactsViewModel.parseContactInput", add_sheet)
+        self.assertIn("viewModel.addContactFromHash", add_sheet)
+        self.assertIn("messageRepository.ensureConversation", add_hash)
+        self.assertIn("messageRepository.setFavorite", add_hash)
+        self.assertNotIn("requestPath", add_hash)
+
     def test_shipping_send_resolves_path_before_bridge_send(self) -> None:
         backend = self._swift_function(
             "Sources/RNSBackendPy/PythonRNSBackend.swift",

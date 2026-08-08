@@ -182,6 +182,38 @@ final class AnnounceClassificationTests: XCTestCase {
         XCTAssertNil(ContactsViewModel.parseLXMA(uri))
     }
 
+    func testManualContactInputAcceptsTrimmedUppercaseDestinationHash() {
+        let hash = Data((0..<16).map(UInt8.init))
+        let uppercaseHex = hash.map { String(format: "%02X", $0) }.joined()
+
+        let parsed = ContactsViewModel.parseContactInput("  \n\(uppercaseHex)\t ")
+
+        XCTAssertEqual(parsed?.destinationHash, hash)
+        XCTAssertNil(parsed?.publicKey)
+    }
+
+    func testManualContactInputAcceptsCryptographicallyBoundLXMAIdentity() throws {
+        let identity = Identity()
+        let destinationHash = Destination.hash(
+            identity: identity,
+            appName: "lxmf",
+            aspects: ["delivery"]
+        )
+        let destinationHex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        let publicKeyHex = identity.publicKeys.map { String(format: "%02x", $0) }.joined()
+
+        let parsed = ContactsViewModel.parseContactInput("lxma://\(destinationHex):\(publicKeyHex)")
+
+        XCTAssertEqual(parsed?.destinationHash, destinationHash)
+        XCTAssertEqual(parsed?.publicKey, identity.publicKeys)
+    }
+
+    func testManualContactInputRejectsMalformedDestinationHashes() {
+        XCTAssertNil(ContactsViewModel.parseContactInput(String(repeating: "a", count: 31)))
+        XCTAssertNil(ContactsViewModel.parseContactInput(String(repeating: "g", count: 32)))
+        XCTAssertNil(ContactsViewModel.parseContactInput(String(repeating: "a", count: 34)))
+    }
+
     func testSharedQRCodeUsesLXMFDeliveryDestinationNotIdentityHash() {
         let info = IdentityInfo(
             identityHash: String(repeating: "11", count: 16),
