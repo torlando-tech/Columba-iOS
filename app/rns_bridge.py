@@ -432,6 +432,20 @@ def _canonical_inbound_hash(message: Any) -> bytes | None:
     return None
 
 
+def _inbound_delivery_method_name(message: Any) -> str:
+    """Map the received LXMF method to the shared persistence vocabulary."""
+    method = getattr(message, "method", None)
+    for attribute, name in (
+        ("OPPORTUNISTIC", "opportunistic"),
+        ("DIRECT", "direct"),
+        ("PROPAGATED", "propagated"),
+        ("PAPER", "paper"),
+    ):
+        if method == getattr(LXMF.LXMessage, attribute, None):
+            return name
+    return ""
+
+
 def _delivery_callback(message: "LXMF.LXMessage") -> None:
     """Fires for every inbound LXMF message routed to our delivery destination."""
     try:
@@ -472,6 +486,7 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
         content=content,
         title=title,
         fields_hex=fields_hex,
+        method=_inbound_delivery_method_name(message),
     )
 
 

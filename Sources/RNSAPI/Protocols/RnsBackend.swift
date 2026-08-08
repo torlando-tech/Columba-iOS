@@ -63,7 +63,7 @@ public enum BackendEvent: Equatable, Sendable {
     /// `fieldsPacked` is the inbound LXMF field map as MessagePack bytes (empty
     /// = no fields) — decode with `LxmfFieldCodec.unpack`. Carries telemetry /
     /// attachments / reactions / replies / icon / cease through the seam.
-    case inbound(sourceHash: String, messageHash: String, content: String, title: String, fieldsPacked: Data, t: Date)
+    case inbound(sourceHash: String, messageHash: String, content: String, title: String, fieldsPacked: Data, method: LXDeliveryMethod?, t: Date)
     case state(String, t: Date)
     /// Delivery lifecycle event for an outbound message. `method` is the
     /// effective transport used for this attempt and is independent of state.
