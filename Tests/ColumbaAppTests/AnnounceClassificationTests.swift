@@ -436,6 +436,58 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         XCTAssertEqual(Message(from: stored, localHash: Data()).deliveryMethod, "propagated")
     }
 
+    func testUnknownInboundMethodDoesNotRenderAsOpportunistic() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let source = Data(repeating: 0x33, count: 16)
+        let messageHash = Data(repeating: 0x34, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: source,
+            sourceIdentity: nil,
+            content: Data("unknown method".utf8),
+            desiredMethod: .unknown
+        )
+        message.sourceHash = source
+        message.hash = messageHash
+        message.method = .unknown
+        message.incoming = true
+        message.state = .received
+
+        try await repository.saveMessage(message)
+
+        let storedRecord = try await repository.getMessageRecord(id: messageHash)
+        let stored = try XCTUnwrap(storedRecord)
+        XCTAssertEqual(stored.method, RNSAPI.LXDeliveryMethod.unknown.rawValue)
+        XCTAssertNil(Message(from: stored, localHash: Data()).deliveryMethod)
+    }
+
+    func testPaperInboundMethodPersistsForMessageDetails() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let source = Data(repeating: 0x35, count: 16)
+        let messageHash = Data(repeating: 0x36, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: source,
+            sourceIdentity: nil,
+            content: Data("paper message".utf8),
+            desiredMethod: .paper
+        )
+        message.sourceHash = source
+        message.hash = messageHash
+        message.method = .paper
+        message.incoming = true
+        message.state = .received
+
+        try await repository.saveMessage(message)
+
+        let storedRecord = try await repository.getMessageRecord(id: messageHash)
+        let stored = try XCTUnwrap(storedRecord)
+        XCTAssertEqual(stored.method, RNSAPI.LXDeliveryMethod.paper.rawValue)
+        XCTAssertEqual(Message(from: stored, localHash: Data()).deliveryMethod, "paper")
+    }
+
     func testAnnouncedNameAtomicallyReplacesGeneratedFallback() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }

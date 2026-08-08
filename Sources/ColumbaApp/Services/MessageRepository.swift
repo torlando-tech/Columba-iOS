@@ -589,6 +589,19 @@ public actor MessageRepository {
     /// map so the chat UI's `LxmfFieldCodec.unpack` can recover attachments.
     public func saveMessage(_ message: RNSAPI.LXMessage) async throws {
         try await database.saveMessage(Self.mapToGRDBMessage(message))
+        // LXMFSwift's enum has no unknown case, so the adapter must use a valid
+        // method while constructing its message. Replace that temporary value
+        // with an out-of-domain raw sentinel before this actor returns. Reads map
+        // the sentinel back to RNSAPI `.unknown`, allowing the details UI to hide
+        // unavailable metadata instead of falsely claiming Opportunistic.
+        if message.method == .unknown {
+            try await replacementPool.write { db in
+                try db.execute(
+                    sql: "UPDATE messages SET method = ? WHERE message_id = ?",
+                    arguments: [UInt8(0), message.hash]
+                )
+            }
+        }
         if !message.incoming {
             NotificationCenter.default.post(
                 name: Self.conversationActivityNotification,
@@ -1204,8 +1217,9 @@ extension MessageRepository {
 
     /// RNSAPI `LXDeliveryMethod` → GRDB `LXDeliveryMethod`.
     ///
-    /// RNSAPI `.unknown` has no GRDB peer; default to `.opportunistic` (the
-    /// canonical LXMF default delivery method).
+    /// RNSAPI `.unknown` has no GRDB enum peer. The mapped message temporarily
+    /// uses `.opportunistic`; `saveMessage` replaces it with raw sentinel zero
+    /// before returning so reads map it back to `.unknown`.
     static func mapMethodToGRDB(_ m: RNSAPI.LXDeliveryMethod) -> LXMFSwift.LXDeliveryMethod {
         switch m {
         case .opportunistic: return .opportunistic

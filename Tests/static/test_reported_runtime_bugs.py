@@ -135,6 +135,7 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             r"messageHash: message\.hash\.hexHash, content:.*?"
             r"method: Self\.mapDeliveryMethod\(message\.method\)",
         )
+        self.assertIn("case .paper: return .paper", swift_backend)
 
         app_services = APP_SERVICES.read_text()
         persist = re.search(
@@ -153,6 +154,14 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         self.assertIn("persistInbound using local non-wire message id", persist_source)
         self.assertIn("desiredMethod: method ?? .unknown", persist_source)
         self.assertIn("message.method = method ?? .unknown", persist_source)
+        repository = (
+            ROOT / "Sources/ColumbaApp/Services/MessageRepository.swift"
+        ).read_text()
+        self.assertIn("if message.method == .unknown", repository)
+        self.assertIn("arguments: [UInt8(0), message.hash]", repository)
+        bubble = MESSAGE_BUBBLE.read_text()
+        self.assertIn("case LXDeliveryMethod.paper.rawValue:", bubble)
+        self.assertIn('self.deliveryMethod = "paper"', bubble)
         self.assertIsNotNone(re.search(
             r"case \.inbound\(let sourceHash, let messageHash, let content,"
             r".*?let method, let t\):.*?"

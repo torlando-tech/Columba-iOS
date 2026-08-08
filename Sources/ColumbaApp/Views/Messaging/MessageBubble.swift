@@ -495,6 +495,8 @@ public struct Message: Identifiable, Equatable {
             self.deliveryMethod = "direct"
         case LXDeliveryMethod.propagated.rawValue:
             self.deliveryMethod = "propagated"
+        case LXDeliveryMethod.paper.rawValue:
+            self.deliveryMethod = "paper"
         default:
             self.deliveryMethod = nil
         }

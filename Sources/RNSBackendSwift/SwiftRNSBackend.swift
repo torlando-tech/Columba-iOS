@@ -783,6 +783,7 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
             case .opportunistic: return .opportunistic
             case .direct: return .direct
             case .propagated: return .propagated
+            case .paper: return .paper
             default: return nil
             }
         }
