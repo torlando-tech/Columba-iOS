@@ -74,6 +74,10 @@ public struct ContactsView: View {
     /// Whether manual hash / LXMA entry is shown.
     @State private var showManualContactEntry = false
 
+    /// Existing-contact feedback waits for its owning sheet to finish dismissing.
+    @State private var pendingExistingContactNotice: ExistingContactNotice?
+    @State private var existingContactNotice: ExistingContactNotice?
+
     /// Contact scanned from QR code or deep link, shown in AddContactSheet.
     @State private var scannedContact: ScannedContact?
 
@@ -250,21 +254,29 @@ public struct ContactsView: View {
             }
         }
         #endif
-        .sheet(item: $scannedContact) { contact in
+        .sheet(item: $scannedContact, onDismiss: presentPendingExistingContactNotice) { contact in
             if let vm = viewModel {
                 AddContactSheet(
                     scannedContact: contact,
                     viewModel: vm,
-                    onDismiss: { scannedContact = nil }
+                    onDismiss: { scannedContact = nil },
+                    onExistingContact: { notice in
+                        pendingExistingContactNotice = notice
+                        scannedContact = nil
+                    }
                 )
                 .presentationDetents([.medium, .large])
             }
         }
-        .sheet(isPresented: $showManualContactEntry) {
+        .sheet(isPresented: $showManualContactEntry, onDismiss: presentPendingExistingContactNotice) {
             if let vm = viewModel {
                 ManualContactEntrySheet(
                     viewModel: vm,
-                    onDismiss: { showManualContactEntry = false }
+                    onDismiss: { showManualContactEntry = false },
+                    onExistingContact: { notice in
+                        pendingExistingContactNotice = notice
+                        showManualContactEntry = false
+                    }
                 )
                 .presentationDetents([.medium, .large])
             }
@@ -281,6 +293,20 @@ public struct ContactsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Scan a contact QR code or enter an LXMF address.")
+        }
+        .alert(item: $existingContactNotice) { notice in
+            switch notice {
+            case .alreadyAdded:
+                Alert(
+                    title: Text("Contact Already Added"),
+                    message: Text("This address is already in your contacts.")
+                )
+            case .identityUpdated:
+                Alert(
+                    title: Text("Contact Updated"),
+                    message: Text("The LXMA identity was refreshed for this existing contact.")
+                )
+            }
         }
         .alert("Edit Nickname", isPresented: Binding(
             get: { editingContact != nil },
@@ -478,6 +504,12 @@ public struct ContactsView: View {
     }
 
     // MARK: - Toolbar
+
+    private func presentPendingExistingContactNotice() {
+        guard let notice = pendingExistingContactNotice else { return }
+        pendingExistingContactNotice = nil
+        existingContactNotice = notice
+    }
 
     // MARK: - Start Chat
 

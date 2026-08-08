@@ -20,16 +20,23 @@ struct ScannedContact: Identifiable {
     }
 }
 
+enum ExistingContactNotice: String, Identifiable {
+    case alreadyAdded
+    case identityUpdated
+
+    var id: String { rawValue }
+}
+
 /// Confirmation sheet for adding a contact from QR scan or deep link.
 @available(iOS 17.0, macOS 14.0, *)
 struct AddContactSheet: View {
     let scannedContact: ScannedContact
     let viewModel: ContactsViewModel
     let onDismiss: () -> Void
+    let onExistingContact: (ExistingContactNotice) -> Void
 
     @State private var nickname: String = ""
     @State private var isAdding = false
-    @State private var alreadyExists = false
 
     var body: some View {
         NavigationStack {
@@ -116,11 +123,6 @@ struct AddContactSheet: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .alert("Contact Updated", isPresented: $alreadyExists) {
-                Button("OK") { onDismiss() }
-            } message: {
-                Text("The QR identity was refreshed for this existing contact.")
-            }
         }
     }
 
@@ -137,7 +139,7 @@ struct AddContactSheet: View {
             isAdding = false
             guard succeeded else { return }
             if existed {
-                alreadyExists = true
+                onExistingContact(.identityUpdated)
             } else {
                 onDismiss()
             }
@@ -152,19 +154,12 @@ struct AddContactSheet: View {
 struct ManualContactEntrySheet: View {
     let viewModel: ContactsViewModel
     let onDismiss: () -> Void
+    let onExistingContact: (ExistingContactNotice) -> Void
 
     @State private var address = ""
     @State private var nickname = ""
     @State private var validationError: String?
     @State private var isAdding = false
-    @State private var existingContactNotice: ExistingContactNotice?
-
-    private enum ExistingContactNotice: String, Identifiable {
-        case alreadyAdded
-        case identityUpdated
-
-        var id: String { rawValue }
-    }
 
     var body: some View {
         NavigationStack {
@@ -217,22 +212,6 @@ struct ManualContactEntrySheet: View {
                 }
             }
             .interactiveDismissDisabled(isAdding)
-            .alert(item: $existingContactNotice) { notice in
-                switch notice {
-                case .alreadyAdded:
-                    Alert(
-                        title: Text("Contact Already Added"),
-                        message: Text("This address is already in your contacts."),
-                        dismissButton: .default(Text("OK"), action: onDismiss)
-                    )
-                case .identityUpdated:
-                    Alert(
-                        title: Text("Contact Updated"),
-                        message: Text("The LXMA identity was refreshed for this existing contact."),
-                        dismissButton: .default(Text("OK"), action: onDismiss)
-                    )
-                }
-            }
         }
     }
 
@@ -267,7 +246,7 @@ struct ManualContactEntrySheet: View {
                 return
             }
             if existed {
-                existingContactNotice = parsed.publicKey == nil ? .alreadyAdded : .identityUpdated
+                onExistingContact(parsed.publicKey == nil ? .alreadyAdded : .identityUpdated)
             } else {
                 onDismiss()
             }
