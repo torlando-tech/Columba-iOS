@@ -588,19 +588,22 @@ public actor MessageRepository {
     /// which `mapRecord` passes back through as the RNSAPI `packedLxmf` field
     /// map so the chat UI's `LxmfFieldCodec.unpack` can recover attachments.
     public func saveMessage(_ message: RNSAPI.LXMessage) async throws {
-        try await database.saveMessage(Self.mapToGRDBMessage(message))
-        // LXMFSwift's enum has no unknown case, so the adapter must use a valid
-        // method while constructing its message. Replace that temporary value
-        // with an out-of-domain raw sentinel before this actor returns. Reads map
-        // the sentinel back to RNSAPI `.unknown`, allowing the details UI to hide
-        // unavailable metadata instead of falsely claiming Opportunistic.
+        let mapped = Self.mapToGRDBMessage(message)
         if message.method == .unknown {
+            // LXMFSwift's enum cannot represent unknown, but its persisted record
+            // stores a raw byte. Build the record from the mapped message, replace
+            // only that byte with an out-of-domain sentinel, and save the
+            // conversation + message in one immediate transaction. This prevents
+            // readers or competing writers from observing a temporary
+            // Opportunistic value.
+            var record = try LXMFSwift.MessageRecord(from: mapped)
+            record.method = 0
             try await replacementPool.write { db in
-                try db.execute(
-                    sql: "UPDATE messages SET method = ? WHERE message_id = ?",
-                    arguments: [UInt8(0), message.hash]
-                )
+                try Self.updateConversation(for: mapped, in: db)
+                try record.save(db)
             }
+        } else {
+            try await database.saveMessage(mapped)
         }
         if !message.incoming {
             NotificationCenter.default.post(
@@ -608,6 +611,45 @@ public actor MessageRepository {
                 object: nil,
                 userInfo: [Self.conversationHashUserInfoKey: message.destinationHash]
             )
+        }
+    }
+
+    /// Mirror LXMFSwift's conversation update inside the app-owned transaction
+    /// used for raw method values that its enum cannot represent.
+    private static func updateConversation(
+        for message: LXMFSwift.LXMessage,
+        in db: Database
+    ) throws {
+        let conversationHash = message.incoming ? message.sourceHash : message.destinationHash
+        if var conversation = try LXMFSwift.ConversationRecord
+            .filter(Column("destination_hash") == conversationHash)
+            .fetchOne(db) {
+            if message.timestamp >= conversation.lastMessageTimestamp {
+                conversation.lastMessageTimestamp = message.timestamp
+                conversation.updatedAt = Date().timeIntervalSince1970
+                if !message.content.isEmpty,
+                   let content = String(data: message.content, encoding: .utf8),
+                   !content.isEmpty {
+                    conversation.lastMessagePreview = String(content.prefix(100))
+                }
+            }
+            if message.incoming {
+                conversation.unreadCount += 1
+                conversation.isUnread = 1
+            }
+            try conversation.update(db)
+        } else {
+            let preview = String(data: message.content, encoding: .utf8).map {
+                String($0.prefix(100))
+            }
+            let conversation = LXMFSwift.ConversationRecord(
+                destinationHash: conversationHash,
+                displayName: nil,
+                lastMessageTimestamp: message.timestamp,
+                lastMessagePreview: preview,
+                unreadCount: message.incoming ? 1 : 0
+            )
+            try conversation.insert(db)
         }
     }
 
@@ -1217,9 +1259,9 @@ extension MessageRepository {
 
     /// RNSAPI `LXDeliveryMethod` → GRDB `LXDeliveryMethod`.
     ///
-    /// RNSAPI `.unknown` has no GRDB enum peer. The mapped message temporarily
-    /// uses `.opportunistic`; `saveMessage` replaces it with raw sentinel zero
-    /// before returning so reads map it back to `.unknown`.
+    /// RNSAPI `.unknown` has no GRDB enum peer. `saveMessage` replaces the
+    /// mapped record's temporary value with raw sentinel zero before inserting
+    /// it in the same transaction, so reads map it back to `.unknown`.
     static func mapMethodToGRDB(_ m: RNSAPI.LXDeliveryMethod) -> LXMFSwift.LXDeliveryMethod {
         switch m {
         case .opportunistic: return .opportunistic

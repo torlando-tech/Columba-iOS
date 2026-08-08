@@ -158,7 +158,10 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             ROOT / "Sources/ColumbaApp/Services/MessageRepository.swift"
         ).read_text()
         self.assertIn("if message.method == .unknown", repository)
-        self.assertIn("arguments: [UInt8(0), message.hash]", repository)
+        self.assertIn("record.method = 0", repository)
+        self.assertIn("try await replacementPool.write", repository)
+        self.assertIn("try Self.updateConversation(for: mapped, in: db)", repository)
+        self.assertIn("try record.save(db)", repository)
         bubble = MESSAGE_BUBBLE.read_text()
         self.assertIn("case LXDeliveryMethod.paper.rawValue:", bubble)
         self.assertIn('self.deliveryMethod = "paper"', bubble)
