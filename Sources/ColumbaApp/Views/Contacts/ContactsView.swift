@@ -401,7 +401,7 @@ public struct ContactsView: View {
                 .font(.headline)
                 .foregroundStyle(Theme.textPrimary)
 
-            Text("Add contacts from the Network tab\nor wait for announces")
+            Text("Tap + to add by address or QR code,\nor add peers from the Network tab")
                 .font(.subheadline)
                 .foregroundStyle(.gray)
                 .multilineTextAlignment(.center)
@@ -559,6 +559,7 @@ public struct ContactsView: View {
             .disabled(viewModel?.isAnnouncing == true)
             .help("Send Announce")
 
+            #if os(iOS)
             if viewModel?.selectedTab == .myContacts {
                 Button {
                     showAddContactOptions = true
@@ -569,7 +570,31 @@ public struct ContactsView: View {
                 .accessibilityLabel("Add Contact")
                 .accessibilityIdentifier("add_contact_button")
                 .help("Add Contact")
+            } else {
+                Button {
+                    showQRScanner = true
+                } label: {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.title3)
+                }
+                .accessibilityLabel("Scan Contact QR Code")
+                .help("Scan Contact QR Code")
             }
+            #else
+            Button {
+                if let str = NSPasteboard.general.string(forType: .string),
+                   let parsed = ContactsViewModel.parseLXMA(str) {
+                    scannedContact = ScannedContact(
+                        destinationHash: parsed.destinationHash,
+                        publicKey: parsed.publicKey
+                    )
+                }
+            } label: {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.title3)
+            }
+            .help("Add Contact from Clipboard")
+            #endif
 
             // Search button
             Button {
