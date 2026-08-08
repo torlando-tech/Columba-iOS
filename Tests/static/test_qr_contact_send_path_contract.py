@@ -110,6 +110,7 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertIn('Button("OK")', contacts_view)
         self.assertIn("existingContactNotice = nil", contacts_view)
         self.assertGreaterEqual(add_sheet.count(".interactiveDismissDisabled(isAdding)"), 2)
+        self.assertGreaterEqual(add_sheet.count(".disabled(isAdding)"), 3)
         self.assertIn("messageRepository.ensureConversation", add_hash)
         self.assertIn("messageRepository.setFavorite", add_hash)
         self.assertIn("applyAnnouncedDisplayName", add_hash)

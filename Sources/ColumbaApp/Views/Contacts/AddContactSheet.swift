@@ -112,6 +112,7 @@ struct AddContactSheet: View {
                     Button("Cancel") {
                         onDismiss()
                     }
+                    .disabled(isAdding)
                     .font(.system(size: 17))
                     .foregroundStyle(.gray)
                 }
@@ -215,6 +216,7 @@ struct ManualContactEntrySheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: onDismiss)
+                        .disabled(isAdding)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
