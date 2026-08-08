@@ -467,7 +467,7 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         defer { removeDatabase(at: databaseURL) }
         let repository = try MessageRepository(grdbPath: databaseURL.path)
         let inspectionQueue = try DatabaseQueue(path: databaseURL.path)
-        try inspectionQueue.write { db in
+        try await inspectionQueue.write { db in
             try db.execute(sql: """
                 CREATE TRIGGER reject_unknown_method_correction
                 BEFORE UPDATE OF method ON messages
@@ -505,7 +505,7 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         defer { removeDatabase(at: databaseURL) }
         let repository = try MessageRepository(grdbPath: databaseURL.path)
         let inspectionQueue = try DatabaseQueue(path: databaseURL.path)
-        try inspectionQueue.write { db in
+        try await inspectionQueue.write { db in
             try db.execute(sql: """
                 CREATE TRIGGER reject_unknown_method_insert
                 BEFORE INSERT ON messages
