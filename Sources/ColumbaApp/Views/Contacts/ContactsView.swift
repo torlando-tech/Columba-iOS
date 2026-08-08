@@ -294,19 +294,20 @@ public struct ContactsView: View {
         } message: {
             Text("Scan a contact QR code or enter an LXMF address.")
         }
-        .alert(item: $existingContactNotice) { notice in
-            switch notice {
-            case .alreadyAdded:
-                Alert(
-                    title: Text("Contact Already Added"),
-                    message: Text("This address is already in your contacts.")
-                )
-            case .identityUpdated:
-                Alert(
-                    title: Text("Contact Updated"),
-                    message: Text("The LXMA identity was refreshed for this existing contact.")
-                )
+        .alert(
+            existingContactNotice == .alreadyAdded ? "Contact Already Added" : "Contact Updated",
+            isPresented: Binding(
+                get: { existingContactNotice != nil },
+                set: { if !$0 { existingContactNotice = nil } }
+            )
+        ) {
+            Button("OK") {
+                existingContactNotice = nil
             }
+        } message: {
+            Text(existingContactNotice == .alreadyAdded
+                 ? "This address is already in your contacts."
+                 : "The LXMA identity was refreshed for this existing contact.")
         }
         .alert("Edit Nickname", isPresented: Binding(
             get: { editingContact != nil },

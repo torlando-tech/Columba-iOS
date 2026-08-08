@@ -123,6 +123,7 @@ struct AddContactSheet: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .interactiveDismissDisabled(isAdding)
         }
     }
 
