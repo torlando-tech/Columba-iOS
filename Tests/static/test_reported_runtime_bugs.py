@@ -106,7 +106,8 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             r"case inbound\(sourceHash: String, messageHash: String, content:",
         )
         self.assertIsNotNone(re.search(
-            r'case "inbound":.*?key: "message_hash".*?\.inbound\(sourceHash: h, messageHash:',
+            r'case "inbound":.*?key: "message_hash".*?key: "method".*?'
+            r'\.inbound\(sourceHash: h, messageHash:.*?method: method',
             py_bridge,
             re.DOTALL,
         ))
@@ -114,13 +115,15 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         backend_event = RNS_BACKEND.read_text()
         self.assertRegex(
             backend_event,
-            r"case inbound\(sourceHash: String, messageHash: String, content:",
+            r"case inbound\(sourceHash: String, messageHash: String, content:.*?"
+            r"method: LXDeliveryMethod\?",
         )
 
         py_backend = PY_BACKEND.read_text()
         self.assertIsNotNone(re.search(
-            r"case let \.inbound\(s, mh, c, ti, fh, t\):.*?"
-            r"\.inbound\(sourceHash: s, messageHash: mh, content: c",
+            r"case let \.inbound\(s, mh, c, ti, fh, method, t\):.*?"
+            r"\.inbound\(sourceHash: s, messageHash: mh, content: c.*?"
+            r"method: deliveryMethod",
             py_backend,
             re.DOTALL,
         ))
@@ -129,7 +132,8 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         self.assertRegex(
             swift_backend,
             r"\.inbound\(sourceHash: message\.sourceHash\.hexHash, "
-            r"messageHash: message\.hash\.hexHash, content:",
+            r"messageHash: message\.hash\.hexHash, content:.*?"
+            r"method: Self\.mapDeliveryMethod\(message\.method\)",
         )
 
         app_services = APP_SERVICES.read_text()
@@ -142,13 +146,17 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         assert persist is not None
         persist_source = persist.group(0)
         self.assertIn("messageHashHex: String", persist_source)
+        self.assertIn("method: LXDeliveryMethod?", persist_source)
         self.assertIn("Data(hexString: messageHashHex)", persist_source)
         self.assertIn("parsedHash.count == 32", persist_source)
         self.assertIn("Data([0x00]) + Data(SHA256.hash(data: seed))", persist_source)
         self.assertIn("persistInbound using local non-wire message id", persist_source)
+        self.assertIn("desiredMethod: method ?? .unknown", persist_source)
         self.assertIsNotNone(re.search(
             r"case \.inbound\(let sourceHash, let messageHash, let content,"
-            r".*?persistInboundFromPython\(sourceHash: data, messageHashHex: messageHash,",
+            r".*?let method, let t\):.*?"
+            r"persistInboundFromPython\(sourceHash: data, messageHashHex: messageHash,"
+            r".*?method: method, timestamp: t\)",
             app_services,
             re.DOTALL,
         ))

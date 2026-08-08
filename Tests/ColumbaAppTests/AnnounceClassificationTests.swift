@@ -410,6 +410,31 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         }
     }
 
+    func testInboundPropagatedMethodPersistsForMessageDetails() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let source = Data(repeating: 0x31, count: 16)
+        let messageHash = Data(repeating: 0x32, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: source,
+            sourceIdentity: nil,
+            content: Data("relay message".utf8),
+            desiredMethod: .propagated
+        )
+        message.sourceHash = source
+        message.hash = messageHash
+        message.incoming = true
+        message.state = .received
+
+        try await repository.saveMessage(message)
+
+        let storedRecord = try await repository.getMessageRecord(id: messageHash)
+        let stored = try XCTUnwrap(storedRecord)
+        XCTAssertEqual(stored.method, RNSAPI.LXDeliveryMethod.propagated.rawValue)
+        XCTAssertEqual(Message(from: stored, localHash: Data()).deliveryMethod, "propagated")
+    }
+
     func testAnnouncedNameAtomicallyReplacesGeneratedFallback() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }
