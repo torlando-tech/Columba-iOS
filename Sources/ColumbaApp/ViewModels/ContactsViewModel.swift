@@ -980,6 +980,33 @@ public final class ContactsViewModel {
         return (destinationHash: hashData, publicKey: pubkeyData)
     }
 
+    /// Parsed manual contact input. The public key is present only for a
+    /// cryptographically validated `lxma://` identity.
+    public struct ParsedContactInput: Equatable, Sendable {
+        public let destinationHash: Data
+        public let publicKey: Data?
+    }
+
+    /// Parse Android-compatible manual contact input: either a complete,
+    /// cryptographically bound `lxma://` identity or a 16-byte destination hash.
+    public static func parseContactInput(_ input: String) -> ParsedContactInput? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("lxma://") {
+            guard let parsed = parseLXMA(trimmed) else { return nil }
+            return ParsedContactInput(
+                destinationHash: parsed.destinationHash,
+                publicKey: parsed.publicKey
+            )
+        }
+
+        guard trimmed.count == 32,
+              let destinationHash = hexToData(trimmed),
+              destinationHash.count == 16 else {
+            return nil
+        }
+        return ParsedContactInput(destinationHash: destinationHash, publicKey: nil)
+    }
+
     /// Check if a contact with the given destination hash already exists.
     public func contactExists(_ destinationHash: Data) -> Bool {
         let hex = destinationHash.map { String(format: "%02x", $0) }.joined()
@@ -991,48 +1018,93 @@ public final class ContactsViewModel {
     @MainActor
     public func addContactFromQR(destinationHash: Data, publicKey: Data, nickname: String?) async -> Bool {
         let hex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        errorMessage = nil
+
+        // Retain the already-validated public identity locally. This is a
+        // cache write only: path discovery remains strictly send-triggered.
+        let remembered = await appServices.backend?.core.rememberPeerIdentity(
+            destHashHex: hex,
+            publicKey: publicKey
+        ) ?? false
+        guard remembered else {
+            errorMessage = "The contact identity could not be saved. Please try again."
+            return false
+        }
+        return await addContactFromHash(
+            destinationHash: destinationHash,
+            nickname: nickname
+        )
+    }
+
+    /// Add a contact from a destination hash without requesting a path. The
+    /// existing outbound send gate resolves the peer identity only when needed.
+    @MainActor
+    public func addContactFromHash(destinationHash: Data, nickname: String?) async -> Bool {
+        errorMessage = nil
+        guard destinationHash.count == 16 else {
+            errorMessage = "The destination hash must contain exactly 16 bytes."
+            return false
+        }
 
         do {
-            // Retain the already-validated public identity locally. This is a
-            // cache write only: path discovery remains strictly send-triggered.
-            let remembered = await appServices.backend?.core.rememberPeerIdentity(
-                destHashHex: hex,
-                publicKey: publicKey
-            ) ?? false
-            guard remembered else {
-                errorMessage = "The contact identity could not be saved. Please try again."
-                return false
-            }
-            guard !myContacts.contains(where: { $0.id == hex }) else { return true }
-            try await messageRepository.ensureConversation(
-                destinationHash,
-                displayName: nickname
+            try await persistFavoriteContact(
+                destinationHash: destinationHash,
+                nickname: nickname
             )
-            try await messageRepository.setFavorite(destinationHash, isFavorite: true)
-
-            let contact = Contact(
-                id: hex,
-                displayName: nickname,
-                identityHash: destinationHash,
-                identityHashHex: hex,
-                badgeType: .peer,
-                hopCount: 0,
-                signalStrength: 3,
-                timestamp: Date(),
-                isOnline: false,
-                isFavorite: true,
-                isRelay: false,
-                aspect: "lxmf.delivery"
-            )
-            if let existingIndex = myContacts.firstIndex(where: { $0.id == hex }) {
-                myContacts[existingIndex] = contact
-            } else {
-                myContacts.append(contact)
-            }
             return true
         } catch {
             errorMessage = "Failed to add contact: \(error.localizedDescription)"
             return false
+        }
+    }
+
+    @MainActor
+    private func persistFavoriteContact(destinationHash: Data, nickname: String?) async throws {
+        let hex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        guard !myContacts.contains(where: { $0.id == hex }) else { return }
+
+        let announcedName = networkAnnounces.first(where: { $0.id == hex })?.displayName
+            ?? pendingAnnounces.first(where: { $0.id == hex })?.displayName
+        let trimmedNickname = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explicitNickname = trimmedNickname?.isEmpty == false ? trimmedNickname : nil
+
+        try await messageRepository.ensureConversation(
+            destinationHash,
+            displayName: explicitNickname
+        )
+        if explicitNickname == nil,
+           let announcedName,
+           !announcedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            _ = try await messageRepository.applyAnnouncedDisplayName(
+                destinationHash,
+                displayName: announcedName.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        try await messageRepository.setFavorite(destinationHash, isFavorite: true)
+
+        let persistedDisplayName = try await messageRepository
+            .fetchConversations(for: [destinationHash])
+            .first?
+            .displayName
+
+        let contact = Contact(
+            id: hex,
+            displayName: persistedDisplayName,
+            identityHash: destinationHash,
+            identityHashHex: hex,
+            badgeType: .peer,
+            hopCount: 0,
+            signalStrength: 3,
+            timestamp: Date(),
+            isOnline: false,
+            isFavorite: true,
+            isRelay: false,
+            aspect: "lxmf.delivery"
+        )
+        if let existingIndex = myContacts.firstIndex(where: { $0.id == hex }) {
+            myContacts[existingIndex] = contact
+        } else {
+            myContacts.append(contact)
         }
     }
 

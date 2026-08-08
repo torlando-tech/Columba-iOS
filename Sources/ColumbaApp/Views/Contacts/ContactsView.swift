@@ -68,6 +68,16 @@ public struct ContactsView: View {
     /// Whether the QR scanner is shown.
     @State private var showQRScanner = false
 
+    /// Whether the native add-contact action menu is shown.
+    @State private var showAddContactOptions = false
+
+    /// Whether manual hash / LXMA entry is shown.
+    @State private var showManualContactEntry = false
+
+    /// Existing-contact feedback waits for its owning sheet to finish dismissing.
+    @State private var pendingExistingContactNotice: ExistingContactNotice?
+    @State private var existingContactNotice: ExistingContactNotice?
+
     /// Contact scanned from QR code or deep link, shown in AddContactSheet.
     @State private var scannedContact: ScannedContact?
 
@@ -244,15 +254,60 @@ public struct ContactsView: View {
             }
         }
         #endif
-        .sheet(item: $scannedContact) { contact in
+        .sheet(item: $scannedContact, onDismiss: presentPendingExistingContactNotice) { contact in
             if let vm = viewModel {
                 AddContactSheet(
                     scannedContact: contact,
                     viewModel: vm,
-                    onDismiss: { scannedContact = nil }
+                    onDismiss: { scannedContact = nil },
+                    onExistingContact: { notice in
+                        pendingExistingContactNotice = notice
+                        scannedContact = nil
+                    }
                 )
                 .presentationDetents([.medium, .large])
             }
+        }
+        .sheet(isPresented: $showManualContactEntry, onDismiss: presentPendingExistingContactNotice) {
+            if let vm = viewModel {
+                ManualContactEntrySheet(
+                    viewModel: vm,
+                    onDismiss: { showManualContactEntry = false },
+                    onExistingContact: { notice in
+                        pendingExistingContactNotice = notice
+                        showManualContactEntry = false
+                    }
+                )
+                .presentationDetents([.medium, .large])
+            }
+        }
+        .confirmationDialog("Add Contact", isPresented: $showAddContactOptions) {
+            #if os(iOS)
+            Button("Scan QR Code") {
+                showQRScanner = true
+            }
+            #endif
+            Button("Enter Address Manually") {
+                showManualContactEntry = true
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Scan a contact QR code or enter an LXMF address.")
+        }
+        .alert(
+            existingContactNotice == .alreadyAdded ? "Contact Already Added" : "Contact Updated",
+            isPresented: Binding(
+                get: { existingContactNotice != nil },
+                set: { if !$0 { existingContactNotice = nil } }
+            )
+        ) {
+            Button("OK") {
+                existingContactNotice = nil
+            }
+        } message: {
+            Text(existingContactNotice == .alreadyAdded
+                 ? "This address is already in your contacts."
+                 : "The LXMA identity was refreshed for this existing contact.")
         }
         .alert("Edit Nickname", isPresented: Binding(
             get: { editingContact != nil },
@@ -373,7 +428,7 @@ public struct ContactsView: View {
                 .font(.headline)
                 .foregroundStyle(Theme.textPrimary)
 
-            Text("Add contacts from the Network tab\nor wait for announces")
+            Text("Tap + to add by address or QR code,\nor add peers from the Network tab")
                 .font(.subheadline)
                 .foregroundStyle(.gray)
                 .multilineTextAlignment(.center)
@@ -450,6 +505,12 @@ public struct ContactsView: View {
     }
 
     // MARK: - Toolbar
+
+    private func presentPendingExistingContactNotice() {
+        guard let notice = pendingExistingContactNotice else { return }
+        pendingExistingContactNotice = nil
+        existingContactNotice = notice
+    }
 
     // MARK: - Start Chat
 
@@ -532,15 +593,27 @@ public struct ContactsView: View {
             .help("Send Announce")
 
             #if os(iOS)
-            // QR scan button
-            Button {
-                showQRScanner = true
-            } label: {
-                Image(systemName: "qrcode.viewfinder")
-                    .font(.title3)
+            if viewModel?.selectedTab == .myContacts {
+                Button {
+                    showAddContactOptions = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title3)
+                }
+                .accessibilityLabel("Add Contact")
+                .accessibilityIdentifier("add_contact_button")
+                .help("Add Contact")
+            } else {
+                Button {
+                    showQRScanner = true
+                } label: {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.title3)
+                }
+                .accessibilityLabel("Scan Contact QR Code")
+                .help("Scan Contact QR Code")
             }
             #else
-            // Paste contact button (macOS — no camera)
             Button {
                 if let str = NSPasteboard.general.string(forType: .string),
                    let parsed = ContactsViewModel.parseLXMA(str) {

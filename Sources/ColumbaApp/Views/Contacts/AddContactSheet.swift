@@ -20,16 +20,23 @@ struct ScannedContact: Identifiable {
     }
 }
 
+enum ExistingContactNotice: String, Identifiable {
+    case alreadyAdded
+    case identityUpdated
+
+    var id: String { rawValue }
+}
+
 /// Confirmation sheet for adding a contact from QR scan or deep link.
 @available(iOS 17.0, macOS 14.0, *)
 struct AddContactSheet: View {
     let scannedContact: ScannedContact
     let viewModel: ContactsViewModel
     let onDismiss: () -> Void
+    let onExistingContact: (ExistingContactNotice) -> Void
 
     @State private var nickname: String = ""
     @State private var isAdding = false
-    @State private var alreadyExists = false
 
     var body: some View {
         NavigationStack {
@@ -105,6 +112,7 @@ struct AddContactSheet: View {
                     Button("Cancel") {
                         onDismiss()
                     }
+                    .disabled(isAdding)
                     .font(.system(size: 17))
                     .foregroundStyle(.gray)
                 }
@@ -116,11 +124,7 @@ struct AddContactSheet: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .alert("Contact Updated", isPresented: $alreadyExists) {
-                Button("OK") { onDismiss() }
-            } message: {
-                Text("The QR identity was refreshed for this existing contact.")
-            }
+            .interactiveDismissDisabled(isAdding)
         }
     }
 
@@ -137,7 +141,126 @@ struct AddContactSheet: View {
             isAdding = false
             guard succeeded else { return }
             if existed {
-                alreadyExists = true
+                onExistingContact(.identityUpdated)
+            } else {
+                onDismiss()
+            }
+        }
+    }
+}
+
+/// Native manual-entry flow matching Android's add-contact affordance.
+/// Hash-only contacts are persisted passively; identity/path lookup remains
+/// owned by the existing send-time resolution gate.
+@available(iOS 17.0, macOS 14.0, *)
+struct ManualContactEntrySheet: View {
+    let viewModel: ContactsViewModel
+    let onDismiss: () -> Void
+    let onExistingContact: (ExistingContactNotice) -> Void
+
+    @State private var address = ""
+    @State private var nickname = ""
+    @State private var validationError: String?
+    @State private var isAdding = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack(alignment: .top, spacing: 8) {
+                        TextField("lxma://… or 32-character hash", text: $address, axis: .vertical)
+                            .lineLimit(2...4)
+                            .font(.system(.body, design: .monospaced))
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.asciiCapable)
+                            #endif
+                            .accessibilityLabel("Identity or Address")
+                            .onChange(of: address) { _, _ in
+                                validationError = nil
+                            }
+
+                        PasteButton(payloadType: String.self) { values in
+                            guard let pastedAddress = values.first else { return }
+                            address = pastedAddress
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel("Paste Contact Address")
+                        .accessibilityIdentifier("paste_contact_address")
+                    }
+
+                    TextField("Nickname (optional)", text: $nickname)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.words)
+                        #endif
+                } header: {
+                    Text("Contact Address")
+                } footer: {
+                    Text("Enter a complete lxma:// identity or a 32-character LXMF destination hash. A hash-only contact is resolved when you send a message.")
+                }
+
+                if let message = validationError {
+                    Section {
+                        Text(message)
+                            .foregroundStyle(Theme.error)
+                            .accessibilityIdentifier("manual_contact_error")
+                    }
+                }
+            }
+            .navigationTitle("Add Contact")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onDismiss)
+                        .disabled(isAdding)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        addContact()
+                    }
+                    .disabled(isAdding || address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .interactiveDismissDisabled(isAdding)
+        }
+    }
+
+    private func addContact() {
+        guard let parsed = ContactsViewModel.parseContactInput(address) else {
+            validationError = "Enter a valid lxma:// identity or 32-character hexadecimal destination hash."
+            return
+        }
+
+        let existed = viewModel.contactExists(parsed.destinationHash)
+        let trimmedNickname = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        isAdding = true
+
+        Task {
+            let succeeded: Bool
+            if let publicKey = parsed.publicKey {
+                succeeded = await viewModel.addContactFromQR(
+                    destinationHash: parsed.destinationHash,
+                    publicKey: publicKey,
+                    nickname: trimmedNickname.isEmpty ? nil : trimmedNickname
+                )
+            } else {
+                succeeded = await viewModel.addContactFromHash(
+                    destinationHash: parsed.destinationHash,
+                    nickname: trimmedNickname.isEmpty ? nil : trimmedNickname
+                )
+            }
+
+            isAdding = false
+            guard succeeded else {
+                validationError = viewModel.errorMessage ?? "The contact could not be added. Please try again."
+                return
+            }
+            if existed {
+                onExistingContact(parsed.publicKey == nil ? .alreadyAdded : .identityUpdated)
             } else {
                 onDismiss()
             }

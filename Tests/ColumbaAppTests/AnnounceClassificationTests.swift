@@ -182,6 +182,38 @@ final class AnnounceClassificationTests: XCTestCase {
         XCTAssertNil(ContactsViewModel.parseLXMA(uri))
     }
 
+    func testManualContactInputAcceptsTrimmedUppercaseDestinationHash() {
+        let hash = Data((0..<16).map(UInt8.init))
+        let uppercaseHex = hash.map { String(format: "%02X", $0) }.joined()
+
+        let parsed = ContactsViewModel.parseContactInput("  \n\(uppercaseHex)\t ")
+
+        XCTAssertEqual(parsed?.destinationHash, hash)
+        XCTAssertNil(parsed?.publicKey)
+    }
+
+    func testManualContactInputAcceptsCryptographicallyBoundLXMAIdentity() throws {
+        let identity = Identity()
+        let destinationHash = Destination.hash(
+            identity: identity,
+            appName: "lxmf",
+            aspects: ["delivery"]
+        )
+        let destinationHex = destinationHash.map { String(format: "%02x", $0) }.joined()
+        let publicKeyHex = identity.publicKeys.map { String(format: "%02x", $0) }.joined()
+
+        let parsed = ContactsViewModel.parseContactInput("lxma://\(destinationHex):\(publicKeyHex)")
+
+        XCTAssertEqual(parsed?.destinationHash, destinationHash)
+        XCTAssertEqual(parsed?.publicKey, identity.publicKeys)
+    }
+
+    func testManualContactInputRejectsMalformedDestinationHashes() {
+        XCTAssertNil(ContactsViewModel.parseContactInput(String(repeating: "a", count: 31)))
+        XCTAssertNil(ContactsViewModel.parseContactInput(String(repeating: "g", count: 32)))
+        XCTAssertNil(ContactsViewModel.parseContactInput(String(repeating: "a", count: 34)))
+    }
+
     func testSharedQRCodeUsesLXMFDeliveryDestinationNotIdentityHash() {
         let info = IdentityInfo(
             identityHash: String(repeating: "11", count: 16),
@@ -394,6 +426,26 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         let conversation = try XCTUnwrap(storedConversation)
         XCTAssertTrue(applied)
         XCTAssertEqual(conversation.displayName, "Hermes Homelab")
+    }
+
+    func testCachedAnnouncedNameAtomicallyFillsNewContactConversation() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data([0x42, 0x42, 0x42, 0x42] + Array(repeating: 0xbb, count: 12))
+
+        try await repository.ensureConversation(destination, displayName: nil)
+        let applied = try await repository.applyAnnouncedDisplayName(
+            destination,
+            displayName: "Announced Peer"
+        )
+        try await repository.setFavorite(destination, isFavorite: true)
+
+        let storedConversations = try await repository.fetchConversations(for: [destination])
+        let stored = try XCTUnwrap(storedConversations.first)
+        XCTAssertTrue(applied)
+        XCTAssertEqual(stored.displayName, "Announced Peer")
+        XCTAssertEqual(stored.isFavorite, 1)
     }
 
     func testAnnouncedNameCompareAndSetPreservesCurrentCustomName() async throws {

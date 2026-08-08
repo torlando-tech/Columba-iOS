@@ -84,6 +84,41 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertNotIn("requestPath", details)
         self.assertNotIn("Tap an action to issue a path request", details)
 
+    def test_contacts_plus_menu_supports_passive_hash_only_add(self) -> None:
+        contacts_view = self._read("Sources/ColumbaApp/Views/Contacts/ContactsView.swift")
+        add_sheet = self._read("Sources/ColumbaApp/Views/Contacts/AddContactSheet.swift")
+        add_hash = self._swift_function(
+            "Sources/ColumbaApp/ViewModels/ContactsViewModel.swift",
+            "public func addContactFromHash(",
+            "/// Convert a hex string to Data",
+        )
+
+        self.assertIn('Image(systemName: "plus")', contacts_view)
+        self.assertIn('.accessibilityLabel("Add Contact")', contacts_view)
+        self.assertIn('Button("Scan QR Code")', contacts_view)
+        self.assertIn('Button("Enter Address Manually")', contacts_view)
+        self.assertIn("ManualContactEntrySheet(", contacts_view)
+        self.assertIn("struct ManualContactEntrySheet: View", add_sheet)
+        self.assertIn("PasteButton(payloadType: String.self)", add_sheet)
+        self.assertIn('accessibilityIdentifier("paste_contact_address")', add_sheet)
+        self.assertIn("ContactsViewModel.parseContactInput", add_sheet)
+        self.assertIn("viewModel.addContactFromHash", add_sheet)
+        self.assertIn("onExistingContact", add_sheet)
+        self.assertNotIn(".alert(item: $existingContactNotice)", add_sheet)
+        self.assertIn("onDismiss: presentPendingExistingContactNotice", contacts_view)
+        self.assertIn("pendingExistingContactNotice = notice", contacts_view)
+        self.assertIn('Button("OK")', contacts_view)
+        self.assertIn("existingContactNotice = nil", contacts_view)
+        self.assertGreaterEqual(add_sheet.count(".interactiveDismissDisabled(isAdding)"), 2)
+        self.assertGreaterEqual(add_sheet.count(".disabled(isAdding)"), 3)
+        self.assertIn("messageRepository.ensureConversation", add_hash)
+        self.assertIn("messageRepository.setFavorite", add_hash)
+        self.assertIn("applyAnnouncedDisplayName", add_hash)
+        self.assertIn("fetchConversations(for: [destinationHash])", add_hash)
+        self.assertIn("networkAnnounces.first", add_hash)
+        self.assertIn("pendingAnnounces.first", add_hash)
+        self.assertNotIn("requestPath", add_hash)
+
     def test_shipping_send_resolves_path_before_bridge_send(self) -> None:
         backend = self._swift_function(
             "Sources/RNSBackendPy/PythonRNSBackend.swift",
