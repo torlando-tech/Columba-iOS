@@ -1063,15 +1063,28 @@ public final class ContactsViewModel {
         let hex = destinationHash.map { String(format: "%02x", $0) }.joined()
         guard !myContacts.contains(where: { $0.id == hex }) else { return }
 
+        let existingName = try await messageRepository
+            .fetchConversations(for: [destinationHash])
+            .first?
+            .displayName
+        let announcedName = networkAnnounces.first(where: { $0.id == hex })?.displayName
+            ?? pendingAnnounces.first(where: { $0.id == hex })?.displayName
+        let displayName = Self.preferredContactDisplayName(
+            destinationHash: destinationHash,
+            existingName: existingName,
+            nickname: nickname,
+            announcedName: announcedName
+        )
+
         try await messageRepository.ensureConversation(
             destinationHash,
-            displayName: nickname
+            displayName: displayName
         )
         try await messageRepository.setFavorite(destinationHash, isFavorite: true)
 
         let contact = Contact(
             id: hex,
-            displayName: nickname,
+            displayName: displayName,
             identityHash: destinationHash,
             identityHashHex: hex,
             badgeType: .peer,
@@ -1088,6 +1101,36 @@ public final class ContactsViewModel {
         } else {
             myContacts.append(contact)
         }
+    }
+
+    /// Resolve the name saved when a destination becomes a contact.
+    /// Explicit nicknames win, existing custom names remain authoritative, and
+    /// a cached announce can replace only an empty or generated fallback name.
+    static func preferredContactDisplayName(
+        destinationHash: Data,
+        existingName: String?,
+        nickname: String?,
+        announcedName: String?
+    ) -> String? {
+        func normalized(_ value: String?) -> String? {
+            guard let value else { return nil }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
+        if let nickname = normalized(nickname) {
+            return nickname
+        }
+
+        let existingName = normalized(existingName)
+        guard AppDataParser.shouldReplaceConversationName(
+            existingName,
+            destinationHash: destinationHash
+        ) else {
+            return existingName
+        }
+
+        return normalized(announcedName) ?? existingName
     }
 
     /// Convert a hex string to Data. Returns nil if the string contains invalid hex characters.

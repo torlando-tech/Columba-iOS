@@ -214,6 +214,58 @@ final class AnnounceClassificationTests: XCTestCase {
         XCTAssertNil(ContactsViewModel.parseContactInput(String(repeating: "a", count: 34)))
     }
 
+    func testManualContactUsesPreviouslyAnnouncedName() {
+        let destination = Data(repeating: 0x42, count: 16)
+
+        let name = ContactsViewModel.preferredContactDisplayName(
+            destinationHash: destination,
+            existingName: nil,
+            nickname: nil,
+            announcedName: "Announced Peer"
+        )
+
+        XCTAssertEqual(name, "Announced Peer")
+    }
+
+    func testManualContactNicknameOverridesPreviouslyAnnouncedName() {
+        let destination = Data(repeating: 0x42, count: 16)
+
+        let name = ContactsViewModel.preferredContactDisplayName(
+            destinationHash: destination,
+            existingName: nil,
+            nickname: "  My Peer  ",
+            announcedName: "Announced Peer"
+        )
+
+        XCTAssertEqual(name, "My Peer")
+    }
+
+    func testManualContactPreservesExistingCustomNameOverAnnouncement() {
+        let destination = Data(repeating: 0x42, count: 16)
+
+        let name = ContactsViewModel.preferredContactDisplayName(
+            destinationHash: destination,
+            existingName: "My Existing Name",
+            nickname: nil,
+            announcedName: "Announced Peer"
+        )
+
+        XCTAssertEqual(name, "My Existing Name")
+    }
+
+    func testManualContactReplacesGeneratedFallbackWithAnnouncement() {
+        let destination = Data([0x42, 0x42, 0x42, 0x42] + Array(repeating: 0x00, count: 12))
+
+        let name = ContactsViewModel.preferredContactDisplayName(
+            destinationHash: destination,
+            existingName: "Peer 42424242",
+            nickname: nil,
+            announcedName: "Announced Peer"
+        )
+
+        XCTAssertEqual(name, "Announced Peer")
+    }
+
     func testSharedQRCodeUsesLXMFDeliveryDestinationNotIdentityHash() {
         let info = IdentityInfo(
             identityHash: String(repeating: "11", count: 16),

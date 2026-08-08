@@ -110,6 +110,9 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertGreaterEqual(add_sheet.count(".interactiveDismissDisabled(isAdding)"), 2)
         self.assertIn("messageRepository.ensureConversation", add_hash)
         self.assertIn("messageRepository.setFavorite", add_hash)
+        self.assertIn("preferredContactDisplayName", add_hash)
+        self.assertIn("networkAnnounces.first", add_hash)
+        self.assertIn("pendingAnnounces.first", add_hash)
         self.assertNotIn("requestPath", add_hash)
 
     def test_shipping_send_resolves_path_before_bridge_send(self) -> None:
