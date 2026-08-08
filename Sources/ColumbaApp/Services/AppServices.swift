@@ -2809,6 +2809,7 @@ public final class AppServices {
             )
             message.sourceHash = sourceHash
             message.hash = messageHash
+            message.method = method ?? .unknown
             message.incoming = true
             message.timestamp = timestamp.timeIntervalSince1970
             message.state = .received

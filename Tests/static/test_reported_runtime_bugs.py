@@ -152,6 +152,7 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         self.assertIn("Data([0x00]) + Data(SHA256.hash(data: seed))", persist_source)
         self.assertIn("persistInbound using local non-wire message id", persist_source)
         self.assertIn("desiredMethod: method ?? .unknown", persist_source)
+        self.assertIn("message.method = method ?? .unknown", persist_source)
         self.assertIsNotNone(re.search(
             r"case \.inbound\(let sourceHash, let messageHash, let content,"
             r".*?let method, let t\):.*?"
