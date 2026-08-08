@@ -2090,6 +2090,7 @@ public final class AppServices {
                     content: content,
                     title: "",
                     fields: nil,
+                    method: .opportunistic,
                     timestamp: Date()
                 )
             }
