@@ -99,6 +99,8 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertIn('Button("Enter Address Manually")', contacts_view)
         self.assertIn("ManualContactEntrySheet(", contacts_view)
         self.assertIn("struct ManualContactEntrySheet: View", add_sheet)
+        self.assertIn("PasteButton(payloadType: String.self)", add_sheet)
+        self.assertIn('accessibilityIdentifier("paste_contact_address")', add_sheet)
         self.assertIn("ContactsViewModel.parseContactInput", add_sheet)
         self.assertIn("viewModel.addContactFromHash", add_sheet)
         self.assertIn("onExistingContact", add_sheet)

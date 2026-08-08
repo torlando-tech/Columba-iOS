@@ -166,18 +166,29 @@ struct ManualContactEntrySheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("lxma://… or 32-character hash", text: $address, axis: .vertical)
-                        .lineLimit(2...4)
-                        .font(.system(.body, design: .monospaced))
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.asciiCapable)
-                        #endif
-                        .accessibilityLabel("Identity or Address")
-                        .onChange(of: address) { _, _ in
-                            validationError = nil
+                    HStack(alignment: .top, spacing: 8) {
+                        TextField("lxma://… or 32-character hash", text: $address, axis: .vertical)
+                            .lineLimit(2...4)
+                            .font(.system(.body, design: .monospaced))
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.asciiCapable)
+                            #endif
+                            .accessibilityLabel("Identity or Address")
+                            .onChange(of: address) { _, _ in
+                                validationError = nil
+                            }
+
+                        PasteButton(payloadType: String.self) { values in
+                            guard let pastedAddress = values.first else { return }
+                            address = pastedAddress
                         }
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel("Paste Contact Address")
+                        .accessibilityIdentifier("paste_contact_address")
+                    }
 
                     TextField("Nickname (optional)", text: $nickname)
                         #if os(iOS)
