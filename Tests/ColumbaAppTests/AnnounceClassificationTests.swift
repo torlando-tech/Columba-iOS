@@ -424,6 +424,7 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         )
         message.sourceHash = source
         message.hash = messageHash
+        message.method = .propagated
         message.incoming = true
         message.state = .received
 
