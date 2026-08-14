@@ -980,6 +980,46 @@
     },
     "The attachment could not be prepared for preview.": {
       "comment": "Privacy-safe error text shown when temporary attachment export fails."
+    },
+    "Announce to Network": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Announce to Network"
+          }
+        }
+      }
+    },
+    "Announced": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Announced"
+          }
+        }
+      }
+    },
+    "Broadcasts your identity so nearby peers can discover you": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Broadcasts your identity so nearby peers can discover you"
+          }
+        }
+      }
+    },
+    "Send Announce": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send Announce"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

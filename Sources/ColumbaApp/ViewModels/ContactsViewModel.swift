@@ -10,6 +10,64 @@ import Foundation
 import RNSAPI
 import Observation
 
+// MARK: - Announce Feedback
+
+/// Owns the transient success state for network announces.
+///
+/// Each new success supersedes the previous timeout. The generation check is a
+/// second fence behind task cancellation so an obsolete reset can never hide a
+/// newer success banner.
+@MainActor
+@Observable
+public final class AnnounceFeedbackState {
+    public private(set) var isVisible = false
+
+    @ObservationIgnored private var resetTask: Task<Void, Never>?
+    @ObservationIgnored private var generation: UInt64 = 0
+
+    public nonisolated init() {}
+
+    deinit {
+        resetTask?.cancel()
+    }
+
+    @discardableResult
+    public func show(for duration: Duration = .seconds(3)) -> UInt64 {
+        resetTask?.cancel()
+        generation &+= 1
+        let currentGeneration = generation
+        isVisible = true
+
+        resetTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: duration)
+            } catch {
+                return
+            }
+            self?.dismiss(ifCurrent: currentGeneration)
+        }
+        return currentGeneration
+    }
+
+    /// Hide any current success before admitting another announce attempt.
+    /// This also invalidates the previous timeout so a failed retry cannot leave
+    /// stale success feedback visible.
+    public func hide() {
+        resetTask?.cancel()
+        resetTask = nil
+        generation &+= 1
+        isVisible = false
+    }
+
+    /// Internal seam for deterministic stale-timeout regression tests.
+    func dismiss(ifCurrent candidateGeneration: UInt64) {
+        guard candidateGeneration == generation else { return }
+        resetTask?.cancel()
+        resetTask = nil
+        isVisible = false
+    }
+}
+
 // MARK: - Contact Type
 
 /// Type of contact badge.
@@ -340,8 +398,8 @@ public final class ContactsViewModel {
     /// True while sending an announce.
     public var isAnnouncing = false
 
-    /// Brief feedback after announce succeeds.
-    public var announceSuccess = false
+    /// Transient feedback shown after a successful network announce.
+    public let announceFeedback = AnnounceFeedbackState()
 
     /// Error message if load failed.
     public var errorMessage: String?
@@ -892,17 +950,13 @@ public final class ContactsViewModel {
     /// Send an LXMF delivery announce so peers can discover and message this device.
     @MainActor
     public func sendAnnounce() async {
+        announceFeedback.hide()
         isAnnouncing = true
-        announceSuccess = false
 
         do {
             let displayName = await SettingsRepository().getDisplayName()
             try await appServices.sendAllAnnounces(displayName: displayName)
-            announceSuccess = true
-            Task {
-                try? await Task.sleep(for: .seconds(3))
-                await MainActor.run { self.announceSuccess = false }
-            }
+            announceFeedback.show()
         } catch {
             errorMessage = "Announce failed: \(error.localizedDescription)"
         }

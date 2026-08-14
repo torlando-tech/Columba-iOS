@@ -8,6 +8,9 @@
 
 import SwiftUI
 import RNSAPI
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Navigation Target
 
@@ -139,6 +142,35 @@ public struct ContactsView: View {
                 .toolbar {
                     toolbarContent(vm)
                 }
+                .safeAreaInset(edge: .top) {
+                    if vm.announceFeedback.isVisible {
+                        Label("Announced", systemImage: "checkmark.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay {
+                                Capsule()
+                                    .stroke(.green.opacity(0.35), lineWidth: 1)
+                            }
+                            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                            .accessibilityIdentifier("announce_success_banner")
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .padding(.top, 8)
+                    }
+                }
+                .animation(.easeInOut, value: vm.announceFeedback.isVisible)
+                #if os(iOS)
+                .onChange(of: vm.announceFeedback.isVisible) { _, isVisible in
+                    if isVisible {
+                        UIAccessibility.post(
+                            notification: .announcement,
+                            argument: String(localized: "Announced")
+                        )
+                    }
+                }
+                #endif
                 .navigationDestination(for: ContactsNavTarget.self) { target in
                     switch target {
                     case .nodeDetails(let contact):
@@ -582,14 +614,16 @@ public struct ContactsView: View {
                     ProgressView()
                         .scaleEffect(0.8)
                 } else {
-                    Image(systemName: viewModel?.announceSuccess == true
+                    Image(systemName: viewModel?.announceFeedback.isVisible == true
                           ? "checkmark.circle.fill"
                           : "antenna.radiowaves.left.and.right")
                         .font(.title3)
-                        .foregroundStyle(viewModel?.announceSuccess == true ? .green : Theme.accentColor)
+                        .foregroundStyle(viewModel?.announceFeedback.isVisible == true ? .green : Theme.accentColor)
                 }
             }
             .disabled(viewModel?.isAnnouncing == true)
+            .accessibilityLabel("Announce to Network")
+            .accessibilityHint("Broadcasts your identity so nearby peers can discover you")
             .help("Send Announce")
 
             #if os(iOS)
