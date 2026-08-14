@@ -62,7 +62,7 @@ final class MessageTextSelectionTests: XCTestCase {
         defer { window.isHidden = true }
 
         let action = try XCTUnwrap(
-            findView(in: host.view, accessibilityIdentifier: "select_message_text_action")
+            findAccessibilityElement(in: host.view, accessibilityIdentifier: "select_message_text_action")
         )
         XCTAssertTrue(action.accessibilityActivate())
         XCTAssertEqual(events, ["dismiss", "select"])
@@ -88,7 +88,9 @@ final class MessageTextSelectionTests: XCTestCase {
         let window = hostInWindow(host)
         defer { window.isHidden = true }
 
-        XCTAssertNil(findView(in: host.view, accessibilityIdentifier: "select_message_text_action"))
+        XCTAssertNil(
+            findAccessibilityElement(in: host.view, accessibilityIdentifier: "select_message_text_action")
+        )
     }
 
     @MainActor
@@ -120,10 +122,35 @@ final class MessageTextSelectionTests: XCTestCase {
         return window
     }
 
-    private func findView(in root: UIView, accessibilityIdentifier: String) -> UIView? {
+    private func findAccessibilityElement(
+        in root: UIView,
+        accessibilityIdentifier: String
+    ) -> NSObject? {
         if root.accessibilityIdentifier == accessibilityIdentifier { return root }
+
+        let elementCount = root.accessibilityElementCount()
+        if elementCount > 0 {
+            for index in 0..<elementCount {
+                guard let element = root.accessibilityElement(at: index) as? NSObject else { continue }
+                if let identified = element as? UIAccessibilityIdentification,
+                   identified.accessibilityIdentifier == accessibilityIdentifier {
+                    return element
+                }
+                if let elementView = element as? UIView,
+                   let match = findAccessibilityElement(
+                       in: elementView,
+                       accessibilityIdentifier: accessibilityIdentifier
+                   ) {
+                    return match
+                }
+            }
+        }
+
         for subview in root.subviews {
-            if let match = findView(in: subview, accessibilityIdentifier: accessibilityIdentifier) {
+            if let match = findAccessibilityElement(
+                in: subview,
+                accessibilityIdentifier: accessibilityIdentifier
+            ) {
                 return match
             }
         }
