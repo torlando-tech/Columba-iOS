@@ -49,11 +49,22 @@ public final class AnnounceFeedbackState {
         return currentGeneration
     }
 
+    /// Hide any current success before admitting another announce attempt.
+    /// This also invalidates the previous timeout so a failed retry cannot leave
+    /// stale success feedback visible.
+    public func hide() {
+        resetTask?.cancel()
+        resetTask = nil
+        generation &+= 1
+        isVisible = false
+    }
+
     /// Internal seam for deterministic stale-timeout regression tests.
     func dismiss(ifCurrent candidateGeneration: UInt64) {
         guard candidateGeneration == generation else { return }
-        isVisible = false
+        resetTask?.cancel()
         resetTask = nil
+        isVisible = false
     }
 }
 
@@ -939,6 +950,7 @@ public final class ContactsViewModel {
     /// Send an LXMF delivery announce so peers can discover and message this device.
     @MainActor
     public func sendAnnounce() async {
+        announceFeedback.hide()
         isAnnouncing = true
 
         do {

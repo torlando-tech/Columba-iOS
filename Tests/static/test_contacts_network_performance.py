@@ -10,6 +10,7 @@ IDENTICON = ROOT / "Sources/ColumbaApp/Views/Components/Identicon.swift"
 GENERATOR = ROOT / "Sources/ColumbaApp/Views/Components/IdenticonGenerator.swift"
 CONTACTS_VIEW = ROOT / "Sources/ColumbaApp/Views/Contacts/ContactsView.swift"
 MESSAGE_REPOSITORY = ROOT / "Sources/ColumbaApp/Services/MessageRepository.swift"
+LOCALIZATIONS = ROOT / "Sources/ColumbaApp/Resources/Localizable.xcstrings"
 
 
 class ContactsNetworkPerformanceContractTests(unittest.TestCase):
@@ -21,6 +22,7 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
         cls.generator = GENERATOR.read_text()
         cls.view = CONTACTS_VIEW.read_text()
         cls.repository = MESSAGE_REPOSITORY.read_text()
+        cls.localizations = LOCALIZATIONS.read_text()
 
     def test_contact_diagnostics_are_aggregate_only(self):
         self.assertNotIn("relayContacts.map", self.vm)
@@ -69,8 +71,16 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
         self.assertIn("UIAccessibility.post(", self.view)
         self.assertIn("notification: .announcement", self.view)
         self.assertIn("public let announceFeedback = AnnounceFeedbackState()", self.vm)
+        self.assertIn("announceFeedback.hide()", self.vm)
         self.assertIn("resetTask?.cancel()", self.vm)
         self.assertIn("dismiss(ifCurrent: currentGeneration)", self.vm)
+        for text in (
+            "Announce to Network",
+            "Announced",
+            "Broadcasts your identity so nearby peers can discover you",
+            "Send Announce",
+        ):
+            self.assertIn(f'"{text}"', self.localizations)
 
     def test_reappearance_refreshes_saved_state_without_rebuilding_paths(self):
         self.assertIn("private var hasLoadedContacts = false", self.vm)

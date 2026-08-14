@@ -40,6 +40,22 @@ final class AnnounceFeedbackStateTests: XCTestCase {
         XCTAssertFalse(feedback.isVisible)
     }
 
+    func testStartingAnotherAttemptClearsPriorSuccessAndInvalidatesItsTimeout() {
+        let feedback = AnnounceFeedbackState()
+
+        let priorGeneration = feedback.show(for: .seconds(60))
+        feedback.hide()
+
+        XCTAssertFalse(feedback.isVisible, "A retry must clear stale success immediately")
+
+        let retryGeneration = feedback.show(for: .seconds(60))
+        feedback.dismiss(ifCurrent: priorGeneration)
+        XCTAssertTrue(feedback.isVisible, "The prior timeout must not hide retry success")
+
+        feedback.dismiss(ifCurrent: retryGeneration)
+        XCTAssertFalse(feedback.isVisible)
+    }
+
     func testSuccessAutomaticallyDismissesAfterRequestedDuration() async throws {
         let feedback = AnnounceFeedbackState()
 
