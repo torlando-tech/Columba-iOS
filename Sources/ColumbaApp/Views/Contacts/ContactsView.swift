@@ -8,6 +8,9 @@
 
 import SwiftUI
 import RNSAPI
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Navigation Target
 
@@ -140,7 +143,7 @@ public struct ContactsView: View {
                     toolbarContent(vm)
                 }
                 .safeAreaInset(edge: .top) {
-                    if vm.announceSuccess {
+                    if vm.announceFeedback.isVisible {
                         Label("Announced", systemImage: "checkmark.circle.fill")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.green)
@@ -157,7 +160,17 @@ public struct ContactsView: View {
                             .padding(.top, 8)
                     }
                 }
-                .animation(.easeInOut, value: vm.announceSuccess)
+                .animation(.easeInOut, value: vm.announceFeedback.isVisible)
+                #if os(iOS)
+                .onChange(of: vm.announceFeedback.isVisible) { _, isVisible in
+                    if isVisible {
+                        UIAccessibility.post(
+                            notification: .announcement,
+                            argument: String(localized: "Announced")
+                        )
+                    }
+                }
+                #endif
                 .navigationDestination(for: ContactsNavTarget.self) { target in
                     switch target {
                     case .nodeDetails(let contact):
@@ -601,11 +614,11 @@ public struct ContactsView: View {
                     ProgressView()
                         .scaleEffect(0.8)
                 } else {
-                    Image(systemName: viewModel?.announceSuccess == true
+                    Image(systemName: viewModel?.announceFeedback.isVisible == true
                           ? "checkmark.circle.fill"
                           : "antenna.radiowaves.left.and.right")
                         .font(.title3)
-                        .foregroundStyle(viewModel?.announceSuccess == true ? .green : Theme.accentColor)
+                        .foregroundStyle(viewModel?.announceFeedback.isVisible == true ? .green : Theme.accentColor)
                 }
             }
             .disabled(viewModel?.isAnnouncing == true)

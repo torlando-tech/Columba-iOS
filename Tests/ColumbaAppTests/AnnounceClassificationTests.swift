@@ -25,6 +25,32 @@ import GRDB
 /// what the device decodes off the wire. Lives in Tests/ColumbaAppTests (runs
 /// via the Columba.xcodeproj scheme) because `Contact` lives in the ColumbaApp
 /// module.
+@MainActor
+final class AnnounceFeedbackStateTests: XCTestCase {
+    func testNewestSuccessOwnsVisibilityUntilItsOwnTimeout() async throws {
+        let feedback = AnnounceFeedbackState()
+
+        let firstGeneration = feedback.show(for: .seconds(60))
+        let secondGeneration = feedback.show(for: .seconds(60))
+
+        feedback.dismiss(ifCurrent: firstGeneration)
+        XCTAssertTrue(feedback.isVisible, "A stale timeout must not hide newer feedback")
+
+        feedback.dismiss(ifCurrent: secondGeneration)
+        XCTAssertFalse(feedback.isVisible)
+    }
+
+    func testSuccessAutomaticallyDismissesAfterRequestedDuration() async throws {
+        let feedback = AnnounceFeedbackState()
+
+        feedback.show(for: .milliseconds(20))
+        XCTAssertTrue(feedback.isVisible)
+
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(feedback.isVisible)
+    }
+}
+
 final class AnnounceClassificationTests: XCTestCase {
 
     private let pnMetaName: UInt64 = 0x01

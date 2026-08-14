@@ -63,9 +63,14 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
             self.view,
         )
         self.assertIn(".safeAreaInset(edge: .top)", self.view)
-        self.assertIn("if vm.announceSuccess", self.view)
+        self.assertIn("if vm.announceFeedback.isVisible", self.view)
         self.assertIn('Label("Announced", systemImage: "checkmark.circle.fill")', self.view)
         self.assertIn('.accessibilityIdentifier("announce_success_banner")', self.view)
+        self.assertIn("UIAccessibility.post(", self.view)
+        self.assertIn("notification: .announcement", self.view)
+        self.assertIn("public let announceFeedback = AnnounceFeedbackState()", self.vm)
+        self.assertIn("resetTask?.cancel()", self.vm)
+        self.assertIn("dismiss(ifCurrent: currentGeneration)", self.vm)
 
     def test_reappearance_refreshes_saved_state_without_rebuilding_paths(self):
         self.assertIn("private var hasLoadedContacts = false", self.vm)
