@@ -1393,6 +1393,14 @@ struct ReactionOverlay: View {
 
     private static let quickEmojis = ["👍", "❤️", "😂", "😮", "😢", "😡"]
 
+    static func performSelectText(
+        onDismiss: () -> Void,
+        onSelectText: () -> Void
+    ) {
+        onDismiss()
+        onSelectText()
+    }
+
     var body: some View {
         ZStack {
             // Dimmed scrim
@@ -1486,8 +1494,10 @@ struct ReactionOverlay: View {
                             icon: "text.cursor",
                             label: String(localized: "Select Text")
                         ) {
-                            onDismiss()
-                            onSelectText()
+                            Self.performSelectText(
+                                onDismiss: onDismiss,
+                                onSelectText: onSelectText
+                            )
                         }
                         .accessibilityIdentifier("select_message_text_action")
                     }

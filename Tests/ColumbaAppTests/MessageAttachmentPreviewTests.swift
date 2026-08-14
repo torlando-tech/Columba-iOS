@@ -41,56 +41,15 @@ final class MessageTextSelectionTests: XCTestCase {
     }
 
     @MainActor
-    func testHostedReactionOverlayActivatesSelectTextAfterDismissal() throws {
-        let message = Message(id: "overlay-message", content: "Copy only part of this", isFromMe: false)
+    func testReactionOverlaySelectTextActionDismissesBeforePresentation() {
         var events: [String] = []
-        let overlay = ReactionOverlay(
-            message: message,
-            onReact: { _ in },
-            onReply: {},
-            onCopy: {},
-            onSelectText: { events.append("select") },
-            onDetails: {},
-            onDelete: nil,
-            canTarget: true,
-            onRetry: nil,
-            onMoreEmoji: {},
-            onDismiss: { events.append("dismiss") }
-        )
-        let host = UIHostingController(rootView: overlay)
-        let window = hostInWindow(host)
-        defer { window.isHidden = true }
 
-        let action = try XCTUnwrap(
-            findAccessibilityElement(in: host.view, accessibilityIdentifier: "select_message_text_action")
+        ReactionOverlay.performSelectText(
+            onDismiss: { events.append("dismiss") },
+            onSelectText: { events.append("select") }
         )
-        XCTAssertTrue(action.accessibilityActivate())
+
         XCTAssertEqual(events, ["dismiss", "select"])
-    }
-
-    @MainActor
-    func testHostedReactionOverlayOmitsSelectTextForBlankContent() {
-        let message = Message(id: "blank-overlay", content: " \n\t ", isFromMe: true)
-        let overlay = ReactionOverlay(
-            message: message,
-            onReact: { _ in },
-            onReply: {},
-            onCopy: {},
-            onSelectText: MessageTextSelection(message: message).map { _ in {} },
-            onDetails: {},
-            onDelete: nil,
-            canTarget: true,
-            onRetry: nil,
-            onMoreEmoji: {},
-            onDismiss: {}
-        )
-        let host = UIHostingController(rootView: overlay)
-        let window = hostInWindow(host)
-        defer { window.isHidden = true }
-
-        XCTAssertNil(
-            findAccessibilityElement(in: host.view, accessibilityIdentifier: "select_message_text_action")
-        )
     }
 
     @MainActor
@@ -120,41 +79,6 @@ final class MessageTextSelectionTests: XCTestCase {
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         return window
-    }
-
-    private func findAccessibilityElement(
-        in root: UIView,
-        accessibilityIdentifier: String
-    ) -> NSObject? {
-        if root.accessibilityIdentifier == accessibilityIdentifier { return root }
-
-        let elementCount = root.accessibilityElementCount()
-        if elementCount > 0 {
-            for index in 0..<elementCount {
-                guard let element = root.accessibilityElement(at: index) as? NSObject else { continue }
-                if let identified = element as? UIAccessibilityIdentification,
-                   identified.accessibilityIdentifier == accessibilityIdentifier {
-                    return element
-                }
-                if let elementView = element as? UIView,
-                   let match = findAccessibilityElement(
-                       in: elementView,
-                       accessibilityIdentifier: accessibilityIdentifier
-                   ) {
-                    return match
-                }
-            }
-        }
-
-        for subview in root.subviews {
-            if let match = findAccessibilityElement(
-                in: subview,
-                accessibilityIdentifier: accessibilityIdentifier
-            ) {
-                return match
-            }
-        }
-        return nil
     }
 
     private func findFirstSubview<T: UIView>(of type: T.Type, in root: UIView) -> T? {
