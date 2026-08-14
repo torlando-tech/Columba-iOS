@@ -39,6 +39,104 @@ final class MessageTextSelectionTests: XCTestCase {
         XCTAssertTrue(textView.adjustsFontForContentSizeCategory)
         XCTAssertEqual(textView.accessibilityIdentifier, "selectable_message_text")
     }
+
+    @MainActor
+    func testHostedReactionOverlayActivatesSelectTextAfterDismissal() throws {
+        let message = Message(id: "overlay-message", content: "Copy only part of this", isFromMe: false)
+        var events: [String] = []
+        let overlay = ReactionOverlay(
+            message: message,
+            onReact: { _ in },
+            onReply: {},
+            onCopy: {},
+            onSelectText: { events.append("select") },
+            onDetails: {},
+            onDelete: nil,
+            canTarget: true,
+            onRetry: nil,
+            onMoreEmoji: {},
+            onDismiss: { events.append("dismiss") }
+        )
+        let host = UIHostingController(rootView: overlay)
+        let window = hostInWindow(host)
+        defer { window.isHidden = true }
+
+        let action = try XCTUnwrap(
+            findView(in: host.view, accessibilityIdentifier: "select_message_text_action")
+        )
+        XCTAssertTrue(action.accessibilityActivate())
+        XCTAssertEqual(events, ["dismiss", "select"])
+    }
+
+    @MainActor
+    func testHostedReactionOverlayOmitsSelectTextForBlankContent() {
+        let message = Message(id: "blank-overlay", content: " \n\t ", isFromMe: true)
+        let overlay = ReactionOverlay(
+            message: message,
+            onReact: { _ in },
+            onReply: {},
+            onCopy: {},
+            onSelectText: MessageTextSelection(message: message).map { _ in {} },
+            onDetails: {},
+            onDelete: nil,
+            canTarget: true,
+            onRetry: nil,
+            onMoreEmoji: {},
+            onDismiss: {}
+        )
+        let host = UIHostingController(rootView: overlay)
+        let window = hostInWindow(host)
+        defer { window.isHidden = true }
+
+        XCTAssertNil(findView(in: host.view, accessibilityIdentifier: "select_message_text_action"))
+    }
+
+    @MainActor
+    func testHostedSelectionSheetContainsExactNativeSelectableText() throws {
+        let message = Message(
+            id: "sheet-message",
+            content: "First line\n  preserve this spacing  ",
+            isFromMe: false
+        )
+        let selection = try XCTUnwrap(MessageTextSelection(message: message))
+        let host = UIHostingController(rootView: SelectableMessageTextSheet(selection: selection))
+        let window = hostInWindow(host)
+        defer { window.isHidden = true }
+
+        let textView = try XCTUnwrap(findFirstSubview(of: UITextView.self, in: host.view))
+        XCTAssertEqual(textView.text, message.content)
+        XCTAssertTrue(textView.isSelectable)
+        XCTAssertFalse(textView.isEditable)
+    }
+
+    @MainActor
+    private func hostInWindow<Content: View>(_ host: UIHostingController<Content>) -> UIWindow {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.frame = window.bounds
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        return window
+    }
+
+    private func findView(in root: UIView, accessibilityIdentifier: String) -> UIView? {
+        if root.accessibilityIdentifier == accessibilityIdentifier { return root }
+        for subview in root.subviews {
+            if let match = findView(in: subview, accessibilityIdentifier: accessibilityIdentifier) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private func findFirstSubview<T: UIView>(of type: T.Type, in root: UIView) -> T? {
+        if let match = root as? T { return match }
+        for subview in root.subviews {
+            if let match = findFirstSubview(of: type, in: subview) { return match }
+        }
+        return nil
+    }
 }
 
 final class MessageAttachmentPreviewItemTests: XCTestCase {

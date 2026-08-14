@@ -66,7 +66,7 @@ struct SelectableMessageTextView: UIViewRepresentable {
 }
 #endif
 
-private struct SelectableMessageTextSheet: View {
+struct SelectableMessageTextSheet: View {
     let selection: MessageTextSelection
     @Environment(\.dismiss) private var dismiss
 
@@ -1378,7 +1378,7 @@ private struct EmojiPickerSheet: View {
 
 /// Full-screen overlay with emoji bar and action buttons, triggered by long-press on a message.
 @available(iOS 17.0, macOS 14.0, *)
-private struct ReactionOverlay: View {
+struct ReactionOverlay: View {
     let message: Message
     let onReact: (String) -> Void
     let onReply: () -> Void
@@ -1489,6 +1489,7 @@ private struct ReactionOverlay: View {
                             onDismiss()
                             onSelectText()
                         }
+                        .accessibilityIdentifier("select_message_text_action")
                     }
 
                     actionButton(icon: "info.circle", label: "Details") {
