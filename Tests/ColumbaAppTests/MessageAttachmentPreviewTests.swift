@@ -3,6 +3,44 @@ import UIKit
 import SwiftUI
 @testable import ColumbaApp
 
+final class MessageTextSelectionTests: XCTestCase {
+    func testSelectionPreservesExactMessageText() {
+        let message = Message(
+            id: "selectable-message",
+            content: "First line\n  second line with spacing  ",
+            isFromMe: false
+        )
+
+        let selection = MessageTextSelection(message: message)
+
+        XCTAssertEqual(selection?.id, message.id)
+        XCTAssertEqual(selection?.text, message.content)
+    }
+
+    func testSelectionIsUnavailableForEmptyOrWhitespaceOnlyMessages() {
+        XCTAssertNil(MessageTextSelection(
+            message: Message(id: "empty", content: "", isFromMe: false)
+        ))
+        XCTAssertNil(MessageTextSelection(
+            message: Message(id: "whitespace", content: " \n\t ", isFromMe: true)
+        ))
+    }
+
+    @MainActor
+    func testNativeTextViewIsReadOnlySelectableAndAccessible() {
+        let text = "Select only this substring"
+
+        let textView = SelectableMessageTextView.makeTextView(text: text)
+
+        XCTAssertEqual(textView.text, text)
+        XCTAssertTrue(textView.isSelectable)
+        XCTAssertFalse(textView.isEditable)
+        XCTAssertTrue(textView.isScrollEnabled)
+        XCTAssertTrue(textView.adjustsFontForContentSizeCategory)
+        XCTAssertEqual(textView.accessibilityIdentifier, "selectable_message_text")
+    }
+}
+
 final class MessageAttachmentPreviewItemTests: XCTestCase {
     private let pngData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL1WQAAAABJRU5ErkJggg==")!
 
