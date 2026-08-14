@@ -664,16 +664,23 @@ struct SettingsView: View {
         ExpandableSettingsCard(
             icon: "shield.fill",
             title: "Privacy",
-            isExpanded: Binding(get: { vm.isPrivacyExpanded }, set: { vm.isPrivacyExpanded = $0 }),
-            toggle: Binding(get: { vm.blockUnknownSenders }, set: { newValue in
-                vm.blockUnknownSenders = newValue
-                vm.saveSettings()
-            })
+            isExpanded: Binding(get: { vm.isPrivacyExpanded }, set: { vm.isPrivacyExpanded = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
+                Toggle(String(localized: "Messages from contacts only"), isOn: Binding(
+                    get: { vm.blockUnknownSenders },
+                    set: { newValue in
+                        vm.blockUnknownSenders = newValue
+                        vm.saveSettings()
+                    }
+                ))
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+                .toggleStyle(AccentToggleStyle())
+
                 Text(vm.blockUnknownSenders
-                    ? "Only contacts can message you. Messages from unknown senders are silently discarded."
-                    : "Anyone can send you messages, including unknown senders.")
+                    ? String(localized: "Only contacts can message you. Messages from unknown senders are silently discarded.")
+                    : String(localized: "Anyone can send you messages, including unknown senders."))
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
             }

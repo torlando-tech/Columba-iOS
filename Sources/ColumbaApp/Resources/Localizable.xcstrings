@@ -981,6 +981,39 @@
     "The attachment could not be prepared for preview.": {
       "comment": "Privacy-safe error text shown when temporary attachment export fails."
     },
+    "Messages from contacts only": {
+      "comment": "Label for the privacy control that rejects messages from unknown senders.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Messages from contacts only"
+          }
+        }
+      }
+    },
+    "Only contacts can message you. Messages from unknown senders are silently discarded.": {
+      "comment": "Privacy explanation shown when messages from unknown senders are blocked.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only contacts can message you. Messages from unknown senders are silently discarded."
+          }
+        }
+      }
+    },
+    "Anyone can send you messages, including unknown senders.": {
+      "comment": "Privacy explanation shown when messages from unknown senders are allowed.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anyone can send you messages, including unknown senders."
+          }
+        }
+      }
+    },
     "Announce to Network": {
       "localizations": {
         "en": {
