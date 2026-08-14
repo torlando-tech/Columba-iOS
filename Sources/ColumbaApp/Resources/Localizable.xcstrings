@@ -701,6 +701,16 @@
         }
       }
     },
+    "Select Text": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select Text"
+          }
+        }
+      }
+    },
     "Select at least one connection method to continue.": {
       "localizations": {
         "en": {
