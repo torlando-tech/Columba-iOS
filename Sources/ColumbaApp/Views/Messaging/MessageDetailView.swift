@@ -282,6 +282,9 @@ struct MessageDetailView: View {
             case "propagated":
                 return ("point.3.connected.trianglepath.dotted", "Propagated",
                         "Delivered via relay/propagation node")
+            case "paper":
+                return ("doc.text", "Paper",
+                        "Transferred as a paper LXMF message")
             default:
                 return ("questionmark.circle", method.capitalized, "")
             }

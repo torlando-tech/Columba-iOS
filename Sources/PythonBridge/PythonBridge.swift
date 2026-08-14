@@ -68,7 +68,7 @@ public final class PythonBridge: @unchecked Sendable {
 
     public enum Event: Equatable, Sendable {
         case announce(destHash: String, appDataHex: String, aspect: String, publicKeysHex: String, interfaceName: String, hops: Int, t: Date)
-        case inbound(sourceHash: String, messageHash: String, content: String, title: String, fieldsHex: String, t: Date)
+        case inbound(sourceHash: String, messageHash: String, content: String, title: String, fieldsHex: String, method: String, t: Date)
         case state(String, t: Date)
 
         /// Delivery lifecycle event for an outbound message, keyed by its LXMF
@@ -886,7 +886,8 @@ public final class PythonBridge: @unchecked Sendable {
                 let c = pyStringFromDict(item, key: "content") ?? ""
                 let title = pyStringFromDict(item, key: "title") ?? ""
                 let fieldsHex = pyStringFromDict(item, key: "fields_hex") ?? ""
-                out.append(.inbound(sourceHash: h, messageHash: messageHash, content: c, title: title, fieldsHex: fieldsHex, t: t))
+                let method = pyStringFromDict(item, key: "method") ?? ""
+                out.append(.inbound(sourceHash: h, messageHash: messageHash, content: c, title: title, fieldsHex: fieldsHex, method: method, t: t))
             case "state":
                 let v = pyStringFromDict(item, key: "value") ?? "?"
                 out.append(.state(v, t: t))

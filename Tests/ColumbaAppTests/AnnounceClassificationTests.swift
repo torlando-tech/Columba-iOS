@@ -410,6 +410,164 @@ final class MessageRepositoryAtomicReplacementTests: XCTestCase {
         }
     }
 
+    func testInboundPropagatedMethodPersistsForMessageDetails() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let source = Data(repeating: 0x31, count: 16)
+        let messageHash = Data(repeating: 0x32, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: source,
+            sourceIdentity: nil,
+            content: Data("relay message".utf8),
+            desiredMethod: .propagated
+        )
+        message.sourceHash = source
+        message.hash = messageHash
+        message.method = .propagated
+        message.incoming = true
+        message.state = .received
+
+        try await repository.saveMessage(message)
+
+        let storedRecord = try await repository.getMessageRecord(id: messageHash)
+        let stored = try XCTUnwrap(storedRecord)
+        XCTAssertEqual(stored.method, RNSAPI.LXDeliveryMethod.propagated.rawValue)
+        XCTAssertEqual(Message(from: stored, localHash: Data()).deliveryMethod, "propagated")
+    }
+
+    func testUnknownInboundMethodDoesNotRenderAsOpportunistic() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let source = Data(repeating: 0x33, count: 16)
+        let messageHash = Data(repeating: 0x34, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: source,
+            sourceIdentity: nil,
+            content: Data("unknown method".utf8),
+            desiredMethod: .unknown
+        )
+        message.sourceHash = source
+        message.hash = messageHash
+        message.method = .unknown
+        message.incoming = true
+        message.state = .received
+
+        try await repository.saveMessage(message)
+
+        let storedRecord = try await repository.getMessageRecord(id: messageHash)
+        let stored = try XCTUnwrap(storedRecord)
+        XCTAssertEqual(stored.method, RNSAPI.LXDeliveryMethod.unknown.rawValue)
+        XCTAssertNil(Message(from: stored, localHash: Data()).deliveryMethod)
+    }
+
+    func testUnknownInboundMethodDoesNotUseCorrectiveUpdate() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let inspectionQueue = try DatabaseQueue(path: databaseURL.path)
+        try await inspectionQueue.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER reject_unknown_method_correction
+                BEFORE UPDATE OF method ON messages
+                WHEN NEW.method = 0
+                BEGIN
+                    SELECT RAISE(ABORT, 'unknown method must be inserted atomically');
+                END
+                """)
+        }
+        let source = Data(repeating: 0x37, count: 16)
+        let messageHash = Data(repeating: 0x38, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: source,
+            sourceIdentity: nil,
+            content: Data("atomic unknown".utf8),
+            desiredMethod: .unknown
+        )
+        message.sourceHash = source
+        message.hash = messageHash
+        message.method = .unknown
+        message.incoming = true
+        message.state = .received
+
+        try await repository.saveMessage(message)
+
+        let storedRecord = try await repository.getMessageRecord(id: messageHash)
+        XCTAssertEqual(
+            try XCTUnwrap(storedRecord).method,
+            RNSAPI.LXDeliveryMethod.unknown.rawValue
+        )
+    }
+
+    func testUnknownInboundInsertFailureRollsBackConversation() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let inspectionQueue = try DatabaseQueue(path: databaseURL.path)
+        try await inspectionQueue.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER reject_unknown_method_insert
+                BEFORE INSERT ON messages
+                WHEN NEW.method = 0
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced unknown insert failure');
+                END
+                """)
+        }
+        let source = Data(repeating: 0x39, count: 16)
+        let messageHash = Data(repeating: 0x3a, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: source,
+            sourceIdentity: nil,
+            content: Data("rollback unknown".utf8),
+            desiredMethod: .unknown
+        )
+        message.sourceHash = source
+        message.hash = messageHash
+        message.method = .unknown
+        message.incoming = true
+        message.state = .received
+
+        do {
+            try await repository.saveMessage(message)
+            XCTFail("Expected forced insert failure")
+        } catch {
+            // Expected: the trigger aborts the transaction.
+        }
+
+        let storedRecord = try await repository.getMessageRecord(id: messageHash)
+        let conversation = try await repository.fetchConversation(source)
+        XCTAssertNil(storedRecord)
+        XCTAssertNil(conversation)
+    }
+
+    func testPaperInboundMethodPersistsForMessageDetails() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let source = Data(repeating: 0x35, count: 16)
+        let messageHash = Data(repeating: 0x36, count: 32)
+        let message = RNSAPI.LXMessage(
+            destinationHash: source,
+            sourceIdentity: nil,
+            content: Data("paper message".utf8),
+            desiredMethod: .paper
+        )
+        message.sourceHash = source
+        message.hash = messageHash
+        message.method = .paper
+        message.incoming = true
+        message.state = .received
+
+        try await repository.saveMessage(message)
+
+        let storedRecord = try await repository.getMessageRecord(id: messageHash)
+        let stored = try XCTUnwrap(storedRecord)
+        XCTAssertEqual(stored.method, RNSAPI.LXDeliveryMethod.paper.rawValue)
+        XCTAssertEqual(Message(from: stored, localHash: Data()).deliveryMethod, "paper")
+    }
+
     func testAnnouncedNameAtomicallyReplacesGeneratedFallback() async throws {
         let databaseURL = temporaryDatabaseURL()
         defer { removeDatabase(at: databaseURL) }
