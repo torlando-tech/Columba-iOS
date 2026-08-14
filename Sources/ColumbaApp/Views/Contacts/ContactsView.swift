@@ -139,6 +139,25 @@ public struct ContactsView: View {
                 .toolbar {
                     toolbarContent(vm)
                 }
+                .safeAreaInset(edge: .top) {
+                    if vm.announceSuccess {
+                        Label("Announced", systemImage: "checkmark.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay {
+                                Capsule()
+                                    .stroke(.green.opacity(0.35), lineWidth: 1)
+                            }
+                            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                            .accessibilityIdentifier("announce_success_banner")
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .padding(.top, 8)
+                    }
+                }
+                .animation(.easeInOut, value: vm.announceSuccess)
                 .navigationDestination(for: ContactsNavTarget.self) { target in
                     switch target {
                     case .nodeDetails(let contact):
@@ -590,6 +609,8 @@ public struct ContactsView: View {
                 }
             }
             .disabled(viewModel?.isAnnouncing == true)
+            .accessibilityLabel("Announce to Network")
+            .accessibilityHint("Broadcasts your identity so nearby peers can discover you")
             .help("Send Announce")
 
             #if os(iOS)

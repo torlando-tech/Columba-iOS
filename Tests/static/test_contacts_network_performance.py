@@ -56,6 +56,17 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
         self.assertIn("patternCache.countLimit = 4096", self.generator)
         self.assertIn("public static func cachedPattern", self.generator)
 
+    def test_announce_action_explains_itself_and_shows_success_feedback(self):
+        self.assertIn('.accessibilityLabel("Announce to Network")', self.view)
+        self.assertIn(
+            '.accessibilityHint("Broadcasts your identity so nearby peers can discover you")',
+            self.view,
+        )
+        self.assertIn(".safeAreaInset(edge: .top)", self.view)
+        self.assertIn("if vm.announceSuccess", self.view)
+        self.assertIn('Label("Announced", systemImage: "checkmark.circle.fill")', self.view)
+        self.assertIn('.accessibilityIdentifier("announce_success_banner")', self.view)
+
     def test_reappearance_refreshes_saved_state_without_rebuilding_paths(self):
         self.assertIn("private var hasLoadedContacts = false", self.vm)
         self.assertIn("public func loadContacts(force: Bool = false)", self.vm)
