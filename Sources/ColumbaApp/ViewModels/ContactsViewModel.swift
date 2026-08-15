@@ -999,9 +999,13 @@ public final class ContactsViewModel {
     /// Returns nil on any validation failure.
     public static func parseLXMA(_ urlString: String) -> (destinationHash: Data, publicKey: Data)? {
         var s = urlString
-        // Strip scheme prefix
+        // Strip the canonical URI prefix or the equivalent opaque action URL
+        // used by message links. Foundation rejects the canonical hierarchical
+        // form because it interprets the 128-character public key as a port.
         if s.hasPrefix("lxma://") {
             s = String(s.dropFirst("lxma://".count))
+        } else if s.hasPrefix("lxma:") {
+            s = String(s.dropFirst("lxma:".count))
         } else {
             return nil
         }
