@@ -22,10 +22,6 @@ struct MonospaceLineView: View {
     let bold: Bool
     var defaultForegroundColor: Color? = nil
     var linkForegroundColor: Color? = nil
-    /// Force the UIKit label to be at least this wide so center/right alignment
-    /// resolves against the visible viewport, not just the text's intrinsic width.
-    /// Pass 0 to opt out (label sizes to its own intrinsic only).
-    var minWidth: CGFloat = 0
     var onLinkTapped: ((MicronLink) -> Void)?
 
     var body: some View {
@@ -34,7 +30,6 @@ struct MonospaceLineView: View {
             attributedString: buildAttributedString(),
             cellHeight: cellHeight,
             alignment: alignment,
-            minWidth: minWidth,
             onTap: handleTap
         )
         .frame(height: cellHeight)
@@ -151,7 +146,6 @@ private struct UIMonospaceLine: UIViewRepresentable {
     let attributedString: NSAttributedString
     let cellHeight: CGFloat
     let alignment: MicronAlignment
-    let minWidth: CGFloat
     var onTap: ((Int) -> Void)?
 
     /// Return only the label's intrinsic content width. SwiftUI `.frame`
