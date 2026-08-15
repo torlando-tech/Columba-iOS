@@ -3,6 +3,93 @@ import UIKit
 import SwiftUI
 @testable import ColumbaApp
 
+final class MessageTextSelectionTests: XCTestCase {
+    func testSelectionPreservesExactMessageText() {
+        let message = Message(
+            id: "selectable-message",
+            content: "First line\n  second line with spacing  ",
+            isFromMe: false
+        )
+
+        let selection = MessageTextSelection(message: message)
+
+        XCTAssertEqual(selection?.id, message.id)
+        XCTAssertEqual(selection?.text, message.content)
+    }
+
+    func testSelectionIsUnavailableForEmptyOrWhitespaceOnlyMessages() {
+        XCTAssertNil(MessageTextSelection(
+            message: Message(id: "empty", content: "", isFromMe: false)
+        ))
+        XCTAssertNil(MessageTextSelection(
+            message: Message(id: "whitespace", content: " \n\t ", isFromMe: true)
+        ))
+    }
+
+    @MainActor
+    func testNativeTextViewIsReadOnlySelectableAndAccessible() {
+        let text = "Select only this substring"
+
+        let textView = SelectableMessageTextView.makeTextView(text: text)
+
+        XCTAssertEqual(textView.text, text)
+        XCTAssertTrue(textView.isSelectable)
+        XCTAssertFalse(textView.isEditable)
+        XCTAssertTrue(textView.isScrollEnabled)
+        XCTAssertTrue(textView.adjustsFontForContentSizeCategory)
+        XCTAssertEqual(textView.accessibilityIdentifier, "selectable_message_text")
+    }
+
+    @MainActor
+    func testReactionOverlaySelectTextActionDismissesBeforePresentation() {
+        var events: [String] = []
+
+        ReactionOverlay.performSelectText(
+            onDismiss: { events.append("dismiss") },
+            onSelectText: { events.append("select") }
+        )
+
+        XCTAssertEqual(events, ["dismiss", "select"])
+    }
+
+    @MainActor
+    func testHostedSelectionSheetContainsExactNativeSelectableText() throws {
+        let message = Message(
+            id: "sheet-message",
+            content: "First line\n  preserve this spacing  ",
+            isFromMe: false
+        )
+        let selection = try XCTUnwrap(MessageTextSelection(message: message))
+        let host = UIHostingController(rootView: SelectableMessageTextSheet(selection: selection))
+        let window = hostInWindow(host)
+        defer { window.isHidden = true }
+
+        let textView = try XCTUnwrap(findFirstSubview(of: UITextView.self, in: host.view))
+        XCTAssertEqual(textView.text, message.content)
+        XCTAssertTrue(textView.isSelectable)
+        XCTAssertFalse(textView.isEditable)
+    }
+
+    @MainActor
+    private func hostInWindow<Content: View>(_ host: UIHostingController<Content>) -> UIWindow {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.frame = window.bounds
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        return window
+    }
+
+    private func findFirstSubview<T: UIView>(of type: T.Type, in root: UIView) -> T? {
+        if let match = root as? T { return match }
+        for subview in root.subviews {
+            if let match = findFirstSubview(of: type, in: subview) { return match }
+        }
+        return nil
+    }
+}
+
 final class MessageAttachmentPreviewItemTests: XCTestCase {
     private let pngData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL1WQAAAABJRU5ErkJggg==")!
 

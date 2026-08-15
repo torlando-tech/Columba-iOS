@@ -21,6 +21,79 @@ import AppKit
 
 private let logger = Logger(subsystem: "network.columba.Columba", category: "MessagingView")
 
+/// Stable presentation value for a message body that can be selected and copied.
+/// Whitespace-only bodies have no useful substring and do not expose the action.
+struct MessageTextSelection: Identifiable, Equatable {
+    let id: String
+    let text: String
+
+    init?(message: Message) {
+        guard !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        id = message.id
+        text = message.content
+    }
+}
+
+#if os(iOS)
+/// Native read-only text control so iOS owns selection handles and the copy menu.
+struct SelectableMessageTextView: UIViewRepresentable {
+    let text: String
+
+    static func makeTextView(text: String) -> UITextView {
+        let textView = UITextView()
+        textView.text = text
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = true
+        textView.backgroundColor = .clear
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        textView.accessibilityIdentifier = "selectable_message_text"
+        return textView
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        Self.makeTextView(text: text)
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        guard textView.text != text else { return }
+        textView.text = text
+    }
+}
+#endif
+
+struct SelectableMessageTextSheet: View {
+    let selection: MessageTextSelection
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            #if os(iOS)
+            SelectableMessageTextView(text: selection.text)
+                .navigationTitle(String(localized: "Select Text"))
+                .navigationBarTitleDisplayMode(.inline)
+            #else
+            ScrollView {
+                Text(selection.text)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .navigationTitle(String(localized: "Select Text"))
+            #endif
+        }
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button(String(localized: "Done")) { dismiss() }
+            }
+        }
+    }
+}
+
 @MainActor
 enum MessagingDraftBootstrap {
     enum Outcome {
@@ -163,6 +236,7 @@ struct MessagingView: View {
     @State private var showCodecSheet = false
     @State private var emojiPickerTargetMessage: Message?
     @State private var reactionModeMessage: Message?
+    @State private var textSelection: MessageTextSelection?
     @State private var isSavedContact: Bool = false
     /// Set when a voice call can't be placed (no telephony path to the peer)
     /// so the user gets feedback instead of the codec sheet silently dismissing.
@@ -493,6 +567,9 @@ struct MessagingView: View {
                         NSPasteboard.general.setString(msg.content, forType: .string)
                         #endif
                     },
+                    onSelectText: MessageTextSelection(message: msg).map { selection in
+                        { textSelection = selection }
+                    },
                     onDetails: {
                         detailMessage = msg
                     },
@@ -594,6 +671,11 @@ struct MessagingView: View {
                 destinationHash: conversation.destinationHash,
                 pathTable: appServices.pathTable
             )
+        }
+        .sheet(item: $textSelection) { selection in
+            SelectableMessageTextSheet(selection: selection)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .alert("Delete Message?", isPresented: Binding(
             get: { deleteConfirmMessage != nil },
@@ -1296,11 +1378,12 @@ private struct EmojiPickerSheet: View {
 
 /// Full-screen overlay with emoji bar and action buttons, triggered by long-press on a message.
 @available(iOS 17.0, macOS 14.0, *)
-private struct ReactionOverlay: View {
+struct ReactionOverlay: View {
     let message: Message
     let onReact: (String) -> Void
     let onReply: () -> Void
     let onCopy: () -> Void
+    let onSelectText: (() -> Void)?
     let onDetails: () -> Void
     let onDelete: (() -> Void)?
     let canTarget: Bool
@@ -1309,6 +1392,14 @@ private struct ReactionOverlay: View {
     let onDismiss: () -> Void
 
     private static let quickEmojis = ["👍", "❤️", "😂", "😮", "😢", "😡"]
+
+    static func performSelectText(
+        onDismiss: () -> Void,
+        onSelectText: () -> Void
+    ) {
+        onDismiss()
+        onSelectText()
+    }
 
     var body: some View {
         ZStack {
@@ -1396,6 +1487,19 @@ private struct ReactionOverlay: View {
                             onDismiss()
                             onCopy()
                         }
+                    }
+
+                    if let onSelectText {
+                        actionButton(
+                            icon: "text.cursor",
+                            label: String(localized: "Select Text")
+                        ) {
+                            Self.performSelectText(
+                                onDismiss: onDismiss,
+                                onSelectText: onSelectText
+                            )
+                        }
+                        .accessibilityIdentifier("select_message_text_action")
                     }
 
                     actionButton(icon: "info.circle", label: "Details") {
