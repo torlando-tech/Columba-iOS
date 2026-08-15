@@ -204,9 +204,12 @@ final class AnnounceClassificationTests: XCTestCase {
         let uri = "lxma://\(destinationHex):\(publicKeyHex)"
 
         let parsed = ContactsViewModel.parseLXMA(uri)
+        let routed = ContactsViewModel.parseLXMA("lxma:\(destinationHex):\(publicKeyHex)")
 
         XCTAssertEqual(parsed?.destinationHash, destinationHash)
         XCTAssertEqual(parsed?.publicKey, identity.publicKeys)
+        XCTAssertEqual(routed?.destinationHash, destinationHash)
+        XCTAssertEqual(routed?.publicKey, identity.publicKeys)
     }
 
     func testLXMAContactRejectsPublicIdentityThatDoesNotOwnDestination() throws {

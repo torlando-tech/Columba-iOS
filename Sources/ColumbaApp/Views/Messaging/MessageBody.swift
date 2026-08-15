@@ -37,6 +37,10 @@ enum MessageLinkParser {
         pattern: #"^(?:nomadnetwork://)?([0-9a-fA-F]{32}):(/[^\s,;!?)\]]+)$"#,
         options: [.caseInsensitive]
     )
+    private static let anchoredLXMA = try! NSRegularExpression(
+        pattern: #"^lxma:(?://)?([0-9a-fA-F]{32}):([0-9a-fA-F]{128})$"#,
+        options: [.caseInsensitive]
+    )
     private static let detectors = [
         try! NSRegularExpression(pattern: bareNomadNetPattern),
         try! NSRegularExpression(pattern: explicitPattern, options: [.caseInsensitive]),
@@ -90,6 +94,18 @@ enum MessageLinkParser {
            let pathRange = Range(match.range(at: 2), in: cleaned),
            let hash = Data(hexString: String(cleaned[hashRange])) {
             return .nomadNet(nodeHash: hash, path: String(cleaned[pathRange]))
+        }
+
+        if let match = anchoredLXMA.firstMatch(in: cleaned, range: range),
+           let hashRange = Range(match.range(at: 1), in: cleaned),
+           let publicKeyRange = Range(match.range(at: 2), in: cleaned),
+           let actionURL = URL(
+            string: "lxma:\(cleaned[hashRange]):\(cleaned[publicKeyRange])"
+           ) {
+            // A canonical lxma:// URI is not a valid hierarchical Foundation URL:
+            // the 128-character public key is interpreted as an invalid port.
+            // Use the equivalent opaque form for the attributed link and app route.
+            return .external(actionURL)
         }
 
         guard let url = URL(string: cleaned),

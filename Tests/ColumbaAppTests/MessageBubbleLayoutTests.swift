@@ -21,6 +21,20 @@ final class MessageLinkParserTests: XCTestCase {
         ])
     }
 
+    func testPlaintextDetectsCanonicalLXMAContactLink() throws {
+        let destinationHash = String(repeating: "01", count: 16)
+        let publicKey = String(repeating: "ab", count: 64)
+        let lxma = "lxma://\(destinationHash):\(publicKey)"
+
+        let match = try XCTUnwrap(MessageLinkParser.matches(in: "Add \(lxma) now").first)
+
+        let actionURL = try XCTUnwrap(URL(string: "lxma:\(destinationHash):\(publicKey)"))
+        XCTAssertEqual(match.text, lxma)
+        XCTAssertEqual(match.target, .external(actionURL))
+        XCTAssertEqual(match.target.url, actionURL)
+        XCTAssertEqual(MessageLinkParser.target(for: actionURL), .external(actionURL))
+    }
+
     func testMarkdownLinkTargetsAllowOnlySupportedSchemes() {
         XCTAssertEqual(
             MessageLinkParser.target(for: URL(string: "https://example.com")!),

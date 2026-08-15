@@ -364,18 +364,27 @@ public struct ContactsView: View {
         } message: {
             Text("Enter a custom name for this contact. Clear to use the announce name.")
         }
-        .onChange(of: pendingDeepLink?.wrappedValue) { _, newValue in
-            if let urlString = newValue, let parsed = ContactsViewModel.parseLXMA(urlString) {
-                pendingDeepLink?.wrappedValue = nil
-                scannedContact = ScannedContact(
-                    destinationHash: parsed.destinationHash,
-                    publicKey: parsed.publicKey
-                )
-            }
+        .onAppear {
+            consumePendingDeepLink()
+        }
+        .onChange(of: pendingDeepLink?.wrappedValue) { _, _ in
+            consumePendingDeepLink()
         }
     }
 
     // MARK: - Tab Picker
+
+    /// Consume both cold-start and already-mounted LXMA URLs exactly once.
+    /// `onChange` does not fire when the binding is already populated at mount.
+    private func consumePendingDeepLink() {
+        guard let urlString = pendingDeepLink?.wrappedValue,
+              let parsed = ContactsViewModel.parseLXMA(urlString) else { return }
+        pendingDeepLink?.wrappedValue = nil
+        scannedContact = ScannedContact(
+            destinationHash: parsed.destinationHash,
+            publicKey: parsed.publicKey
+        )
+    }
 
     private func tabPicker(_ vm: ContactsViewModel) -> some View {
         Picker("Tab", selection: Binding(
