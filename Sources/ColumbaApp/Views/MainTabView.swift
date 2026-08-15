@@ -106,6 +106,7 @@ struct MainTabView: View {
         .tint(Theme.accentColor)
         .onAppear {
             consumePendingRNodeSetup()
+            routePendingDeepLink()
         }
         .onChange(of: pendingRNodeSetup) { _, requested in
             // MainTabView can already be mounted behind onboarding, in which case
@@ -114,10 +115,8 @@ struct MainTabView: View {
                 consumePendingRNodeSetup()
             }
         }
-        .onChange(of: pendingDeepLink) { _, newValue in
-            if newValue != nil {
-                selectedTab = .contacts
-            }
+        .onChange(of: pendingDeepLink) { _, _ in
+            routePendingDeepLink()
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
@@ -207,5 +206,13 @@ struct MainTabView: View {
         selectedTab = .settings
         shouldOpenRNodeWizard = true
         pendingRNodeSetup = false
+    }
+
+    /// Route both cold-start and already-mounted LXMA URLs to Contacts.
+    /// `onChange` alone misses a value that exists before this view mounts.
+    private func routePendingDeepLink() {
+        if pendingDeepLink != nil {
+            selectedTab = .contacts
+        }
     }
 }
