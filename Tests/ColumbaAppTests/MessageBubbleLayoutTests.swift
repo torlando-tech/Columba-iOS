@@ -124,6 +124,60 @@ final class MessageRendererMappingTests: XCTestCase {
     }
 }
 
+@MainActor
+final class ComposerReturnKeyPresentationTests: XCTestCase {
+    private final class SendCounter {
+        var value = 0
+    }
+
+    private func descendants<T: UIView>(of type: T.Type, in root: UIView) -> [T] {
+        root.subviews.flatMap { subview in
+            (subview as? T).map { [$0] } ?? [] + descendants(of: type, in: subview)
+        }
+    }
+
+    private func hostedComposer(sendsOnReturn: Bool) throws -> (UIHostingController<MessageInputBar>, UITextField, SendCounter) {
+        UserDefaults.standard.set(sendsOnReturn, forKey: ComposerKeyboardPreference.key)
+        let counter = SendCounter()
+        let host = UIHostingController(rootView: MessageInputBar(
+            text: .constant("Hello"),
+            attachedImage: .constant(nil),
+            attachedFiles: .constant([]),
+            onSend: { counter.value += 1 },
+            onImagePicker: {},
+            onAttachment: {}
+        ))
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 220)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        let field = try XCTUnwrap(descendants(of: UITextField.self, in: host.view).first)
+        return (host, field, counter)
+    }
+
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: ComposerKeyboardPreference.key)
+        super.tearDown()
+    }
+
+    func testDefaultReturnKeyPresentsSendAndSubmitsMessage() throws {
+        let (host, field, counter) = try hostedComposer(sendsOnReturn: true)
+        withExtendedLifetime(host) {
+            XCTAssertEqual(field.returnKeyType, .send)
+            XCTAssertEqual(field.delegate?.textFieldShouldReturn?(field), true)
+            XCTAssertEqual(counter.value, 1)
+        }
+    }
+
+    func testNewlinePreferencePresentsReturnWithoutSubmitting() throws {
+        let (host, field, counter) = try hostedComposer(sendsOnReturn: false)
+        withExtendedLifetime(host) {
+            XCTAssertEqual(field.returnKeyType, .default)
+            XCTAssertNil(field.delegate?.textFieldShouldReturn?(field))
+            XCTAssertEqual(counter.value, 0)
+        }
+    }
+}
+
 final class MessageBubbleLayoutTests: XCTestCase {
 
     private func descendants<T: UIView>(of type: T.Type, in root: UIView) -> [T] {
