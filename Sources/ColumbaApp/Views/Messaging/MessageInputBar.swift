@@ -38,11 +38,17 @@ enum ComposerReturnDecision {
 #if os(iOS)
 private final class ComposerUITextView: UITextView {
     private(set) var isPerformingPaste = false
+    private var pasteGeneration = 0
 
     override func paste(_ sender: Any?) {
+        pasteGeneration += 1
+        let generation = pasteGeneration
         isPerformingPaste = true
-        defer { isPerformingPaste = false }
         super.paste(sender)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.pasteGeneration == generation else { return }
+            self.isPerformingPaste = false
+        }
     }
 }
 
