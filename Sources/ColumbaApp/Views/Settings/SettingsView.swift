@@ -50,6 +50,9 @@ struct SettingsView: View {
     @State private var showDataMigration = false
     @State private var onboardingReviewIdentity: LocalIdentity?
     @State private var onboardingReviewError: String?
+    @State private var isMessagingExpanded = false
+    @AppStorage(ComposerKeyboardPreference.key)
+    private var sendsOnReturn = ComposerKeyboardPreference.defaultValue
     #if COLUMBA_RUNTIME_MODEL_B
     /// Presents the background-transport explainer / enable sheet.
     @State private var showBackgroundTransport = false
@@ -87,6 +90,9 @@ struct SettingsView: View {
                         AppearanceCard(
                             isExpanded: Binding(get: { vm.isAppearanceExpanded }, set: { vm.isAppearanceExpanded = $0 })
                         )
+
+                        // Messaging
+                        messagingCard
 
                         // Identity
                         identityCard(vm)
@@ -250,6 +256,28 @@ struct SettingsView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 await viewModel?.refreshConnectionState()
+            }
+        }
+    }
+
+    private var messagingCard: some View {
+        ExpandableSettingsCard(
+            icon: "message.fill",
+            title: String(localized: "Messaging"),
+            isExpanded: $isMessagingExpanded
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(String(localized: "Enter Key Sends Message"), isOn: $sendsOnReturn)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+                    .toggleStyle(AccentToggleStyle())
+                    .accessibilityIdentifier("setting_send_message_on_return")
+
+                Text(sendsOnReturn
+                    ? String(localized: "Press Enter to send. Turn this off when you want Enter to insert new lines.")
+                    : String(localized: "Press Enter to insert a new line. Use the send button to send the message."))
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
     }

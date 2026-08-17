@@ -12,6 +12,15 @@ import RNSAPI
 import UIKit
 #endif
 
+enum ComposerKeyboardPreference {
+    static let key = "send_message_on_return"
+    static let defaultValue = true
+
+    static func sendsOnReturn(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? defaultValue
+    }
+}
+
 /// Message input bar with text field and action buttons.
 ///
 /// Features:
@@ -33,6 +42,8 @@ struct MessageInputBar: View {
     var onAttachment: () -> Void
 
     @FocusState private var isFocused: Bool
+    @AppStorage(ComposerKeyboardPreference.key)
+    private var sendsOnReturn = ComposerKeyboardPreference.defaultValue
 
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
@@ -122,14 +133,7 @@ struct MessageInputBar: View {
                 // Text field container
                 HStack(alignment: .bottom, spacing: 8) {
                     // Text field
-                    TextField("Type a message...", text: $text, axis: .vertical)
-                        .font(.body)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1...6)
-                        .accessibilityIdentifier("message_composer")
-                        .focused($isFocused)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
+                    messageTextField
                 }
                 .background(Theme.backgroundTertiary)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -181,6 +185,33 @@ struct MessageInputBar: View {
             .padding(.vertical, 10)
             .background(.ultraThinMaterial)
         }
+    }
+
+    @ViewBuilder
+    private var messageTextField: some View {
+        if sendsOnReturn {
+            baseMessageTextField
+                .submitLabel(.send)
+                .onSubmit {
+                    if canSend {
+                        onSend()
+                    }
+                }
+        } else {
+            baseMessageTextField
+                .submitLabel(.return)
+        }
+    }
+
+    private var baseMessageTextField: some View {
+        TextField("Type a message...", text: $text, axis: .vertical)
+            .font(.body)
+            .foregroundStyle(Theme.textPrimary)
+            .lineLimit(1...6)
+            .accessibilityIdentifier("message_composer")
+            .focused($isFocused)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
     }
 
     // MARK: - File Chip View
