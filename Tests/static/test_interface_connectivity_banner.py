@@ -42,7 +42,7 @@ class InterfaceConnectivityBannerContractTests(unittest.TestCase):
         source = MAIN_TAB.read_text(encoding="utf-8")
 
         self.assertIn("HStack(spacing: 10)", source)
-        self.assertIn(".frame(minHeight: 32)", source)
+        self.assertIn(".frame(minHeight: 44)", source)
         self.assertIn('String(localized: "Manage")', source)
         self.assertNotIn("Text(content.message)", source)
         self.assertNotIn("Add or configure a network interface", source)

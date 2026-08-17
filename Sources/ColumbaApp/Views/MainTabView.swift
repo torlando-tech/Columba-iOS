@@ -49,7 +49,7 @@ private struct InterfaceConnectivityBanner: View {
                         .foregroundStyle(Theme.accentColor)
                         .accessibilityHidden(true)
                 }
-                .frame(minHeight: 32)
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -57,7 +57,7 @@ private struct InterfaceConnectivityBanner: View {
             .accessibilityIdentifier("connectivity_banner_manage_interfaces")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .padding(.vertical, 0)
         .background(Theme.warning.opacity(0.14))
         .overlay(alignment: .bottom) {
             Divider()
