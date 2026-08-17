@@ -1,0 +1,63 @@
+appId: network.columba.Columba
+name: interface-connectivity-banner
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+    arguments:
+      ui-screenshotter: true
+- extendedWaitUntil:
+    visible:
+      id: "interface_connectivity_banner"
+    timeout: 30000
+- assertVisible:
+    text: "No Interfaces Connected"
+- assertVisible:
+    text: "Manage"
+
+# Cold route: Settings has not been selected or initialized by the user yet.
+- tapOn:
+    id: "interface_connectivity_banner"
+- extendedWaitUntil:
+    visible:
+      text: "Network Interfaces"
+    timeout: 10000
+- assertVisible:
+    text: "Network Interfaces"
+- tapOn:
+    id: "BackButton"
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+
+# Mount Settings normally, leave it, then route through the banner again.
+- tapOn:
+    id: "tab_chats|message.fill"
+- assertVisible:
+    id: "interface_connectivity_banner"
+- tapOn:
+    id: "tab_settings|gearshape.fill"
+- assertVisible:
+    id: "screen_settings"
+- tapOn:
+    id: "tab_chats|message.fill"
+- tapOn:
+    id: "interface_connectivity_banner"
+- extendedWaitUntil:
+    visible:
+      text: "Network Interfaces"
+    timeout: 10000
+- tapOn:
+    id: "BackButton"
+
+# A third request proves the consumed Boolean route can be raised repeatedly.
+- tapOn:
+    id: "tab_chats|message.fill"
+- tapOn:
+    id: "interface_connectivity_banner"
+- extendedWaitUntil:
+    visible:
+      text: "Network Interfaces"
+    timeout: 10000
+- takeScreenshot: "interface-connectivity-banner-route"

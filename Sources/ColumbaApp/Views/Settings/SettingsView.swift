@@ -38,6 +38,8 @@ struct SettingsView: View {
     /// Session-scoped flag from MainTabView requesting the RNode wizard.
     /// Cleared by SettingsView only after the wizard has actually been triggered.
     @Binding var shouldOpenRNodeWizard: Bool
+    /// Session-scoped request from the app shell to push Network Interfaces.
+    @Binding var shouldOpenInterfaceManagement: Bool
 
     // MARK: - State
 
@@ -240,6 +242,11 @@ struct SettingsView: View {
                 openRequestedRNodeWizard()
             }
         }
+        .onChange(of: shouldOpenInterfaceManagement) { _, requested in
+            if requested {
+                openRequestedInterfaceManagement()
+            }
+        }
         .task {
             if viewModel == nil {
                 viewModel = SettingsViewModel(
@@ -251,6 +258,7 @@ struct SettingsView: View {
             await viewModel?.loadSettings()
 
             openRequestedRNodeWizard()
+            openRequestedInterfaceManagement()
 
             // Poll connection state every 2s so the card stays live
             while !Task.isCancelled {
@@ -302,6 +310,26 @@ struct SettingsView: View {
             shouldOpenRNodeWizard = false
         }
         #endif
+    }
+
+    /// Consume a root-level route request after Settings has mounted. The same
+    /// helper owns direct taps inside Settings so both paths build identical state.
+    private func openRequestedInterfaceManagement() {
+        guard shouldOpenInterfaceManagement else { return }
+        openInterfaceManagement()
+        shouldOpenInterfaceManagement = false
+    }
+
+    private func openInterfaceManagement() {
+        if interfaceRepository == nil {
+            let repo = InterfaceRepository()
+            interfaceRepository = repo
+            interfaceViewModel = InterfaceManagementViewModel(
+                repository: repo,
+                appServices: appServices
+            )
+        }
+        showInterfaceManagement = true
     }
 
     // MARK: - Network Card
@@ -365,15 +393,7 @@ struct SettingsView: View {
 
                 // Manage Interfaces Button
                 Button(action: {
-                    if interfaceRepository == nil {
-                        let repo = InterfaceRepository()
-                        interfaceRepository = repo
-                        interfaceViewModel = InterfaceManagementViewModel(
-                            repository: repo,
-                            appServices: appServices
-                        )
-                    }
-                    showInterfaceManagement = true
+                    openInterfaceManagement()
                 }) {
                     HStack(spacing: 8) {
                         Image(systemName: "gearshape")

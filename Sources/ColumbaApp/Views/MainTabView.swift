@@ -9,6 +9,62 @@
 import SwiftUI
 import RNSAPI
 
+struct InterfaceConnectivityBannerContent: Equatable {
+    let title: String
+    let actionTitle: String
+
+    static func forConnectionState(isConnected: Bool) -> Self? {
+        guard !isConnected else { return nil }
+        return Self(
+            title: String(localized: "No Interfaces Connected"),
+            actionTitle: String(localized: "Manage")
+        )
+    }
+}
+
+private struct InterfaceConnectivityBanner: View {
+    let content: InterfaceConnectivityBannerContent
+    let onManageInterfaces: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button(action: onManageInterfaces) {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.warning)
+                        .accessibilityHidden(true)
+
+                    Text(content.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+
+                    Spacer(minLength: 8)
+
+                    Text(content.actionTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.accentColor)
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.accentColor)
+                        .accessibilityHidden(true)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens network interface settings")
+            .accessibilityIdentifier("interface_connectivity_banner")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 0)
+        .background(Theme.warning.opacity(0.14))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+}
+
 /// Main tab-based navigation container.
 ///
 /// Provides navigation between:
@@ -37,6 +93,9 @@ struct MainTabView: View {
     /// trigger the wizard. The request may exist before MainTabView appears or
     /// arrive later when onboarding completes over an already-mounted tab view.
     @State private var shouldOpenRNodeWizard: Bool = false
+    /// Session-scoped route request raised by the disconnected-interface banner.
+    /// Settings consumes it after its navigation stack and interface model exist.
+    @State private var shouldOpenInterfaceManagement: Bool = false
     /// Which app-root voice-call cover (if any) is showing, driven off
     /// callManager.callState so a call's UI shows from any tab and survives
     /// navigating away from the chat. A single optional makes the two covers
@@ -51,7 +110,22 @@ struct MainTabView: View {
     // MARK: - Body
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        VStack(spacing: 0) {
+            // The shipping runtime owns the aggregate TCP/Auto/RNode/BLE state.
+            // Model B's relay lives in the Network Extension and is not represented
+            // by AppServices.isConnected, so do not present a false offline banner there.
+            #if COLUMBA_RUNTIME_PYTHON
+            if let content = InterfaceConnectivityBannerContent.forConnectionState(
+                isConnected: appServices.isConnected
+            ) {
+                InterfaceConnectivityBanner(content: content) {
+                    selectedTab = .settings
+                    shouldOpenInterfaceManagement = true
+                }
+            }
+            #endif
+
+            TabView(selection: $selectedTab) {
             // Chats Tab
             ChatsView(
                 appServices: appServices,
@@ -95,13 +169,15 @@ struct MainTabView: View {
                 settingsRepository: settingsRepository,
                 identityManager: identityManager,
                 onIdentitySwitch: onIdentitySwitch,
-                shouldOpenRNodeWizard: $shouldOpenRNodeWizard
+                shouldOpenRNodeWizard: $shouldOpenRNodeWizard,
+                shouldOpenInterfaceManagement: $shouldOpenInterfaceManagement
             )
             .tabItem {
                 Label(Tab.settings.title, systemImage: Tab.settings.icon)
                     .accessibilityIdentifier("tab_settings")
             }
             .tag(Tab.settings)
+            }
         }
         .tint(Theme.accentColor)
         .onAppear {
