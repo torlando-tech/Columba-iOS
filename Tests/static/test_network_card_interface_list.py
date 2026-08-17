@@ -13,6 +13,8 @@ class NetworkCardInterfaceListContractTests(unittest.TestCase):
         source = SETTINGS_VM.read_text()
         refresh = source[source.index("public func refreshConnectionState() async") :]
 
+        self.assertIn("let configuredInterfaces = InterfaceRepository().interfaces", refresh)
+        self.assertNotIn("InterfaceRepository().getEnabledInterfaces()", refresh)
         self.assertIn("for (entityId, tcpInterface) in appServices.tcpInterfaces", refresh)
         self.assertIn("runtimeTCPStates[entityId] = await tcpInterface.state", refresh)
         self.assertIn("runtimeStates: runtimeTCPStates", refresh)

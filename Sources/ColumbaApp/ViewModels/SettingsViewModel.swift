@@ -539,7 +539,10 @@ public final class SettingsViewModel {
         // Build connected interface string from all active interfaces.
         var activeInterfaces: [String] = []
 
-        let configuredInterfaces = InterfaceRepository().getEnabledInterfaces()
+        // Pass the complete persisted snapshot. The presenter owns enabled-state
+        // filtering and needs disabled IDs to distinguish teardown-in-progress
+        // entries from genuinely unmapped runtime-created interfaces.
+        let configuredInterfaces = InterfaceRepository().interfaces
 
         if modelB {
             // Model B: the NE owns MULTIPLE relays (one `ne-tcp-relay-<entityId>` per
