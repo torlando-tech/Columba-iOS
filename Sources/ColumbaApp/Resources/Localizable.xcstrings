@@ -1,6 +1,46 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Add or configure a network interface to establish connectivity.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add or configure a network interface to establish connectivity."
+          }
+        }
+      }
+    },
+    "Manage Interfaces": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manage Interfaces"
+          }
+        }
+      }
+    },
+    "No Interfaces Connected": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Interfaces Connected"
+          }
+        }
+      }
+    },
+    "Opens network interface settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens network interface settings"
+          }
+        }
+      }
+    },
     "A relay helps your device reach Reticulum peers over the internet. It transports encrypted Reticulum traffic — it does not create an account or hold your identity. We've selected a recommended default.": {
       "localizations": {
         "en": {

@@ -9,6 +9,60 @@
 import SwiftUI
 import RNSAPI
 
+struct InterfaceConnectivityBannerContent: Equatable {
+    let title: String
+    let message: String
+    let actionTitle: String
+
+    static func forConnectionState(isConnected: Bool) -> Self? {
+        guard !isConnected else { return nil }
+        return Self(
+            title: String(localized: "No Interfaces Connected"),
+            message: String(localized: "Add or configure a network interface to establish connectivity."),
+            actionTitle: String(localized: "Manage Interfaces")
+        )
+    }
+}
+
+private struct InterfaceConnectivityBanner: View {
+    let content: InterfaceConnectivityBannerContent
+    let onManageInterfaces: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.warning)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(content.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(content.message)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 4)
+
+            Button(content.actionTitle, action: onManageInterfaces)
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accentColor)
+                .accessibilityHint("Opens network interface settings")
+                .accessibilityIdentifier("connectivity_banner_manage_interfaces")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Theme.warning.opacity(0.14))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .accessibilityIdentifier("interface_connectivity_banner")
+    }
+}
+
 /// Main tab-based navigation container.
 ///
 /// Provides navigation between:
@@ -37,6 +91,9 @@ struct MainTabView: View {
     /// trigger the wizard. The request may exist before MainTabView appears or
     /// arrive later when onboarding completes over an already-mounted tab view.
     @State private var shouldOpenRNodeWizard: Bool = false
+    /// Session-scoped route request raised by the disconnected-interface banner.
+    /// Settings consumes it after its navigation stack and interface model exist.
+    @State private var shouldOpenInterfaceManagement: Bool = false
     /// Which app-root voice-call cover (if any) is showing, driven off
     /// callManager.callState so a call's UI shows from any tab and survives
     /// navigating away from the chat. A single optional makes the two covers
@@ -95,7 +152,8 @@ struct MainTabView: View {
                 settingsRepository: settingsRepository,
                 identityManager: identityManager,
                 onIdentitySwitch: onIdentitySwitch,
-                shouldOpenRNodeWizard: $shouldOpenRNodeWizard
+                shouldOpenRNodeWizard: $shouldOpenRNodeWizard,
+                shouldOpenInterfaceManagement: $shouldOpenInterfaceManagement
             )
             .tabItem {
                 Label(Tab.settings.title, systemImage: Tab.settings.icon)
@@ -104,6 +162,16 @@ struct MainTabView: View {
             .tag(Tab.settings)
         }
         .tint(Theme.accentColor)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let content = InterfaceConnectivityBannerContent.forConnectionState(
+                isConnected: appServices.isConnected
+            ) {
+                InterfaceConnectivityBanner(content: content) {
+                    selectedTab = .settings
+                    shouldOpenInterfaceManagement = true
+                }
+            }
+        }
         .onAppear {
             consumePendingRNodeSetup()
             routePendingDeepLink()
