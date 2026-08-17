@@ -19,8 +19,7 @@ final class RuntimeFlavorTests: XCTestCase {
             InterfaceConnectivityBannerContent.forConnectionState(isConnected: false),
             InterfaceConnectivityBannerContent(
                 title: "No Interfaces Connected",
-                message: "Add or configure a network interface to establish connectivity.",
-                actionTitle: "Manage Interfaces"
+                actionTitle: "Manage"
             )
         )
     }
