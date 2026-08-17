@@ -72,6 +72,39 @@ final class ComposerKeyboardPreferenceTests: XCTestCase {
 
         XCTAssertFalse(ComposerKeyboardPreference.sendsOnReturn(in: defaults))
     }
+
+    func testOnlyUnmarkedKeyboardReturnSubmits() {
+        XCTAssertTrue(ComposerReturnDecision.shouldSubmit(
+            replacementText: "\n",
+            sendsOnReturn: true,
+            hasMarkedText: false,
+            isPerformingPaste: false
+        ))
+        XCTAssertFalse(ComposerReturnDecision.shouldSubmit(
+            replacementText: "\n",
+            sendsOnReturn: true,
+            hasMarkedText: false,
+            isPerformingPaste: true
+        ))
+        XCTAssertFalse(ComposerReturnDecision.shouldSubmit(
+            replacementText: "\n",
+            sendsOnReturn: true,
+            hasMarkedText: true,
+            isPerformingPaste: false
+        ))
+        XCTAssertFalse(ComposerReturnDecision.shouldSubmit(
+            replacementText: "\n",
+            sendsOnReturn: false,
+            hasMarkedText: false,
+            isPerformingPaste: false
+        ))
+        XCTAssertFalse(ComposerReturnDecision.shouldSubmit(
+            replacementText: "pasted text",
+            sendsOnReturn: true,
+            hasMarkedText: false,
+            isPerformingPaste: false
+        ))
+    }
 }
 
 final class MessageTextScaleTests: XCTestCase {

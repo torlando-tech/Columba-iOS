@@ -21,7 +21,31 @@ enum ComposerKeyboardPreference {
     }
 }
 
+enum ComposerReturnDecision {
+    static func shouldSubmit(
+        replacementText: String,
+        sendsOnReturn: Bool,
+        hasMarkedText: Bool,
+        isPerformingPaste: Bool
+    ) -> Bool {
+        replacementText == "\n"
+            && sendsOnReturn
+            && !hasMarkedText
+            && !isPerformingPaste
+    }
+}
+
 #if os(iOS)
+private final class ComposerUITextView: UITextView {
+    private(set) var isPerformingPaste = false
+
+    override func paste(_ sender: Any?) {
+        isPerformingPaste = true
+        defer { isPerformingPaste = false }
+        super.paste(sender)
+    }
+}
+
 private struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let sendsOnReturn: Bool
@@ -32,7 +56,7 @@ private struct ComposerTextView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = ComposerUITextView()
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
         textView.font = .preferredFont(forTextStyle: .body)
@@ -99,9 +123,13 @@ private struct ComposerTextView: UIViewRepresentable {
             shouldChangeTextIn range: NSRange,
             replacementText replacement: String
         ) -> Bool {
-            guard replacement == "\n",
-                  sendsOnReturn,
-                  textView.markedTextRange == nil else { return true }
+            let shouldSubmit = ComposerReturnDecision.shouldSubmit(
+                replacementText: replacement,
+                sendsOnReturn: sendsOnReturn,
+                hasMarkedText: textView.markedTextRange != nil,
+                isPerformingPaste: (textView as? ComposerUITextView)?.isPerformingPaste == true
+            )
+            guard shouldSubmit else { return true }
             onSubmit()
             return false
         }
