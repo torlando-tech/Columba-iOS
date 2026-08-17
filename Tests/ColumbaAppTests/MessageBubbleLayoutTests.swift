@@ -174,7 +174,7 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         let (window, field, state, counter) = try hostedComposer(sendsOnReturn: true)
         defer {
             window.isHidden = true
-            window.rootViewController = nil
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         }
         withExtendedLifetime(window) {
             XCTAssertEqual(field.returnKeyType, .send)
@@ -194,7 +194,7 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         let (window, field, _, counter) = try hostedComposer(sendsOnReturn: true)
         defer {
             window.isHidden = true
-            window.rootViewController = nil
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         }
         withExtendedLifetime(window) {
             field.setMarkedText("候", selectedRange: NSRange(location: 1, length: 0))
@@ -215,7 +215,7 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         let (window, field, state, counter) = try hostedComposer(sendsOnReturn: false)
         defer {
             window.isHidden = true
-            window.rootViewController = nil
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         }
         withExtendedLifetime(window) {
             XCTAssertEqual(field.returnKeyType, .default)
