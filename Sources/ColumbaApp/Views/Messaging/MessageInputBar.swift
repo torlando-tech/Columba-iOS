@@ -43,6 +43,7 @@ private struct ComposerTextView: UIViewRepresentable {
         textView.textContainer.lineFragmentPadding = 0
         textView.isScrollEnabled = false
         textView.accessibilityIdentifier = "message_composer"
+        textView.accessibilityLabel = String(localized: "Type a message...")
         return textView
     }
 
@@ -98,7 +99,9 @@ private struct ComposerTextView: UIViewRepresentable {
             shouldChangeTextIn range: NSRange,
             replacementText replacement: String
         ) -> Bool {
-            guard replacement == "\n", sendsOnReturn else { return true }
+            guard replacement == "\n",
+                  sendsOnReturn,
+                  textView.markedTextRange == nil else { return true }
             onSubmit()
             return false
         }
@@ -280,6 +283,7 @@ struct MessageInputBar: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
 
             #if os(iOS)

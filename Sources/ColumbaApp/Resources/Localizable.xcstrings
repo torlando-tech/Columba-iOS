@@ -991,6 +991,17 @@
     "The attachment could not be prepared for preview.": {
       "comment": "Privacy-safe error text shown when temporary attachment export fails."
     },
+    "Type a message...": {
+      "comment": "Placeholder and VoiceOver label for the message composer.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Type a message..."
+          }
+        }
+      }
+    },
     "Enter Key Sends Message": {
       "comment": "Settings toggle controlling whether the on-screen keyboard Enter key sends the current message.",
       "localizations": {

@@ -174,6 +174,7 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         let (window, field, state, counter) = try hostedComposer(sendsOnReturn: true)
         withExtendedLifetime(window) {
             XCTAssertEqual(field.returnKeyType, .send)
+            XCTAssertEqual(field.accessibilityLabel, "Type a message...")
             let shouldInsertNewline = field.delegate?.textView?(
                 field,
                 shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
@@ -182,6 +183,23 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
             XCTAssertEqual(shouldInsertNewline, false)
             XCTAssertEqual(counter.value, 1)
             XCTAssertEqual(state.text, "Hello")
+        }
+    }
+
+    func testMarkedTextIsCommittedInsteadOfSending() throws {
+        let (window, field, _, counter) = try hostedComposer(sendsOnReturn: true)
+        withExtendedLifetime(window) {
+            field.setMarkedText("候", selectedRange: NSRange(location: 1, length: 0))
+            XCTAssertNotNil(field.markedTextRange)
+
+            let shouldCommitMarkedText = field.delegate?.textView?(
+                field,
+                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
+                replacementText: "\n"
+            )
+
+            XCTAssertEqual(shouldCommitMarkedText, true)
+            XCTAssertEqual(counter.value, 0)
         }
     }
 
