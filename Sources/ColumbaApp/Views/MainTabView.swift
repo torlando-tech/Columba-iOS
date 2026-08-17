@@ -11,15 +11,13 @@ import RNSAPI
 
 struct InterfaceConnectivityBannerContent: Equatable {
     let title: String
-    let message: String
     let actionTitle: String
 
     static func forConnectionState(isConnected: Bool) -> Self? {
         guard !isConnected else { return nil }
         return Self(
             title: String(localized: "No Interfaces Connected"),
-            message: String(localized: "Add or configure a network interface to establish connectivity."),
-            actionTitle: String(localized: "Manage Interfaces")
+            actionTitle: String(localized: "Manage")
         )
     }
 }
@@ -29,32 +27,37 @@ private struct InterfaceConnectivityBanner: View {
     let onManageInterfaces: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.warning)
-                .accessibilityHidden(true)
+        VStack(spacing: 0) {
+            Button(action: onManageInterfaces) {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.warning)
+                        .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(content.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(content.message)
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(content.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
 
-                Button(content.actionTitle, action: onManageInterfaces)
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .tint(Theme.accentColor)
-                    .padding(.top, 2)
-                    .accessibilityHint("Opens network interface settings")
-                    .accessibilityIdentifier("connectivity_banner_manage_interfaces")
+                    Spacer(minLength: 8)
+
+                    Text(content.actionTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.accentColor)
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.accentColor)
+                        .accessibilityHidden(true)
+                }
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens network interface settings")
+            .accessibilityIdentifier("connectivity_banner_manage_interfaces")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 6)
         .background(Theme.warning.opacity(0.14))
         .overlay(alignment: .bottom) {
             Divider()

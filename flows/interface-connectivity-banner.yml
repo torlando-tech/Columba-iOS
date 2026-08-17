@@ -13,7 +13,7 @@ name: interface-connectivity-banner
 - assertVisible:
     text: "No Interfaces Connected"
 - assertVisible:
-    text: "Add or configure a network interface to establish connectivity."
+    text: "Manage"
 
 # Cold route: Settings has not been selected or initialized by the user yet.
 - tapOn:

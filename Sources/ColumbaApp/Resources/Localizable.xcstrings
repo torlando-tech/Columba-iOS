@@ -1,12 +1,12 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "Add or configure a network interface to establish connectivity.": {
+    "Manage": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Add or configure a network interface to establish connectivity."
+            "value": "Manage"
           }
         }
       }

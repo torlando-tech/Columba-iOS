@@ -38,11 +38,20 @@ class InterfaceConnectivityBannerContractTests(unittest.TestCase):
         self.assertIn("showInterfaceManagement = true", settings)
         self.assertIn("shouldOpenInterfaceManagement = false", settings)
 
+    def test_persistent_banner_uses_compact_single_row(self) -> None:
+        source = MAIN_TAB.read_text(encoding="utf-8")
+
+        self.assertIn("HStack(spacing: 10)", source)
+        self.assertIn(".frame(minHeight: 32)", source)
+        self.assertIn('String(localized: "Manage")', source)
+        self.assertNotIn("Text(content.message)", source)
+        self.assertNotIn("Add or configure a network interface", source)
+
     def test_banner_copy_is_translation_ready(self) -> None:
         catalog = json.loads(LOCALIZATIONS.read_text(encoding="utf-8"))
         required = {
             "No Interfaces Connected",
-            "Add or configure a network interface to establish connectivity.",
+            "Manage",
             "Manage Interfaces",
             "Opens network interface settings",
         }
