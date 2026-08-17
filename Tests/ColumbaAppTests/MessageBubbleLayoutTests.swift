@@ -172,6 +172,10 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
 
     func testDefaultReturnKeyPresentsSendAndSubmitsMessage() throws {
         let (window, field, state, counter) = try hostedComposer(sendsOnReturn: true)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
         withExtendedLifetime(window) {
             XCTAssertEqual(field.returnKeyType, .send)
             XCTAssertEqual(field.accessibilityLabel, "Type a message...")
@@ -188,6 +192,10 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
 
     func testMarkedTextIsCommittedInsteadOfSending() throws {
         let (window, field, _, counter) = try hostedComposer(sendsOnReturn: true)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
         withExtendedLifetime(window) {
             field.setMarkedText("候", selectedRange: NSRange(location: 1, length: 0))
             XCTAssertNotNil(field.markedTextRange)
@@ -205,6 +213,10 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
 
     func testNewlinePreferencePresentsReturnWithoutSubmitting() throws {
         let (window, field, state, counter) = try hostedComposer(sendsOnReturn: false)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
         withExtendedLifetime(window) {
             XCTAssertEqual(field.returnKeyType, .default)
             let shouldInsertNewline = field.delegate?.textView?(
