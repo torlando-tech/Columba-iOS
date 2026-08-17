@@ -53,6 +53,27 @@ final class IncomingMessageSizeLimitTests: XCTestCase {
     }
 }
 
+final class ComposerKeyboardPreferenceTests: XCTestCase {
+    private let key = "send_message_on_return"
+
+    func testReturnKeyDefaultsToSendingMessages() {
+        let suiteName = "ComposerKeyboardPreferenceTests-default-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertTrue(ComposerKeyboardPreference.sendsOnReturn(in: defaults))
+    }
+
+    func testReturnKeyCanBeConfiguredToInsertNewlines() {
+        let suiteName = "ComposerKeyboardPreferenceTests-newline-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(false, forKey: key)
+
+        XCTAssertFalse(ComposerKeyboardPreference.sendsOnReturn(in: defaults))
+    }
+}
+
 final class MessageTextScaleTests: XCTestCase {
     private let key = "message_text_scale"
 
