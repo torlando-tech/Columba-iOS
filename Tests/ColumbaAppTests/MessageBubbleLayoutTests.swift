@@ -124,6 +124,135 @@ final class MessageRendererMappingTests: XCTestCase {
     }
 }
 
+@MainActor
+final class ComposerReturnKeyPresentationTests: XCTestCase {
+    private final class SendCounter {
+        var value = 0
+    }
+
+    private final class ComposerState {
+        var text = "Hello"
+    }
+
+    private func descendants<T: UIView>(of type: T.Type, in root: UIView) -> [T] {
+        root.subviews.flatMap { subview in
+            (subview as? T).map { [$0] } ?? [] + descendants(of: type, in: subview)
+        }
+    }
+
+    private func hostedComposer(sendsOnReturn: Bool) throws -> (UIWindow, UITextView, ComposerState, SendCounter) {
+        UserDefaults.standard.set(sendsOnReturn, forKey: ComposerKeyboardPreference.key)
+        let state = ComposerState()
+        let counter = SendCounter()
+        let host = UIHostingController(rootView: MessageInputBar(
+            text: Binding(get: { state.text }, set: { state.text = $0 }),
+            attachedImage: .constant(nil),
+            attachedFiles: .constant([]),
+            onSend: { counter.value += 1 },
+            onImagePicker: {},
+            onAttachment: {}
+        ))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 220))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        let field = try XCTUnwrap(
+            descendants(of: UITextView.self, in: host.view)
+                .first(where: { $0.accessibilityIdentifier == "message_composer" })
+        )
+        return (window, field, state, counter)
+    }
+
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: ComposerKeyboardPreference.key)
+        super.tearDown()
+    }
+
+    func testDefaultReturnKeyPresentsSendAndSubmitsMessage() throws {
+        let (window, field, state, counter) = try hostedComposer(sendsOnReturn: true)
+        defer {
+            window.isHidden = true
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        withExtendedLifetime(window) {
+            XCTAssertEqual(field.returnKeyType, .send)
+            XCTAssertEqual(field.accessibilityLabel, "Type a message...")
+            let shouldInsertNewline = field.delegate?.textView?(
+                field,
+                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
+                replacementText: "\n"
+            )
+            XCTAssertEqual(shouldInsertNewline, false)
+            XCTAssertEqual(counter.value, 1)
+            XCTAssertEqual(state.text, "Hello")
+        }
+    }
+
+    func testMarkedTextIsCommittedInsteadOfSending() throws {
+        let (window, field, _, counter) = try hostedComposer(sendsOnReturn: true)
+        defer {
+            window.isHidden = true
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        withExtendedLifetime(window) {
+            field.setMarkedText("候", selectedRange: NSRange(location: 1, length: 0))
+            XCTAssertNotNil(field.markedTextRange)
+
+            let shouldCommitMarkedText = field.delegate?.textView?(
+                field,
+                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
+                replacementText: "\n"
+            )
+
+            XCTAssertEqual(shouldCommitMarkedText, true)
+            XCTAssertEqual(counter.value, 0)
+        }
+    }
+
+    func testPastedSingleNewlineIsInsertedWithoutSending() throws {
+        let pasteboard = UIPasteboard.general
+        let previousItems = pasteboard.items
+        let (window, field, state, counter) = try hostedComposer(sendsOnReturn: true)
+        defer {
+            pasteboard.items = previousItems
+            window.isHidden = true
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+
+        pasteboard.string = "\n"
+        XCTAssertTrue(field.becomeFirstResponder())
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        field.selectedRange = NSRange(location: field.text.count, length: 0)
+        field.paste(nil)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+
+        XCTAssertEqual(counter.value, 0)
+        XCTAssertEqual(field.text, "Hello\n")
+        XCTAssertEqual(state.text, "Hello\n")
+    }
+
+    func testNewlinePreferencePresentsReturnWithoutSubmitting() throws {
+        let (window, field, state, counter) = try hostedComposer(sendsOnReturn: false)
+        defer {
+            window.isHidden = true
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        withExtendedLifetime(window) {
+            XCTAssertEqual(field.returnKeyType, .default)
+            let shouldInsertNewline = field.delegate?.textView?(
+                field,
+                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
+                replacementText: "\n"
+            )
+            XCTAssertEqual(shouldInsertNewline, true)
+            XCTAssertEqual(counter.value, 0)
+            XCTAssertEqual(state.text, "Hello")
+        }
+    }
+}
+
 final class MessageBubbleLayoutTests: XCTestCase {
 
     private func descendants<T: UIView>(of type: T.Type, in root: UIView) -> [T] {

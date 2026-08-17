@@ -991,6 +991,61 @@
     "The attachment could not be prepared for preview.": {
       "comment": "Privacy-safe error text shown when temporary attachment export fails."
     },
+    "Type a message...": {
+      "comment": "Placeholder and VoiceOver label for the message composer.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Type a message..."
+          }
+        }
+      }
+    },
+    "Enter Key Sends Message": {
+      "comment": "Settings toggle controlling whether the on-screen keyboard Enter key sends the current message.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter Key Sends Message"
+          }
+        }
+      }
+    },
+    "Messaging": {
+      "comment": "Title of the settings card containing message composition preferences.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Messaging"
+          }
+        }
+      }
+    },
+    "Press Enter to send. Turn this off when you want Enter to insert new lines.": {
+      "comment": "Explanation shown when the message composer Enter key sends messages.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Press Enter to send. Turn this off when you want Enter to insert new lines."
+          }
+        }
+      }
+    },
+    "Press Enter to insert a new line. Use the send button to send the message.": {
+      "comment": "Explanation shown when the message composer Enter key inserts a line break.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Press Enter to insert a new line. Use the send button to send the message."
+          }
+        }
+      }
+    },
     "Messages from contacts only": {
       "comment": "Label for the privacy control that rejects messages from unknown senders.",
       "localizations": {
