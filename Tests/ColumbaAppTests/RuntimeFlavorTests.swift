@@ -14,6 +14,23 @@ import XCTest
 #endif
 
 final class RuntimeFlavorTests: XCTestCase {
+    func testDisconnectedInterfaceBannerOffersDirectRecovery() {
+        XCTAssertEqual(
+            InterfaceConnectivityBannerContent.forConnectionState(isConnected: false),
+            InterfaceConnectivityBannerContent(
+                title: "No Interfaces Connected",
+                message: "Add or configure a network interface to establish connectivity.",
+                actionTitle: "Manage Interfaces"
+            )
+        )
+    }
+
+    func testConnectedInterfaceHidesConnectivityBanner() {
+        XCTAssertNil(
+            InterfaceConnectivityBannerContent.forConnectionState(isConnected: true)
+        )
+    }
+
     func testActiveFlavorMatchesHostConfiguration() {
         #if COLUMBA_RUNTIME_MODEL_B
         XCTAssertEqual(BackendPreference.runtimeFlavor, .modelB)
