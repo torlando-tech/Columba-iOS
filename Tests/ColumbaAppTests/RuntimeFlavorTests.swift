@@ -14,6 +14,40 @@ import XCTest
 #endif
 
 final class RuntimeFlavorTests: XCTestCase {
+    func testNetworkCardListsEveryConnectedTCPInterface() {
+        let interfaces = [
+            InterfaceEntity(
+                id: "primary",
+                name: "Primary Relay",
+                type: .tcpClient,
+                config: .tcpClient(TCPClientConfig(targetHost: "relay-one.example", targetPort: 4242))
+            ),
+            InterfaceEntity(
+                id: "secondary",
+                name: "Secondary Relay",
+                type: .tcpClient,
+                config: .tcpClient(TCPClientConfig(targetHost: "relay-two.example", targetPort: 4243))
+            ),
+            InterfaceEntity(
+                id: "offline",
+                name: "Offline Relay",
+                type: .tcpClient,
+                config: .tcpClient(TCPClientConfig(targetHost: "offline.example", targetPort: 4244))
+            ),
+        ]
+
+        XCTAssertEqual(
+            NetworkInterfacePresentation.connectedTCPDescriptions(
+                configuredInterfaces: interfaces,
+                connectedEntityIds: ["primary", "secondary"]
+            ),
+            [
+                "TCP (relay-one.example:4242)",
+                "TCP (relay-two.example:4243)",
+            ]
+        )
+    }
+
     func testDisconnectedInterfaceBannerOffersDirectRecovery() {
         XCTAssertEqual(
             InterfaceConnectivityBannerContent.forConnectionState(isConnected: false),
