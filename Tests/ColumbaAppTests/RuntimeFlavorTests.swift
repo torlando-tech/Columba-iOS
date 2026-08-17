@@ -36,15 +36,21 @@ final class RuntimeFlavorTests: XCTestCase {
             ),
         ]
 
+        let descriptions = NetworkInterfacePresentation.connectedTCPDescriptions(
+            configuredInterfaces: interfaces,
+            connectedEntityIds: ["primary", "secondary"]
+        )
+
         XCTAssertEqual(
-            NetworkInterfacePresentation.connectedTCPDescriptions(
-                configuredInterfaces: interfaces,
-                connectedEntityIds: ["primary", "secondary"]
-            ),
+            descriptions,
             [
                 "TCP (relay-one.example:4242)",
                 "TCP (relay-two.example:4243)",
             ]
+        )
+        XCTAssertEqual(
+            NetworkInterfacePresentation.listText(descriptions),
+            "TCP (relay-one.example:4242)\nTCP (relay-two.example:4243)"
         )
     }
 

@@ -70,6 +70,10 @@ public struct IdentityInfo: Equatable {
 // MARK: - SettingsViewModel
 
 enum NetworkInterfacePresentation {
+    static func listText(_ descriptions: [String]) -> String {
+        descriptions.isEmpty ? "No active interface" : descriptions.joined(separator: "\n")
+    }
+
     static func connectedTCPDescriptions(
         configuredInterfaces: [InterfaceEntity],
         connectedEntityIds: Set<String>
@@ -575,7 +579,7 @@ public final class SettingsViewModel {
                 activeInterfaces.append("Bluetooth LE")
             }
         }
-        connectedInterface = activeInterfaces.isEmpty ? "No active interface" : activeInterfaces.joined(separator: ", ")
+        connectedInterface = NetworkInterfacePresentation.listText(activeInterfaces)
 
         // Overall state: in Model B "connected" = at least one active interface
         // (the NE relay or an app-owned radio); otherwise defer to the app's own

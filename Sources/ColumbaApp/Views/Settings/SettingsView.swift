@@ -360,14 +360,15 @@ struct SettingsView: View {
                 }
 
                 if vm.isConnected {
-                    HStack {
-                        Text("Interface:")
+                    HStack(alignment: .top) {
+                        Text("Interfaces:")
                             .font(.subheadline)
                             .foregroundStyle(Theme.textSecondary)
 
                         Text(vm.connectedInterface)
                             .font(.subheadline)
                             .foregroundStyle(Theme.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
