@@ -54,7 +54,7 @@ private struct InterfaceConnectivityBanner: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Opens network interface settings")
-            .accessibilityIdentifier("connectivity_banner_manage_interfaces")
+            .accessibilityIdentifier("interface_connectivity_banner")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 0)
@@ -62,7 +62,6 @@ private struct InterfaceConnectivityBanner: View {
         .overlay(alignment: .bottom) {
             Divider()
         }
-        .accessibilityIdentifier("interface_connectivity_banner")
     }
 }
 

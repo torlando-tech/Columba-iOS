@@ -17,10 +17,9 @@ class InterfaceConnectivityBannerContractTests(unittest.TestCase):
 
         self.assertIn("#if COLUMBA_RUNTIME_PYTHON", source)
         self.assertIn("isConnected: appServices.isConnected", source)
-        self.assertIn('accessibilityIdentifier("interface_connectivity_banner")', source)
-        self.assertIn(
-            'accessibilityIdentifier("connectivity_banner_manage_interfaces")',
-            source,
+        self.assertEqual(
+            source.count('accessibilityIdentifier("interface_connectivity_banner")'),
+            1,
         )
 
     def test_banner_action_routes_directly_to_interface_management(self) -> None:
@@ -63,10 +62,9 @@ class InterfaceConnectivityBannerContractTests(unittest.TestCase):
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("interface-connectivity-banner.yml", workflow)
-        self.assertIn('id: "interface_connectivity_banner"', flow)
         self.assertEqual(
-            flow.count('id: "connectivity_banner_manage_interfaces"'),
-            3,
+            flow.count('id: "interface_connectivity_banner"'),
+            5,
         )
         self.assertGreaterEqual(flow.count('text: "Network Interfaces"'), 3)
         self.assertIn('id: "screen_settings"', flow)

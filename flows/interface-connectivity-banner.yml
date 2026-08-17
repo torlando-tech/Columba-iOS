@@ -17,7 +17,7 @@ name: interface-connectivity-banner
 
 # Cold route: Settings has not been selected or initialized by the user yet.
 - tapOn:
-    id: "connectivity_banner_manage_interfaces"
+    id: "interface_connectivity_banner"
 - extendedWaitUntil:
     visible:
       text: "Network Interfaces"
@@ -42,7 +42,7 @@ name: interface-connectivity-banner
 - tapOn:
     id: "tab_chats|message.fill"
 - tapOn:
-    id: "connectivity_banner_manage_interfaces"
+    id: "interface_connectivity_banner"
 - extendedWaitUntil:
     visible:
       text: "Network Interfaces"
@@ -53,7 +53,7 @@ name: interface-connectivity-banner
 - tapOn:
     id: "tab_chats|message.fill"
 - tapOn:
-    id: "connectivity_banner_manage_interfaces"
+    id: "interface_connectivity_banner"
 - extendedWaitUntil:
     visible:
       text: "Network Interfaces"
