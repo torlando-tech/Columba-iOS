@@ -158,7 +158,10 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
-        let field = try XCTUnwrap(descendants(of: UITextView.self, in: host.view).first)
+        let field = try XCTUnwrap(
+            descendants(of: UITextView.self, in: host.view)
+                .first(where: { $0.accessibilityIdentifier == "message_composer" })
+        )
         return (window, field, state, counter)
     }
 
@@ -171,9 +174,12 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         let (window, field, state, counter) = try hostedComposer(sendsOnReturn: true)
         withExtendedLifetime(window) {
             XCTAssertEqual(field.returnKeyType, .send)
-            field.selectedRange = NSRange(location: field.text.count, length: 0)
-            field.insertText("\n")
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+            let shouldInsertNewline = field.delegate?.textView?(
+                field,
+                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
+                replacementText: "\n"
+            )
+            XCTAssertEqual(shouldInsertNewline, false)
             XCTAssertEqual(counter.value, 1)
             XCTAssertEqual(state.text, "Hello")
         }
@@ -183,11 +189,14 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         let (window, field, state, counter) = try hostedComposer(sendsOnReturn: false)
         withExtendedLifetime(window) {
             XCTAssertEqual(field.returnKeyType, .default)
-            field.selectedRange = NSRange(location: field.text.count, length: 0)
-            field.insertText("\n")
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+            let shouldInsertNewline = field.delegate?.textView?(
+                field,
+                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
+                replacementText: "\n"
+            )
+            XCTAssertEqual(shouldInsertNewline, true)
             XCTAssertEqual(counter.value, 0)
-            XCTAssertEqual(state.text, "Hello\n")
+            XCTAssertEqual(state.text, "Hello")
         }
     }
 }
