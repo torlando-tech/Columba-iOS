@@ -252,7 +252,13 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             settings,
             re.DOTALL,
         ))
-        self.assertIn("openRequestedRNodeWizard()\n\n            // Poll connection state", settings)
+        self.assertIsNotNone(re.search(
+            r"await viewModel\?\.loadSettings\(\).*?"
+            r"openRequestedRNodeWizard\(\).*?"
+            r"// Poll connection state",
+            settings,
+            re.DOTALL,
+        ))
         self.assertIn("private func openRequestedRNodeWizard()", settings)
 
         consumer = re.search(
