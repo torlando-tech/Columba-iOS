@@ -44,7 +44,21 @@ private final class ComposerUITextView: UITextView {
         pasteGeneration += 1
         let generation = pasteGeneration
         isPerformingPaste = true
+
+        // UIKit 26.6 can discard a newline-only paste before mutating a
+        // UITextView. Route that exact payload through UIKeyInput so it still
+        // follows the native delegate path and replaces the current selection.
+        if UIPasteboard.general.string == "\n" {
+            insertText("\n")
+            finishPasteIfNeeded(generation: generation)
+            return
+        }
+
         super.paste(sender)
+        finishPasteIfNeeded(generation: generation)
+    }
+
+    private func finishPasteIfNeeded(generation: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, self.pasteGeneration == generation else { return }
             self.isPerformingPaste = false

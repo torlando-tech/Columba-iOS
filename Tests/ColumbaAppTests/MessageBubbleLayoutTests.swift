@@ -229,6 +229,7 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
 
         XCTAssertEqual(counter.value, 0)
+        XCTAssertEqual(field.text, "Hello\n")
         XCTAssertEqual(state.text, "Hello\n")
     }
 
