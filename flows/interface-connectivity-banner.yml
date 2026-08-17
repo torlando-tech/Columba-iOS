@@ -24,7 +24,8 @@ name: interface-connectivity-banner
     timeout: 10000
 - assertVisible:
     text: "Network Interfaces"
-- back
+- tapOn:
+    id: "BackButton"
 - extendedWaitUntil:
     visible:
       id: "screen_settings"
@@ -47,7 +48,8 @@ name: interface-connectivity-banner
     visible:
       text: "Network Interfaces"
     timeout: 10000
-- back
+- tapOn:
+    id: "BackButton"
 
 # A third request proves the consumed Boolean route can be raised repeatedly.
 - tapOn:

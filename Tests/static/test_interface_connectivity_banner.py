@@ -67,6 +67,8 @@ class InterfaceConnectivityBannerContractTests(unittest.TestCase):
             5,
         )
         self.assertGreaterEqual(flow.count('text: "Network Interfaces"'), 3)
+        self.assertEqual(flow.count('id: "BackButton"'), 2)
+        self.assertNotIn("\n- back\n", flow)
         self.assertIn('id: "screen_settings"', flow)
         self.assertGreaterEqual(flow.count('id: "tab_chats|message.fill"'), 3)
 
