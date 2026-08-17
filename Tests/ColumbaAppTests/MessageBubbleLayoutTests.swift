@@ -222,6 +222,8 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         }
 
         pasteboard.string = "\n"
+        XCTAssertTrue(field.becomeFirstResponder())
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         field.selectedRange = NSRange(location: field.text.count, length: 0)
         field.paste(nil)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
