@@ -42,16 +42,16 @@ private struct InterfaceConnectivityBanner: View {
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Button(content.actionTitle, action: onManageInterfaces)
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(Theme.accentColor)
+                    .padding(.top, 2)
+                    .accessibilityHint("Opens network interface settings")
+                    .accessibilityIdentifier("connectivity_banner_manage_interfaces")
             }
-
-            Spacer(minLength: 4)
-
-            Button(content.actionTitle, action: onManageInterfaces)
-                .font(.caption.weight(.semibold))
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accentColor)
-                .accessibilityHint("Opens network interface settings")
-                .accessibilityIdentifier("connectivity_banner_manage_interfaces")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -108,7 +108,17 @@ struct MainTabView: View {
     // MARK: - Body
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        VStack(spacing: 0) {
+            if let content = InterfaceConnectivityBannerContent.forConnectionState(
+                isConnected: appServices.isConnected
+            ) {
+                InterfaceConnectivityBanner(content: content) {
+                    selectedTab = .settings
+                    shouldOpenInterfaceManagement = true
+                }
+            }
+
+            TabView(selection: $selectedTab) {
             // Chats Tab
             ChatsView(
                 appServices: appServices,
@@ -160,18 +170,9 @@ struct MainTabView: View {
                     .accessibilityIdentifier("tab_settings")
             }
             .tag(Tab.settings)
-        }
-        .tint(Theme.accentColor)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if let content = InterfaceConnectivityBannerContent.forConnectionState(
-                isConnected: appServices.isConnected
-            ) {
-                InterfaceConnectivityBanner(content: content) {
-                    selectedTab = .settings
-                    shouldOpenInterfaceManagement = true
-                }
             }
         }
+        .tint(Theme.accentColor)
         .onAppear {
             consumePendingRNodeSetup()
             routePendingDeepLink()
