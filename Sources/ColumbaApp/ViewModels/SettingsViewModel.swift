@@ -71,25 +71,40 @@ public struct IdentityInfo: Equatable {
 
 enum NetworkInterfacePresentation {
     static func listText(_ descriptions: [String]) -> String {
-        descriptions.isEmpty ? "No active interface" : descriptions.joined(separator: "\n")
+        descriptions.isEmpty
+            ? String(localized: "No active interface")
+            : descriptions.joined(separator: "\n")
     }
 
-    static func connectedTCPDescriptions(
+    static func tcpDescriptions(
         configuredInterfaces: [InterfaceEntity],
-        connectedEntityIds: Set<String>
+        runtimeStates: [String: InterfaceState]
     ) -> [String] {
-        configuredInterfaces.compactMap { entity in
+        let connectedEntityIds = Set(runtimeStates.compactMap { entityId, state in
+            state == .connected ? entityId : nil
+        })
+        let knownEntityIds = Set(configuredInterfaces.map(\.id))
+
+        var descriptions = configuredInterfaces.compactMap { entity -> String? in
             guard entity.enabled, connectedEntityIds.contains(entity.id) else { return nil }
 
             switch entity.config {
             case .tcpClient(let config):
-                return "TCP (\(config.targetHost):\(String(config.targetPort)))"
+                return String(localized: "TCP") + " (\(config.targetHost):\(String(config.targetPort)))"
             case .tcpServer(let config):
-                return "TCP Server (\(config.listenIp):\(String(config.listenPort)))"
+                return String(localized: "TCP Server") + " (\(config.listenIp):\(String(config.listenPort)))"
             default:
                 return nil
             }
         }
+
+        // Runtime-created TCP interfaces have no persisted name or endpoint to show.
+        // Keep one generic row per connected unknown ID so mixed configured/legacy
+        // states still account for every active connection. Known disabled entries
+        // stay omitted even if teardown has not removed their runtime object yet.
+        let unknownConnectedCount = connectedEntityIds.subtracting(knownEntityIds).count
+        descriptions.append(contentsOf: repeatElement(String(localized: "TCP"), count: unknownConnectedCount))
+        return descriptions
     }
 }
 
@@ -529,33 +544,25 @@ public final class SettingsViewModel {
         if modelB {
             // Model B: the NE owns MULTIPLE relays (one `ne-tcp-relay-<entityId>` per
             // enabled tcpClient). Label the card with every relay that is actually online.
-            let onlineIds = Set(await appServices.neTcpRelayStatuses().filter { $0.online }.map { $0.entityId })
-            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.connectedTCPDescriptions(
+            let onlineStates = Dictionary(uniqueKeysWithValues: await appServices.neTcpRelayStatuses().map {
+                ($0.entityId, $0.online ? InterfaceState.connected : InterfaceState.disconnected)
+            })
+            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.tcpDescriptions(
                 configuredInterfaces: configuredInterfaces,
-                connectedEntityIds: onlineIds
+                runtimeStates: onlineStates
             ))
         } else {
             // Shipping Python: every configured TCP interface has its own runtime entry.
-            // Build the card from all connected entity IDs instead of the legacy
-            // `tcpInterface` convenience accessor, whose dictionary-first value can be
-            // a disconnected interface while another connection is carrying traffic.
-            var connectedTCPIds: Set<String> = []
-            for (entityId, tcpInterface) in appServices.tcpInterfaces
-                where await tcpInterface.state == .connected {
-                connectedTCPIds.insert(entityId)
+            // Send the complete state snapshot through the same presentation seam so a
+            // disconnected dictionary-first entry cannot hide other connected entries.
+            var runtimeTCPStates: [String: InterfaceState] = [:]
+            for (entityId, tcpInterface) in appServices.tcpInterfaces {
+                runtimeTCPStates[entityId] = await tcpInterface.state
             }
-
-            let tcpDescriptions = NetworkInterfacePresentation.connectedTCPDescriptions(
+            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.tcpDescriptions(
                 configuredInterfaces: configuredInterfaces,
-                connectedEntityIds: connectedTCPIds
-            )
-            activeInterfaces.append(contentsOf: tcpDescriptions)
-
-            // Preserve a truthful fallback for legacy runtime-created TCP entries
-            // that are not backed by a persisted InterfaceEntity.
-            if !connectedTCPIds.isEmpty, tcpDescriptions.isEmpty {
-                activeInterfaces.append("TCP")
-            }
+                runtimeStates: runtimeTCPStates
+            ))
         }
         if let auto = appServices.autoInterface, await auto.peerCount > 0 {
             let count = await auto.peerCount
