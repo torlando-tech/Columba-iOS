@@ -21,6 +21,91 @@ enum ComposerKeyboardPreference {
     }
 }
 
+#if os(iOS)
+private struct ComposerTextView: UIViewRepresentable {
+    @Binding var text: String
+    let sendsOnReturn: Bool
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, sendsOnReturn: sendsOnReturn, onSubmit: onSubmit)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textColor = UIColor(Theme.textPrimary)
+        textView.tintColor = UIColor(Theme.accentColor)
+        textView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        textView.textContainer.lineFragmentPadding = 0
+        textView.isScrollEnabled = false
+        textView.accessibilityIdentifier = "message_composer"
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.sendsOnReturn = sendsOnReturn
+        context.coordinator.onSubmit = onSubmit
+        textView.returnKeyType = sendsOnReturn ? .send : .default
+        textView.textColor = UIColor(Theme.textPrimary)
+        textView.tintColor = UIColor(Theme.accentColor)
+        if textView.text != text {
+            textView.text = text
+            textView.invalidateIntrinsicContentSize()
+        }
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: UITextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+        let fittingSize = uiView.sizeThatFits(
+            CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let lineHeight = uiView.font?.lineHeight ?? UIFont.preferredFont(forTextStyle: .body).lineHeight
+        let verticalInsets = uiView.textContainerInset.top + uiView.textContainerInset.bottom
+        let minimumHeight = lineHeight + verticalInsets
+        let maximumHeight = lineHeight * 6 + verticalInsets
+        let height = min(max(fittingSize.height, minimumHeight), maximumHeight)
+        uiView.isScrollEnabled = fittingSize.height > maximumHeight
+        return CGSize(width: width, height: height)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var text: Binding<String>
+        var sendsOnReturn: Bool
+        var onSubmit: () -> Void
+
+        init(text: Binding<String>, sendsOnReturn: Bool, onSubmit: @escaping () -> Void) {
+            self.text = text
+            self.sendsOnReturn = sendsOnReturn
+            self.onSubmit = onSubmit
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            text.wrappedValue = textView.text
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText replacement: String
+        ) -> Bool {
+            guard replacement == "\n", sendsOnReturn else { return true }
+            onSubmit()
+            return false
+        }
+    }
+}
+#endif
+
 /// Message input bar with text field and action buttons.
 ///
 /// Features:
@@ -41,7 +126,6 @@ struct MessageInputBar: View {
     var onImagePicker: () -> Void
     var onAttachment: () -> Void
 
-    @FocusState private var isFocused: Bool
     @AppStorage(ComposerKeyboardPreference.key)
     private var sendsOnReturn = ComposerKeyboardPreference.defaultValue
 
@@ -187,31 +271,38 @@ struct MessageInputBar: View {
         }
     }
 
-    @ViewBuilder
     private var messageTextField: some View {
-        if sendsOnReturn {
-            baseMessageTextField
-                .submitLabel(.send)
-                .onSubmit {
+        ZStack(alignment: .topLeading) {
+            if text.isEmpty {
+                Text("Type a message...")
+                    .font(.body)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .allowsHitTesting(false)
+            }
+
+            #if os(iOS)
+            ComposerTextView(
+                text: $text,
+                sendsOnReturn: sendsOnReturn,
+                onSubmit: {
                     if canSend {
                         onSend()
                     }
                 }
-        } else {
-            baseMessageTextField
-                .submitLabel(.return)
-        }
-    }
-
-    private var baseMessageTextField: some View {
-        TextField("Type a message...", text: $text, axis: .vertical)
-            .font(.body)
+            )
             .foregroundStyle(Theme.textPrimary)
-            .lineLimit(1...6)
-            .accessibilityIdentifier("message_composer")
-            .focused($isFocused)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            #else
+            TextField("Type a message...", text: $text, axis: .vertical)
+                .font(.body)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1...6)
+                .accessibilityIdentifier("message_composer")
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            #endif
+        }
     }
 
     // MARK: - File Chip View
