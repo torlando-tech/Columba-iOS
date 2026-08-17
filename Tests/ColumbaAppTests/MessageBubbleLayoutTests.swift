@@ -130,17 +130,22 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         var value = 0
     }
 
+    private final class ComposerState {
+        var text = "Hello"
+    }
+
     private func descendants<T: UIView>(of type: T.Type, in root: UIView) -> [T] {
         root.subviews.flatMap { subview in
             (subview as? T).map { [$0] } ?? [] + descendants(of: type, in: subview)
         }
     }
 
-    private func hostedComposer(sendsOnReturn: Bool) throws -> (UIWindow, UITextView, SendCounter) {
+    private func hostedComposer(sendsOnReturn: Bool) throws -> (UIWindow, UITextView, ComposerState, SendCounter) {
         UserDefaults.standard.set(sendsOnReturn, forKey: ComposerKeyboardPreference.key)
+        let state = ComposerState()
         let counter = SendCounter()
         let host = UIHostingController(rootView: MessageInputBar(
-            text: .constant("Hello"),
+            text: Binding(get: { state.text }, set: { state.text = $0 }),
             attachedImage: .constant(nil),
             attachedFiles: .constant([]),
             onSend: { counter.value += 1 },
@@ -154,7 +159,7 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         host.view.layoutIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         let field = try XCTUnwrap(descendants(of: UITextView.self, in: host.view).first)
-        return (window, field, counter)
+        return (window, field, state, counter)
     }
 
     override func tearDown() {
@@ -163,30 +168,26 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
     }
 
     func testDefaultReturnKeyPresentsSendAndSubmitsMessage() throws {
-        let (window, field, counter) = try hostedComposer(sendsOnReturn: true)
+        let (window, field, state, counter) = try hostedComposer(sendsOnReturn: true)
         withExtendedLifetime(window) {
             XCTAssertEqual(field.returnKeyType, .send)
-            let shouldInsertNewline = field.delegate?.textView?(
-                field,
-                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
-                replacementText: "\n"
-            )
-            XCTAssertEqual(shouldInsertNewline, false)
+            field.selectedRange = NSRange(location: field.text.count, length: 0)
+            field.insertText("\n")
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
             XCTAssertEqual(counter.value, 1)
+            XCTAssertEqual(state.text, "Hello")
         }
     }
 
     func testNewlinePreferencePresentsReturnWithoutSubmitting() throws {
-        let (window, field, counter) = try hostedComposer(sendsOnReturn: false)
+        let (window, field, state, counter) = try hostedComposer(sendsOnReturn: false)
         withExtendedLifetime(window) {
             XCTAssertEqual(field.returnKeyType, .default)
-            let shouldInsertNewline = field.delegate?.textView?(
-                field,
-                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
-                replacementText: "\n"
-            )
-            XCTAssertEqual(shouldInsertNewline, true)
+            field.selectedRange = NSRange(location: field.text.count, length: 0)
+            field.insertText("\n")
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
             XCTAssertEqual(counter.value, 0)
+            XCTAssertEqual(state.text, "Hello\n")
         }
     }
 }
