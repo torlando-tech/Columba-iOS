@@ -211,6 +211,25 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         }
     }
 
+    func testPastedSingleNewlineIsInsertedWithoutSending() throws {
+        let pasteboard = UIPasteboard.general
+        let previousItems = pasteboard.items
+        let (window, field, state, counter) = try hostedComposer(sendsOnReturn: true)
+        defer {
+            pasteboard.items = previousItems
+            window.isHidden = true
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+
+        pasteboard.string = "\n"
+        field.selectedRange = NSRange(location: field.text.count, length: 0)
+        field.paste(nil)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+
+        XCTAssertEqual(counter.value, 0)
+        XCTAssertEqual(state.text, "Hello\n")
+    }
+
     func testNewlinePreferencePresentsReturnWithoutSubmitting() throws {
         let (window, field, state, counter) = try hostedComposer(sendsOnReturn: false)
         defer {
