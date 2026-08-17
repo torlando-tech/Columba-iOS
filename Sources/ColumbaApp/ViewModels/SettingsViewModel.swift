@@ -69,6 +69,26 @@ public struct IdentityInfo: Equatable {
 
 // MARK: - SettingsViewModel
 
+enum NetworkInterfacePresentation {
+    static func connectedTCPDescriptions(
+        configuredInterfaces: [InterfaceEntity],
+        connectedEntityIds: Set<String>
+    ) -> [String] {
+        configuredInterfaces.compactMap { entity in
+            guard entity.enabled, connectedEntityIds.contains(entity.id) else { return nil }
+
+            switch entity.config {
+            case .tcpClient(let config):
+                return "TCP (\(config.targetHost):\(String(config.targetPort)))"
+            case .tcpServer(let config):
+                return "TCP Server (\(config.listenIp):\(String(config.listenPort)))"
+            default:
+                return nil
+            }
+        }
+    }
+}
+
 /// ViewModel for settings screen.
 ///
 /// Uses iOS 17+ @Observable macro for automatic SwiftUI observation.
@@ -500,26 +520,36 @@ public final class SettingsViewModel {
         // Build connected interface string from all active interfaces.
         var activeInterfaces: [String] = []
 
+        let configuredInterfaces = InterfaceRepository().getEnabledInterfaces()
+
         if modelB {
             // Model B: the NE owns MULTIPLE relays (one `ne-tcp-relay-<entityId>` per
-            // enabled tcpClient). Label the card with the relays that are ACTUALLY online,
-            // matched by entity id via the per-relay snapshot — NOT the first-configured
-            // one. The old code labeled with `.first(tcpClient)` whenever ANY relay was up
-            // (a coarse any-online bool), so a down first relay (e.g. a dead community hub)
-            // was shown as the connected interface while a different relay carried traffic.
+            // enabled tcpClient). Label the card with every relay that is actually online.
             let onlineIds = Set(await appServices.neTcpRelayStatuses().filter { $0.online }.map { $0.entityId })
-            let interfaceRepo = InterfaceRepository()
-            for entity in interfaceRepo.getEnabledInterfaces() where entity.type == .tcpClient {
-                guard onlineIds.contains(entity.id), case .tcpClient(let config) = entity.config else { continue }
-                activeInterfaces.append("TCP (\(config.targetHost):\(String(config.targetPort)))")
+            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.connectedTCPDescriptions(
+                configuredInterfaces: configuredInterfaces,
+                connectedEntityIds: onlineIds
+            ))
+        } else {
+            // Shipping Python: every configured TCP interface has its own runtime entry.
+            // Build the card from all connected entity IDs instead of the legacy
+            // `tcpInterface` convenience accessor, whose dictionary-first value can be
+            // a disconnected interface while another connection is carrying traffic.
+            var connectedTCPIds: Set<String> = []
+            for (entityId, tcpInterface) in appServices.tcpInterfaces
+                where await tcpInterface.state == .connected {
+                connectedTCPIds.insert(entityId)
             }
-        } else if let tcp = appServices.tcpInterface, await tcp.state == .connected {
-            // Model A: the app owns a single local TCP interface.
-            let interfaceRepo = InterfaceRepository()
-            if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
-               case .tcpClient(let config) = tcpEntity.config {
-                activeInterfaces.append("TCP (\(config.targetHost):\(String(config.targetPort)))")
-            } else {
+
+            let tcpDescriptions = NetworkInterfacePresentation.connectedTCPDescriptions(
+                configuredInterfaces: configuredInterfaces,
+                connectedEntityIds: connectedTCPIds
+            )
+            activeInterfaces.append(contentsOf: tcpDescriptions)
+
+            // Preserve a truthful fallback for legacy runtime-created TCP entries
+            // that are not backed by a persisted InterfaceEntity.
+            if !connectedTCPIds.isEmpty, tcpDescriptions.isEmpty {
                 activeInterfaces.append("TCP")
             }
         }
