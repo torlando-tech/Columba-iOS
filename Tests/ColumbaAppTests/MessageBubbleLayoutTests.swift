@@ -136,7 +136,7 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         }
     }
 
-    private func hostedComposer(sendsOnReturn: Bool) throws -> (UIHostingController<MessageInputBar>, UITextField, SendCounter) {
+    private func hostedComposer(sendsOnReturn: Bool) throws -> (UIHostingController<MessageInputBar>, UITextView, SendCounter) {
         UserDefaults.standard.set(sendsOnReturn, forKey: ComposerKeyboardPreference.key)
         let counter = SendCounter()
         let host = UIHostingController(rootView: MessageInputBar(
@@ -150,7 +150,7 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 220)
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
-        let field = try XCTUnwrap(descendants(of: UITextField.self, in: host.view).first)
+        let field = try XCTUnwrap(descendants(of: UITextView.self, in: host.view).first)
         return (host, field, counter)
     }
 
@@ -163,7 +163,12 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         let (host, field, counter) = try hostedComposer(sendsOnReturn: true)
         withExtendedLifetime(host) {
             XCTAssertEqual(field.returnKeyType, .send)
-            XCTAssertEqual(field.delegate?.textFieldShouldReturn?(field), true)
+            let shouldInsertNewline = field.delegate?.textView?(
+                field,
+                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
+                replacementText: "\n"
+            )
+            XCTAssertEqual(shouldInsertNewline, false)
             XCTAssertEqual(counter.value, 1)
         }
     }
@@ -172,7 +177,12 @@ final class ComposerReturnKeyPresentationTests: XCTestCase {
         let (host, field, counter) = try hostedComposer(sendsOnReturn: false)
         withExtendedLifetime(host) {
             XCTAssertEqual(field.returnKeyType, .default)
-            XCTAssertNil(field.delegate?.textFieldShouldReturn?(field))
+            let shouldInsertNewline = field.delegate?.textView?(
+                field,
+                shouldChangeTextIn: NSRange(location: field.text.count, length: 0),
+                replacementText: "\n"
+            )
+            XCTAssertEqual(shouldInsertNewline, true)
             XCTAssertEqual(counter.value, 0)
         }
     }
