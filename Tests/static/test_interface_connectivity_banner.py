@@ -7,6 +7,8 @@ ROOT = Path(__file__).resolve().parents[2]
 MAIN_TAB = ROOT / "Sources/ColumbaApp/Views/MainTabView.swift"
 SETTINGS = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
 LOCALIZATIONS = ROOT / "Sources/ColumbaApp/Resources/Localizable.xcstrings"
+UI_FLOW = ROOT / "flows/interface-connectivity-banner.yml"
+CI_WORKFLOW = ROOT / ".github/workflows/tests.yml"
 
 
 class InterfaceConnectivityBannerContractTests(unittest.TestCase):
@@ -46,6 +48,20 @@ class InterfaceConnectivityBannerContractTests(unittest.TestCase):
         }
 
         self.assertTrue(required.issubset(catalog["strings"]))
+
+    def test_ui_flow_covers_cold_mounted_and_repeated_routes(self) -> None:
+        flow = UI_FLOW.read_text(encoding="utf-8")
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("interface-connectivity-banner.yml", workflow)
+        self.assertIn('id: "interface_connectivity_banner"', flow)
+        self.assertEqual(
+            flow.count('id: "connectivity_banner_manage_interfaces"'),
+            3,
+        )
+        self.assertGreaterEqual(flow.count('text: "Network Interfaces"'), 3)
+        self.assertIn('id: "screen_settings"', flow)
+        self.assertGreaterEqual(flow.count('id: "tab_chats|message.fill"'), 3)
 
 
 if __name__ == "__main__":

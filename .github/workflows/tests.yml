@@ -358,7 +358,7 @@ jobs:
           export PATH="$HOME/.maestro/bin:$PATH"
           mkdir -p ui-screenshots
           screenshot_status=0
-          for flow in contacts-list.yml chats-list.yml settings.yml map.yml; do
+          for flow in contacts-list.yml chats-list.yml settings.yml map.yml interface-connectivity-banner.yml; do
             if ! (
               cd ui-screenshots
               maestro --device "$DEVICE_ID" test "$GITHUB_WORKSPACE/flows/$flow"
