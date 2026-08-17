@@ -45,10 +45,14 @@ private final class ComposerUITextView: UITextView {
         let generation = pasteGeneration
         isPerformingPaste = true
         super.paste(sender)
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, self.pasteGeneration == generation else { return }
             self.isPerformingPaste = false
         }
+    }
+
+    func finishPaste() {
+        isPerformingPaste = false
     }
 }
 
@@ -120,6 +124,7 @@ private struct ComposerTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            defer { (textView as? ComposerUITextView)?.finishPaste() }
             text.wrappedValue = textView.text
             textView.invalidateIntrinsicContentSize()
         }
