@@ -416,11 +416,11 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
         XCTAssertNil(selectedDeliveryHash)
     }
 
-    func testDeliveryProofReducerRejectsStaleRetryAndFailureDowngrades() {
-        let sending = Int(RNSAPI.LXMessageState.sending.rawValue)
-        let sent = Int(RNSAPI.LXMessageState.sent.rawValue)
-        let delivered = Int(RNSAPI.LXMessageState.delivered.rawValue)
-        let failed = Int(RNSAPI.LXMessageState.failed.rawValue)
+    func testDeliveryProofReducerRejectsStaleRetryAndFailureDowngrades() throws {
+        let sending = try XCTUnwrap(Int(RNSAPI.LXMessageState.sending.rawValue))
+        let sent = try XCTUnwrap(Int(RNSAPI.LXMessageState.sent.rawValue))
+        let delivered = try XCTUnwrap(Int(RNSAPI.LXMessageState.delivered.rawValue))
+        let failed = try XCTUnwrap(Int(RNSAPI.LXMessageState.failed.rawValue))
 
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: sending), sent)
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: failed), sent)
