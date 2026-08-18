@@ -111,10 +111,11 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
         host.view.frame = window.bounds
         host.view.layoutIfNeeded()
 
-        let control = try XCTUnwrap(
-            accessibilityElements(in: host.view).first {
+        let candidates = accessibilityElements(in: host.view)
+        let control: NSObject = try XCTUnwrap(
+            candidates.first(where: {
                 $0.accessibilityIdentifier == "failed_message_details"
-            }
+            })
         )
         XCTAssertGreaterThanOrEqual(control.accessibilityFrame.width, 44)
         XCTAssertGreaterThanOrEqual(control.accessibilityFrame.height, 44)
