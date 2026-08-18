@@ -333,9 +333,6 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
                         self?.reactionModeMessageID = message.id
                         self?.onLongPress?(message)
                     },
-                    onShowDeliveryFailure: { [weak self] in
-                        self?.routeDeliveryFailure(messageID: message.id)
-                    },
                     onOpenLink: { [weak self] target in
                         self?.routeMessageLink(messageID: message.id, target: target)
                     },
@@ -344,6 +341,9 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
                     },
                     onOpenFileAttachment: { [weak self] index in
                         self?.routeFileAttachment(message: message, index: index)
+                    },
+                    onShowDeliveryFailure: { [weak self] in
+                        self?.routeDeliveryFailure(messageID: message.id)
                     }
                 )
             }
