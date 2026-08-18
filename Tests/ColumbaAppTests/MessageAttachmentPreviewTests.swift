@@ -136,6 +136,8 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
         defer { window.isHidden = true }
         host.view.frame = window.bounds
         host.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        host.view.layoutIfNeeded()
 
         let candidates = accessibilityElements(in: host.view)
         var matchingControl: AccessibilityNode?
