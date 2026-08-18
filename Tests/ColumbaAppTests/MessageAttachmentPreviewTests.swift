@@ -91,6 +91,32 @@ final class MessageTextSelectionTests: XCTestCase {
 }
 
 final class FailedMessageDetailsRoutingTests: XCTestCase {
+    private enum AccessibilityNode {
+        case view(UIView)
+        case element(UIAccessibilityElement)
+
+        var identifier: String? {
+            switch self {
+            case .view(let view): view.accessibilityIdentifier
+            case .element(let element): element.accessibilityIdentifier
+            }
+        }
+
+        var frame: CGRect {
+            switch self {
+            case .view(let view): view.accessibilityFrame
+            case .element(let element): element.accessibilityFrame
+            }
+        }
+
+        func activate() -> Bool {
+            switch self {
+            case .view(let view): view.accessibilityActivate()
+            case .element(let element): element.accessibilityActivate()
+            }
+        }
+    }
+
     @MainActor
     func testFailedStatusButtonActivatesItsProductionCallback() throws {
         var activationCount = 0
@@ -112,15 +138,15 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
         host.view.layoutIfNeeded()
 
         let candidates = accessibilityElements(in: host.view)
-        var matchingControl: UIAccessibilityElement?
-        for candidate in candidates where candidate.accessibilityIdentifier == "failed_message_details" {
+        var matchingControl: AccessibilityNode?
+        for candidate in candidates where candidate.identifier == "failed_message_details" {
             matchingControl = candidate
             break
         }
         let control = try XCTUnwrap(matchingControl)
-        XCTAssertGreaterThanOrEqual(control.accessibilityFrame.width, 44)
-        XCTAssertGreaterThanOrEqual(control.accessibilityFrame.height, 44)
-        XCTAssertTrue(control.accessibilityActivate())
+        XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+        XCTAssertTrue(control.activate())
         XCTAssertEqual(activationCount, 1)
     }
 
@@ -158,14 +184,17 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
     }
 
     @MainActor
-    private func accessibilityElements(in root: UIView) -> [UIAccessibilityElement] {
-        var elements: [UIAccessibilityElement] = []
+    private func accessibilityElements(in root: UIView) -> [AccessibilityNode] {
+        var elements: [AccessibilityNode] = []
+        if root.isAccessibilityElement || root.accessibilityIdentifier != nil {
+            elements.append(.view(root))
+        }
         if let contained = root.accessibilityElements {
             for element in contained {
                 if let view = element as? UIView {
                     elements.append(contentsOf: accessibilityElements(in: view))
                 } else if let accessibilityElement = element as? UIAccessibilityElement {
-                    elements.append(accessibilityElement)
+                    elements.append(.element(accessibilityElement))
                 }
             }
         }
