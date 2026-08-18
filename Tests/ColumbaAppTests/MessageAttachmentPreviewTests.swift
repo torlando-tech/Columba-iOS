@@ -112,7 +112,7 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
         host.view.layoutIfNeeded()
 
         let candidates = accessibilityElements(in: host.view)
-        var matchingControl: NSObject?
+        var matchingControl: UIAccessibilityElement?
         for candidate in candidates where candidate.accessibilityIdentifier == "failed_message_details" {
             matchingControl = candidate
             break
@@ -158,17 +158,14 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
     }
 
     @MainActor
-    private func accessibilityElements(in root: UIView) -> [NSObject] {
-        var elements: [NSObject] = []
-        if root.isAccessibilityElement {
-            elements.append(root)
-        }
+    private func accessibilityElements(in root: UIView) -> [UIAccessibilityElement] {
+        var elements: [UIAccessibilityElement] = []
         if let contained = root.accessibilityElements {
             for element in contained {
                 if let view = element as? UIView {
                     elements.append(contentsOf: accessibilityElements(in: view))
-                } else if let object = element as? NSObject {
-                    elements.append(object)
+                } else if let accessibilityElement = element as? UIAccessibilityElement {
+                    elements.append(accessibilityElement)
                 }
             }
         }
