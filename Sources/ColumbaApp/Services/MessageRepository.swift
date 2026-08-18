@@ -988,13 +988,12 @@ public actor MessageRepository {
     /// callback rejected by the database cannot still downgrade the open UI.
     func persistedDeliveryProof(canonicalHash: Data) async throws -> PersistedDeliveryProof? {
         guard let record = try await getMessageRecord(id: canonicalHash),
-              let rawState = UInt8(exactly: record.state),
-              let rawMethod = UInt8(exactly: record.method) else {
+              let state = RNSAPI.LXMessageState(rawValue: record.state) else {
             return nil
         }
         return PersistedDeliveryProof(
-            state: Self.mapState(rawState),
-            method: Self.mapMethod(rawMethod)
+            state: state,
+            method: RNSAPI.LXDeliveryMethod(rawValue: record.method) ?? .unknown
         )
     }
 
