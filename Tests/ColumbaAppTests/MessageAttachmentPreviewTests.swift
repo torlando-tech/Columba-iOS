@@ -90,6 +90,41 @@ final class MessageTextSelectionTests: XCTestCase {
     }
 }
 
+final class FailedMessageDetailsRoutingTests: XCTestCase {
+    @MainActor
+    func testFailedStatusRoutesTheExactMessageToDetails() {
+        let failed = Message(
+            id: "failed-message",
+            content: "Could not send",
+            isFromMe: true,
+            deliveryStatus: .failed
+        )
+        let delivered = Message(
+            id: "delivered-message",
+            content: "Sent successfully",
+            isFromMe: true,
+            deliveryStatus: .delivered
+        )
+        let controller = MessageTimelineViewController()
+        controller.loadViewIfNeeded()
+        controller.update(
+            messages: [failed, delivered],
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+
+        var routedMessage: Message?
+        controller.onShowDeliveryFailure = { routedMessage = $0 }
+
+        controller.routeDeliveryFailureForTesting(messageID: failed.id)
+        XCTAssertEqual(routedMessage, failed)
+
+        routedMessage = nil
+        controller.routeDeliveryFailureForTesting(messageID: delivered.id)
+        XCTAssertNil(routedMessage, "Only a failed status may open failure details")
+    }
+}
+
 final class MessageAttachmentPreviewItemTests: XCTestCase {
     private let pngData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL1WQAAAABJRU5ErkJggg==")!
 
