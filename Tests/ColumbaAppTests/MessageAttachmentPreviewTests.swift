@@ -92,6 +92,37 @@ final class MessageTextSelectionTests: XCTestCase {
 
 final class FailedMessageDetailsRoutingTests: XCTestCase {
     @MainActor
+    func testFailedStatusButtonActivatesItsProductionCallback() throws {
+        var activationCount = 0
+        let message = Message(
+            id: "failed-control",
+            content: "Could not send",
+            isFromMe: true,
+            deliveryStatus: .failed
+        )
+        let host = UIHostingController(rootView: MessageBubble(
+            message: message,
+            onShowDeliveryFailure: { activationCount += 1 }
+        ))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.frame = window.bounds
+        host.view.layoutIfNeeded()
+
+        let control = try XCTUnwrap(
+            accessibilityElements(in: host.view).first {
+                $0.accessibilityIdentifier == "failed_message_details"
+            }
+        )
+        XCTAssertGreaterThanOrEqual(control.accessibilityFrame.width, 44)
+        XCTAssertGreaterThanOrEqual(control.accessibilityFrame.height, 44)
+        XCTAssertTrue(control.accessibilityActivate())
+        XCTAssertEqual(activationCount, 1)
+    }
+
+    @MainActor
     func testFailedStatusRoutesTheExactMessageToDetails() {
         let failed = Message(
             id: "failed-message",
@@ -122,6 +153,27 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
         routedMessage = nil
         controller.routeDeliveryFailureForTesting(messageID: delivered.id)
         XCTAssertNil(routedMessage, "Only a failed status may open failure details")
+    }
+
+    @MainActor
+    private func accessibilityElements(in root: UIView) -> [NSObject] {
+        var elements: [NSObject] = []
+        if root.isAccessibilityElement {
+            elements.append(root)
+        }
+        if let contained = root.accessibilityElements {
+            for element in contained {
+                if let view = element as? UIView {
+                    elements.append(contentsOf: accessibilityElements(in: view))
+                } else if let object = element as? NSObject {
+                    elements.append(object)
+                }
+            }
+        }
+        for subview in root.subviews {
+            elements.append(contentsOf: accessibilityElements(in: subview))
+        }
+        return elements
     }
 }
 
