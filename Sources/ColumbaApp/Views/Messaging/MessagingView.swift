@@ -289,6 +289,9 @@ struct MessagingView: View {
                             reactionModeMessage = message
                         }
                     },
+                    onShowDeliveryFailure: { message in
+                        detailMessage = message
+                    },
                     onOpenLink: openMessageLink,
                     onOpenImage: openImageAttachment,
                     onOpenFileAttachment: openFileAttachment

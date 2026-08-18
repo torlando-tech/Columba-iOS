@@ -82,6 +82,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
     let onReply: (Message) -> Void
     let onToggleReaction: (Message, String) -> Void
     let onLongPress: (Message) -> Void
+    let onShowDeliveryFailure: (Message) -> Void
     let onOpenLink: (MessageLinkTarget) -> Void
     let onOpenImage: (Message) -> Void
     let onOpenFileAttachment: (Message, Int) -> Void
@@ -93,6 +94,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onReply = onReply
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
+        controller.onShowDeliveryFailure = onShowDeliveryFailure
         controller.onOpenLink = onOpenLink
         controller.setReactionMode(messageID: reactionModeMessageID)
         applyAttachmentCallbacks(to: controller)
@@ -104,6 +106,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onReply = onReply
         controller.onToggleReaction = onToggleReaction
         controller.onLongPress = onLongPress
+        controller.onShowDeliveryFailure = onShowDeliveryFailure
         controller.onOpenLink = onOpenLink
         controller.setReactionMode(messageID: reactionModeMessageID)
         applyAttachmentCallbacks(to: controller)
@@ -128,6 +131,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     var onReply: ((Message) -> Void)?
     var onToggleReaction: ((Message, String) -> Void)?
     var onLongPress: ((Message) -> Void)?
+    var onShowDeliveryFailure: ((Message) -> Void)?
     var onOpenLink: ((MessageLinkTarget) -> Void)?
     var onOpenImage: ((Message) -> Void)?
     var onOpenFileAttachment: ((Message, Int) -> Void)?
@@ -329,6 +333,9 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
                         self?.reactionModeMessageID = message.id
                         self?.onLongPress?(message)
                     },
+                    onShowDeliveryFailure: { [weak self] in
+                        self?.routeDeliveryFailure(messageID: message.id)
+                    },
                     onOpenLink: { [weak self] target in
                         self?.routeMessageLink(messageID: message.id, target: target)
                     },
@@ -356,6 +363,16 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
             self.replyPreviewNavigationCountForTesting += 1
             self.scrollToMessage(id: replyID)
         }
+    }
+
+    private func routeDeliveryFailure(messageID: String) {
+        guard let message = messages.first(where: { $0.id == messageID }),
+              message.deliveryStatus == .failed else { return }
+        onShowDeliveryFailure?(message)
+    }
+
+    func routeDeliveryFailureForTesting(messageID: String) {
+        routeDeliveryFailure(messageID: messageID)
     }
 
     func routeReplyPreviewForTesting(messageID: String, replyID: String) {

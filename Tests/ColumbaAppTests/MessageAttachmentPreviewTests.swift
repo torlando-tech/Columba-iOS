@@ -485,6 +485,7 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             onReply: { _ in },
             onToggleReaction: { _, _ in },
             onLongPress: { _ in },
+            onShowDeliveryFailure: { _ in },
             onOpenLink: { _ in },
             onOpenImage: onOpenImage,
             onOpenFileAttachment: onOpenFile
