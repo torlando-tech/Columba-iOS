@@ -160,18 +160,27 @@ public final class MessagingViewModel {
                     state: proofState,
                     method: proofMethod
                 )
-                let displayProof: PendingDeliveryProof
-                if !proofPersisted {
-                    displayProof = Self.monotonicPendingDeliveryProof(
-                        existing: self.pendingDeliveryProofs[hashHex],
-                        incoming: incomingProof
-                    )
-                    self.pendingDeliveryProofs[hashHex] = displayProof
-                } else {
-                    displayProof = incomingProof
+                // Reduce every callback against any earlier proof, including
+                // callbacks which already reached Room. A stale persisted
+                // failure must not outrank recipient proof buffered before the
+                // canonical row existed.
+                let resolution = Self.resolveDeliveryNotification(
+                    existing: self.pendingDeliveryProofs[hashHex],
+                    incoming: incomingProof,
+                    incomingPersisted: proofPersisted
+                )
+                let displayProof = resolution.proof
+                self.pendingDeliveryProofs[hashHex] = displayProof
+                var displayProofPersisted = proofPersisted
+                if resolution.requiresPersistence {
+                    displayProofPersisted = (try? await self.repository.applyDeliveryProof(
+                        canonicalHash: hashData,
+                        state: displayProof.state,
+                        method: displayProof.method
+                    )) == true
                 }
                 guard let index = self.messages.firstIndex(where: { $0.id == visibleID }) else { return }
-                if wasAliased && proofPersisted {
+                if wasAliased && displayProofPersisted {
                     self.messages[index] = Self.canonicalizedMessage(
                         self.messages[index],
                         canonicalHash: hashData,
@@ -675,6 +684,15 @@ public final class MessagingViewModel {
             return existing
         }
         return incoming
+    }
+
+    static func resolveDeliveryNotification(
+        existing: PendingDeliveryProof?,
+        incoming: PendingDeliveryProof,
+        incomingPersisted: Bool
+    ) -> (proof: PendingDeliveryProof, requiresPersistence: Bool) {
+        let proof = monotonicPendingDeliveryProof(existing: existing, incoming: incoming)
+        return (proof, incomingPersisted && proof != incoming)
     }
 
     static func mergingPendingOutbound(

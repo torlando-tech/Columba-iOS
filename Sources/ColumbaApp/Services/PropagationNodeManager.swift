@@ -91,6 +91,8 @@ public final class PropagationNodeManager {
 
     private weak var appServices: AppServices?
     private let settingsRepository = SettingsRepository()
+    typealias PropagationNodeSetter = @MainActor (String, Int) async throws -> Bool
+    private let propagationNodeSetter: PropagationNodeSetter?
     private let logger = Logger(subsystem: "network.columba.Columba", category: "PropagationNodeManager")
 
     /// Task for listening to path table updates.
@@ -121,6 +123,25 @@ public final class PropagationNodeManager {
 
     public init(appServices: AppServices) {
         self.appServices = appServices
+        #if COLUMBA_RUNTIME_PYTHON
+        self.propagationNodeSetter = { [weak appServices] hash, stampCost in
+            guard let backend = appServices?.pythonBackend else { return false }
+            return try await backend.setPropagationNode(
+                destHashHex: hash,
+                stampCost: stampCost
+            )
+        }
+        #else
+        self.propagationNodeSetter = nil
+        #endif
+    }
+
+    init(
+        appServices: AppServices,
+        propagationNodeSetter: PropagationNodeSetter?
+    ) {
+        self.appServices = appServices
+        self.propagationNodeSetter = propagationNodeSetter
     }
 
     // MARK: - Node Discovery
@@ -293,19 +314,18 @@ public final class PropagationNodeManager {
 
         let stampCost = info.stampCost
         #if COLUMBA_RUNTIME_PYTHON
-        if let backend = appServices?.pythonBackend {
-            do {
-                guard try await backend.setPropagationNode(
-                    destHashHex: hash.toHex(),
-                    stampCost: stampCost
-                ) else {
-                    logger.error("setPropagationNode was rejected by backend")
-                    return false
-                }
-            } catch {
-                logger.error("setPropagationNode failed: \(error.localizedDescription)")
+        guard let propagationNodeSetter else {
+            logger.error("setPropagationNode unavailable: shipping backend is not ready")
+            return false
+        }
+        do {
+            guard try await propagationNodeSetter(hash.toHex(), stampCost) else {
+                logger.error("setPropagationNode was rejected by backend")
                 return false
             }
+        } catch {
+            logger.error("setPropagationNode failed: \(error.localizedDescription)")
+            return false
         }
         #endif
 
@@ -329,16 +349,18 @@ public final class PropagationNodeManager {
     @discardableResult
     public func clearSelection() async -> Bool {
         #if COLUMBA_RUNTIME_PYTHON
-        if let backend = appServices?.pythonBackend {
-            do {
-                guard try await backend.setPropagationNode(destHashHex: "", stampCost: 0) else {
-                    logger.error("clear propagation node was rejected by backend")
-                    return false
-                }
-            } catch {
-                logger.error("clear propagation node failed: \(error.localizedDescription)")
+        guard let propagationNodeSetter else {
+            logger.error("clear propagation node unavailable: shipping backend is not ready")
+            return false
+        }
+        do {
+            guard try await propagationNodeSetter("", 0) else {
+                logger.error("clear propagation node was rejected by backend")
                 return false
             }
+        } catch {
+            logger.error("clear propagation node failed: \(error.localizedDescription)")
+            return false
         }
         #endif
 

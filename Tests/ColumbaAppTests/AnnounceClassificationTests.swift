@@ -396,14 +396,55 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
         XCTAssertEqual(stored.state, LXMessageState.sending.rawValue)
     }
 
-    func testExplicitRelayClearDisablesAutomaticReselection() async {
+    func testExplicitRelayClearFailsClosedWhenBackendIsUnavailable() async {
+        let manager = PropagationNodeManager(appServices: AppServices())
+        manager.autoSelectEnabled = true
+        let hash = Data(repeating: 0x61, count: 16)
+        manager.selectedNodeHash = hash
+        manager.selectedNodeDeliveryHash = Data(repeating: 0x62, count: 16)
+        manager.selectedNodeName = "test relay"
+
+        let cleared = await manager.clearSelection()
+
+        XCTAssertFalse(cleared)
+        XCTAssertTrue(manager.autoSelectEnabled)
+        XCTAssertEqual(manager.selectedNodeHash, hash)
+    }
+
+    func testExplicitRelayClearRequiresBackendAcknowledgement() async {
+        enum TestError: Error { case rejected }
+        for setter: PropagationNodeManager.PropagationNodeSetter in [
+            { _, _ in false },
+            { _, _ in throw TestError.rejected },
+        ] {
+            let manager = PropagationNodeManager(
+                appServices: AppServices(),
+                propagationNodeSetter: setter
+            )
+            manager.autoSelectEnabled = true
+            let hash = Data(repeating: 0x63, count: 16)
+            manager.selectedNodeHash = hash
+
+            let cleared = await manager.clearSelection()
+            XCTAssertFalse(cleared)
+            XCTAssertTrue(manager.autoSelectEnabled)
+            XCTAssertEqual(manager.selectedNodeHash, hash)
+        }
+    }
+
+    func testExplicitRelayClearDisablesAutomaticReselectionAfterBackendAcknowledges() async {
         let settings = SettingsRepository()
         let originalAutoSelect = await settings.getAutoSelectRelay()
         let originalHash = await settings.getManualRelayHash()
         let originalDeliveryHash = await settings.getManualRelayDeliveryHash()
         let originalName = await settings.getManualRelayName()
         let originalStampCost = await settings.getManualRelayStampCost()
-        let manager = PropagationNodeManager(appServices: AppServices())
+        let manager = PropagationNodeManager(
+            appServices: AppServices(),
+            propagationNodeSetter: { hash, stampCost in
+                hash.isEmpty && stampCost == 0
+            }
+        )
         manager.autoSelectEnabled = true
         manager.selectedNodeHash = Data(repeating: 0x61, count: 16)
         manager.selectedNodeDeliveryHash = Data(repeating: 0x62, count: 16)
@@ -443,6 +484,14 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
             MessagingViewModel.monotonicPendingDeliveryProof(existing: failed, incoming: sent),
             sent
         )
+
+        let persistedFailureAfterBufferedDelivery = MessagingViewModel.resolveDeliveryNotification(
+            existing: delivered,
+            incoming: failed,
+            incomingPersisted: true
+        )
+        XCTAssertEqual(persistedFailureAfterBufferedDelivery.proof, delivered)
+        XCTAssertTrue(persistedFailureAfterBufferedDelivery.requiresPersistence)
     }
 
     func testPersistedSnapshotReportsReducedStateAndMethod() async throws {
