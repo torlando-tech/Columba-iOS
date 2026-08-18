@@ -33,6 +33,11 @@ import RNSAPI
 import LXMFSwift
 import GRDB
 
+struct PersistedDeliveryProof: Equatable {
+    let state: RNSAPI.LXMessageState
+    let method: RNSAPI.LXDeliveryMethod
+}
+
 public struct DraftRecord: Equatable, Sendable {
     public let conversationHash: Data
     public let content: String
@@ -976,6 +981,21 @@ public actor MessageRepository {
             )
             return db.changesCount == 1
         }
+    }
+
+    /// Read the canonical state which survived monotonic persistence.
+    /// Consumers publish this snapshot instead of the raw callback so a stale
+    /// callback rejected by the database cannot still downgrade the open UI.
+    func persistedDeliveryProof(canonicalHash: Data) async throws -> PersistedDeliveryProof? {
+        guard let record = try await getMessageRecord(id: canonicalHash),
+              let rawState = UInt8(exactly: record.state),
+              let rawMethod = UInt8(exactly: record.method) else {
+            return nil
+        }
+        return PersistedDeliveryProof(
+            state: Self.mapState(rawState),
+            method: Self.mapMethod(rawMethod)
+        )
     }
 
     /// Load pending outbound messages (state == .outbound).

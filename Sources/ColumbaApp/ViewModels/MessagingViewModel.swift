@@ -156,22 +156,30 @@ public final class MessagingViewModel {
                     for: hashHex,
                     aliases: self.pendingOutboundAliases
                 )
+                let incomingProof = PendingDeliveryProof(
+                    state: proofState,
+                    method: proofMethod
+                )
+                let displayProof: PendingDeliveryProof
                 if !proofPersisted {
-                    self.pendingDeliveryProofs[hashHex] = PendingDeliveryProof(
-                        state: proofState,
-                        method: proofMethod
+                    displayProof = Self.monotonicPendingDeliveryProof(
+                        existing: self.pendingDeliveryProofs[hashHex],
+                        incoming: incomingProof
                     )
+                    self.pendingDeliveryProofs[hashHex] = displayProof
+                } else {
+                    displayProof = incomingProof
                 }
                 guard let index = self.messages.firstIndex(where: { $0.id == visibleID }) else { return }
                 if wasAliased && proofPersisted {
                     self.messages[index] = Self.canonicalizedMessage(
                         self.messages[index],
                         canonicalHash: hashData,
-                        proofState: proofState,
-                        proofMethod: proofMethod
+                        proofState: displayProof.state,
+                        proofMethod: displayProof.method
                     )
-                    if let deliveryMethod, !deliveryMethod.isEmpty {
-                        self.messages[index].deliveryMethod = deliveryMethod
+                    if let method = displayProof.method {
+                        self.messages[index].deliveryMethod = method.rawValue
                     }
                     Self.recordCanonicalAlias(
                         canonicalID: hashHex,
@@ -182,11 +190,11 @@ public final class MessagingViewModel {
                     await self.invalidatePaginationAndRefresh()
                 } else {
                     self.messages[index].deliveryStatus = Self.deliveryStatus(
-                        for: proofState,
-                        method: proofMethod
+                        for: displayProof.state,
+                        method: displayProof.method
                     )
-                    if let deliveryMethod, !deliveryMethod.isEmpty {
-                        self.messages[index].deliveryMethod = deliveryMethod
+                    if let method = displayProof.method {
+                        self.messages[index].deliveryMethod = method.rawValue
                     }
                 }
             }
@@ -650,6 +658,23 @@ public final class MessagingViewModel {
         case .failed: return .failed
         default: return .sending
         }
+    }
+
+    static func monotonicPendingDeliveryProof(
+        existing: PendingDeliveryProof?,
+        incoming: PendingDeliveryProof
+    ) -> PendingDeliveryProof {
+        guard let existing else { return incoming }
+        if existing.state == .delivered || incoming.state == .delivered {
+            return incoming.state == .delivered ? incoming : existing
+        }
+        if existing.state == .sent && (incoming.state == .sending || incoming.state == .failed) {
+            return existing
+        }
+        if existing.state == .failed && incoming.state == .sending {
+            return existing
+        }
+        return incoming
     }
 
     static func mergingPendingOutbound(

@@ -563,7 +563,7 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         for source in (python_bridge, rns_backend, python_backend):
             self.assertIn("method:", source)
         self.assertIn("method: acceptedMethod", app_services)
-        self.assertIn('"deliveryMethod": acceptedMethod?.rawValue ?? ""', app_services)
+        self.assertIn('"deliveryMethod": effectiveMethod?.rawValue ?? ""', app_services)
         self.assertIn("viewModel?.currentMessage(for:", messaging_view)
         self.assertIn("recordCanonicalAlias", messaging_view_model)
         self.assertIn("PendingDeliveryProof", messaging_view_model)

@@ -390,13 +390,14 @@ struct NodeDetailsView: View {
 
     private var setAsRelayButton: some View {
         Button {
-            if let propManager = appServices.propagationManager {
+            guard let propManager = appServices.propagationManager else { return }
+            Task { @MainActor in
                 if isCurrentRelay {
-                    Task { await propManager.clearSelection() }
-                    isCurrentRelay = false
-                } else {
+                    if await propManager.clearSelection() {
+                        isCurrentRelay = false
+                    }
+                } else if await propManager.selectNode(hash: contact.identityHash) {
                     propManager.autoSelectEnabled = false
-                    Task { await propManager.selectNode(hash: contact.identityHash) }
                     isCurrentRelay = true
                 }
             }

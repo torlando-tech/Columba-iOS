@@ -2994,22 +2994,32 @@ public final class AppServices {
             let acceptedMethod = method ?? (
                 state == "retrying_propagated" ? .propagated : nil
             )
+            var effectiveState = newState
+            var effectiveMethod = acceptedMethod
             if let repo = self.messageRepository {
                 proofPersisted = (try? await repo.applyDeliveryProof(
                     canonicalHash: hashData,
                     state: newState,
                     method: acceptedMethod
                 )) ?? false
+                if proofPersisted,
+                   let persisted = try? await repo.persistedDeliveryProof(canonicalHash: hashData) {
+                    effectiveState = persisted.state
+                    effectiveMethod = persisted.method
+                }
             }
-            // Notify the open chat so it can flip the bubble's indicator
-            // (double-check for delivered / failed) without a full reload.
+            let effectiveEventState = (
+                effectiveState == .sending && effectiveMethod == .propagated
+            ) ? "retrying_propagated" : effectiveState.rawValue
+            // Notify the open chat with the state that actually survived
+            // monotonic persistence, never the rejected raw callback.
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonDelivery"),
                 object: nil,
                 userInfo: [
                     "messageHash": hashData,
-                    "state": state,
-                    "deliveryMethod": acceptedMethod?.rawValue ?? "",
+                    "state": effectiveEventState,
+                    "deliveryMethod": effectiveMethod?.rawValue ?? "",
                     "persisted": proofPersisted,
                 ]
             )

@@ -2,7 +2,6 @@ import XCTest
 @testable import ColumbaApp
 import RNSAPI
 import GRDB
-import LXMFSwift
 
 /// Tests for `Contact.init(from: PathEntry)` announce classification — the
 /// single backend-independent point where every networkAnnounces entry gets
@@ -400,34 +399,78 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
     func testExplicitRelayClearDisablesAutomaticReselection() async {
         let settings = SettingsRepository()
         let originalAutoSelect = await settings.getAutoSelectRelay()
+        let originalHash = await settings.getManualRelayHash()
+        let originalDeliveryHash = await settings.getManualRelayDeliveryHash()
+        let originalName = await settings.getManualRelayName()
+        let originalStampCost = await settings.getManualRelayStampCost()
         let manager = PropagationNodeManager(appServices: AppServices())
         manager.autoSelectEnabled = true
         manager.selectedNodeHash = Data(repeating: 0x61, count: 16)
         manager.selectedNodeDeliveryHash = Data(repeating: 0x62, count: 16)
         manager.selectedNodeName = "test relay"
 
-        await manager.clearSelection()
+        let cleared = await manager.clearSelection()
 
         let isAutoSelectEnabled = manager.autoSelectEnabled
         let selectedHash = manager.selectedNodeHash
         let selectedDeliveryHash = manager.selectedNodeDeliveryHash
         await settings.setAutoSelectRelay(originalAutoSelect)
+        await settings.setManualRelayHash(originalHash)
+        await settings.setManualRelayDeliveryHash(originalDeliveryHash)
+        await settings.setManualRelayName(originalName)
+        await settings.setManualRelayStampCost(originalStampCost)
+        XCTAssertTrue(cleared)
         XCTAssertFalse(isAutoSelectEnabled)
         XCTAssertNil(selectedHash)
         XCTAssertNil(selectedDeliveryHash)
     }
 
-    func testDeliveryProofReducerRejectsStaleRetryAndFailureDowngrades() {
-        let sending = Int(LXMFSwift.LXMessageState.sending.rawValue)
-        let sent = Int(LXMFSwift.LXMessageState.sent.rawValue)
-        let delivered = Int(LXMFSwift.LXMessageState.delivered.rawValue)
-        let failed = Int(LXMFSwift.LXMessageState.failed.rawValue)
+    func testPendingProofReducerRejectsOutOfOrderDowngrades() {
+        let delivered = MessagingViewModel.PendingDeliveryProof(state: .delivered, method: .propagated)
+        let failed = MessagingViewModel.PendingDeliveryProof(state: .failed, method: .propagated)
+        let sent = MessagingViewModel.PendingDeliveryProof(state: .sent, method: .propagated)
+        let retrying = MessagingViewModel.PendingDeliveryProof(state: .sending, method: .propagated)
 
-        XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: sending), sent)
-        XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: failed), sent)
-        XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: sending), failed)
-        XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: sent), sent)
-        XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: delivered), delivered)
+        XCTAssertEqual(
+            MessagingViewModel.monotonicPendingDeliveryProof(existing: delivered, incoming: failed),
+            delivered
+        )
+        XCTAssertEqual(
+            MessagingViewModel.monotonicPendingDeliveryProof(existing: sent, incoming: retrying),
+            sent
+        )
+        XCTAssertEqual(
+            MessagingViewModel.monotonicPendingDeliveryProof(existing: failed, incoming: sent),
+            sent
+        )
+    }
+
+    func testPersistedSnapshotReportsReducedStateAndMethod() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let hash = Data(repeating: 0x71, count: 32)
+        let message = LXMessage(
+            destinationHash: Data(repeating: 0x72, count: 16),
+            sourceIdentity: nil,
+            content: Data("stored".utf8),
+            desiredMethod: .propagated
+        )
+        message.hash = hash
+        message.state = .delivered
+        message.method = .propagated
+        try await repository.saveMessage(message)
+
+        let applied = try await repository.applyDeliveryProof(
+            canonicalHash: hash,
+            state: .failed,
+            method: .opportunistic
+        )
+        XCTAssertTrue(applied)
+        let persistedSnapshot = try await repository.persistedDeliveryProof(canonicalHash: hash)
+        let snapshot = try XCTUnwrap(persistedSnapshot)
+        XCTAssertEqual(snapshot.state, .delivered)
+        XCTAssertEqual(snapshot.method, .propagated)
     }
 
     func testPropagatedMethodRefinesPendingAndRelayAcceptedStates() {
