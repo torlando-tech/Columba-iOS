@@ -99,11 +99,10 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
         let source = try String(contentsOf: repositoryRoot
             .appendingPathComponent("Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"))
 
-        XCTAssertTrue(source.contains("""
-            Button {
-                onShowDeliveryFailure?()
-            } label: {
-            """))
+        XCTAssertNotNil(source.range(
+            of: #"Button\s*\{\s*onShowDeliveryFailure\?\(\)\s*\}\s*label:"#,
+            options: .regularExpression
+        ))
     }
 
     @MainActor
