@@ -91,16 +91,35 @@ final class MessageTextSelectionTests: XCTestCase {
 }
 
 final class FailedMessageDetailsRoutingTests: XCTestCase {
-    func testFailedStatusButtonRemainsConnectedToDetailsCallback() throws {
+    func testFailedStatusProductionWiringRemainsConnected() throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let source = try String(contentsOf: repositoryRoot
-            .appendingPathComponent("Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"))
+        func source(_ path: String) throws -> String {
+            try String(contentsOf: repositoryRoot.appendingPathComponent(path))
+        }
 
-        XCTAssertNotNil(source.range(
+        let bubble = try source("Sources/ColumbaApp/Views/Messaging/MessageBubble.swift")
+        XCTAssertNotNil(bubble.range(
             of: #"Button\s*\{\s*onShowDeliveryFailure\?\(\)\s*\}\s*label:"#,
+            options: .regularExpression
+        ))
+
+        let timeline = try source("Sources/ColumbaApp/Views/Messaging/MessageTimelineView.swift")
+        XCTAssertEqual(
+            timeline.components(separatedBy: "controller.onShowDeliveryFailure = onShowDeliveryFailure").count - 1,
+            2,
+            "Both make and update must keep the representable callback current"
+        )
+        XCTAssertNotNil(timeline.range(
+            of: #"onShowDeliveryFailure:\s*\{\s*\[weak self\]\s*in\s*self\?\.routeDeliveryFailure\(messageID:\s*message\.id\)\s*\}"#,
+            options: .regularExpression
+        ))
+
+        let messaging = try source("Sources/ColumbaApp/Views/Messaging/MessagingView.swift")
+        XCTAssertNotNil(messaging.range(
+            of: #"onShowDeliveryFailure:\s*\{\s*message\s*in\s*detailMessage\s*=\s*message\s*\}"#,
             options: .regularExpression
         ))
     }
