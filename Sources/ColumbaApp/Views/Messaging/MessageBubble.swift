@@ -259,6 +259,19 @@ struct MessageBubble: View {
             Image(systemName: "clock")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .accessibilityLabel(String(localized: "Pending send"))
+
+        case .retryingPropagated:
+            Image(systemName: "icloud.and.arrow.up.fill")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(String(localized: "Sending to relay"))
+
+        case .propagated:
+            Image(systemName: "checkmark.icloud.fill")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(String(localized: "Stored on relay"))
 
         case .sent:
             Image(systemName: "checkmark")
@@ -412,12 +425,18 @@ public struct Message: Identifiable, Equatable {
         self.isFromMe = lxMessage.sourceHash == localHash
         self.renderer = MessageRenderer(fields: lxMessage.fields)
 
-        // Map LXMessage state to DeliveryStatus
+        // Transport method refines the two nonterminal LXMF states:
+        // sending+propagated means relay submission, while sent+propagated
+        // means the relay accepted/stored the message.
         switch lxMessage.state {
         case .sending:
-            self.deliveryStatus = .sending
+            self.deliveryStatus = lxMessage.method == .propagated
+                ? .retryingPropagated
+                : .sending
         case .sent:
-            self.deliveryStatus = .sent
+            self.deliveryStatus = lxMessage.method == .propagated
+                ? .propagated
+                : .sent
         case .delivered:
             self.deliveryStatus = .delivered
         case .failed:
@@ -485,12 +504,14 @@ public struct Message: Identifiable, Equatable {
                 && record.receivingInterface != MessageRepository.optimisticOutboundMarker
         }
 
-        // Map raw state value to DeliveryStatus
+        let isPropagated = record.method == LXDeliveryMethod.propagated.rawValue
+
+        // Map raw state and effective method to presentation lifecycle.
         switch record.state {
         case LXMessageState.sending.rawValue:
-            self.deliveryStatus = .sending
+            self.deliveryStatus = isPropagated ? .retryingPropagated : .sending
         case LXMessageState.sent.rawValue:
-            self.deliveryStatus = .sent
+            self.deliveryStatus = isPropagated ? .propagated : .sent
         case LXMessageState.delivered.rawValue:
             self.deliveryStatus = .delivered
         case LXMessageState.failed.rawValue:
@@ -600,6 +621,8 @@ public struct Message: Identifiable, Equatable {
 /// Message delivery status.
 public enum DeliveryStatus: Equatable {
     case sending
+    case retryingPropagated
+    case propagated
     case sent
     case delivered
     case read

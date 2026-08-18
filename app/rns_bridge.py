@@ -1568,6 +1568,16 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
         desired_method = methods.get(method, LXMF.LXMessage.OPPORTUNISTIC)
         fallback_method = methods.get(failure_fallback_method)
 
+        # PROPAGATED requires an explicit relay. LXMRouter versions have varied
+        # in whether they reject this synchronously, so enforce the public
+        # bridge contract here instead of treating local queue admission as
+        # evidence that a relay exists.
+        if (
+            desired_method == LXMF.LXMessage.PROPAGATED
+            and getattr(router, "outbound_propagation_node", None) is None
+        ):
+            return {"ok": False, "reason": "no-propagation-node"}
+
         msg = LXMF.LXMessage(
             peer_dest,
             local_dest,
@@ -1578,7 +1588,11 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
         )
 
         callback_lock = threading.RLock()
-        callback_state = {"outcome": None, "fallback_started": False}
+        callback_state = {
+            "outcome": None,
+            "fallback_started": False,
+            "retrying_emitted": False,
+        }
 
         def _effective_method_name(m: "LXMF.LXMessage") -> str:
             method_value = getattr(m, "method", None)
@@ -1593,7 +1607,11 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
         def _emit_lifecycle(m: "LXMF.LXMessage", state: str, reason: str) -> None:
             with callback_lock:
                 current = callback_state["outcome"]
-                if state == "sent":
+                if state == "retrying_propagated":
+                    if current is not None or callback_state["retrying_emitted"]:
+                        return
+                    callback_state["retrying_emitted"] = True
+                elif state == "sent":
                     if current is not None:
                         return
                 elif state == "delivered":
@@ -1604,7 +1622,8 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                         return
                 else:
                     return
-                callback_state["outcome"] = state
+                if state != "retrying_propagated":
+                    callback_state["outcome"] = state
                 try:
                     _put(
                         "delivery",
@@ -1676,6 +1695,15 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                         m.delivery_attempts = 0
                         m.progress = 0.0
                         m.register_failed_callback(_on_propagated_failed)
+                        # This state means fallback submission has begun. It is
+                        # deliberately emitted before handle_outbound so a
+                        # synchronous relay acceptance/failure callback cannot
+                        # overtake the Cloud Upload state.
+                        _emit_lifecycle(
+                            m,
+                            "retrying_propagated",
+                            "propagation-fallback-admitted",
+                        )
                         router.handle_outbound(m)
             except Exception:
                 _emit_lifecycle(m, "failed", "propagated-enqueue-failed")

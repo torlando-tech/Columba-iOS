@@ -142,6 +142,7 @@ public final class MessagingViewModel {
             Task { @MainActor in
                 let proofState: LXMessageState
                 switch state {
+                case "retrying_propagated": proofState = .sending
                 case "sent": proofState = .sent
                 case "delivered": proofState = .delivered
                 case "failed": proofState = .failed
@@ -166,7 +167,8 @@ public final class MessagingViewModel {
                     self.messages[index] = Self.canonicalizedMessage(
                         self.messages[index],
                         canonicalHash: hashData,
-                        proofState: proofState
+                        proofState: proofState,
+                        proofMethod: proofMethod
                     )
                     if let deliveryMethod, !deliveryMethod.isEmpty {
                         self.messages[index].deliveryMethod = deliveryMethod
@@ -179,7 +181,10 @@ public final class MessagingViewModel {
                     self.pendingDeliveryProofs.removeValue(forKey: hashHex)
                     await self.invalidatePaginationAndRefresh()
                 } else {
-                    self.messages[index].deliveryStatus = Self.deliveryStatus(for: proofState)
+                    self.messages[index].deliveryStatus = Self.deliveryStatus(
+                        for: proofState,
+                        method: proofMethod
+                    )
                     if let deliveryMethod, !deliveryMethod.isEmpty {
                         self.messages[index].deliveryMethod = deliveryMethod
                     }
@@ -295,7 +300,10 @@ public final class MessagingViewModel {
                     aliases: pendingOutboundAliases,
                     proofs: pendingDeliveryProofs
                 ) {
-                    resolvedMessages[i].deliveryStatus = Self.deliveryStatus(for: proof.state)
+                    resolvedMessages[i].deliveryStatus = Self.deliveryStatus(
+                        for: proof.state,
+                        method: proof.method
+                    )
                     if let method = proof.method {
                         resolvedMessages[i].deliveryMethod = method.rawValue
                     }
@@ -605,14 +613,15 @@ public final class MessagingViewModel {
     static func canonicalizedMessage(
         _ message: Message,
         canonicalHash: Data,
-        proofState: LXMessageState
+        proofState: LXMessageState,
+        proofMethod: RNSAPI.LXDeliveryMethod? = nil
     ) -> Message {
         var canonical = Message(
             id: hexString(canonicalHash),
             content: message.content,
             timestamp: message.timestamp,
             isFromMe: message.isFromMe,
-            deliveryStatus: deliveryStatus(for: proofState),
+            deliveryStatus: deliveryStatus(for: proofState, method: proofMethod),
             imageData: message.imageData,
             imageFormat: message.imageFormat,
             attachments: message.attachments,
@@ -630,12 +639,16 @@ public final class MessagingViewModel {
         return canonical
     }
 
-    static func deliveryStatus(for state: LXMessageState) -> DeliveryStatus {
+    static func deliveryStatus(
+        for state: LXMessageState,
+        method: RNSAPI.LXDeliveryMethod? = nil
+    ) -> DeliveryStatus {
         switch state {
-        case .sent: return .sent
+        case .sending: return method == .propagated ? .retryingPropagated : .sending
+        case .sent: return method == .propagated ? .propagated : .sent
         case .delivered: return .delivered
         case .failed: return .failed
-        default: return .sent
+        default: return .sending
         }
     }
 
@@ -919,7 +932,16 @@ public final class MessagingViewModel {
             )
             let sentHash = try Self.queuedHash(from: outcome)
             lxMessage.hash = sentHash
-            lxMessage.state = .sent
+            // `.queued` means the local router accepted ownership. It does not
+            // prove packet transmission, relay storage, or recipient delivery.
+            lxMessage.state = .sending
+            if deliveryMethod == .propagated {
+                lxMessage.method = .propagated
+                if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
+                    messages[index].deliveryStatus = .retryingPropagated
+                    messages[index].deliveryMethod = LXDeliveryMethod.propagated.rawValue
+                }
+            }
             registerPendingOutboundAlias(
                 canonicalHash: sentHash,
                 optimisticID: optimisticId
@@ -951,9 +973,11 @@ public final class MessagingViewModel {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
                 if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                     messages[index].messageHash = sentHash
-                    messages[index].deliveryStatus = proof.map { Self.deliveryStatus(for: $0.state) } ?? .failed
+                    messages[index].deliveryStatus = proof.map {
+                        Self.deliveryStatus(for: $0.state, method: $0.method)
+                    } ?? .failed
                 }
-                errorMessage = "Message was sent, but local confirmation could not be saved. Verify whether it arrived before retrying."
+                errorMessage = "Message was queued, but its local state could not be saved. Do not retry until its delivery outcome is known."
             }
 
             return true
@@ -966,7 +990,8 @@ public final class MessagingViewModel {
                 // Update UI to show retrying
                 if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        messages[index].deliveryStatus = .sending
+                        messages[index].deliveryStatus = .retryingPropagated
+                        messages[index].deliveryMethod = LXDeliveryMethod.propagated.rawValue
                     }
                 }
 
@@ -1002,7 +1027,7 @@ public final class MessagingViewModel {
                     )
                     let retryHash = try Self.queuedHash(from: retryOutcome)
                     retryMessage.hash = retryHash
-                    retryMessage.state = .sent
+                    retryMessage.state = .sending
                     retryMessage.method = .propagated
                     registerPendingOutboundAlias(
                         canonicalHash: retryHash,
@@ -1033,9 +1058,11 @@ public final class MessagingViewModel {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                         if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                             messages[index].messageHash = retryHash
-                            messages[index].deliveryStatus = proof.map { Self.deliveryStatus(for: $0.state) } ?? .failed
+                            messages[index].deliveryStatus = proof.map {
+                                Self.deliveryStatus(for: $0.state, method: $0.method)
+                            } ?? .failed
                         }
-                        errorMessage = "Message was relayed, but local confirmation could not be saved. Verify whether it arrived before retrying."
+                        errorMessage = "Relay submission was queued, but its local state could not be saved. Do not retry until its delivery outcome is known."
                     }
                     return true
                 } catch {

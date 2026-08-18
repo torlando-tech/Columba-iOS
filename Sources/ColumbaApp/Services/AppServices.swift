@@ -2975,6 +2975,7 @@ public final class AppServices {
             guard let hashData = Data(hexString: messageHash) else { return }
             let newState: LXMessageState
             switch state {
+            case "retrying_propagated": newState = .sending
             case "sent": newState = .sent
             case "delivered": newState = .delivered
             case "failed": newState = .failed
@@ -2986,11 +2987,13 @@ public final class AppServices {
             // persisted and the UI reads from), via the shared repository's
             // RNSAPI-typed method — not the Compat `database`.
             var proofPersisted = false
-            // Transport and lifecycle are independent. A propagated fallback
-            // can report recipient proof without a separately observed `sent`
-            // event, so persist the backend's effective method on every state.
-            // Retain the old sent-state inference for legacy event producers.
-            let acceptedMethod = method ?? ((state == "sent") ? .propagated : nil)
+            // Persist the backend's effective method when provided. Only the
+            // newly introduced retrying state is intrinsically propagated;
+            // legacy method-less `sent` events are ambiguous and must not be
+            // rewritten as relay acceptance.
+            let acceptedMethod = method ?? (
+                state == "retrying_propagated" ? .propagated : nil
+            )
             if let repo = self.messageRepository {
                 proofPersisted = (try? await repo.applyDeliveryProof(
                     canonicalHash: hashData,

@@ -317,26 +317,39 @@ public final class PropagationNodeManager {
         await savePreferences()
     }
 
-    /// Clear the selected relay node.
+    /// Clear the selected relay node and disable automatic reselection.
+    ///
+    /// Keep the visible and persisted selection unchanged unless the shipping
+    /// backend confirms that its live router was cleared. This prevents the UI
+    /// from saying "None" while Python continues using a stale relay.
     public func clearSelection() async {
+        #if COLUMBA_RUNTIME_PYTHON
+        if let backend = appServices?.pythonBackend {
+            do {
+                guard try await backend.setPropagationNode(destHashHex: "", stampCost: 0) else {
+                    logger.error("clear propagation node was rejected by backend")
+                    return
+                }
+            } catch {
+                logger.error("clear propagation node failed: \(error.localizedDescription)")
+                return
+            }
+        }
+        #endif
+
+        await appServices?.router?.setOutboundPropagationNode(nil)
+        await appServices?.router?.setPropagationStampCost(0)
+
+        // A user-selected "None" is an explicit opt-out. Leaving automatic
+        // selection enabled would silently repopulate the relay on the next
+        // propagation-node announce.
+        autoSelectEnabled = false
         selectedNodeHash = nil
         selectedNodeDeliveryHash = nil
         selectedNodeName = nil
         selectedNodeStampCost = 0
 
-        #if COLUMBA_RUNTIME_PYTHON
-        if let backend = appServices?.pythonBackend {
-            do {
-                _ = try await backend.setPropagationNode(destHashHex: "", stampCost: 0)
-            } catch {
-                logger.error("clear propagation node failed: \(error.localizedDescription)")
-            }
-        }
-        #endif
-        await appServices?.router?.setOutboundPropagationNode(nil)
-        await appServices?.router?.setPropagationStampCost(0)
-
-        logger.info("Cleared propagation node selection")
+        logger.info("Cleared propagation node selection and disabled auto-select")
         await savePreferences()
     }
 

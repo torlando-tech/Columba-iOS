@@ -255,13 +255,16 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertEqual(FakeMessage.OUTBOUND, retry.state)
         self.assertEqual(0, retry.delivery_attempts)
         self.assertEqual(0.0, retry.progress)
-        self.assertEqual([], self.delivery_events(events))
+        self.assertEqual(
+            ["retrying_propagated"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
 
         primary.failed_callback(primary)
         self.assertEqual(2, len(router.handled), "duplicate failure requeued twice")
-        self.assertEqual(1, len(self.delivery_events(events)))
-        self.assertEqual("failed", self.delivery_events(events)[0]["state"])
-        self.assertEqual("propagated-failed", self.delivery_events(events)[0]["reason"])
+        self.assertEqual(2, len(self.delivery_events(events)))
+        self.assertEqual("failed", self.delivery_events(events)[1]["state"])
+        self.assertEqual("propagated-failed", self.delivery_events(events)[1]["reason"])
 
     def test_explicit_propagated_send_without_node_is_rejected_before_queue(self):
         router = FakeRouter(propagation_node=False)
@@ -412,13 +415,13 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         message.failed_callback(message)
 
         self.assertTrue(router.wait_for_handled_count(2))
-        self.assertTrue(self.wait_for_delivery_events(events, 1))
+        self.assertTrue(self.wait_for_delivery_events(events, 2))
         self.assertEqual(2, len(router.handled))
-        self.assertEqual(1, len(self.delivery_events(events)))
-        self.assertEqual("propagated-enqueue-failed", self.delivery_events(events)[0]["reason"])
+        self.assertEqual(2, len(self.delivery_events(events)))
+        self.assertEqual("propagated-enqueue-failed", self.delivery_events(events)[1]["reason"])
         message.failed_callback(message)
         self.assertEqual(2, len(router.handled))
-        self.assertEqual(1, len(self.delivery_events(events)))
+        self.assertEqual(2, len(self.delivery_events(events)))
 
     def test_failure_callback_returns_before_locked_router_requeue(self):
         router = LockedCallbackRouter()
@@ -435,7 +438,10 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
             router.outbound_processing_lock.release()
 
         self.assertTrue(router.wait_for_handled_count(2))
-        self.assertEqual([], self.delivery_events(events))
+        self.assertEqual(
+            ["retrying_propagated"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
 
     def test_recipient_proof_cancels_deferred_fallback_before_requeue(self):
         router = FakeRouter()
@@ -498,7 +504,7 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertTrue(proof_done.is_set())
         self.assertTrue(router.wait_for_handled_count(2))
         self.assertEqual(
-            ["delivered"],
+            ["retrying_propagated", "delivered"],
             [event["state"] for event in self.delivery_events(events)],
         )
 
@@ -536,9 +542,10 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         retry.delivery_callback(retry)
 
         delivered = self.delivery_events(events)
-        self.assertEqual(1, len(delivered))
-        self.assertEqual("delivered", delivered[0]["state"])
-        self.assertEqual("propagated", delivered[0]["method"])
+        self.assertEqual(2, len(delivered))
+        self.assertEqual("retrying_propagated", delivered[0]["state"])
+        self.assertEqual("delivered", delivered[1]["state"])
+        self.assertEqual("propagated", delivered[1]["method"])
 
         python_bridge = (ROOT / "Sources/PythonBridge/PythonBridge.swift").read_text()
         rns_backend = (ROOT / "Sources/RNSAPI/Protocols/RnsBackend.swift").read_text()

@@ -397,6 +397,19 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
     }
 
     func testPropagatedMethodRefinesPendingAndRelayAcceptedStates() {
+        XCTAssertEqual(
+            MessagingViewModel.deliveryStatus(for: .sending, method: .propagated),
+            .retryingPropagated
+        )
+        XCTAssertEqual(
+            MessagingViewModel.deliveryStatus(for: .sent, method: .propagated),
+            .propagated
+        )
+        XCTAssertEqual(
+            MessagingViewModel.deliveryStatus(for: .delivered, method: .propagated),
+            .delivered
+        )
+
         let pending = LXMessage(
             destinationHash: Data(repeating: 0x51, count: 16),
             sourceIdentity: nil,

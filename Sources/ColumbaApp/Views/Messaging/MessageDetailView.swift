@@ -250,8 +250,14 @@ struct MessageDetailView: View {
                 return ("exclamationmark.circle.fill", .red, "Failed",
                         "Delivery failed — try resending")
             case .sending:
-                return ("hourglass", .orange, "Sending",
-                        "Message is being sent")
+                return ("hourglass", .orange, "Pending",
+                        "Queued locally; no transport confirmation yet")
+            case .retryingPropagated:
+                return ("icloud.and.arrow.up.fill", .orange, "Sending to Relay",
+                        "Submitting through the selected relay")
+            case .propagated:
+                return ("checkmark.icloud.fill", .blue, "Stored on Relay",
+                        "Relay accepted the message; recipient delivery is not confirmed")
             case .sent:
                 return ("paperplane.fill", .blue, "Sent",
                         "Message sent, awaiting delivery confirmation")
@@ -280,8 +286,20 @@ struct MessageDetailView: View {
                 return ("link", "Direct",
                         "Link-based delivery, supports large messages")
             case "propagated":
-                return ("point.3.connected.trianglepath.dotted", "Propagated",
-                        "Delivered via relay/propagation node")
+                let subtitle: String
+                switch message.deliveryStatus {
+                case .retryingPropagated:
+                    subtitle = "Submitting to the selected relay"
+                case .propagated:
+                    subtitle = "Stored by relay; awaiting recipient delivery"
+                case .delivered, .read:
+                    subtitle = "Recipient delivery confirmed through relay"
+                case .failed:
+                    subtitle = "Relay delivery attempt failed"
+                case .sending, .sent:
+                    subtitle = "Relay method selected; relay acceptance is unconfirmed"
+                }
+                return ("point.3.connected.trianglepath.dotted", "Propagated", subtitle)
             case "paper":
                 return ("doc.text", "Paper",
                         "Transferred as a paper LXMF message")
