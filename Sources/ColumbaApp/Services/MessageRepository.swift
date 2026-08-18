@@ -885,8 +885,23 @@ public actor MessageRepository {
     /// rekey it to the wire hash. This path works without an open chat view.
     static func monotonicDeliveryState(existing: Int?, incoming: Int) -> Int {
         guard let existing else { return incoming }
+        let sending = Int(LXMFSwift.LXMessageState.sending.rawValue)
+        let sent = Int(LXMFSwift.LXMessageState.sent.rawValue)
         let delivered = Int(LXMFSwift.LXMessageState.delivered.rawValue)
-        return existing == delivered ? existing : incoming
+        let failed = Int(LXMFSwift.LXMessageState.failed.rawValue)
+
+        if existing == delivered || incoming == delivered { return delivered }
+
+        // A transport or relay acceptance cannot be revoked by a delayed
+        // retry-start/failure callback. Conversely, a terminal failure can be
+        // superseded by later positive proof, but not by stale retry admission.
+        if existing == sent && (incoming == sending || incoming == failed) {
+            return sent
+        }
+        if existing == failed && incoming == sending {
+            return failed
+        }
+        return incoming
     }
 
     @discardableResult
