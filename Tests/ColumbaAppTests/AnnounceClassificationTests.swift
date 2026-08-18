@@ -396,6 +396,26 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
         XCTAssertEqual(stored.state, LXMessageState.sending.rawValue)
     }
 
+    func testExplicitRelayClearDisablesAutomaticReselection() async {
+        let settings = SettingsRepository()
+        let originalAutoSelect = await settings.getAutoSelectRelay()
+        let manager = PropagationNodeManager(appServices: AppServices())
+        manager.autoSelectEnabled = true
+        manager.selectedNodeHash = Data(repeating: 0x61, count: 16)
+        manager.selectedNodeDeliveryHash = Data(repeating: 0x62, count: 16)
+        manager.selectedNodeName = "test relay"
+
+        await manager.clearSelection()
+
+        let isAutoSelectEnabled = manager.autoSelectEnabled
+        let selectedHash = manager.selectedNodeHash
+        let selectedDeliveryHash = manager.selectedNodeDeliveryHash
+        await settings.setAutoSelectRelay(originalAutoSelect)
+        XCTAssertFalse(isAutoSelectEnabled)
+        XCTAssertNil(selectedHash)
+        XCTAssertNil(selectedDeliveryHash)
+    }
+
     func testPropagatedMethodRefinesPendingAndRelayAcceptedStates() {
         XCTAssertEqual(
             MessagingViewModel.deliveryStatus(for: .sending, method: .propagated),
