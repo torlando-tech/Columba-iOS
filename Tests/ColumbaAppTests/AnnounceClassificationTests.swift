@@ -356,6 +356,61 @@ final class AnnounceClassificationTests: XCTestCase {
     }
 }
 
+@MainActor
+final class TruthfulPropagationLifecycleTests: XCTestCase {
+    private func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-truthful-propagation-\(UUID().uuidString).sqlite")
+    }
+
+    private func removeDatabase(at url: URL) {
+        let fm = FileManager.default
+        try? fm.removeItem(at: url)
+        try? fm.removeItem(atPath: url.path + "-wal")
+        try? fm.removeItem(atPath: url.path + "-shm")
+    }
+
+    func testQueuedSendRemainsPendingUntilLifecycleCallback() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x41, count: 16)
+        let canonicalHash = Data(repeating: 0x42, count: 32)
+        let viewModel = MessagingViewModel(
+            conversationHash: destination,
+            repository: repository,
+            appServices: AppServices(),
+            identity: Identity(),
+            outboundSendOperation: { _ in
+                .queued(messageHash: canonicalHash.map { String(format: "%02x", $0) }.joined())
+            }
+        )
+
+        XCTAssertTrue(await viewModel.sendMessage(text: "queued only"))
+
+        let visible = try XCTUnwrap(viewModel.messages.last)
+        XCTAssertEqual(visible.deliveryStatus, .sending)
+        let stored = try XCTUnwrap(await repository.getMessageRecord(id: canonicalHash))
+        XCTAssertEqual(stored.state, LXMessageState.sending.rawValue)
+    }
+
+    func testPropagatedMethodRefinesPendingAndRelayAcceptedStates() {
+        let pending = LXMessage(
+            destinationHash: Data(repeating: 0x51, count: 16),
+            sourceIdentity: nil,
+            content: Data("pending".utf8),
+            desiredMethod: .propagated
+        )
+        pending.hash = Data(repeating: 0x52, count: 32)
+        pending.method = .propagated
+        pending.state = .sending
+        XCTAssertEqual(Message(from: pending, localHash: Data()).deliveryStatus, .retryingPropagated)
+
+        pending.state = .sent
+        XCTAssertEqual(Message(from: pending, localHash: Data()).deliveryStatus, .propagated)
+    }
+}
+
 final class MessageDetailAliasTests: XCTestCase {
     private func temporaryDatabaseURL() -> URL {
         FileManager.default.temporaryDirectory

@@ -263,6 +263,43 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertEqual("failed", self.delivery_events(events)[0]["state"])
         self.assertEqual("propagated-failed", self.delivery_events(events)[0]["reason"])
 
+    def test_explicit_propagated_send_without_node_is_rejected_before_queue(self):
+        router = FakeRouter(propagation_node=False)
+        events = []
+        send = self.load_send(router, events)
+
+        result = send(
+            dest_hash_hex="01" * 16,
+            content="hello",
+            fields_hex="",
+            method="propagated",
+            failure_fallback_method="",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("no-propagation-node", result["reason"])
+        self.assertEqual([], router.handled)
+        self.assertEqual([], self.delivery_events(events))
+
+    def test_fallback_admission_emits_retrying_before_relay_acceptance(self):
+        router = FakeRouter()
+        events = []
+        message = self.queue(router, events)
+
+        message.failed_callback(message)
+
+        self.assertTrue(router.wait_for_handled_count(2))
+        self.assertTrue(self.wait_for_delivery_events(events, 1))
+        self.assertEqual("retrying_propagated", self.delivery_events(events)[0]["state"])
+        self.assertEqual("propagated", self.delivery_events(events)[0]["method"])
+
+        message.state = FakeMessage.SENT
+        message.delivery_callback(message)
+        self.assertEqual(
+            ["retrying_propagated", "sent"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
+
     def test_propagation_acceptance_is_sent_not_delivered(self):
         router = FakeRouter()
         events = []
