@@ -90,6 +90,75 @@ final class MessageTextSelectionTests: XCTestCase {
     }
 }
 
+final class FailedMessageDetailsRoutingTests: XCTestCase {
+    func testFailedStatusProductionWiringRemainsConnected() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        func source(_ path: String) throws -> String {
+            try String(contentsOf: repositoryRoot.appendingPathComponent(path))
+        }
+
+        let bubble = try source("Sources/ColumbaApp/Views/Messaging/MessageBubble.swift")
+        XCTAssertNotNil(bubble.range(
+            of: #"Button\s*\{\s*onShowDeliveryFailure\?\(\)\s*\}\s*label:"#,
+            options: .regularExpression
+        ))
+
+        let timeline = try source("Sources/ColumbaApp/Views/Messaging/MessageTimelineView.swift")
+        XCTAssertEqual(
+            timeline.components(separatedBy: "controller.onShowDeliveryFailure = onShowDeliveryFailure").count - 1,
+            2,
+            "Both make and update must keep the representable callback current"
+        )
+        XCTAssertNotNil(timeline.range(
+            of: #"onShowDeliveryFailure:\s*\{\s*\[weak self\]\s*in\s*self\?\.routeDeliveryFailure\(messageID:\s*message\.id\)\s*\}"#,
+            options: .regularExpression
+        ))
+
+        let messaging = try source("Sources/ColumbaApp/Views/Messaging/MessagingView.swift")
+        XCTAssertNotNil(messaging.range(
+            of: #"onShowDeliveryFailure:\s*\{\s*message\s*in\s*detailMessage\s*=\s*message\s*\}"#,
+            options: .regularExpression
+        ))
+    }
+
+    @MainActor
+    func testFailedStatusRoutesTheExactMessageToDetails() {
+        let failed = Message(
+            id: "failed-message",
+            content: "Could not send",
+            isFromMe: true,
+            deliveryStatus: .failed
+        )
+        let delivered = Message(
+            id: "delivered-message",
+            content: "Sent successfully",
+            isFromMe: true,
+            deliveryStatus: .delivered
+        )
+        let controller = MessageTimelineViewController()
+        controller.loadViewIfNeeded()
+        controller.update(
+            messages: [failed, delivered],
+            isLoadingMore: false,
+            allMessagesLoaded: true
+        )
+
+        var routedMessage: Message?
+        controller.onShowDeliveryFailure = { routedMessage = $0 }
+
+        controller.routeDeliveryFailureForTesting(messageID: failed.id)
+        XCTAssertEqual(routedMessage, failed)
+
+        routedMessage = nil
+        controller.routeDeliveryFailureForTesting(messageID: delivered.id)
+        XCTAssertNil(routedMessage, "Only a failed status may open failure details")
+    }
+
+}
+
 final class MessageAttachmentPreviewItemTests: XCTestCase {
     private let pngData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL1WQAAAABJRU5ErkJggg==")!
 
@@ -450,6 +519,7 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             onReply: { _ in },
             onToggleReaction: { _, _ in },
             onLongPress: { _ in },
+            onShowDeliveryFailure: { _ in },
             onOpenLink: { _ in },
             onOpenImage: onOpenImage,
             onOpenFileAttachment: onOpenFile

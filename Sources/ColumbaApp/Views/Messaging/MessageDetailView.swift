@@ -192,8 +192,8 @@ struct MessageDetailView: View {
                 icon: "exclamationmark.triangle.fill",
                 iconColor: .red,
                 title: "Error",
-                content: "Delivery failed",
-                subtitle: "The message could not be delivered to the recipient"
+                content: String(localized: "No delivery confirmation"),
+                subtitle: String(localized: "Common causes include an unavailable route, an offline recipient, or a delivery timeout. Check your interfaces and try again.")
             )
         }
 

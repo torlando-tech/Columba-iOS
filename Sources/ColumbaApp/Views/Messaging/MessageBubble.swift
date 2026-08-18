@@ -41,6 +41,8 @@ struct MessageBubble: View {
     var onOpenImage: (() -> Void)?
     /// Callback for opening a file attachment by its stable message-local index.
     var onOpenFileAttachment: ((Int) -> Void)?
+    /// Callback for opening delivery details from a failed status indicator.
+    var onShowDeliveryFailure: (() -> Void)?
 
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
@@ -280,9 +282,19 @@ struct MessageBubble: View {
             .foregroundStyle(Theme.accentColor)
 
         case .failed:
-            Image(systemName: "exclamationmark.circle.fill")
-                .font(.caption2)
-                .foregroundStyle(.red)
+            Button {
+                onShowDeliveryFailure?()
+            } label: {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("failed_message_details")
+            .accessibilityLabel(String(localized: "Message delivery failed"))
+            .accessibilityHint(String(localized: "Shows delivery failure details"))
         }
     }
 }

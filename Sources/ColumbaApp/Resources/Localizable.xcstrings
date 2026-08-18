@@ -1,6 +1,46 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Common causes include an unavailable route, an offline recipient, or a delivery timeout. Check your interfaces and try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Common causes include an unavailable route, an offline recipient, or a delivery timeout. Check your interfaces and try again."
+          }
+        }
+      }
+    },
+    "Message delivery failed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message delivery failed"
+          }
+        }
+      }
+    },
+    "No delivery confirmation": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No delivery confirmation"
+          }
+        }
+      }
+    },
+    "Shows delivery failure details": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shows delivery failure details"
+          }
+        }
+      }
+    },
     "No active interface": {
       "localizations": {
         "en": {
