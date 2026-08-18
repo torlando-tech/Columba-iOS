@@ -573,6 +573,33 @@ final class MessageBubbleLayoutTests: XCTestCase {
             "Reply bubbles must retain the visibly scaled primary body at both extremes"
         )
     }
+
+    @MainActor
+    func testFailedStatusControlKeepsTheBubbleCompactAndVisible() throws {
+        let message = Message(
+            id: "failed-visual",
+            content: "Could not send this message",
+            isFromMe: true,
+            deliveryStatus: .failed
+        )
+        let bubble = MessageBubble(message: message, onShowDeliveryFailure: {})
+            .frame(width: 390)
+            .padding()
+            .background(Color.black)
+        let host = UIHostingController(rootView: bubble)
+        let fitted = host.sizeThatFits(in: CGSize(width: 422, height: 500))
+
+        XCTAssertGreaterThanOrEqual(fitted.height, 80)
+        XCTAssertLessThan(fitted.height, 180)
+
+        let renderer = ImageRenderer(content: bubble)
+        renderer.scale = 3
+        let image = try XCTUnwrap(renderer.uiImage)
+        let screenshot = XCTAttachment(image: image)
+        screenshot.name = "failed-message-status-control"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
 }
 
 final class MessageTimelinePolicyTests: XCTestCase {
