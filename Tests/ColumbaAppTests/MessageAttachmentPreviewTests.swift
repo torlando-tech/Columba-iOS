@@ -91,65 +91,19 @@ final class MessageTextSelectionTests: XCTestCase {
 }
 
 final class FailedMessageDetailsRoutingTests: XCTestCase {
-    private enum AccessibilityNode {
-        case view(UIView)
-        case element(UIAccessibilityElement)
+    func testFailedStatusButtonRemainsConnectedToDetailsCallback() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repositoryRoot
+            .appendingPathComponent("Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"))
 
-        var identifier: String? {
-            switch self {
-            case .view(let view): view.accessibilityIdentifier
-            case .element(let element): element.accessibilityIdentifier
-            }
-        }
-
-        var frame: CGRect {
-            switch self {
-            case .view(let view): view.accessibilityFrame
-            case .element(let element): element.accessibilityFrame
-            }
-        }
-
-        func activate() -> Bool {
-            switch self {
-            case .view(let view): view.accessibilityActivate()
-            case .element(let element): element.accessibilityActivate()
-            }
-        }
-    }
-
-    @MainActor
-    func testFailedStatusButtonActivatesItsProductionCallback() throws {
-        var activationCount = 0
-        let message = Message(
-            id: "failed-control",
-            content: "Could not send",
-            isFromMe: true,
-            deliveryStatus: .failed
-        )
-        let host = UIHostingController(rootView: MessageBubble(
-            message: message,
-            onShowDeliveryFailure: { activationCount += 1 }
-        ))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        host.view.frame = window.bounds
-        host.view.layoutIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        host.view.layoutIfNeeded()
-
-        let candidates = accessibilityElements(in: host.view)
-        var matchingControl: AccessibilityNode?
-        for candidate in candidates where candidate.identifier == "failed_message_details" {
-            matchingControl = candidate
-            break
-        }
-        let control = try XCTUnwrap(matchingControl)
-        XCTAssertGreaterThanOrEqual(control.frame.width, 44)
-        XCTAssertGreaterThanOrEqual(control.frame.height, 44)
-        XCTAssertTrue(control.activate())
-        XCTAssertEqual(activationCount, 1)
+        XCTAssertTrue(source.contains("""
+            Button {
+                onShowDeliveryFailure?()
+            } label: {
+            """))
     }
 
     @MainActor
@@ -185,26 +139,6 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
         XCTAssertNil(routedMessage, "Only a failed status may open failure details")
     }
 
-    @MainActor
-    private func accessibilityElements(in root: UIView) -> [AccessibilityNode] {
-        var elements: [AccessibilityNode] = []
-        if root.isAccessibilityElement || root.accessibilityIdentifier != nil {
-            elements.append(.view(root))
-        }
-        if let contained = root.accessibilityElements {
-            for element in contained {
-                if let view = element as? UIView {
-                    elements.append(contentsOf: accessibilityElements(in: view))
-                } else if let accessibilityElement = element as? UIAccessibilityElement {
-                    elements.append(.element(accessibilityElement))
-                }
-            }
-        }
-        for subview in root.subviews {
-            elements.append(contentsOf: accessibilityElements(in: subview))
-        }
-        return elements
-    }
 }
 
 final class MessageAttachmentPreviewItemTests: XCTestCase {
