@@ -2,6 +2,7 @@ import XCTest
 @testable import ColumbaApp
 import RNSAPI
 import GRDB
+import LXMFSwift
 
 /// Tests for `Contact.init(from: PathEntry)` announce classification — the
 /// single backend-independent point where every networkAnnounces entry gets
@@ -416,11 +417,11 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
         XCTAssertNil(selectedDeliveryHash)
     }
 
-    func testDeliveryProofReducerRejectsStaleRetryAndFailureDowngrades() throws {
-        let sending = try XCTUnwrap(Int(RNSAPI.LXMessageState.sending.rawValue))
-        let sent = try XCTUnwrap(Int(RNSAPI.LXMessageState.sent.rawValue))
-        let delivered = try XCTUnwrap(Int(RNSAPI.LXMessageState.delivered.rawValue))
-        let failed = try XCTUnwrap(Int(RNSAPI.LXMessageState.failed.rawValue))
+    func testDeliveryProofReducerRejectsStaleRetryAndFailureDowngrades() {
+        let sending = Int(LXMFSwift.LXMessageState.sending.rawValue)
+        let sent = Int(LXMFSwift.LXMessageState.sent.rawValue)
+        let delivered = Int(LXMFSwift.LXMessageState.delivered.rawValue)
+        let failed = Int(LXMFSwift.LXMessageState.failed.rawValue)
 
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: sending), sent)
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: failed), sent)
