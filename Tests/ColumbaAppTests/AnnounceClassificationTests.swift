@@ -386,11 +386,13 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
             }
         )
 
-        XCTAssertTrue(await viewModel.sendMessage(text: "queued only"))
+        let accepted = await viewModel.sendMessage(text: "queued only")
+        XCTAssertTrue(accepted)
 
         let visible = try XCTUnwrap(viewModel.messages.last)
         XCTAssertEqual(visible.deliveryStatus, .sending)
-        let stored = try XCTUnwrap(await repository.getMessageRecord(id: canonicalHash))
+        let storedRecord = try await repository.getMessageRecord(id: canonicalHash)
+        let stored = try XCTUnwrap(storedRecord)
         XCTAssertEqual(stored.state, LXMessageState.sending.rawValue)
     }
 
