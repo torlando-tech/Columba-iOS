@@ -1,125 +1,8 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "Common causes include an unavailable route, an offline recipient, or a delivery timeout. Check your interfaces and try again.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Common causes include an unavailable route, an offline recipient, or a delivery timeout. Check your interfaces and try again."
-          }
-        }
-      }
-    },
-    "Message delivery failed": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Message delivery failed"
-          }
-        }
-      }
-    },
-    "No delivery confirmation": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No delivery confirmation"
-          }
-        }
-      }
-    },
-    "Shows delivery failure details": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Shows delivery failure details"
-          }
-        }
-      }
-    },
-    "No active interface": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No active interface"
-          }
-        }
-      }
-    },
-    "Interfaces:": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Interfaces:"
-          }
-        }
-      }
-    },
-    "TCP": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "TCP"
-          }
-        }
-      }
-    },
-    "TCP Server": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "TCP Server"
-          }
-        }
-      }
-    },
-    "Manage": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Manage"
-          }
-        }
-      }
-    },
-    "Manage Interfaces": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Manage Interfaces"
-          }
-        }
-      }
-    },
-    "No Interfaces Connected": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No Interfaces Connected"
-          }
-        }
-      }
-    },
-    "Opens network interface settings": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Opens network interface settings"
-          }
-        }
-      }
+    "%lld percent": {
+      "comment": "VoiceOver value announcing the selected message text-size percentage."
     },
     "A relay helps your device reach Reticulum peers over the internet. It transports encrypted Reticulum traffic — it does not create an account or hold your identity. We've selected a recommended default.": {
       "localizations": {
@@ -151,12 +34,46 @@
         }
       }
     },
+    "Allowed": {
+      "comment": "Status indicating an iOS permission is allowed."
+    },
+    "Announce to Network": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Announce to Network"
+          }
+        }
+      }
+    },
+    "Announced": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Announced"
+          }
+        }
+      }
+    },
     "Another Columba user can scan this public contact code to add you. It does not contain your private identity keys.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Another Columba user can scan this public contact code to add you. It does not contain your private identity keys."
+          }
+        }
+      }
+    },
+    "Anyone can send you messages, including unknown senders.": {
+      "comment": "Privacy explanation shown when messages from unknown senders are allowed.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anyone can send you messages, including unknown senders."
           }
         }
       }
@@ -241,6 +158,16 @@
         }
       }
     },
+    "Broadcasts your identity so nearby peers can discover you": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Broadcasts your identity so nearby peers can discover you"
+          }
+        }
+      }
+    },
     "Cancel": {
       "localizations": {
         "en": {
@@ -311,6 +238,16 @@
         }
       }
     },
+    "Common causes include an unavailable route, an offline recipient, or a delivery timeout. Check your interfaces and try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Common causes include an unavailable route, an offline recipient, or a delivery timeout. Check your interfaces and try again."
+          }
+        }
+      }
+    },
     "Configure in Settings after setup": {
       "localizations": {
         "en": {
@@ -350,6 +287,12 @@
           }
         }
       }
+    },
+    "Current connections": {
+      "comment": "Read-only heading for connection methods shown during setup review."
+    },
+    "Current relay": {
+      "comment": "Read-only heading for the relay shown during setup review."
     },
     "Decrypt": {
       "localizations": {
@@ -421,6 +364,17 @@
         }
       }
     },
+    "Enter Key Sends Message": {
+      "comment": "Settings toggle controlling whether the on-screen keyboard Enter key sends the current message.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter Key Sends Message"
+          }
+        }
+      }
+    },
     "Existing identities and messages will not be duplicated. Conversation details and app settings may be updated from this backup.": {
       "localizations": {
         "en": {
@@ -430,6 +384,9 @@
           }
         }
       }
+    },
+    "File attachment: %@": {
+      "comment": "VoiceOver label for a file attached to a chat message. The placeholder is the sender-provided display name."
     },
     "Generating identity...": {
       "localizations": {
@@ -461,12 +418,25 @@
         }
       }
     },
+    "Image attachment": {
+      "comment": "VoiceOver label for an image attached to a chat message."
+    },
     "Incorrect password. Please try again.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Incorrect password. Please try again."
+          }
+        }
+      }
+    },
+    "Interfaces:": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interfaces:"
           }
         }
       }
@@ -521,6 +491,29 @@
         }
       }
     },
+    "Manage": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manage"
+          }
+        }
+      }
+    },
+    "Manage Interfaces": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manage Interfaces"
+          }
+        }
+      }
+    },
+    "Maximum text size": {
+      "comment": "VoiceOver label for the large endpoint in the message text-size range."
+    },
     "Message Alerts": {
       "localizations": {
         "en": {
@@ -530,6 +523,54 @@
           }
         }
       }
+    },
+    "Message delivery failed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message delivery failed"
+          }
+        }
+      }
+    },
+    "Message text size": {
+      "comment": "VoiceOver label for the conversation message text-size slider."
+    },
+    "Message was queued, but its local state could not be saved. Do not retry until its delivery outcome is known.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message was queued, but its local state could not be saved. Do not retry until its delivery outcome is known."
+          }
+        }
+      }
+    },
+    "Messages from contacts only": {
+      "comment": "Label for the privacy control that rejects messages from unknown senders.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Messages from contacts only"
+          }
+        }
+      }
+    },
+    "Messaging": {
+      "comment": "Title of the settings card containing message composition preferences.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Messaging"
+          }
+        }
+      }
+    },
+    "Minimum text size": {
+      "comment": "VoiceOver label for the small endpoint in the message text-size range."
     },
     "Nearby": {
       "localizations": {
@@ -547,6 +588,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "New messages"
+          }
+        }
+      }
+    },
+    "No Interfaces Connected": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Interfaces Connected"
           }
         }
       }
@@ -571,12 +622,32 @@
         }
       }
     },
+    "No active interface": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No active interface"
+          }
+        }
+      }
+    },
     "No central account or sign-up": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "No central account or sign-up"
+          }
+        }
+      }
+    },
+    "No delivery confirmation": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No delivery confirmation"
           }
         }
       }
@@ -600,6 +671,9 @@
           }
         }
       }
+    },
+    "Not Allowed": {
+      "comment": "Status indicating an iOS permission is not allowed."
     },
     "Notification permission does not keep Columba connected in the background. You can change access anytime in iOS Settings.": {
       "localizations": {
@@ -631,6 +705,30 @@
         }
       }
     },
+    "Only contacts can message you. Messages from unknown senders are silently discarded.": {
+      "comment": "Privacy explanation shown when messages from unknown senders are blocked.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only contacts can message you. Messages from unknown senders are silently discarded."
+          }
+        }
+      }
+    },
+    "Opens attachment preview": {
+      "comment": "VoiceOver hint for tappable image and file attachment controls."
+    },
+    "Opens network interface settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens network interface settings"
+          }
+        }
+      }
+    },
     "Optional network and Bluetooth events": {
       "localizations": {
         "en": {
@@ -651,6 +749,26 @@
         }
       }
     },
+    "Pending": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pending"
+          }
+        }
+      }
+    },
+    "Pending send": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pending send"
+          }
+        }
+      }
+    },
     "Please try again.": {
       "localizations": {
         "en": {
@@ -661,12 +779,47 @@
         }
       }
     },
+    "Press Enter to insert a new line. Use the send button to send the message.": {
+      "comment": "Explanation shown when the message composer Enter key inserts a line break.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Press Enter to insert a new line. Use the send button to send the message."
+          }
+        }
+      }
+    },
+    "Press Enter to send. Turn this off when you want Enter to insert new lines.": {
+      "comment": "Explanation shown when the message composer Enter key sends messages.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Press Enter to send. Turn this off when you want Enter to insert new lines."
+          }
+        }
+      }
+    },
+    "Preview message text": {
+      "comment": "Sample message shown in the conversation text-size picker."
+    },
     "Private messaging without a central account": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Private messaging without a central account"
+          }
+        }
+      }
+    },
+    "Queued locally; no transport confirmation yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queued locally; no transport confirmation yet"
           }
         }
       }
@@ -721,6 +874,16 @@
         }
       }
     },
+    "Recipient delivery confirmed through relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recipient delivery confirmed through relay"
+          }
+        }
+      }
+    },
     "Recommended Relays": {
       "localizations": {
         "en": {
@@ -741,12 +904,52 @@
         }
       }
     },
+    "Relay accepted the message; recipient delivery is not confirmed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay accepted the message; recipient delivery is not confirmed"
+          }
+        }
+      }
+    },
+    "Relay delivery attempt failed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay delivery attempt failed"
+          }
+        }
+      }
+    },
+    "Relay method selected; relay acceptance is unconfirmed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay method selected; relay acceptance is unconfirmed"
+          }
+        }
+      }
+    },
     "Relay server": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Relay server"
+          }
+        }
+      }
+    },
+    "Relay submission was queued, but its local state could not be saved. Do not retry until its delivery outcome is known.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay submission was queued, but its local state could not be saved. Do not retry until its delivery outcome is known."
           }
         }
       }
@@ -851,6 +1054,39 @@
         }
       }
     },
+    "Send Announce": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send Announce"
+          }
+        }
+      }
+    },
+    "Sending to Relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending to Relay"
+          }
+        }
+      }
+    },
+    "Sending to relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending to relay"
+          }
+        }
+      }
+    },
+    "Setup Guide Reviewed": {
+      "comment": "Heading after completing a read-only setup review."
+    },
     "Share Your Identity": {
       "localizations": {
         "en": {
@@ -890,6 +1126,92 @@
           }
         }
       }
+    },
+    "Shows delivery failure details": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shows delivery failure details"
+          }
+        }
+      }
+    },
+    "Stored by relay; awaiting recipient delivery": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stored by relay; awaiting recipient delivery"
+          }
+        }
+      }
+    },
+    "Stored on Relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stored on Relay"
+          }
+        }
+      }
+    },
+    "Stored on relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stored on relay"
+          }
+        }
+      }
+    },
+    "Submitting through the selected relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Submitting through the selected relay"
+          }
+        }
+      }
+    },
+    "Submitting to the selected relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Submitting to the selected relay"
+          }
+        }
+      }
+    },
+    "TCP": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TCP"
+          }
+        }
+      }
+    },
+    "TCP Server": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TCP Server"
+          }
+        }
+      }
+    },
+    "Text Size": {
+      "comment": "Conversation action and picker title for changing primary message-body text size."
+    },
+    "The attachment could not be prepared for preview.": {
+      "comment": "Privacy-safe error text shown when temporary attachment export fails."
     },
     "The indicator means iOS has an active network extension. It stays visible while Background Delivery is enabled.": {
       "localizations": {
@@ -931,6 +1253,12 @@
         }
       }
     },
+    "This is the relay currently configured for Columba. You can change it later in Settings.": {
+      "comment": "Explains that setup review does not edit the relay."
+    },
+    "This setup review is read-only. Change connection methods in Settings.": {
+      "comment": "Explains where connection methods can be edited."
+    },
     "Try Again": {
       "localizations": {
         "en": {
@@ -940,6 +1268,20 @@
           }
         }
       }
+    },
+    "Type a message...": {
+      "comment": "Placeholder and VoiceOver label for the message composer.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Type a message..."
+          }
+        }
+      }
+    },
+    "Unable to Open Attachment": {
+      "comment": "Error alert title when a message attachment cannot be prepared for preview."
     },
     "Unable to Open Setup": {
       "localizations": {
@@ -1021,6 +1363,12 @@
         }
       }
     },
+    "Your Display Name": {
+      "comment": "Read-only heading shown while reviewing an existing setup."
+    },
+    "iOS Notification Permission": {
+      "comment": "Label for the operating-system notification authorization status."
+    },
     "iOS Notifications": {
       "localizations": {
         "en": {
@@ -1047,194 +1395,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "iOS will ask you to allow the configuration and will show a VPN indicator while Background Delivery is enabled. Delivery still depends on available Reticulum connections."
-          }
-        }
-      }
-    },
-    "Your Display Name": {
-      "comment": "Read-only heading shown while reviewing an existing setup."
-    },
-    "Current relay": {
-      "comment": "Read-only heading for the relay shown during setup review."
-    },
-    "This is the relay currently configured for Columba. You can change it later in Settings.": {
-      "comment": "Explains that setup review does not edit the relay."
-    },
-    "Current connections": {
-      "comment": "Read-only heading for connection methods shown during setup review."
-    },
-    "This setup review is read-only. Change connection methods in Settings.": {
-      "comment": "Explains where connection methods can be edited."
-    },
-    "Setup Guide Reviewed": {
-      "comment": "Heading after completing a read-only setup review."
-    },
-    "iOS Notification Permission": {
-      "comment": "Label for the operating-system notification authorization status."
-    },
-    "Allowed": {
-      "comment": "Status indicating an iOS permission is allowed."
-    },
-    "Not Allowed": {
-      "comment": "Status indicating an iOS permission is not allowed."
-    },
-    "Text Size": {
-      "comment": "Conversation action and picker title for changing primary message-body text size."
-    },
-    "Preview message text": {
-      "comment": "Sample message shown in the conversation text-size picker."
-    },
-    "Message text size": {
-      "comment": "VoiceOver label for the conversation message text-size slider."
-    },
-    "Minimum text size": {
-      "comment": "VoiceOver label for the small endpoint in the message text-size range."
-    },
-    "Maximum text size": {
-      "comment": "VoiceOver label for the large endpoint in the message text-size range."
-    },
-    "%lld percent": {
-      "comment": "VoiceOver value announcing the selected message text-size percentage."
-    },
-    "Image attachment": {
-      "comment": "VoiceOver label for an image attached to a chat message."
-    },
-    "File attachment: %@": {
-      "comment": "VoiceOver label for a file attached to a chat message. The placeholder is the sender-provided display name."
-    },
-    "Opens attachment preview": {
-      "comment": "VoiceOver hint for tappable image and file attachment controls."
-    },
-    "Unable to Open Attachment": {
-      "comment": "Error alert title when a message attachment cannot be prepared for preview."
-    },
-    "The attachment could not be prepared for preview.": {
-      "comment": "Privacy-safe error text shown when temporary attachment export fails."
-    },
-    "Type a message...": {
-      "comment": "Placeholder and VoiceOver label for the message composer.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Type a message..."
-          }
-        }
-      }
-    },
-    "Enter Key Sends Message": {
-      "comment": "Settings toggle controlling whether the on-screen keyboard Enter key sends the current message.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enter Key Sends Message"
-          }
-        }
-      }
-    },
-    "Messaging": {
-      "comment": "Title of the settings card containing message composition preferences.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Messaging"
-          }
-        }
-      }
-    },
-    "Press Enter to send. Turn this off when you want Enter to insert new lines.": {
-      "comment": "Explanation shown when the message composer Enter key sends messages.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Press Enter to send. Turn this off when you want Enter to insert new lines."
-          }
-        }
-      }
-    },
-    "Press Enter to insert a new line. Use the send button to send the message.": {
-      "comment": "Explanation shown when the message composer Enter key inserts a line break.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Press Enter to insert a new line. Use the send button to send the message."
-          }
-        }
-      }
-    },
-    "Messages from contacts only": {
-      "comment": "Label for the privacy control that rejects messages from unknown senders.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Messages from contacts only"
-          }
-        }
-      }
-    },
-    "Only contacts can message you. Messages from unknown senders are silently discarded.": {
-      "comment": "Privacy explanation shown when messages from unknown senders are blocked.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Only contacts can message you. Messages from unknown senders are silently discarded."
-          }
-        }
-      }
-    },
-    "Anyone can send you messages, including unknown senders.": {
-      "comment": "Privacy explanation shown when messages from unknown senders are allowed.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Anyone can send you messages, including unknown senders."
-          }
-        }
-      }
-    },
-    "Announce to Network": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Announce to Network"
-          }
-        }
-      }
-    },
-    "Announced": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Announced"
-          }
-        }
-      }
-    },
-    "Broadcasts your identity so nearby peers can discover you": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Broadcasts your identity so nearby peers can discover you"
-          }
-        }
-      }
-    },
-    "Send Announce": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Send Announce"
           }
         }
       }

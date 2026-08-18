@@ -970,7 +970,7 @@ public final class MessagingViewModel {
                         Self.deliveryStatus(for: $0.state, method: $0.method)
                     } ?? .failed
                 }
-                errorMessage = "Message was queued, but its local state could not be saved. Do not retry until its delivery outcome is known."
+                errorMessage = String(localized: "Message was queued, but its local state could not be saved. Do not retry until its delivery outcome is known.")
             }
 
             return true
@@ -1055,7 +1055,7 @@ public final class MessagingViewModel {
                                 Self.deliveryStatus(for: $0.state, method: $0.method)
                             } ?? .failed
                         }
-                        errorMessage = "Relay submission was queued, but its local state could not be saved. Do not retry until its delivery outcome is known."
+                        errorMessage = String(localized: "Relay submission was queued, but its local state could not be saved. Do not retry until its delivery outcome is known.")
                     }
                     return true
                 } catch {

@@ -1,6 +1,7 @@
 import ast
 import copy
 import inspect
+import json
 import threading
 import time
 import types
@@ -576,6 +577,40 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertIn("let rowUpdated = try await repository.updateMessageState", messaging_view_model)
         self.assertIn("if rowUpdated, pendingDeliveryProofs[hashHex] == proof", messaging_view_model)
         self.assertIn("Tests.static.test_async_propagation_fallback", ci_workflow)
+
+    def test_ios_presentation_distinguishes_queue_relay_storage_and_delivery(self):
+        bubble = (
+            ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
+        ).read_text()
+        detail = (
+            ROOT / "Sources/ColumbaApp/Views/Messaging/MessageDetailView.swift"
+        ).read_text()
+        view_model = (
+            ROOT / "Sources/ColumbaApp/ViewModels/MessagingViewModel.swift"
+        ).read_text()
+        catalog = json.loads(
+            (
+                ROOT
+                / "Sources/ColumbaApp/Resources/Localizable.xcstrings"
+            ).read_text()
+        )["strings"]
+
+        self.assertIn("case retryingPropagated", bubble)
+        self.assertIn("case propagated", bubble)
+        self.assertIn('Image(systemName: "icloud.and.arrow.up.fill")', bubble)
+        self.assertIn('Image(systemName: "checkmark.icloud.fill")', bubble)
+        self.assertIn("lxMessage.state = .sending", view_model)
+        self.assertNotIn("lxMessage.state = .sent\n            registerPendingOutboundAlias", view_model)
+        self.assertNotIn("Delivered via relay/propagation node", detail)
+        for key in (
+            "Pending send",
+            "Sending to relay",
+            "Stored on relay",
+            "Queued locally; no transport confirmation yet",
+            "Relay accepted the message; recipient delivery is not confirmed",
+            "Stored by relay; awaiting recipient delivery",
+        ):
+            self.assertIn(key, catalog)
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
