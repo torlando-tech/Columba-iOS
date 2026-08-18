@@ -935,13 +935,6 @@ public final class MessagingViewModel {
             // `.queued` means the local router accepted ownership. It does not
             // prove packet transmission, relay storage, or recipient delivery.
             lxMessage.state = .sending
-            if deliveryMethod == .propagated {
-                lxMessage.method = .propagated
-                if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
-                    messages[index].deliveryStatus = .retryingPropagated
-                    messages[index].deliveryMethod = LXDeliveryMethod.propagated.rawValue
-                }
-            }
             registerPendingOutboundAlias(
                 canonicalHash: sentHash,
                 optimisticID: optimisticId
