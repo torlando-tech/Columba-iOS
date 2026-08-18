@@ -69,6 +69,45 @@ public struct IdentityInfo: Equatable {
 
 // MARK: - SettingsViewModel
 
+enum NetworkInterfacePresentation {
+    static func listText(_ descriptions: [String]) -> String {
+        descriptions.isEmpty
+            ? String(localized: "No active interface")
+            : descriptions.joined(separator: "\n")
+    }
+
+    static func tcpDescriptions(
+        configuredInterfaces: [InterfaceEntity],
+        runtimeStates: [String: InterfaceState]
+    ) -> [String] {
+        let connectedEntityIds = Set(runtimeStates.compactMap { entityId, state in
+            state == .connected ? entityId : nil
+        })
+        let knownEntityIds = Set(configuredInterfaces.map(\.id))
+
+        var descriptions = configuredInterfaces.compactMap { entity -> String? in
+            guard entity.enabled, connectedEntityIds.contains(entity.id) else { return nil }
+
+            switch entity.config {
+            case .tcpClient(let config):
+                return String(localized: "TCP") + " (\(config.targetHost):\(String(config.targetPort)))"
+            case .tcpServer(let config):
+                return String(localized: "TCP Server") + " (\(config.listenIp):\(String(config.listenPort)))"
+            default:
+                return nil
+            }
+        }
+
+        // Runtime-created TCP interfaces have no persisted name or endpoint to show.
+        // Keep one generic row per connected unknown ID so mixed configured/legacy
+        // states still account for every active connection. Known disabled entries
+        // stay omitted even if teardown has not removed their runtime object yet.
+        let unknownConnectedCount = connectedEntityIds.subtracting(knownEntityIds).count
+        descriptions.append(contentsOf: repeatElement(String(localized: "TCP"), count: unknownConnectedCount))
+        return descriptions
+    }
+}
+
 /// ViewModel for settings screen.
 ///
 /// Uses iOS 17+ @Observable macro for automatic SwiftUI observation.
@@ -500,28 +539,33 @@ public final class SettingsViewModel {
         // Build connected interface string from all active interfaces.
         var activeInterfaces: [String] = []
 
+        // Pass the complete persisted snapshot. The presenter owns enabled-state
+        // filtering and needs disabled IDs to distinguish teardown-in-progress
+        // entries from genuinely unmapped runtime-created interfaces.
+        let configuredInterfaces = InterfaceRepository().interfaces
+
         if modelB {
             // Model B: the NE owns MULTIPLE relays (one `ne-tcp-relay-<entityId>` per
-            // enabled tcpClient). Label the card with the relays that are ACTUALLY online,
-            // matched by entity id via the per-relay snapshot — NOT the first-configured
-            // one. The old code labeled with `.first(tcpClient)` whenever ANY relay was up
-            // (a coarse any-online bool), so a down first relay (e.g. a dead community hub)
-            // was shown as the connected interface while a different relay carried traffic.
-            let onlineIds = Set(await appServices.neTcpRelayStatuses().filter { $0.online }.map { $0.entityId })
-            let interfaceRepo = InterfaceRepository()
-            for entity in interfaceRepo.getEnabledInterfaces() where entity.type == .tcpClient {
-                guard onlineIds.contains(entity.id), case .tcpClient(let config) = entity.config else { continue }
-                activeInterfaces.append("TCP (\(config.targetHost):\(String(config.targetPort)))")
+            // enabled tcpClient). Label the card with every relay that is actually online.
+            let onlineStates = Dictionary(uniqueKeysWithValues: await appServices.neTcpRelayStatuses().map {
+                ($0.entityId, $0.online ? InterfaceState.connected : InterfaceState.disconnected)
+            })
+            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.tcpDescriptions(
+                configuredInterfaces: configuredInterfaces,
+                runtimeStates: onlineStates
+            ))
+        } else {
+            // Shipping Python: every configured TCP interface has its own runtime entry.
+            // Send the complete state snapshot through the same presentation seam so a
+            // disconnected dictionary-first entry cannot hide other connected entries.
+            var runtimeTCPStates: [String: InterfaceState] = [:]
+            for (entityId, tcpInterface) in appServices.tcpInterfaces {
+                runtimeTCPStates[entityId] = await tcpInterface.state
             }
-        } else if let tcp = appServices.tcpInterface, await tcp.state == .connected {
-            // Model A: the app owns a single local TCP interface.
-            let interfaceRepo = InterfaceRepository()
-            if let tcpEntity = interfaceRepo.getEnabledInterfaces().first(where: { $0.type == .tcpClient }),
-               case .tcpClient(let config) = tcpEntity.config {
-                activeInterfaces.append("TCP (\(config.targetHost):\(String(config.targetPort)))")
-            } else {
-                activeInterfaces.append("TCP")
-            }
+            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.tcpDescriptions(
+                configuredInterfaces: configuredInterfaces,
+                runtimeStates: runtimeTCPStates
+            ))
         }
         if let auto = appServices.autoInterface, await auto.peerCount > 0 {
             let count = await auto.peerCount
@@ -545,7 +589,7 @@ public final class SettingsViewModel {
                 activeInterfaces.append("Bluetooth LE")
             }
         }
-        connectedInterface = activeInterfaces.isEmpty ? "No active interface" : activeInterfaces.joined(separator: ", ")
+        connectedInterface = NetworkInterfacePresentation.listText(activeInterfaces)
 
         // Overall state: in Model B "connected" = at least one active interface
         // (the NE relay or an app-owned radio); otherwise defer to the app's own

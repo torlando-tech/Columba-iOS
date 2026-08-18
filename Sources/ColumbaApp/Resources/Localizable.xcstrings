@@ -1,6 +1,46 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "No active interface": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No active interface"
+          }
+        }
+      }
+    },
+    "Interfaces:": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interfaces:"
+          }
+        }
+      }
+    },
+    "TCP": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TCP"
+          }
+        }
+      }
+    },
+    "TCP Server": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TCP Server"
+          }
+        }
+      }
+    },
     "Manage": {
       "localizations": {
         "en": {

@@ -14,6 +14,86 @@ import XCTest
 #endif
 
 final class RuntimeFlavorTests: XCTestCase {
+    func testNetworkCardListsEveryConnectedTCPInterface() {
+        let interfaces = [
+            InterfaceEntity(
+                id: "primary",
+                name: "Primary Relay",
+                type: .tcpClient,
+                config: .tcpClient(TCPClientConfig(targetHost: "relay-one.example", targetPort: 4242))
+            ),
+            InterfaceEntity(
+                id: "secondary",
+                name: "Secondary Relay",
+                type: .tcpClient,
+                config: .tcpClient(TCPClientConfig(targetHost: "relay-two.example", targetPort: 4243))
+            ),
+            InterfaceEntity(
+                id: "offline",
+                name: "Offline Relay",
+                type: .tcpClient,
+                config: .tcpClient(TCPClientConfig(targetHost: "offline.example", targetPort: 4244))
+            ),
+        ]
+
+        let descriptions = NetworkInterfacePresentation.tcpDescriptions(
+            configuredInterfaces: interfaces,
+            runtimeStates: [
+                "primary": .connected,
+                "secondary": .connected,
+                "offline": .disconnected,
+            ]
+        )
+
+        XCTAssertEqual(
+            descriptions,
+            [
+                "TCP (relay-one.example:4242)",
+                "TCP (relay-two.example:4243)",
+            ]
+        )
+        XCTAssertEqual(
+            NetworkInterfacePresentation.listText(descriptions),
+            "TCP (relay-one.example:4242)\nTCP (relay-two.example:4243)"
+        )
+    }
+
+    func testNetworkCardAccountsForServerUnknownAndDisabledTCPStates() {
+        let interfaces = [
+            InterfaceEntity(
+                id: "server",
+                name: "Local Server",
+                type: .tcpServer,
+                config: .tcpServer(TCPServerConfig(listenIp: "0.0.0.0", listenPort: 4242))
+            ),
+            InterfaceEntity(
+                id: "disabled",
+                name: "Disabled Relay",
+                type: .tcpClient,
+                enabled: false,
+                config: .tcpClient(TCPClientConfig(targetHost: "disabled.example", targetPort: 4243))
+            ),
+        ]
+
+        XCTAssertEqual(
+            NetworkInterfacePresentation.tcpDescriptions(
+                configuredInterfaces: interfaces,
+                runtimeStates: [
+                    "server": .connected,
+                    "disabled": .connected,
+                    "legacy-one": .connected,
+                    "legacy-two": .connected,
+                    "legacy-offline": .disconnected,
+                ]
+            ),
+            [
+                "TCP Server (0.0.0.0:4242)",
+                "TCP",
+                "TCP",
+            ]
+        )
+    }
+
     func testDisconnectedInterfaceBannerOffersDirectRecovery() {
         XCTAssertEqual(
             InterfaceConnectivityBannerContent.forConnectionState(isConnected: false),
