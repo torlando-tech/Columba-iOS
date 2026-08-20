@@ -31,6 +31,16 @@
         }
       }
     },
+    "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again."
+          }
+        }
+      }
+    },
     "Shows delivery failure details": {
       "localizations": {
         "en": {

@@ -736,7 +736,7 @@ public final class MessagingViewModel {
             return "The messaging network is not ready."
         case .other(let reason):
             if reason == "no-propagation-node" {
-                return "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again."
+                return String(localized: "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again.")
             }
             return reason.isEmpty ? "The messaging backend rejected the message." : reason
         }
