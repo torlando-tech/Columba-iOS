@@ -185,7 +185,7 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertIn("repository.stageRetry(lxMessage, replacing: storedHash)", send)
         self.assertIn("config.observesSuspensionNotifications = true", repository)
         self.assertIn("try await replacementPool.write", repository)
-        self.assertIn("lxMessage.method = .opportunistic", send)
+        self.assertIn("lxMessage.method = selectedDeliveryMethod", send)
         self.assertIn("retryMessage.method = .propagated", send)
         self.assertIn("replacementSourceMissing", repository)
         self.assertNotIn("repository.deleteMessage(oldHash)", send)

@@ -735,6 +735,9 @@ public final class MessagingViewModel {
         case .notStarted:
             return "The messaging network is not ready."
         case .other(let reason):
+            if reason == "no-propagation-node" {
+                return "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again."
+            }
             return reason.isEmpty ? "The messaging backend rejected the message." : reason
         }
     }
@@ -745,7 +748,8 @@ public final class MessagingViewModel {
         case .requestingPath: return "path-unavailable"
         case .badHash: return "invalid-destination"
         case .notStarted: return "backend-not-started"
-        case .other: return "backend-rejected"
+        case .other(let reason):
+            return reason == "no-propagation-node" ? "relay-not-configured" : "backend-rejected"
         }
     }
 
@@ -803,6 +807,16 @@ public final class MessagingViewModel {
         }
     }
 
+    static func deliveryPlan(
+        defaultMethod: String,
+        retryViaRelay: Bool
+    ) -> (method: LXDeliveryMethod, failureFallbackMethod: LXDeliveryMethod?) {
+        let method: LXDeliveryMethod = defaultMethod == "propagated" ? .propagated : .direct
+        let failureFallbackMethod: LXDeliveryMethod? =
+            retryViaRelay && method != .propagated ? .propagated : nil
+        return (method, failureFallbackMethod)
+    }
+
     /// Send a text-only message (convenience wrapper).
     @MainActor
     public func sendMessage(text: String) async -> Bool {
@@ -845,13 +859,13 @@ public final class MessagingViewModel {
         }
 
 
-        // Always start with opportunistic (single encrypted packet, no link needed).
-        // For large messages that exceed single-packet size, handleOutbound() will
-        // auto-fallback using the fallbackMethod (direct or propagated per settings).
-        // On failure, retry-via-relay handles the final propagated fallback.
         let settingsMethod = await settingsRepository.getDefaultDeliveryMethod()
-        let fallbackForLargeMessages: LXDeliveryMethod = (settingsMethod == "propagated") ? .propagated : .direct
         let retryViaRelay = await settingsRepository.getRetryViaRelay()
+        let deliveryPlan = Self.deliveryPlan(
+            defaultMethod: settingsMethod,
+            retryViaRelay: retryViaRelay
+        )
+        let selectedDeliveryMethod = deliveryPlan.method
 
         // Resolve icon once — passed to the typed backend send below and also
         // stashed in the local Compat.LXMessage fields for persistence/display.
@@ -879,17 +893,17 @@ public final class MessagingViewModel {
             fields[LXMessage.FIELD_APP_DATA] = ["reply_to": replyToId] as [String: Any]
         }
 
-        // Create outbound LXMF message — always opportunistic first
+        // Create outbound LXMF message with the same method used by the shipping backend.
         let lxMessage = LXMessage(
             destinationHash: conversationHash,
             sourceIdentity: identity,
             content: trimmedText.data(using: .utf8) ?? Data(),
             title: Data(),
             fields: fields.isEmpty ? nil : fields,
-            desiredMethod: .opportunistic
+            desiredMethod: selectedDeliveryMethod
         )
-        lxMessage.method = .opportunistic
-        lxMessage.fallbackMethod = fallbackForLargeMessages
+        lxMessage.method = selectedDeliveryMethod
+        lxMessage.fallbackMethod = deliveryPlan.failureFallbackMethod
 
         // Use a canonical-width local ID so failed rows remain retryable after
         // reload. A retry reuses its existing ID and atomically replaces that
@@ -959,8 +973,8 @@ public final class MessagingViewModel {
                 OutboundSendRequest(
                     destHashHex: Self.hexString(conversationHash),
                     content: trimmedText,
-                    method: .opportunistic,
-                    failureFallbackMethod: retryViaRelay ? .propagated : nil,
+                    method: selectedDeliveryMethod,
+                    failureFallbackMethod: deliveryPlan.failureFallbackMethod,
                     imageData: imageData,
                     imageFormat: imageFormat,
                     fileAttachments: attachments?.map {
@@ -1019,8 +1033,9 @@ public final class MessagingViewModel {
             return true
         } catch {
             var failure: Error = error
-            // Retry via relay if enabled
-            if retryViaRelay {
+            // Retry a failed direct attempt via relay when configured. A message
+            // already submitted as propagated must not recursively retry itself.
+            if retryViaRelay && selectedDeliveryMethod != .propagated {
                 logger.info("[MSG_VM] Delivery failed, retrying via relay")
 
                 // Update UI to show retrying

@@ -526,6 +526,33 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
         XCTAssertEqual(snapshot.method, .propagated)
     }
 
+    func testDefaultDeliveryMethodControlsInitialWireMethodAndRelayRetry() {
+        let propagated = MessagingViewModel.deliveryPlan(
+            defaultMethod: "propagated",
+            retryViaRelay: true
+        )
+        XCTAssertEqual(propagated.method, .propagated)
+        XCTAssertNil(propagated.failureFallbackMethod)
+
+        let directWithRetry = MessagingViewModel.deliveryPlan(
+            defaultMethod: "direct",
+            retryViaRelay: true
+        )
+        XCTAssertEqual(directWithRetry.method, .direct)
+        XCTAssertEqual(directWithRetry.failureFallbackMethod, .propagated)
+
+        let directWithoutRetry = MessagingViewModel.deliveryPlan(
+            defaultMethod: "direct",
+            retryViaRelay: false
+        )
+        XCTAssertEqual(directWithoutRetry.method, .direct)
+        XCTAssertNil(directWithoutRetry.failureFallbackMethod)
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .other("no-propagation-node")),
+            "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again."
+        )
+    }
+
     func testPropagatedMethodRefinesPendingAndRelayAcceptedStates() {
         XCTAssertEqual(
             MessagingViewModel.deliveryStatus(for: .sending, method: .propagated),

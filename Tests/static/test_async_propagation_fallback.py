@@ -579,6 +579,20 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertIn("if rowUpdated, pendingDeliveryProofs[hashHex] == proof", messaging_view_model)
         self.assertIn("Tests.static.test_async_propagation_fallback", ci_workflow)
 
+    def test_default_delivery_method_controls_wire_request(self):
+        view_model = (
+            ROOT / "Sources/ColumbaApp/ViewModels/MessagingViewModel.swift"
+        ).read_text()
+        settings_view = (
+            ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
+        ).read_text()
+
+        self.assertIn("let selectedDeliveryMethod", view_model)
+        self.assertIn("desiredMethod: selectedDeliveryMethod", view_model)
+        self.assertIn("method: selectedDeliveryMethod", view_model)
+        self.assertNotIn("method: .opportunistic,\n                    failureFallbackMethod:", view_model)
+        self.assertIn("Select a relay before using propagation", settings_view)
+
     def test_ios_presentation_distinguishes_queue_relay_storage_and_delivery(self):
         bubble = (
             ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
@@ -622,7 +636,7 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertIn("failureFallbackMethod", rns_lxmf)
         self.assertIn("failureFallbackMethod", backend)
         self.assertIn("failureFallbackMethod", bridge)
-        self.assertIn("failureFallbackMethod: retryViaRelay ? .propagated : nil", messaging)
+        self.assertIn("failureFallbackMethod: deliveryPlan.failureFallbackMethod", messaging)
 
     def test_sent_delivered_failed_states_are_mapped_explicitly(self):
         app_services = (ROOT / "Sources/ColumbaApp/Services/AppServices.swift").read_text()

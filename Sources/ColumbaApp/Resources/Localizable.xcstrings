@@ -831,6 +831,16 @@
         }
       }
     },
+    "Select a relay before using propagation": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a relay before using propagation"
+          }
+        }
+      }
+    },
     "Select at least one connection method to continue.": {
       "localizations": {
         "en": {
