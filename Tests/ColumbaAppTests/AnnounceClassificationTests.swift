@@ -481,6 +481,10 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
             sent
         )
         XCTAssertEqual(
+            MessagingViewModel.monotonicPendingDeliveryProof(existing: sent, incoming: failed),
+            failed
+        )
+        XCTAssertEqual(
             MessagingViewModel.monotonicPendingDeliveryProof(existing: failed, incoming: sent),
             sent
         )

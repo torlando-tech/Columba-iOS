@@ -2356,14 +2356,14 @@ final class MessageRepositoryAdapterTests: XCTestCase {
 }
 
 final class DeliveryProofMonotonicityTests: XCTestCase {
-    func testReducerRejectsStaleRetryAndFailureDowngrades() {
+    func testReducerRejectsStaleRetryButAdmitsTerminalRelayFailure() {
         let sending = Int(LXMFSwift.LXMessageState.sending.rawValue)
         let sent = Int(LXMFSwift.LXMessageState.sent.rawValue)
         let delivered = Int(LXMFSwift.LXMessageState.delivered.rawValue)
         let failed = Int(LXMFSwift.LXMessageState.failed.rawValue)
 
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: sending), sent)
-        XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: failed), sent)
+        XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: failed), failed)
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: sending), failed)
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: sent), sent)
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: delivered), delivered)

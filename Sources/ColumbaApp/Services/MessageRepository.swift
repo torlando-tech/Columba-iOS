@@ -897,10 +897,10 @@ public actor MessageRepository {
 
         if existing == delivered || incoming == delivered { return delivered }
 
-        // A transport or relay acceptance cannot be revoked by a delayed
-        // retry-start/failure callback. Conversely, a terminal failure can be
-        // superseded by later positive proof, but not by stale retry admission.
-        if existing == sent && (incoming == sending || incoming == failed) {
+        // Relay acceptance cannot be revoked by delayed retry admission, but a
+        // later terminal backend failure is authoritative and must expose retry.
+        // Recipient delivery remains the highest-authority terminal proof.
+        if existing == sent && incoming == sending {
             return sent
         }
         if existing == failed && incoming == sending {

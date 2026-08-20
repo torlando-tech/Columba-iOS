@@ -677,7 +677,7 @@ public final class MessagingViewModel {
         if existing.state == .delivered || incoming.state == .delivered {
             return incoming.state == .delivered ? incoming : existing
         }
-        if existing.state == .sent && (incoming.state == .sending || incoming.state == .failed) {
+        if existing.state == .sent && incoming.state == .sending {
             return existing
         }
         if existing.state == .failed && incoming.state == .sending {
