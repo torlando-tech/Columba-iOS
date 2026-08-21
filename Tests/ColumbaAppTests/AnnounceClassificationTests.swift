@@ -356,6 +356,233 @@ final class AnnounceClassificationTests: XCTestCase {
     }
 }
 
+@MainActor
+final class TruthfulPropagationLifecycleTests: XCTestCase {
+    private func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-truthful-propagation-\(UUID().uuidString).sqlite")
+    }
+
+    private func removeDatabase(at url: URL) {
+        let fm = FileManager.default
+        try? fm.removeItem(at: url)
+        try? fm.removeItem(atPath: url.path + "-wal")
+        try? fm.removeItem(atPath: url.path + "-shm")
+    }
+
+    func testQueuedSendRemainsPendingUntilLifecycleCallback() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data(repeating: 0x41, count: 16)
+        let canonicalHash = Data(repeating: 0x42, count: 32)
+        let viewModel = MessagingViewModel(
+            conversationHash: destination,
+            repository: repository,
+            appServices: AppServices(),
+            identity: Identity(),
+            outboundSendOperation: { _ in
+                .queued(messageHash: canonicalHash.map { String(format: "%02x", $0) }.joined())
+            }
+        )
+
+        let accepted = await viewModel.sendMessage(text: "queued only")
+        XCTAssertTrue(accepted)
+
+        let visible = try XCTUnwrap(viewModel.messages.last)
+        XCTAssertEqual(visible.deliveryStatus, .sending)
+        let storedRecord = try await repository.getMessageRecord(id: canonicalHash)
+        let stored = try XCTUnwrap(storedRecord)
+        XCTAssertEqual(stored.state, LXMessageState.sending.rawValue)
+    }
+
+    func testExplicitRelayClearFailsClosedWhenBackendIsUnavailable() async {
+        let manager = PropagationNodeManager(appServices: AppServices())
+        manager.autoSelectEnabled = true
+        let hash = Data(repeating: 0x61, count: 16)
+        manager.selectedNodeHash = hash
+        manager.selectedNodeDeliveryHash = Data(repeating: 0x62, count: 16)
+        manager.selectedNodeName = "test relay"
+
+        let cleared = await manager.clearSelection()
+
+        XCTAssertFalse(cleared)
+        XCTAssertTrue(manager.autoSelectEnabled)
+        XCTAssertEqual(manager.selectedNodeHash, hash)
+    }
+
+    func testExplicitRelayClearRequiresBackendAcknowledgement() async {
+        enum TestError: Error { case rejected }
+        for setter: PropagationNodeManager.PropagationNodeSetter in [
+            { _, _ in false },
+            { _, _ in throw TestError.rejected },
+        ] {
+            let manager = PropagationNodeManager(
+                appServices: AppServices(),
+                propagationNodeSetter: setter
+            )
+            manager.autoSelectEnabled = true
+            let hash = Data(repeating: 0x63, count: 16)
+            manager.selectedNodeHash = hash
+
+            let cleared = await manager.clearSelection()
+            XCTAssertFalse(cleared)
+            XCTAssertTrue(manager.autoSelectEnabled)
+            XCTAssertEqual(manager.selectedNodeHash, hash)
+        }
+    }
+
+    func testExplicitRelayClearDisablesAutomaticReselectionAfterBackendAcknowledges() async {
+        let settings = SettingsRepository()
+        let originalAutoSelect = await settings.getAutoSelectRelay()
+        let originalHash = await settings.getManualRelayHash()
+        let originalDeliveryHash = await settings.getManualRelayDeliveryHash()
+        let originalName = await settings.getManualRelayName()
+        let originalStampCost = await settings.getManualRelayStampCost()
+        let manager = PropagationNodeManager(
+            appServices: AppServices(),
+            propagationNodeSetter: { hash, stampCost in
+                hash.isEmpty && stampCost == 0
+            }
+        )
+        manager.autoSelectEnabled = true
+        manager.selectedNodeHash = Data(repeating: 0x61, count: 16)
+        manager.selectedNodeDeliveryHash = Data(repeating: 0x62, count: 16)
+        manager.selectedNodeName = "test relay"
+
+        let cleared = await manager.clearSelection()
+
+        let isAutoSelectEnabled = manager.autoSelectEnabled
+        let selectedHash = manager.selectedNodeHash
+        let selectedDeliveryHash = manager.selectedNodeDeliveryHash
+        await settings.setAutoSelectRelay(originalAutoSelect)
+        await settings.setManualRelayHash(originalHash)
+        await settings.setManualRelayDeliveryHash(originalDeliveryHash)
+        await settings.setManualRelayName(originalName)
+        await settings.setManualRelayStampCost(originalStampCost)
+        XCTAssertTrue(cleared)
+        XCTAssertFalse(isAutoSelectEnabled)
+        XCTAssertNil(selectedHash)
+        XCTAssertNil(selectedDeliveryHash)
+    }
+
+    func testPendingProofReducerRejectsOutOfOrderDowngrades() {
+        let delivered = MessagingViewModel.PendingDeliveryProof(state: .delivered, method: .propagated)
+        let failed = MessagingViewModel.PendingDeliveryProof(state: .failed, method: .propagated)
+        let sent = MessagingViewModel.PendingDeliveryProof(state: .sent, method: .propagated)
+        let retrying = MessagingViewModel.PendingDeliveryProof(state: .sending, method: .propagated)
+
+        XCTAssertEqual(
+            MessagingViewModel.monotonicPendingDeliveryProof(existing: delivered, incoming: failed),
+            delivered
+        )
+        XCTAssertEqual(
+            MessagingViewModel.monotonicPendingDeliveryProof(existing: sent, incoming: retrying),
+            sent
+        )
+        XCTAssertEqual(
+            MessagingViewModel.monotonicPendingDeliveryProof(existing: sent, incoming: failed),
+            failed
+        )
+        XCTAssertEqual(
+            MessagingViewModel.monotonicPendingDeliveryProof(existing: failed, incoming: sent),
+            sent
+        )
+
+        let persistedFailureAfterBufferedDelivery = MessagingViewModel.resolveDeliveryNotification(
+            existing: delivered,
+            incoming: failed,
+            incomingPersisted: true
+        )
+        XCTAssertEqual(persistedFailureAfterBufferedDelivery.proof, delivered)
+        XCTAssertTrue(persistedFailureAfterBufferedDelivery.requiresPersistence)
+    }
+
+    func testPersistedSnapshotReportsReducedStateAndMethod() async throws {
+        let databaseURL = temporaryDatabaseURL()
+        defer { removeDatabase(at: databaseURL) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let hash = Data(repeating: 0x71, count: 32)
+        let message = LXMessage(
+            destinationHash: Data(repeating: 0x72, count: 16),
+            sourceIdentity: nil,
+            content: Data("stored".utf8),
+            desiredMethod: .propagated
+        )
+        message.hash = hash
+        message.state = .delivered
+        message.method = .propagated
+        try await repository.saveMessage(message)
+
+        let applied = try await repository.applyDeliveryProof(
+            canonicalHash: hash,
+            state: .failed,
+            method: .opportunistic
+        )
+        XCTAssertTrue(applied)
+        let persistedSnapshot = try await repository.persistedDeliveryProof(canonicalHash: hash)
+        let snapshot = try XCTUnwrap(persistedSnapshot)
+        XCTAssertEqual(snapshot.state, .delivered)
+        XCTAssertEqual(snapshot.method, .propagated)
+    }
+
+    func testDefaultDeliveryMethodControlsInitialWireMethodAndRelayRetry() {
+        let propagated = MessagingViewModel.deliveryPlan(
+            defaultMethod: "propagated",
+            retryViaRelay: true
+        )
+        XCTAssertEqual(propagated.method, .propagated)
+        XCTAssertNil(propagated.failureFallbackMethod)
+
+        let directWithRetry = MessagingViewModel.deliveryPlan(
+            defaultMethod: "direct",
+            retryViaRelay: true
+        )
+        XCTAssertEqual(directWithRetry.method, .direct)
+        XCTAssertEqual(directWithRetry.failureFallbackMethod, .propagated)
+
+        let directWithoutRetry = MessagingViewModel.deliveryPlan(
+            defaultMethod: "direct",
+            retryViaRelay: false
+        )
+        XCTAssertEqual(directWithoutRetry.method, .direct)
+        XCTAssertNil(directWithoutRetry.failureFallbackMethod)
+        XCTAssertEqual(
+            MessagingViewModel.failureDescription(for: .other("no-propagation-node")),
+            "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again."
+        )
+    }
+
+    func testPropagatedMethodRefinesPendingAndRelayAcceptedStates() {
+        XCTAssertEqual(
+            MessagingViewModel.deliveryStatus(for: .sending, method: .propagated),
+            .retryingPropagated
+        )
+        XCTAssertEqual(
+            MessagingViewModel.deliveryStatus(for: .sent, method: .propagated),
+            .propagated
+        )
+        XCTAssertEqual(
+            MessagingViewModel.deliveryStatus(for: .delivered, method: .propagated),
+            .delivered
+        )
+
+        let pending = LXMessage(
+            destinationHash: Data(repeating: 0x51, count: 16),
+            sourceIdentity: nil,
+            content: Data("pending".utf8),
+            desiredMethod: .propagated
+        )
+        pending.hash = Data(repeating: 0x52, count: 32)
+        pending.method = .propagated
+        pending.state = .sending
+        XCTAssertEqual(Message(from: pending, localHash: Data()).deliveryStatus, .retryingPropagated)
+
+        pending.state = .sent
+        XCTAssertEqual(Message(from: pending, localHash: Data()).deliveryStatus, .propagated)
+    }
+}
+
 final class MessageDetailAliasTests: XCTestCase {
     private func temporaryDatabaseURL() -> URL {
         FileManager.default.temporaryDirectory

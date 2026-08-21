@@ -250,8 +250,14 @@ struct MessageDetailView: View {
                 return ("exclamationmark.circle.fill", .red, "Failed",
                         "Delivery failed — try resending")
             case .sending:
-                return ("hourglass", .orange, "Sending",
-                        "Message is being sent")
+                return ("hourglass", .orange, String(localized: "Pending"),
+                        String(localized: "Queued locally; no transport confirmation yet"))
+            case .retryingPropagated:
+                return ("icloud.and.arrow.up.fill", .orange, String(localized: "Sending to Relay"),
+                        String(localized: "Submitting through the selected relay"))
+            case .propagated:
+                return ("checkmark.icloud.fill", .blue, String(localized: "Stored on Relay"),
+                        String(localized: "Relay accepted the message; recipient delivery is not confirmed"))
             case .sent:
                 return ("paperplane.fill", .blue, "Sent",
                         "Message sent, awaiting delivery confirmation")
@@ -280,8 +286,20 @@ struct MessageDetailView: View {
                 return ("link", "Direct",
                         "Link-based delivery, supports large messages")
             case "propagated":
-                return ("point.3.connected.trianglepath.dotted", "Propagated",
-                        "Delivered via relay/propagation node")
+                let subtitle: String
+                switch message.deliveryStatus {
+                case .retryingPropagated:
+                    subtitle = String(localized: "Submitting to the selected relay")
+                case .propagated:
+                    subtitle = String(localized: "Stored by relay; awaiting recipient delivery")
+                case .delivered, .read:
+                    subtitle = String(localized: "Recipient delivery confirmed through relay")
+                case .failed:
+                    subtitle = String(localized: "Relay delivery attempt failed")
+                case .sending, .sent:
+                    subtitle = String(localized: "Relay method selected; relay acceptance is unconfirmed")
+                }
+                return ("point.3.connected.trianglepath.dotted", "Propagated", subtitle)
             case "paper":
                 return ("doc.text", "Paper",
                         "Transferred as a paper LXMF message")

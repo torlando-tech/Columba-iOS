@@ -142,6 +142,7 @@ public final class MessagingViewModel {
             Task { @MainActor in
                 let proofState: LXMessageState
                 switch state {
+                case "retrying_propagated": proofState = .sending
                 case "sent": proofState = .sent
                 case "delivered": proofState = .delivered
                 case "failed": proofState = .failed
@@ -155,21 +156,39 @@ public final class MessagingViewModel {
                     for: hashHex,
                     aliases: self.pendingOutboundAliases
                 )
-                if !proofPersisted {
-                    self.pendingDeliveryProofs[hashHex] = PendingDeliveryProof(
-                        state: proofState,
-                        method: proofMethod
-                    )
+                let incomingProof = PendingDeliveryProof(
+                    state: proofState,
+                    method: proofMethod
+                )
+                // Reduce every callback against any earlier proof, including
+                // callbacks which already reached Room. A stale persisted
+                // failure must not outrank recipient proof buffered before the
+                // canonical row existed.
+                let resolution = Self.resolveDeliveryNotification(
+                    existing: self.pendingDeliveryProofs[hashHex],
+                    incoming: incomingProof,
+                    incomingPersisted: proofPersisted
+                )
+                let displayProof = resolution.proof
+                self.pendingDeliveryProofs[hashHex] = displayProof
+                var displayProofPersisted = proofPersisted
+                if resolution.requiresPersistence {
+                    displayProofPersisted = (try? await self.repository.applyDeliveryProof(
+                        canonicalHash: hashData,
+                        state: displayProof.state,
+                        method: displayProof.method
+                    )) == true
                 }
                 guard let index = self.messages.firstIndex(where: { $0.id == visibleID }) else { return }
-                if wasAliased && proofPersisted {
+                if wasAliased && displayProofPersisted {
                     self.messages[index] = Self.canonicalizedMessage(
                         self.messages[index],
                         canonicalHash: hashData,
-                        proofState: proofState
+                        proofState: displayProof.state,
+                        proofMethod: displayProof.method
                     )
-                    if let deliveryMethod, !deliveryMethod.isEmpty {
-                        self.messages[index].deliveryMethod = deliveryMethod
+                    if let method = displayProof.method {
+                        self.messages[index].deliveryMethod = method.rawValue
                     }
                     Self.recordCanonicalAlias(
                         canonicalID: hashHex,
@@ -179,9 +198,12 @@ public final class MessagingViewModel {
                     self.pendingDeliveryProofs.removeValue(forKey: hashHex)
                     await self.invalidatePaginationAndRefresh()
                 } else {
-                    self.messages[index].deliveryStatus = Self.deliveryStatus(for: proofState)
-                    if let deliveryMethod, !deliveryMethod.isEmpty {
-                        self.messages[index].deliveryMethod = deliveryMethod
+                    self.messages[index].deliveryStatus = Self.deliveryStatus(
+                        for: displayProof.state,
+                        method: displayProof.method
+                    )
+                    if let method = displayProof.method {
+                        self.messages[index].deliveryMethod = method.rawValue
                     }
                 }
             }
@@ -295,7 +317,10 @@ public final class MessagingViewModel {
                     aliases: pendingOutboundAliases,
                     proofs: pendingDeliveryProofs
                 ) {
-                    resolvedMessages[i].deliveryStatus = Self.deliveryStatus(for: proof.state)
+                    resolvedMessages[i].deliveryStatus = Self.deliveryStatus(
+                        for: proof.state,
+                        method: proof.method
+                    )
                     if let method = proof.method {
                         resolvedMessages[i].deliveryMethod = method.rawValue
                     }
@@ -605,14 +630,15 @@ public final class MessagingViewModel {
     static func canonicalizedMessage(
         _ message: Message,
         canonicalHash: Data,
-        proofState: LXMessageState
+        proofState: LXMessageState,
+        proofMethod: RNSAPI.LXDeliveryMethod? = nil
     ) -> Message {
         var canonical = Message(
             id: hexString(canonicalHash),
             content: message.content,
             timestamp: message.timestamp,
             isFromMe: message.isFromMe,
-            deliveryStatus: deliveryStatus(for: proofState),
+            deliveryStatus: deliveryStatus(for: proofState, method: proofMethod),
             imageData: message.imageData,
             imageFormat: message.imageFormat,
             attachments: message.attachments,
@@ -630,13 +656,43 @@ public final class MessagingViewModel {
         return canonical
     }
 
-    static func deliveryStatus(for state: LXMessageState) -> DeliveryStatus {
+    static func deliveryStatus(
+        for state: LXMessageState,
+        method: RNSAPI.LXDeliveryMethod? = nil
+    ) -> DeliveryStatus {
         switch state {
-        case .sent: return .sent
+        case .sending: return method == .propagated ? .retryingPropagated : .sending
+        case .sent: return method == .propagated ? .propagated : .sent
         case .delivered: return .delivered
         case .failed: return .failed
-        default: return .sent
+        default: return .sending
         }
+    }
+
+    static func monotonicPendingDeliveryProof(
+        existing: PendingDeliveryProof?,
+        incoming: PendingDeliveryProof
+    ) -> PendingDeliveryProof {
+        guard let existing else { return incoming }
+        if existing.state == .delivered || incoming.state == .delivered {
+            return incoming.state == .delivered ? incoming : existing
+        }
+        if existing.state == .sent && incoming.state == .sending {
+            return existing
+        }
+        if existing.state == .failed && incoming.state == .sending {
+            return existing
+        }
+        return incoming
+    }
+
+    static func resolveDeliveryNotification(
+        existing: PendingDeliveryProof?,
+        incoming: PendingDeliveryProof,
+        incomingPersisted: Bool
+    ) -> (proof: PendingDeliveryProof, requiresPersistence: Bool) {
+        let proof = monotonicPendingDeliveryProof(existing: existing, incoming: incoming)
+        return (proof, incomingPersisted && proof != incoming)
     }
 
     static func mergingPendingOutbound(
@@ -679,6 +735,9 @@ public final class MessagingViewModel {
         case .notStarted:
             return "The messaging network is not ready."
         case .other(let reason):
+            if reason == "no-propagation-node" {
+                return String(localized: "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again.")
+            }
             return reason.isEmpty ? "The messaging backend rejected the message." : reason
         }
     }
@@ -689,7 +748,8 @@ public final class MessagingViewModel {
         case .requestingPath: return "path-unavailable"
         case .badHash: return "invalid-destination"
         case .notStarted: return "backend-not-started"
-        case .other: return "backend-rejected"
+        case .other(let reason):
+            return reason == "no-propagation-node" ? "relay-not-configured" : "backend-rejected"
         }
     }
 
@@ -747,6 +807,16 @@ public final class MessagingViewModel {
         }
     }
 
+    static func deliveryPlan(
+        defaultMethod: String,
+        retryViaRelay: Bool
+    ) -> (method: LXDeliveryMethod, failureFallbackMethod: LXDeliveryMethod?) {
+        let method: LXDeliveryMethod = defaultMethod == "propagated" ? .propagated : .direct
+        let failureFallbackMethod: LXDeliveryMethod? =
+            retryViaRelay && method != .propagated ? .propagated : nil
+        return (method, failureFallbackMethod)
+    }
+
     /// Send a text-only message (convenience wrapper).
     @MainActor
     public func sendMessage(text: String) async -> Bool {
@@ -789,13 +859,13 @@ public final class MessagingViewModel {
         }
 
 
-        // Always start with opportunistic (single encrypted packet, no link needed).
-        // For large messages that exceed single-packet size, handleOutbound() will
-        // auto-fallback using the fallbackMethod (direct or propagated per settings).
-        // On failure, retry-via-relay handles the final propagated fallback.
         let settingsMethod = await settingsRepository.getDefaultDeliveryMethod()
-        let fallbackForLargeMessages: LXDeliveryMethod = (settingsMethod == "propagated") ? .propagated : .direct
         let retryViaRelay = await settingsRepository.getRetryViaRelay()
+        let deliveryPlan = Self.deliveryPlan(
+            defaultMethod: settingsMethod,
+            retryViaRelay: retryViaRelay
+        )
+        let selectedDeliveryMethod = deliveryPlan.method
 
         // Resolve icon once — passed to the typed backend send below and also
         // stashed in the local Compat.LXMessage fields for persistence/display.
@@ -823,17 +893,17 @@ public final class MessagingViewModel {
             fields[LXMessage.FIELD_APP_DATA] = ["reply_to": replyToId] as [String: Any]
         }
 
-        // Create outbound LXMF message — always opportunistic first
+        // Create outbound LXMF message with the same method used by the shipping backend.
         let lxMessage = LXMessage(
             destinationHash: conversationHash,
             sourceIdentity: identity,
             content: trimmedText.data(using: .utf8) ?? Data(),
             title: Data(),
             fields: fields.isEmpty ? nil : fields,
-            desiredMethod: .opportunistic
+            desiredMethod: selectedDeliveryMethod
         )
-        lxMessage.method = .opportunistic
-        lxMessage.fallbackMethod = fallbackForLargeMessages
+        lxMessage.method = selectedDeliveryMethod
+        lxMessage.fallbackMethod = deliveryPlan.failureFallbackMethod
 
         // Use a canonical-width local ID so failed rows remain retryable after
         // reload. A retry reuses its existing ID and atomically replaces that
@@ -903,8 +973,8 @@ public final class MessagingViewModel {
                 OutboundSendRequest(
                     destHashHex: Self.hexString(conversationHash),
                     content: trimmedText,
-                    method: .opportunistic,
-                    failureFallbackMethod: retryViaRelay ? .propagated : nil,
+                    method: selectedDeliveryMethod,
+                    failureFallbackMethod: deliveryPlan.failureFallbackMethod,
                     imageData: imageData,
                     imageFormat: imageFormat,
                     fileAttachments: attachments?.map {
@@ -919,7 +989,9 @@ public final class MessagingViewModel {
             )
             let sentHash = try Self.queuedHash(from: outcome)
             lxMessage.hash = sentHash
-            lxMessage.state = .sent
+            // `.queued` means the local router accepted ownership. It does not
+            // prove packet transmission, relay storage, or recipient delivery.
+            lxMessage.state = .sending
             registerPendingOutboundAlias(
                 canonicalHash: sentHash,
                 optimisticID: optimisticId
@@ -951,22 +1023,26 @@ public final class MessagingViewModel {
                 logger.error("[MSG_VM] saveMessage(outbound) failed: \(error.localizedDescription)")
                 if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                     messages[index].messageHash = sentHash
-                    messages[index].deliveryStatus = proof.map { Self.deliveryStatus(for: $0.state) } ?? .failed
+                    messages[index].deliveryStatus = proof.map {
+                        Self.deliveryStatus(for: $0.state, method: $0.method)
+                    } ?? .failed
                 }
-                errorMessage = "Message was sent, but local confirmation could not be saved. Verify whether it arrived before retrying."
+                errorMessage = String(localized: "Message was queued, but its local state could not be saved. Do not retry until its delivery outcome is known.")
             }
 
             return true
         } catch {
             var failure: Error = error
-            // Retry via relay if enabled
-            if retryViaRelay {
+            // Retry a failed direct attempt via relay when configured. A message
+            // already submitted as propagated must not recursively retry itself.
+            if retryViaRelay && selectedDeliveryMethod != .propagated {
                 logger.info("[MSG_VM] Delivery failed, retrying via relay")
 
                 // Update UI to show retrying
                 if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        messages[index].deliveryStatus = .sending
+                        messages[index].deliveryStatus = .retryingPropagated
+                        messages[index].deliveryMethod = LXDeliveryMethod.propagated.rawValue
                     }
                 }
 
@@ -1002,7 +1078,7 @@ public final class MessagingViewModel {
                     )
                     let retryHash = try Self.queuedHash(from: retryOutcome)
                     retryMessage.hash = retryHash
-                    retryMessage.state = .sent
+                    retryMessage.state = .sending
                     retryMessage.method = .propagated
                     registerPendingOutboundAlias(
                         canonicalHash: retryHash,
@@ -1033,9 +1109,11 @@ public final class MessagingViewModel {
                         logger.error("[MSG_VM] saveMessage(retry-relay) failed: \(error.localizedDescription)")
                         if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
                             messages[index].messageHash = retryHash
-                            messages[index].deliveryStatus = proof.map { Self.deliveryStatus(for: $0.state) } ?? .failed
+                            messages[index].deliveryStatus = proof.map {
+                                Self.deliveryStatus(for: $0.state, method: $0.method)
+                            } ?? .failed
                         }
-                        errorMessage = "Message was relayed, but local confirmation could not be saved. Verify whether it arrived before retrying."
+                        errorMessage = String(localized: "Relay submission was queued, but its local state could not be saved. Do not retry until its delivery outcome is known.")
                     }
                     return true
                 } catch {

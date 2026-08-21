@@ -1,6 +1,7 @@
 import ast
 import copy
 import inspect
+import json
 import threading
 import time
 import types
@@ -255,13 +256,53 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertEqual(FakeMessage.OUTBOUND, retry.state)
         self.assertEqual(0, retry.delivery_attempts)
         self.assertEqual(0.0, retry.progress)
-        self.assertEqual([], self.delivery_events(events))
+        self.assertEqual(
+            ["retrying_propagated"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
 
         primary.failed_callback(primary)
         self.assertEqual(2, len(router.handled), "duplicate failure requeued twice")
-        self.assertEqual(1, len(self.delivery_events(events)))
-        self.assertEqual("failed", self.delivery_events(events)[0]["state"])
-        self.assertEqual("propagated-failed", self.delivery_events(events)[0]["reason"])
+        self.assertEqual(2, len(self.delivery_events(events)))
+        self.assertEqual("failed", self.delivery_events(events)[1]["state"])
+        self.assertEqual("propagated-failed", self.delivery_events(events)[1]["reason"])
+
+    def test_explicit_propagated_send_without_node_is_rejected_before_queue(self):
+        router = FakeRouter(propagation_node=False)
+        events = []
+        send = self.load_send(router, events)
+
+        result = send(
+            dest_hash_hex="01" * 16,
+            content="hello",
+            fields_hex="",
+            method="propagated",
+            failure_fallback_method="",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("no-propagation-node", result["reason"])
+        self.assertEqual([], router.handled)
+        self.assertEqual([], self.delivery_events(events))
+
+    def test_fallback_admission_emits_retrying_before_relay_acceptance(self):
+        router = FakeRouter()
+        events = []
+        message = self.queue(router, events)
+
+        message.failed_callback(message)
+
+        self.assertTrue(router.wait_for_handled_count(2))
+        self.assertTrue(self.wait_for_delivery_events(events, 1))
+        self.assertEqual("retrying_propagated", self.delivery_events(events)[0]["state"])
+        self.assertEqual("propagated", self.delivery_events(events)[0]["method"])
+
+        message.state = FakeMessage.SENT
+        message.delivery_callback(message)
+        self.assertEqual(
+            ["retrying_propagated", "sent"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
 
     def test_propagation_acceptance_is_sent_not_delivered(self):
         router = FakeRouter()
@@ -375,13 +416,13 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         message.failed_callback(message)
 
         self.assertTrue(router.wait_for_handled_count(2))
-        self.assertTrue(self.wait_for_delivery_events(events, 1))
+        self.assertTrue(self.wait_for_delivery_events(events, 2))
         self.assertEqual(2, len(router.handled))
-        self.assertEqual(1, len(self.delivery_events(events)))
-        self.assertEqual("propagated-enqueue-failed", self.delivery_events(events)[0]["reason"])
+        self.assertEqual(2, len(self.delivery_events(events)))
+        self.assertEqual("propagated-enqueue-failed", self.delivery_events(events)[1]["reason"])
         message.failed_callback(message)
         self.assertEqual(2, len(router.handled))
-        self.assertEqual(1, len(self.delivery_events(events)))
+        self.assertEqual(2, len(self.delivery_events(events)))
 
     def test_failure_callback_returns_before_locked_router_requeue(self):
         router = LockedCallbackRouter()
@@ -398,7 +439,10 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
             router.outbound_processing_lock.release()
 
         self.assertTrue(router.wait_for_handled_count(2))
-        self.assertEqual([], self.delivery_events(events))
+        self.assertEqual(
+            ["retrying_propagated"],
+            [event["state"] for event in self.delivery_events(events)],
+        )
 
     def test_recipient_proof_cancels_deferred_fallback_before_requeue(self):
         router = FakeRouter()
@@ -461,7 +505,7 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertTrue(proof_done.is_set())
         self.assertTrue(router.wait_for_handled_count(2))
         self.assertEqual(
-            ["delivered"],
+            ["retrying_propagated", "delivered"],
             [event["state"] for event in self.delivery_events(events)],
         )
 
@@ -499,9 +543,10 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         retry.delivery_callback(retry)
 
         delivered = self.delivery_events(events)
-        self.assertEqual(1, len(delivered))
-        self.assertEqual("delivered", delivered[0]["state"])
-        self.assertEqual("propagated", delivered[0]["method"])
+        self.assertEqual(2, len(delivered))
+        self.assertEqual("retrying_propagated", delivered[0]["state"])
+        self.assertEqual("delivered", delivered[1]["state"])
+        self.assertEqual("propagated", delivered[1]["method"])
 
         python_bridge = (ROOT / "Sources/PythonBridge/PythonBridge.swift").read_text()
         rns_backend = (ROOT / "Sources/RNSAPI/Protocols/RnsBackend.swift").read_text()
@@ -518,13 +563,14 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         for source in (python_bridge, rns_backend, python_backend):
             self.assertIn("method:", source)
         self.assertIn("method: acceptedMethod", app_services)
-        self.assertIn('"deliveryMethod": acceptedMethod?.rawValue ?? ""', app_services)
+        self.assertIn('"deliveryMethod": effectiveMethod?.rawValue ?? ""', app_services)
         self.assertIn("viewModel?.currentMessage(for:", messaging_view)
         self.assertIn("recordCanonicalAlias", messaging_view_model)
         self.assertIn("PendingDeliveryProof", messaging_view_model)
         self.assertIn("method: proof.method", messaging_view_model)
         self.assertIn("outboundSendOperation", messaging_view_model)
-        self.assertIn("if !proofPersisted", messaging_view_model)
+        self.assertIn("resolveDeliveryNotification", messaging_view_model)
+        self.assertIn("if resolution.requiresPersistence", messaging_view_model)
         self.assertNotIn("if wasAliased && !proofPersisted", messaging_view_model)
         self.assertNotIn("(proof == .delivered) ? .delivered : .failed", messaging_view_model)
         self.assertIn("monotonicDeliveryState", message_repository)
@@ -532,6 +578,54 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertIn("let rowUpdated = try await repository.updateMessageState", messaging_view_model)
         self.assertIn("if rowUpdated, pendingDeliveryProofs[hashHex] == proof", messaging_view_model)
         self.assertIn("Tests.static.test_async_propagation_fallback", ci_workflow)
+
+    def test_default_delivery_method_controls_wire_request(self):
+        view_model = (
+            ROOT / "Sources/ColumbaApp/ViewModels/MessagingViewModel.swift"
+        ).read_text()
+        settings_view = (
+            ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
+        ).read_text()
+
+        self.assertIn("let selectedDeliveryMethod", view_model)
+        self.assertIn("desiredMethod: selectedDeliveryMethod", view_model)
+        self.assertIn("method: selectedDeliveryMethod", view_model)
+        self.assertNotIn("method: .opportunistic,\n                    failureFallbackMethod:", view_model)
+        self.assertIn("Select a relay before using propagation", settings_view)
+
+    def test_ios_presentation_distinguishes_queue_relay_storage_and_delivery(self):
+        bubble = (
+            ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
+        ).read_text()
+        detail = (
+            ROOT / "Sources/ColumbaApp/Views/Messaging/MessageDetailView.swift"
+        ).read_text()
+        view_model = (
+            ROOT / "Sources/ColumbaApp/ViewModels/MessagingViewModel.swift"
+        ).read_text()
+        catalog = json.loads(
+            (
+                ROOT
+                / "Sources/ColumbaApp/Resources/Localizable.xcstrings"
+            ).read_text()
+        )["strings"]
+
+        self.assertIn("case retryingPropagated", bubble)
+        self.assertIn("case propagated", bubble)
+        self.assertIn('Image(systemName: "icloud.and.arrow.up.fill")', bubble)
+        self.assertIn('Image(systemName: "checkmark.icloud.fill")', bubble)
+        self.assertIn("lxMessage.state = .sending", view_model)
+        self.assertNotIn("lxMessage.state = .sent\n            registerPendingOutboundAlias", view_model)
+        self.assertNotIn("Delivered via relay/propagation node", detail)
+        for key in (
+            "Pending send",
+            "Sending to relay",
+            "Stored on relay",
+            "Queued locally; no transport confirmation yet",
+            "Relay accepted the message; recipient delivery is not confirmed",
+            "Stored by relay; awaiting recipient delivery",
+        ):
+            self.assertIn(key, catalog)
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
@@ -542,7 +636,7 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertIn("failureFallbackMethod", rns_lxmf)
         self.assertIn("failureFallbackMethod", backend)
         self.assertIn("failureFallbackMethod", bridge)
-        self.assertIn("failureFallbackMethod: retryViaRelay ? .propagated : nil", messaging)
+        self.assertIn("failureFallbackMethod: deliveryPlan.failureFallbackMethod", messaging)
 
     def test_sent_delivered_failed_states_are_mapped_explicitly(self):
         app_services = (ROOT / "Sources/ColumbaApp/Services/AppServices.swift").read_text()

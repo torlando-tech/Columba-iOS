@@ -31,6 +31,16 @@
         }
       }
     },
+    "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No relay is selected. Select a relay in Message Delivery and Retrieval, then try again."
+          }
+        }
+      }
+    },
     "Shows delivery failure details": {
       "localizations": {
         "en": {
@@ -831,6 +841,16 @@
         }
       }
     },
+    "Select a relay before using propagation": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a relay before using propagation"
+          }
+        }
+      }
+    },
     "Select at least one connection method to continue.": {
       "localizations": {
         "en": {
@@ -1235,6 +1255,166 @@
           "stringUnit": {
             "state": "translated",
             "value": "Send Announce"
+          }
+        }
+      }
+    },
+    "Pending send": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pending send"
+          }
+        }
+      }
+    },
+    "Sending to relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending to relay"
+          }
+        }
+      }
+    },
+    "Stored on relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stored on relay"
+          }
+        }
+      }
+    },
+    "Pending": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pending"
+          }
+        }
+      }
+    },
+    "Queued locally; no transport confirmation yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queued locally; no transport confirmation yet"
+          }
+        }
+      }
+    },
+    "Sending to Relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending to Relay"
+          }
+        }
+      }
+    },
+    "Submitting through the selected relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Submitting through the selected relay"
+          }
+        }
+      }
+    },
+    "Stored on Relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stored on Relay"
+          }
+        }
+      }
+    },
+    "Relay accepted the message; recipient delivery is not confirmed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay accepted the message; recipient delivery is not confirmed"
+          }
+        }
+      }
+    },
+    "Submitting to the selected relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Submitting to the selected relay"
+          }
+        }
+      }
+    },
+    "Stored by relay; awaiting recipient delivery": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stored by relay; awaiting recipient delivery"
+          }
+        }
+      }
+    },
+    "Recipient delivery confirmed through relay": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recipient delivery confirmed through relay"
+          }
+        }
+      }
+    },
+    "Relay delivery attempt failed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay delivery attempt failed"
+          }
+        }
+      }
+    },
+    "Relay method selected; relay acceptance is unconfirmed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay method selected; relay acceptance is unconfirmed"
+          }
+        }
+      }
+    },
+    "Message was queued, but its local state could not be saved. Do not retry until its delivery outcome is known.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message was queued, but its local state could not be saved. Do not retry until its delivery outcome is known."
+          }
+        }
+      }
+    },
+    "Relay submission was queued, but its local state could not be saved. Do not retry until its delivery outcome is known.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay submission was queued, but its local state could not be saved. Do not retry until its delivery outcome is known."
           }
         }
       }

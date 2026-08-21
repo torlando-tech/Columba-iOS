@@ -91,6 +91,8 @@ public final class PropagationNodeManager {
 
     private weak var appServices: AppServices?
     private let settingsRepository = SettingsRepository()
+    typealias PropagationNodeSetter = @MainActor (String, Int) async throws -> Bool
+    private let propagationNodeSetter: PropagationNodeSetter?
     private let logger = Logger(subsystem: "network.columba.Columba", category: "PropagationNodeManager")
 
     /// Task for listening to path table updates.
@@ -121,6 +123,25 @@ public final class PropagationNodeManager {
 
     public init(appServices: AppServices) {
         self.appServices = appServices
+        #if COLUMBA_RUNTIME_PYTHON
+        self.propagationNodeSetter = { [weak appServices] hash, stampCost in
+            guard let backend = appServices?.pythonBackend else { return false }
+            return try await backend.setPropagationNode(
+                destHashHex: hash,
+                stampCost: stampCost
+            )
+        }
+        #else
+        self.propagationNodeSetter = nil
+        #endif
+    }
+
+    init(
+        appServices: AppServices,
+        propagationNodeSetter: PropagationNodeSetter?
+    ) {
+        self.appServices = appServices
+        self.propagationNodeSetter = propagationNodeSetter
     }
 
     // MARK: - Node Discovery
@@ -265,79 +286,99 @@ public final class PropagationNodeManager {
         await selectNode(hash: best.hash)
     }
 
-    /// Manually select a propagation node.
-    ///
-    /// Disables auto-select when called manually.
-    public func selectNode(hash: Data) async {
+    /// Select a validated propagation node and commit it only after the live
+    /// shipping backend accepts the configuration.
+    @discardableResult
+    public func selectNode(hash: Data) async -> Bool {
         guard let entry = await appServices?.pathTable?.lookup(destinationHash: hash),
               entry.destinationAspect == .lxmfPropagation,
               let appData = entry.appData,
               let info = PropagationNodeInfo.parse(from: appData),
               info.enabled else {
             logger.warning("Rejected relay selection without exact enabled propagation aspect")
-            return
+            return false
         }
-        selectedNodeHash = hash
         let node = knownNodes.first(where: { $0.hash == hash })
-        selectedNodeName = node?.resolvedDisplayName ?? info.displayName ?? entry.displayName
+        let candidateName = node?.resolvedDisplayName ?? info.displayName ?? entry.displayName
 
-        // Compute delivery hash for this identity so we can match against saved contacts.
-        // Relay announces use lxmf.propagation aspect; contacts use lxmf.delivery aspect.
+        let candidateDeliveryHash: Data?
         if entry.publicKeys.count >= 64 {
             let identityHash = Hashing.truncatedHash(entry.publicKeys)
             let nameHash = Hashing.destinationNameHash(appName: "lxmf", aspects: ["delivery"])
             var combined = nameHash
             combined.append(identityHash)
-            selectedNodeDeliveryHash = Hashing.truncatedHash(combined)
+            candidateDeliveryHash = Hashing.truncatedHash(combined)
         } else {
-            selectedNodeDeliveryHash = nil
+            candidateDeliveryHash = nil
         }
 
-        // Wire to Python LXMRouter via the embedded backend. Compat
-        // LXMRouter.setOutboundPropagationNode used to set a local var
-        // only — Python's LXMF.LXMRouter.set_outbound_propagation_node
-        // is what actually affects delivery.
         let stampCost = info.stampCost
-        selectedNodeStampCost = stampCost
         #if COLUMBA_RUNTIME_PYTHON
-        if let backend = appServices?.pythonBackend {
-            do {
-                _ = try await backend.setPropagationNode(destHashHex: hash.toHex(), stampCost: stampCost)
-            } catch {
-                logger.error("setPropagationNode failed: \(error.localizedDescription)")
+        guard let propagationNodeSetter else {
+            logger.error("setPropagationNode unavailable: shipping backend is not ready")
+            return false
+        }
+        do {
+            guard try await propagationNodeSetter(hash.toHex(), stampCost) else {
+                logger.error("setPropagationNode was rejected by backend")
+                return false
             }
+        } catch {
+            logger.error("setPropagationNode failed: \(error.localizedDescription)")
+            return false
         }
         #endif
-        // Keep the Compat-layer var in sync so any UI that still reads
-        // router.outboundPropagationNode shows the right value.
+
+        selectedNodeHash = hash
+        selectedNodeName = candidateName
+        selectedNodeDeliveryHash = candidateDeliveryHash
+        selectedNodeStampCost = stampCost
         await appServices?.router?.setOutboundPropagationNode(hash)
         await appServices?.router?.setPropagationStampCost(stampCost)
 
         logger.info("Selected propagation node: \(self.selectedNodeName ?? "unknown")")
         await savePreferences()
+        return true
     }
 
-    /// Clear the selected relay node.
-    public func clearSelection() async {
+    /// Clear the selected relay node and disable automatic reselection.
+    ///
+    /// Keep the visible and persisted selection unchanged unless the shipping
+    /// backend confirms that its live router was cleared. This prevents the UI
+    /// from saying "None" while Python continues using a stale relay.
+    @discardableResult
+    public func clearSelection() async -> Bool {
+        #if COLUMBA_RUNTIME_PYTHON
+        guard let propagationNodeSetter else {
+            logger.error("clear propagation node unavailable: shipping backend is not ready")
+            return false
+        }
+        do {
+            guard try await propagationNodeSetter("", 0) else {
+                logger.error("clear propagation node was rejected by backend")
+                return false
+            }
+        } catch {
+            logger.error("clear propagation node failed: \(error.localizedDescription)")
+            return false
+        }
+        #endif
+
+        await appServices?.router?.setOutboundPropagationNode(nil)
+        await appServices?.router?.setPropagationStampCost(0)
+
+        // A user-selected "None" is an explicit opt-out. Leaving automatic
+        // selection enabled would silently repopulate the relay on the next
+        // propagation-node announce.
+        autoSelectEnabled = false
         selectedNodeHash = nil
         selectedNodeDeliveryHash = nil
         selectedNodeName = nil
         selectedNodeStampCost = 0
 
-        #if COLUMBA_RUNTIME_PYTHON
-        if let backend = appServices?.pythonBackend {
-            do {
-                _ = try await backend.setPropagationNode(destHashHex: "", stampCost: 0)
-            } catch {
-                logger.error("clear propagation node failed: \(error.localizedDescription)")
-            }
-        }
-        #endif
-        await appServices?.router?.setOutboundPropagationNode(nil)
-        await appServices?.router?.setPropagationStampCost(0)
-
-        logger.info("Cleared propagation node selection")
+        logger.info("Cleared propagation node selection and disabled auto-select")
         await savePreferences()
+        return true
     }
 
     // MARK: - Sync

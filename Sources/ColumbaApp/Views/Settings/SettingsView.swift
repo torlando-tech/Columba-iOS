@@ -1372,6 +1372,17 @@ struct SettingsView: View {
                     )
                 )
 
+                if (vm.defaultDeliveryMethod == "propagated" || vm.retryViaRelay),
+                   appServices.propagationManager?.selectedNodeHash == nil {
+                    Label {
+                        Text("Select a relay before using propagation")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+
                 Divider()
                     .padding(.vertical, 4)
 

@@ -116,8 +116,7 @@ public actor SettingsRepository {
 
     // MARK: - Delivery & Propagation
 
-    /// Get default delivery method for large messages ("direct" or "propagated").
-    /// Small messages always use opportunistic first regardless of this setting.
+    /// Get the default outbound delivery method ("direct" or "propagated").
     public func getDefaultDeliveryMethod() -> String {
         defaults.string(forKey: Keys.defaultDeliveryMethod) ?? "direct"
     }
