@@ -356,6 +356,7 @@
 		RFT002 /* RuntimeFlavorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RFT001 /* RuntimeFlavorTests.swift */; };
 		RMLT002 /* RuntimeActivityMonitorLeaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */; };
 		RMLT003 /* RuntimeActivityMonitorLeaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */; };
+		TMP002 /* ThemeManagerPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TMP001 /* ThemeManagerPersistenceTests.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -600,6 +601,7 @@
 		PXIF /* ProxyIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyIPC.swift; sourceTree = "<group>"; };
 		RFT001 /* RuntimeFlavorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RuntimeFlavorTests.swift; sourceTree = "<group>"; };
 		RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RuntimeActivityMonitorLeaseTests.swift; sourceTree = "<group>"; };
+		TMP001 /* ThemeManagerPersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThemeManagerPersistenceTests.swift; sourceTree = "<group>"; };
 		SRB002 /* SwiftRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwiftRNSBackend.swift; path = Sources/RNSBackendSwift/SwiftRNSBackend.swift; sourceTree = SOURCE_ROOT; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -1043,6 +1045,7 @@
 				6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */,
 				RFT001 /* RuntimeFlavorTests.swift */,
 				RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */,
+				TMP001 /* ThemeManagerPersistenceTests.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -1728,6 +1731,7 @@
 				26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */,
 				RFT002 /* RuntimeFlavorTests.swift in Sources */,
 				RMLT002 /* RuntimeActivityMonitorLeaseTests.swift in Sources */,
+				TMP002 /* ThemeManagerPersistenceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -6,6 +6,7 @@
 //  and custom theme CRUD. Persists selections to UserDefaults.
 //
 
+import Foundation
 import SwiftUI
 import RNSAPI
 import Observation
@@ -22,27 +23,22 @@ final class ThemeManager {
 
     static let shared = ThemeManager()
 
+    @ObservationIgnored
+    private let defaults: UserDefaults
+
     // MARK: - State
 
     /// User's color scheme preference.
-    var colorSchemePreference: ColorSchemePreference = .dark {
-        didSet { persist() }
-    }
+    var colorSchemePreference: ColorSchemePreference = .dark
 
     /// Currently active preset (nil if using custom theme).
-    var activePresetId: PresetThemeId? = .plum {
-        didSet { persist() }
-    }
+    var activePresetId: PresetThemeId? = .plum
 
     /// Currently active custom theme ID (nil if using preset).
-    var activeCustomThemeId: UUID? = nil {
-        didSet { persist() }
-    }
+    var activeCustomThemeId: UUID? = nil
 
     /// All user-created custom themes.
-    var customThemes: [CustomThemeData] = [] {
-        didSet { persistCustomThemes() }
-    }
+    var customThemes: [CustomThemeData] = []
 
     /// Bumped on every theme change to force root view re-render via `.id()`.
     var themeVersion: Int = 0
@@ -139,7 +135,8 @@ final class ThemeManager {
 
     // MARK: - Init
 
-    private init() {
+    internal init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         restore()
     }
 
@@ -149,6 +146,7 @@ final class ThemeManager {
     func selectPreset(_ preset: PresetThemeId) {
         activePresetId = preset
         activeCustomThemeId = nil
+        persistSelection()
         themeVersion += 1
     }
 
@@ -156,12 +154,14 @@ final class ThemeManager {
     func selectCustomTheme(_ id: UUID) {
         activeCustomThemeId = id
         activePresetId = nil
+        persistSelection()
         themeVersion += 1
     }
 
     /// Set color scheme preference.
     func setColorScheme(_ pref: ColorSchemePreference) {
         colorSchemePreference = pref
+        persistSelection()
         themeVersion += 1
     }
 
@@ -170,6 +170,7 @@ final class ThemeManager {
     /// Add a new custom theme and select it.
     func addCustomTheme(_ theme: CustomThemeData) {
         customThemes.append(theme)
+        persistCustomThemes()
         selectCustomTheme(theme.id)
     }
 
@@ -177,6 +178,7 @@ final class ThemeManager {
     func updateCustomTheme(_ theme: CustomThemeData) {
         if let index = customThemes.firstIndex(where: { $0.id == theme.id }) {
             customThemes[index] = theme
+            persistCustomThemes()
             if activeCustomThemeId == theme.id {
                 themeVersion += 1
             }
@@ -186,9 +188,11 @@ final class ThemeManager {
     /// Delete a custom theme. If it was active, fall back to plum preset.
     func deleteCustomTheme(_ id: UUID) {
         customThemes.removeAll { $0.id == id }
+        persistCustomThemes()
         if activeCustomThemeId == id {
             activeCustomThemeId = nil
             activePresetId = .plum
+            persistSelection()
             themeVersion += 1
         }
     }
@@ -200,8 +204,7 @@ final class ThemeManager {
     private static let customThemeIdKey = "theme_customThemeId"
     private static let customThemesKey = "theme_customThemes"
 
-    private func persist() {
-        let defaults = UserDefaults.standard
+    private func persistSelection() {
         defaults.set(colorSchemePreference.rawValue, forKey: Self.colorSchemeKey)
         defaults.set(activePresetId?.rawValue, forKey: Self.presetIdKey)
         defaults.set(activeCustomThemeId?.uuidString, forKey: Self.customThemeIdKey)
@@ -209,33 +212,41 @@ final class ThemeManager {
 
     private func persistCustomThemes() {
         if let data = try? JSONEncoder().encode(customThemes) {
-            UserDefaults.standard.set(data, forKey: Self.customThemesKey)
+            defaults.set(data, forKey: Self.customThemesKey)
         }
     }
 
     private func restore() {
-        let defaults = UserDefaults.standard
-
-        if let raw = defaults.string(forKey: Self.colorSchemeKey),
-           let pref = ColorSchemePreference(rawValue: raw) {
-            colorSchemePreference = pref
-        }
-
-        if let raw = defaults.string(forKey: Self.presetIdKey),
-           let preset = PresetThemeId(rawValue: raw) {
-            activePresetId = preset
-        }
-
-        if let raw = defaults.string(forKey: Self.customThemeIdKey) {
-            activeCustomThemeId = UUID(uuidString: raw)
-            if activeCustomThemeId != nil {
-                activePresetId = nil
+        let restoredColorScheme: ColorSchemePreference = {
+            guard let raw = defaults.string(forKey: Self.colorSchemeKey) else {
+                return .dark
             }
-        }
+            return ColorSchemePreference(rawValue: raw) ?? .dark
+        }()
 
-        if let data = defaults.data(forKey: Self.customThemesKey),
-           let themes = try? JSONDecoder().decode([CustomThemeData].self, from: data) {
-            customThemes = themes
+        let restoredCustomThemes: [CustomThemeData] = {
+            guard let data = defaults.data(forKey: Self.customThemesKey),
+                  let themes = try? JSONDecoder().decode([CustomThemeData].self, from: data) else {
+                return []
+            }
+            return themes
+        }()
+
+        let restoredPresetId = defaults.string(forKey: Self.presetIdKey)
+            .flatMap(PresetThemeId.init(rawValue:))
+        let restoredCustomThemeId = defaults.string(forKey: Self.customThemeIdKey)
+            .flatMap(UUID.init(uuidString:))
+
+        colorSchemePreference = restoredColorScheme
+        customThemes = restoredCustomThemes
+
+        if let customThemeId = restoredCustomThemeId,
+           restoredCustomThemes.contains(where: { $0.id == customThemeId }) {
+            activeCustomThemeId = customThemeId
+            activePresetId = nil
+        } else {
+            activeCustomThemeId = nil
+            activePresetId = restoredPresetId ?? .plum
         }
     }
 }
