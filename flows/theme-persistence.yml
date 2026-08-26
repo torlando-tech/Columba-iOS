@@ -4,9 +4,8 @@ tags:
   - regression
   - screenshot
 ---
-# Verify the color-scheme and preset selections survive app termination.
-# The Appearance card has no safe header-level identifier, so its localized
-# visible title is used only to expand the existing shipping card.
+# Verify color-scheme and preset selections after the app's intentional
+# themeVersion root rebuild, then again after process termination and relaunch.
 - launchApp:
     clearState: true
     clearKeychain: true
@@ -35,8 +34,30 @@ tags:
     timeout: 10000
 - tapOn:
     id: "appearance_color_scheme_light"
-- assertVisible:
-    id: "appearance_color_scheme_light_selected"
+
+# Changing the scheme rebuilds the root and returns to Chats. Reopen Appearance
+# and prove Light is selected before choosing the Ocean preset.
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 10000
+- tapOn:
+    id: "tab_settings|gearshape.fill"
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "Appearance"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "Appearance"
+- extendedWaitUntil:
+    visible:
+      id: "appearance_color_scheme_light_selected"
+    timeout: 10000
 - scrollUntilVisible:
     element:
       id: "appearance_theme_ocean"
@@ -44,10 +65,36 @@ tags:
     timeout: 20000
 - tapOn:
     id: "appearance_theme_ocean"
-- assertVisible:
-    id: "appearance_theme_ocean_selected"
 
-# Relaunch without clearState/clearKeychain so persisted preferences are read.
+# Preset selection also rebuilds the root. Reopen and prove Ocean is selected.
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 10000
+- tapOn:
+    id: "tab_settings|gearshape.fill"
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "Appearance"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "Appearance"
+- extendedWaitUntil:
+    visible:
+      id: "appearance_color_scheme_light_selected"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "appearance_theme_ocean_selected"
+    direction: DOWN
+    timeout: 20000
+
+# Relaunch without clearing state so the new ThemeManager restores the record.
 - killApp
 - launchApp:
     stopApp: false
@@ -70,15 +117,11 @@ tags:
     text: "Appearance"
 - extendedWaitUntil:
     visible:
-      id: "appearance_color_scheme_light"
+      id: "appearance_color_scheme_light_selected"
     timeout: 10000
-- assertVisible:
-    id: "appearance_color_scheme_light_selected"
 - scrollUntilVisible:
     element:
-      id: "appearance_theme_ocean"
+      id: "appearance_theme_ocean_selected"
     direction: DOWN
     timeout: 20000
-- assertVisible:
-    id: "appearance_theme_ocean_selected"
 - takeScreenshot: "theme-persistence"
