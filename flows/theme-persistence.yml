@@ -56,7 +56,8 @@ tags:
     text: "Appearance"
 - extendedWaitUntil:
     visible:
-      id: "appearance_color_scheme_light_selected"
+      id: "appearance_color_scheme_light"
+      selected: true
     timeout: 10000
 - scrollUntilVisible:
     element:
@@ -86,11 +87,13 @@ tags:
     text: "Appearance"
 - extendedWaitUntil:
     visible:
-      id: "appearance_color_scheme_light_selected"
+      id: "appearance_color_scheme_light"
+      selected: true
     timeout: 10000
 - scrollUntilVisible:
     element:
-      id: "appearance_theme_ocean_selected"
+      id: "appearance_theme_ocean"
+      selected: true
     direction: DOWN
     timeout: 20000
 
@@ -117,11 +120,13 @@ tags:
     text: "Appearance"
 - extendedWaitUntil:
     visible:
-      id: "appearance_color_scheme_light_selected"
+      id: "appearance_color_scheme_light"
+      selected: true
     timeout: 10000
 - scrollUntilVisible:
     element:
-      id: "appearance_theme_ocean_selected"
+      id: "appearance_theme_ocean"
+      selected: true
     direction: DOWN
     timeout: 20000
 - takeScreenshot: "theme-persistence"

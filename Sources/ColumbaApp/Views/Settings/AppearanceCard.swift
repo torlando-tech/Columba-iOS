@@ -98,9 +98,6 @@ struct AppearanceCard: View {
                             if themeManager.colorSchemePreference == pref {
                                 Image(systemName: "checkmark")
                                     .font(.system(size: 10, weight: .bold))
-                                    .accessibilityIdentifier(
-                                        "appearance_color_scheme_\(pref.rawValue)_selected"
-                                    )
                             }
                         }
                         .foregroundStyle(
@@ -156,7 +153,6 @@ struct AppearanceCard: View {
                         Image(systemName: "checkmark")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(.white)
-                            .accessibilityIdentifier("appearance_theme_\(preset.rawValue)_selected")
                     }
                 }
                 .overlay {
@@ -206,9 +202,6 @@ struct AppearanceCard: View {
                         Image(systemName: "checkmark")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(.white)
-                            .accessibilityIdentifier(
-                                "appearance_custom_theme_\(theme.id.uuidString)_selected"
-                            )
                     }
                 }
 
