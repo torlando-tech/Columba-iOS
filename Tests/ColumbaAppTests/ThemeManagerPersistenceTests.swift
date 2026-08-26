@@ -13,6 +13,13 @@ import XCTest
 @available(iOS 17.0, macOS 14.0, *)
 @MainActor
 final class ThemeManagerPersistenceTests: XCTestCase {
+    private struct PersistedThemeStateFixture: Codable {
+        let colorSchemeRawValue: String
+        let presetRawValue: String?
+        let customThemeID: UUID?
+        let customThemes: [CustomThemeData]
+    }
+
     private var defaults: UserDefaults!
     private var suiteName: String!
 
@@ -41,6 +48,15 @@ final class ThemeManagerPersistenceTests: XCTestCase {
         XCTAssertEqual(second.resolvedColorScheme, .light)
         XCTAssertFalse(second.isDarkMode)
         XCTAssertEqual(second.activeColors, PresetThemeId.plum.colors)
+    }
+
+    func testLegacyColorSchemePreferenceRestoresWhenAggregateStateIsAbsent() {
+        defaults.set(ColorSchemePreference.light.rawValue, forKey: "theme_colorScheme")
+
+        let manager = ThemeManager(defaults: defaults)
+
+        XCTAssertEqual(manager.colorSchemePreference, .light)
+        XCTAssertEqual(manager.resolvedColorScheme, .light)
     }
 
     func testPresetSelectionRestoresPresetAndResolvedColors() {
@@ -113,6 +129,23 @@ final class ThemeManagerPersistenceTests: XCTestCase {
         XCTAssertEqual(second.activeColors, PresetThemeId.midnight.colors)
     }
 
+    func testAggregateCustomSelectionDoesNotFallBackToStaleLegacyPresetID() {
+        let state = PersistedThemeStateFixture(
+            colorSchemeRawValue: ColorSchemePreference.dark.rawValue,
+            presetRawValue: nil,
+            customThemeID: UUID(),
+            customThemes: []
+        )
+        defaults.set(PresetThemeId.rose.rawValue, forKey: "theme_presetId")
+        defaults.set(try! JSONEncoder().encode(state), forKey: "theme_state")
+
+        let manager = ThemeManager(defaults: defaults)
+
+        XCTAssertEqual(manager.activePresetId, .plum)
+        XCTAssertNil(manager.activeCustomThemeId)
+        XCTAssertEqual(manager.activeColors, PresetThemeId.plum.colors)
+    }
+
     func testLegacyCustomIDWinsOverPersistedPreset() {
         let custom = CustomThemeData(id: UUID(), name: "Custom", primaryHue: 210)
 
@@ -151,6 +184,31 @@ final class ThemeManagerPersistenceTests: XCTestCase {
         XCTAssertEqual(noValidSelection.activePresetId, .plum)
         XCTAssertNil(noValidSelection.activeCustomThemeId)
         XCTAssertEqual(noValidSelection.activeColors, PresetThemeId.plum.colors)
+    }
+
+    func testCustomThemeUpdatesAndDeletesPersistAcrossManagerInstances() {
+        let custom = CustomThemeData(id: UUID(), name: "Original")
+        var updated = custom
+        updated.name = "Updated"
+        updated.primaryHue = 120
+
+        do {
+            let first = ThemeManager(defaults: defaults)
+            first.addCustomTheme(custom)
+            first.updateCustomTheme(updated)
+        }
+
+        let afterUpdate = ThemeManager(defaults: defaults)
+        XCTAssertEqual(afterUpdate.customThemes, [updated])
+        XCTAssertEqual(afterUpdate.activeCustomThemeId, updated.id)
+        XCTAssertEqual(afterUpdate.activeColors, updated.generateColors())
+
+        afterUpdate.deleteCustomTheme(updated.id)
+
+        let afterDelete = ThemeManager(defaults: defaults)
+        XCTAssertTrue(afterDelete.customThemes.isEmpty)
+        XCTAssertEqual(afterDelete.activePresetId, .plum)
+        XCTAssertNil(afterDelete.activeCustomThemeId)
     }
 
     func testUnknownCustomSelectionFallsBackToPlumAndPersistsSafely() {
