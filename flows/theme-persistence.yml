@@ -1,0 +1,88 @@
+appId: network.columba.Columba
+name: theme-persistence
+tags:
+  - regression
+  - screenshot
+---
+# Verify the color-scheme and preset selections survive app termination.
+# The Appearance card has no safe header-level identifier, so its localized
+# visible title is used only to expand the existing shipping card.
+- launchApp:
+    clearState: true
+    clearKeychain: true
+    arguments:
+      ui-screenshotter: true
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 30000
+- tapOn:
+    id: "tab_settings|gearshape.fill"
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "Appearance"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "Appearance"
+- extendedWaitUntil:
+    visible:
+      id: "appearance_color_scheme_light"
+    timeout: 10000
+- tapOn:
+    id: "appearance_color_scheme_light"
+- assertVisible:
+    id: "appearance_color_scheme_light"
+    selected: true
+- scrollUntilVisible:
+    element:
+      id: "appearance_theme_ocean"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "appearance_theme_ocean"
+- assertVisible:
+    id: "appearance_theme_ocean"
+    selected: true
+
+# Relaunch without clearState/clearKeychain so persisted preferences are read.
+- killApp
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 30000
+- tapOn:
+    id: "tab_settings|gearshape.fill"
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "Appearance"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "Appearance"
+- extendedWaitUntil:
+    visible:
+      id: "appearance_color_scheme_light"
+    timeout: 10000
+- assertVisible:
+    id: "appearance_color_scheme_light"
+    selected: true
+- scrollUntilVisible:
+    element:
+      id: "appearance_theme_ocean"
+    direction: DOWN
+    timeout: 20000
+- assertVisible:
+    id: "appearance_theme_ocean"
+    selected: true
+- takeScreenshot: "theme-persistence"

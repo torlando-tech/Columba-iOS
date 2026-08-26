@@ -108,6 +108,10 @@ struct AppearanceCard: View {
                         )
                         .clipShape(Capsule())
                     }
+                    .accessibilityIdentifier("appearance_color_scheme_\(pref.rawValue)")
+                    .accessibilityAddTraits(
+                        themeManager.colorSchemePreference == pref ? .isSelected : []
+                    )
                 }
             }
         }
@@ -154,6 +158,12 @@ struct AppearanceCard: View {
                     .font(.caption2)
                     .foregroundStyle(Theme.textSecondary)
             }
+            .accessibilityIdentifier("appearance_theme_\(preset.rawValue)")
+            .accessibilityAddTraits(
+                themeManager.activePresetId == preset && themeManager.activeCustomThemeId == nil
+                    ? .isSelected
+                    : []
+            )
         }
     }
 
