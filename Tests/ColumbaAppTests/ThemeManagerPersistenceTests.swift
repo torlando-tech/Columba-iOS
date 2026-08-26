@@ -86,16 +86,8 @@ final class ThemeManagerPersistenceTests: XCTestCase {
         do {
             let first = ThemeManager(defaults: defaults)
             first.selectPreset(.teal)
-            XCTAssertEqual(defaults.string(forKey: "theme_presetId"), PresetThemeId.teal.rawValue)
-            XCTAssertNil(defaults.object(forKey: "theme_customThemeId"))
-
             first.addCustomTheme(custom)
-            XCTAssertNil(defaults.object(forKey: "theme_presetId"))
-            XCTAssertEqual(defaults.string(forKey: "theme_customThemeId"), custom.id.uuidString)
-
             first.selectPreset(.forest)
-            XCTAssertEqual(defaults.string(forKey: "theme_presetId"), PresetThemeId.forest.rawValue)
-            XCTAssertNil(defaults.object(forKey: "theme_customThemeId"))
         }
 
         let second = ThemeManager(defaults: defaults)
@@ -104,23 +96,39 @@ final class ThemeManagerPersistenceTests: XCTestCase {
         XCTAssertEqual(second.activeColors, PresetThemeId.forest.colors)
     }
 
-    func testValidCustomIDWinsOverPersistedPresetAndInvalidIDsFallBackToPlum() {
-        let custom = CustomThemeData(id: UUID(), name: "Custom", primaryHue: 210)
+    func testAggregatePresetSelectionDoesNotFallBackToStaleLegacyCustomID() {
+        let custom = CustomThemeData(id: UUID(), name: "Legacy Custom")
+        defaults.set(custom.id.uuidString, forKey: "theme_customThemeId")
+        defaults.set(try! JSONEncoder().encode([custom]), forKey: "theme_customThemes")
 
         do {
             let first = ThemeManager(defaults: defaults)
-            first.addCustomTheme(custom)
-            defaults.set(PresetThemeId.rose.rawValue, forKey: "theme_presetId")
+            XCTAssertEqual(first.activeCustomThemeId, custom.id)
+            first.selectPreset(.midnight)
         }
+
+        let second = ThemeManager(defaults: defaults)
+        XCTAssertEqual(second.activePresetId, .midnight)
+        XCTAssertNil(second.activeCustomThemeId)
+        XCTAssertEqual(second.activeColors, PresetThemeId.midnight.colors)
+    }
+
+    func testLegacyCustomIDWinsOverPersistedPreset() {
+        let custom = CustomThemeData(id: UUID(), name: "Custom", primaryHue: 210)
+
+        defaults.set(PresetThemeId.rose.rawValue, forKey: "theme_presetId")
+        defaults.set(custom.id.uuidString, forKey: "theme_customThemeId")
+        defaults.set(try! JSONEncoder().encode([custom]), forKey: "theme_customThemes")
 
         let customWins = ThemeManager(defaults: defaults)
         XCTAssertEqual(customWins.activeCustomThemeId, custom.id)
         XCTAssertNil(customWins.activePresetId)
         XCTAssertEqual(customWins.activeColors, custom.generateColors())
+    }
 
+    func testInvalidLegacyIDsFallBackToPlum() {
         defaults.set("not-a-preset", forKey: "theme_presetId")
         defaults.set("not-a-uuid", forKey: "theme_customThemeId")
-        defaults.removeObject(forKey: "theme_customThemes")
 
         let invalidIDs = ThemeManager(defaults: defaults)
         XCTAssertEqual(invalidIDs.activePresetId, .plum)
@@ -143,5 +151,24 @@ final class ThemeManagerPersistenceTests: XCTestCase {
         XCTAssertEqual(noValidSelection.activePresetId, .plum)
         XCTAssertNil(noValidSelection.activeCustomThemeId)
         XCTAssertEqual(noValidSelection.activeColors, PresetThemeId.plum.colors)
+    }
+
+    func testUnknownCustomSelectionFallsBackToPlumAndPersistsSafely() {
+        let unknownID = UUID()
+
+        do {
+            let first = ThemeManager(defaults: defaults)
+            first.selectPreset(.ocean)
+            first.selectCustomTheme(unknownID)
+
+            XCTAssertNil(first.activeCustomThemeId)
+            XCTAssertEqual(first.activePresetId, .plum)
+            XCTAssertEqual(first.activeColors, PresetThemeId.plum.colors)
+        }
+
+        let second = ThemeManager(defaults: defaults)
+        XCTAssertNil(second.activeCustomThemeId)
+        XCTAssertEqual(second.activePresetId, .plum)
+        XCTAssertEqual(second.activeColors, PresetThemeId.plum.colors)
     }
 }
