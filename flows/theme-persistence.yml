@@ -37,7 +37,7 @@ tags:
     id: "appearance_color_scheme_light"
 - assertVisible:
     id: "appearance_color_scheme_light"
-    selected: true
+    text: ".*Selected.*"
 - scrollUntilVisible:
     element:
       id: "appearance_theme_ocean"
@@ -47,7 +47,7 @@ tags:
     id: "appearance_theme_ocean"
 - assertVisible:
     id: "appearance_theme_ocean"
-    selected: true
+    text: ".*Selected.*"
 
 # Relaunch without clearState/clearKeychain so persisted preferences are read.
 - killApp
@@ -76,7 +76,7 @@ tags:
     timeout: 10000
 - assertVisible:
     id: "appearance_color_scheme_light"
-    selected: true
+    text: ".*Selected.*"
 - scrollUntilVisible:
     element:
       id: "appearance_theme_ocean"
@@ -84,5 +84,5 @@ tags:
     timeout: 20000
 - assertVisible:
     id: "appearance_theme_ocean"
-    selected: true
+    text: ".*Selected.*"
 - takeScreenshot: "theme-persistence"

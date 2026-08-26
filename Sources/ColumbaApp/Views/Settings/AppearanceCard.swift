@@ -112,6 +112,11 @@ struct AppearanceCard: View {
                     .accessibilityAddTraits(
                         themeManager.colorSchemePreference == pref ? .isSelected : []
                     )
+                    .accessibilityValue(
+                        themeManager.colorSchemePreference == pref
+                            ? Text("Selected")
+                            : Text("Not selected")
+                    )
                 }
             }
         }
@@ -163,6 +168,11 @@ struct AppearanceCard: View {
                 themeManager.activePresetId == preset && themeManager.activeCustomThemeId == nil
                     ? .isSelected
                     : []
+            )
+            .accessibilityValue(
+                themeManager.activePresetId == preset && themeManager.activeCustomThemeId == nil
+                    ? Text("Selected")
+                    : Text("Not selected")
             )
         }
     }
@@ -231,6 +241,11 @@ struct AppearanceCard: View {
         .accessibilityIdentifier("appearance_custom_theme_\(theme.id.uuidString)")
         .accessibilityAddTraits(
             themeManager.activeCustomThemeId == theme.id ? .isSelected : []
+        )
+        .accessibilityValue(
+            themeManager.activeCustomThemeId == theme.id
+                ? Text("Selected")
+                : Text("Not selected")
         )
     }
 }
