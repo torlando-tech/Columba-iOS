@@ -228,5 +228,9 @@ struct AppearanceCard: View {
         .onTapGesture {
             themeManager.selectCustomTheme(theme.id)
         }
+        .accessibilityIdentifier("appearance_custom_theme_\(theme.id.uuidString)")
+        .accessibilityAddTraits(
+            themeManager.activeCustomThemeId == theme.id ? .isSelected : []
+        )
     }
 }
