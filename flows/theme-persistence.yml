@@ -4,8 +4,10 @@ tags:
   - regression
   - screenshot
 ---
-# Verify color-scheme and preset selections after the app's intentional
-# themeVersion root rebuild, then again after process termination and relaunch.
+# Selecting a color scheme or theme must change it in place and KEEP the user
+# on the Settings screen, then persist across process termination and relaunch.
+# (Regression: the old themeVersion root rebuild tore down the whole view tree
+# and bounced the user back to Chats on every theme change.)
 - launchApp:
     clearState: true
     clearKeychain: true
@@ -35,25 +37,12 @@ tags:
 - tapOn:
     id: "appearance_color_scheme_light"
 
-# Changing the scheme rebuilds the root and returns to Chats. Reopen Appearance
-# and prove Light is selected before choosing the Ocean preset.
-- extendedWaitUntil:
-    visible:
-      id: "screen_chats"
-    timeout: 10000
-- tapOn:
-    id: "tab_settings|gearshape.fill"
+# The scheme changes in place: still on Settings, Light selected, and the
+# theme grid is still reachable without leaving the screen.
 - extendedWaitUntil:
     visible:
       id: "screen_settings"
     timeout: 10000
-- scrollUntilVisible:
-    element:
-      text: "Appearance"
-    direction: DOWN
-    timeout: 20000
-- tapOn:
-    text: "Appearance"
 - extendedWaitUntil:
     visible:
       id: "appearance_color_scheme_light"
@@ -67,35 +56,27 @@ tags:
 - tapOn:
     id: "appearance_theme_ocean"
 
-# Preset selection also rebuilds the root. Reopen and prove Ocean is selected.
-- extendedWaitUntil:
-    visible:
-      id: "screen_chats"
-    timeout: 10000
-- tapOn:
-    id: "tab_settings|gearshape.fill"
+# Preset selection also changes in place: still on Settings, Ocean selected,
+# and the earlier Light scheme selection is intact on the same screen.
 - extendedWaitUntil:
     visible:
       id: "screen_settings"
     timeout: 10000
+- extendedWaitUntil:
+    visible:
+      id: "appearance_theme_ocean"
+      selected: true
+    timeout: 10000
 - scrollUntilVisible:
     element:
-      text: "Appearance"
-    direction: DOWN
+      id: "appearance_color_scheme_light"
+    direction: UP
     timeout: 20000
-- tapOn:
-    text: "Appearance"
 - extendedWaitUntil:
     visible:
       id: "appearance_color_scheme_light"
       selected: true
     timeout: 10000
-- scrollUntilVisible:
-    element:
-      id: "appearance_theme_ocean"
-      selected: true
-    direction: DOWN
-    timeout: 20000
 
 # Relaunch without clearing state so the new ThemeManager restores the record.
 - killApp
@@ -126,7 +107,11 @@ tags:
 - scrollUntilVisible:
     element:
       id: "appearance_theme_ocean"
-      selected: true
     direction: DOWN
     timeout: 20000
+- extendedWaitUntil:
+    visible:
+      id: "appearance_theme_ocean"
+      selected: true
+    timeout: 10000
 - takeScreenshot: "theme-persistence"

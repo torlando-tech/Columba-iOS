@@ -40,9 +40,6 @@ final class ThemeManager {
     /// All user-created custom themes.
     var customThemes: [CustomThemeData] = []
 
-    /// Bumped on every theme change to force root view re-render via `.id()`.
-    var themeVersion: Int = 0
-
     // MARK: - Resolved Colors
 
     /// The active color palette (from preset or custom theme).
@@ -147,33 +144,26 @@ final class ThemeManager {
         activePresetId = preset
         activeCustomThemeId = nil
         persistState()
-        themeVersion += 1
     }
 
     /// Select a custom theme by ID.
     func selectCustomTheme(_ id: UUID) {
         guard customThemes.contains(where: { $0.id == id }) else {
-            let changed = activeCustomThemeId != nil || activePresetId != .plum
             activeCustomThemeId = nil
             activePresetId = .plum
             persistState()
-            if changed {
-                themeVersion += 1
-            }
             return
         }
 
         activeCustomThemeId = id
         activePresetId = nil
         persistState()
-        themeVersion += 1
     }
 
     /// Set color scheme preference.
     func setColorScheme(_ pref: ColorSchemePreference) {
         colorSchemePreference = pref
         persistState()
-        themeVersion += 1
     }
 
     // MARK: - Custom Theme CRUD
@@ -184,7 +174,6 @@ final class ThemeManager {
         activeCustomThemeId = theme.id
         activePresetId = nil
         persistState()
-        themeVersion += 1
     }
 
     /// Update an existing custom theme.
@@ -192,9 +181,6 @@ final class ThemeManager {
         if let index = customThemes.firstIndex(where: { $0.id == theme.id }) {
             customThemes[index] = theme
             persistState()
-            if activeCustomThemeId == theme.id {
-                themeVersion += 1
-            }
         }
     }
 
@@ -207,7 +193,6 @@ final class ThemeManager {
         if wasActive {
             activeCustomThemeId = nil
             activePresetId = .plum
-            themeVersion += 1
         }
         if removedTheme || wasActive {
             persistState()

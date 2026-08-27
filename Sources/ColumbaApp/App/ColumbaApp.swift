@@ -142,7 +142,6 @@ struct ColumbaApp: App {
             #endif
             .preferredColorScheme(ThemeManager.shared.resolvedColorScheme)
             .tint(Theme.accentColor)
-            .id(ThemeManager.shared.themeVersion)
             .onOpenURL { url in
                 guard url.scheme == "lxma" else { return }
                 #if DEBUG
