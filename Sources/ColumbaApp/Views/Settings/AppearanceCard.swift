@@ -95,6 +95,10 @@ struct AppearanceCard: View {
                                 .font(.system(size: 12, weight: .medium))
                             Text(pref.displayName)
                                 .font(.system(size: 13, weight: .medium))
+                            if themeManager.colorSchemePreference == pref {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .bold))
+                            }
                         }
                         .foregroundStyle(
                             themeManager.colorSchemePreference == pref ? .white : Theme.textSecondary
@@ -108,6 +112,15 @@ struct AppearanceCard: View {
                         )
                         .clipShape(Capsule())
                     }
+                    .accessibilityIdentifier("appearance_color_scheme_\(pref.rawValue)")
+                    .accessibilityAddTraits(
+                        themeManager.colorSchemePreference == pref ? .isSelected : []
+                    )
+                    .accessibilityValue(
+                        themeManager.colorSchemePreference == pref
+                            ? Text("Selected")
+                            : Text("Not selected")
+                    )
                 }
             }
         }
@@ -154,6 +167,17 @@ struct AppearanceCard: View {
                     .font(.caption2)
                     .foregroundStyle(Theme.textSecondary)
             }
+            .accessibilityIdentifier("appearance_theme_\(preset.rawValue)")
+            .accessibilityAddTraits(
+                themeManager.activePresetId == preset && themeManager.activeCustomThemeId == nil
+                    ? .isSelected
+                    : []
+            )
+            .accessibilityValue(
+                themeManager.activePresetId == preset && themeManager.activeCustomThemeId == nil
+                    ? Text("Selected")
+                    : Text("Not selected")
+            )
         }
     }
 
@@ -218,5 +242,14 @@ struct AppearanceCard: View {
         .onTapGesture {
             themeManager.selectCustomTheme(theme.id)
         }
+        .accessibilityIdentifier("appearance_custom_theme_\(theme.id.uuidString)")
+        .accessibilityAddTraits(
+            themeManager.activeCustomThemeId == theme.id ? .isSelected : []
+        )
+        .accessibilityValue(
+            themeManager.activeCustomThemeId == theme.id
+                ? Text("Selected")
+                : Text("Not selected")
+        )
     }
 }

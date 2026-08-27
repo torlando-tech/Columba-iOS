@@ -76,6 +76,7 @@ jobs:
             Tests.static.test_ios_stamp_runtime_hardening \
             Tests.static.test_async_propagation_fallback \
             Tests.static.test_privacy_settings_contract \
+            Tests.static.test_theme_selection_navigation_contract \
             Tests.static.test_ui_screenshotter_readiness \
             Tests.static.test_collect_maestro_screenshots
 
@@ -358,7 +359,7 @@ jobs:
           export PATH="$HOME/.maestro/bin:$PATH"
           mkdir -p ui-screenshots
           screenshot_status=0
-          for flow in contacts-list.yml chats-list.yml settings.yml map.yml interface-connectivity-banner.yml; do
+          for flow in contacts-list.yml chats-list.yml settings.yml theme-persistence.yml map.yml interface-connectivity-banner.yml; do
             if ! (
               cd ui-screenshots
               maestro --device "$DEVICE_ID" test "$GITHUB_WORKSPACE/flows/$flow"

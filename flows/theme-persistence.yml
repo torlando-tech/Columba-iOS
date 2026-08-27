@@ -1,0 +1,117 @@
+appId: network.columba.Columba
+name: theme-persistence
+tags:
+  - regression
+  - screenshot
+---
+# Selecting a color scheme or theme must change it in place and KEEP the user
+# on the Settings screen, then persist across process termination and relaunch.
+# (Regression: the old themeVersion root rebuild tore down the whole view tree
+# and bounced the user back to Chats on every theme change.)
+- launchApp:
+    clearState: true
+    clearKeychain: true
+    arguments:
+      ui-screenshotter: true
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 30000
+- tapOn:
+    id: "tab_settings|gearshape.fill"
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "Appearance"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "Appearance"
+- extendedWaitUntil:
+    visible:
+      id: "appearance_color_scheme_light"
+    timeout: 10000
+- tapOn:
+    id: "appearance_color_scheme_light"
+
+# The scheme changes in place: still on Settings, Light selected, and the
+# theme grid is still reachable without leaving the screen.
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+- extendedWaitUntil:
+    visible:
+      id: "appearance_color_scheme_light"
+      selected: true
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "appearance_theme_ocean"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "appearance_theme_ocean"
+
+# Preset selection also changes in place: still on Settings, Ocean selected,
+# and the earlier Light scheme selection is intact on the same screen.
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+- extendedWaitUntil:
+    visible:
+      id: "appearance_theme_ocean"
+      selected: true
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "appearance_color_scheme_light"
+    direction: UP
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      id: "appearance_color_scheme_light"
+      selected: true
+    timeout: 10000
+
+# Relaunch without clearing state so the new ThemeManager restores the record.
+- killApp
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 30000
+- tapOn:
+    id: "tab_settings|gearshape.fill"
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "Appearance"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "Appearance"
+- extendedWaitUntil:
+    visible:
+      id: "appearance_color_scheme_light"
+      selected: true
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "appearance_theme_ocean"
+    direction: DOWN
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      id: "appearance_theme_ocean"
+      selected: true
+    timeout: 10000
+- takeScreenshot: "theme-persistence"
