@@ -27,18 +27,24 @@ final class ThemeManager {
     private let defaults: UserDefaults
 
     // MARK: - State
+    //
+    // Persistence-sensitive state. These are `private(set)` so the only
+    // writers are the mutation methods below (each of which persists the
+    // aggregate state) and `restore()`. A direct write from any other module
+    // location would change live theme state without updating `theme_state`,
+    // silently losing that change on relaunch.
 
     /// User's color scheme preference.
-    var colorSchemePreference: ColorSchemePreference = .dark
+    private(set) var colorSchemePreference: ColorSchemePreference = .dark
 
     /// Currently active preset (nil if using custom theme).
-    var activePresetId: PresetThemeId? = .plum
+    private(set) var activePresetId: PresetThemeId? = .plum
 
     /// Currently active custom theme ID (nil if using preset).
-    var activeCustomThemeId: UUID? = nil
+    private(set) var activeCustomThemeId: UUID? = nil
 
     /// All user-created custom themes.
-    var customThemes: [CustomThemeData] = []
+    private(set) var customThemes: [CustomThemeData] = []
 
     // MARK: - Resolved Colors
 

@@ -42,6 +42,29 @@ class ThemeSelectionNavigationContractTests(unittest.TestCase):
         self.assertIn("func selectPreset(_ preset: PresetThemeId)", source)
         self.assertIn("persistState()", source)
 
+    def test_persisted_theme_state_is_not_externally_writable(self) -> None:
+        source = THEME_MANAGER.read_text(encoding="utf-8")
+
+        # The persistence-sensitive properties must be private(set). With the
+        # old automatic-persistence observers gone, an internal setter would
+        # let a future caller change live theme state without updating
+        # `theme_state`, silently losing the change on relaunch. Only the
+        # mutation methods (which call persistState()) and restore() may
+        # write them, and that requires an explicit, reviewed change here.
+        for prop in (
+            "colorSchemePreference",
+            "activePresetId",
+            "activeCustomThemeId",
+            "customThemes",
+        ):
+            self.assertRegex(
+                source,
+                rf"private\(set\) var {prop}:",
+                f"{prop} must be private(set): only ThemeManager mutation "
+                "methods and restore() may write persistence-sensitive "
+                "theme state.",
+            )
+
     def test_theme_facade_still_delegates_to_observable_manager(self) -> None:
         theme = (
             ROOT / "Sources/ColumbaApp/Theme/Theme.swift"
