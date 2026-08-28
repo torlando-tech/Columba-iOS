@@ -707,7 +707,7 @@ public final class PythonBridge: @unchecked Sendable {
         do {
             return try JSONDecoder().decode(StatusSnapshot.self, from: data)
         } catch {
-            DiagLog_status("decode failed: \(error) raw=\(raw.prefix(200))")
+            DiagLog_status("decode failed: \(error) statusBytes=\(raw.utf8.count)")
             return nil
         }
     }

@@ -39,17 +39,23 @@ RNODE_SEAM = ROOT / "Sources/Shared/RNodeSeam.swift"
 SWIFT_SOURCES = sorted((ROOT / "Sources").rglob("*.swift"))
 
 # Log sinks that reach disk and/or the unified log, matched against the
-# code outside string literals. Two shapes, both receiver-UNRESTRICTED so
-# that any receiver spelling the project uses — `logger`, `self.log`,
-# `sLogger`, `backgroundPropagationLogger`, a future `netLogger`, … — is
-# covered:
+# code outside string literals. All receiver-UNRESTRICTED so that any
+# receiver spelling the project uses — `logger`, `self.log`, `sLogger`,
+# `backgroundPropagationLogger`, a future `netLogger`, … — is covered:
 #   * `DiagLog.log(…)` / `ExtensionDiagLog.log(…)` — any `.log(` call
 #     (the static diag sinks);
 #   * `<receiver>.<level>(…)` where level ∈ debug/info/notice/warning/
-#     error/trace/fatal — os.Logger style calls (`logger.info(…)` etc.).
+#     error/trace/fatal — os.Logger style calls (`logger.info(…)` etc.);
+#   * bare diagnostic helpers spelled `<Name>_status(…)` (`DiagLog_status`)
+#     and `NSLog(…)` (unified log direct);
+#   * optional log callbacks `log?(…)` / `self?.log?(…)` (the seam-server
+#     `((String) -> Void)?` properties that forward to the host's DiagLog).
 SINK_RE = re.compile(
     r"\.log\("
     r"|\b[A-Za-z_][A-Za-z0-9_]*\.(?:debug|info|notice|warning|error|trace|fatal)\("
+    r"|\b[A-Z][A-Za-z0-9_]*_status\("
+    r"|\bNSLog\("
+    r"|(?<![A-Za-z0-9_])log\?\("
 )
 
 # Interpolations that carry message-content variables. Matched against the
@@ -58,6 +64,9 @@ SINK_RE = re.compile(
 CONTENT_TOKENS = {
     "content", "contentString", "plaintext", "messageContent", "body",
     "payload", "rawData", "frameData", "title",
+    # `raw` — the Python status-JSON string; a `.prefix(n)` of it lands
+    # payload data in diag.log / the unified log (`.count` is metadata).
+    "raw",
     # RNodeSeamMessage interpolated whole carries .send(data:)/.dataReceived
     # frame bytes in its default description.
     "message",
@@ -573,6 +582,38 @@ class NoMessageContentInLogsTests(unittest.TestCase):
         found = [a for _s, _e, a in _iter_log_calls(ok)]
         self.assertEqual(len(found), 1)
         self.assertEqual(_content_bearing_interpolations(found[0]), [])
+
+        # Bare diagnostic helpers, the unified-log direct sink, and the
+        # optional seam-server log callback must all be captured.
+        bare = (
+            '        guard let raw else { return nil }\n'
+            '        DiagLog_status("decode failed: \\(error) raw=\\(raw.prefix(200))")\n'
+        )
+        found = [a for _s, _e, a in _iter_log_calls(bare)]
+        self.assertEqual(len(found), 1, "DiagLog_status(…) call not captured")
+        self.assertEqual(
+            _content_bearing_interpolations(found[0]),
+            ["\\(raw.prefix(200))"],
+            "raw payload prefix not flagged",
+        )
+
+        callback = '        self?.log?("[RNODE] server: failed content=\\(content)")\n'
+        found = [a for _s, _e, a in _iter_log_calls(callback)]
+        self.assertEqual(len(found), 1, "log?(…) callback not captured")
+        self.assertEqual(
+            _content_bearing_interpolations(found[0]),
+            ["\\(content)"],
+            "optional-callback content interpolation not flagged",
+        )
+
+        nslog = '        NSLog("%@", "[STATUS] payload=\\(payload)")\n'
+        found = [a for _s, _e, a in _iter_log_calls(nslog)]
+        self.assertEqual(len(found), 1, "NSLog(…) call not captured")
+        self.assertEqual(
+            _content_bearing_interpolations(found[0]),
+            ["\\(payload)"],
+            "NSLog content interpolation not flagged",
+        )
 
 
 if __name__ == "__main__":
