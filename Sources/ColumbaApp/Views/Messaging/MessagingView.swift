@@ -626,24 +626,12 @@ struct MessagingView: View {
             nomadNetDestination(for: target)
         }
         .sheet(isPresented: $showQualityPicker) {
-            ImageQualityPickerSheet(
-                selectedPreset: $selectedImagePreset,
-                onConfirm: {
-                    if let raw = pendingRawImage {
-                        attachedImage = raw.resizedToFit(maxDimension: selectedImagePreset.maxDimension)
-                        // Remember choice for next time
-                        UserDefaults.standard.set(selectedImagePreset.rawValue, forKey: "image_quality_preset")
-                    }
-                    pendingRawImage = nil
-                    showQualityPicker = false
-                },
-                onCancel: {
-                    pendingRawImage = nil
-                    showQualityPicker = false
-                }
-            )
-            .presentationDetents([.height(340)])
-            .presentationDragIndicator(.visible)
+            // Presented via a computed property (not inlined in the body):
+            // this body sits at the edge of the Swift type-checker's
+            // expression-complexity budget, and inlining the sheet's view +
+            // closures makes it fail with "unable to type-check in
+            // reasonable time". Kept out of the body for that reason.
+            imageQualityPickerSheet
         }
         // Codec picker → place the voice call. The active/outgoing call UI
         // (VoiceCallScreen) is presented app-root in MainTabView off
@@ -843,6 +831,40 @@ struct MessagingView: View {
                 .fill(appServices.isConnected ? Color.green : Color.gray)
                 .frame(width: 8, height: 8)
         }
+    }
+
+    // Base height of the image-quality bottom sheet, scaled by the user's
+    // Dynamic Type size. @ScaledMetric grows the detent in lockstep with the
+    // (larger) text so the sheet makes room for it instead of clipping its
+    // content - the reported issue #181 had the header pushed off the top and
+    // the Cancel/Attach buttons off the bottom at large accessibility text.
+    @ScaledMetric(relativeTo: .body) private var imageQualitySheetHeight: CGFloat = 340
+
+    // Image-quality bottom sheet. Kept as a standalone computed property so
+    // its view + closures stay out of `body` (which is at the type-checker's
+    // expression-complexity limit). Sizing: a @ScaledMetric detent grows with
+    // Dynamic Type, and the options scroll inside as a safety net, so the
+    // header and Cancel/Attach buttons are never clipped at large text sizes
+    // (issue #181).
+    private var imageQualityPickerSheet: some View {
+        ImageQualityPickerSheet(
+            selectedPreset: $selectedImagePreset,
+            onConfirm: {
+                if let raw = pendingRawImage {
+                    attachedImage = raw.resizedToFit(maxDimension: selectedImagePreset.maxDimension)
+                    // Remember choice for next time
+                    UserDefaults.standard.set(selectedImagePreset.rawValue, forKey: "image_quality_preset")
+                }
+                pendingRawImage = nil
+                showQualityPicker = false
+            },
+            onCancel: {
+                pendingRawImage = nil
+                showQualityPicker = false
+            }
+        )
+        .presentationDetents([.height(imageQualitySheetHeight)])
+        .presentationDragIndicator(.visible)
     }
 
     @State private var isSyncing = false
@@ -1154,38 +1176,47 @@ private struct ImageQualityPickerSheet: View {
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.top, 8)
 
-            VStack(spacing: 8) {
-                ForEach(SettingsViewModel.ImageQualityPreset.allCases) { preset in
-                    Button {
-                        selectedPreset = preset
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: selectedPreset == preset ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 20))
-                                .foregroundStyle(selectedPreset == preset ? Theme.accentColor : .gray)
+            // The quality options scroll independently while the header and
+            // the Cancel/Attach buttons stay pinned. The sheet's height is a
+            // @ScaledMetric that grows with the user's Dynamic Type size, so
+            // at large text sizes the sheet grows instead of clipping its
+            // content (the header used to be pushed off the top and the
+            // action buttons off the bottom of the screen - issue #181).
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(SettingsViewModel.ImageQualityPreset.allCases) { preset in
+                        Button {
+                            selectedPreset = preset
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: selectedPreset == preset ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 20))
+                                    .foregroundStyle(selectedPreset == preset ? Theme.accentColor : .gray)
 
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(preset.rawValue)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(Theme.textPrimary)
-                                Text(preset.description)
-                                    .font(.caption)
-                                    .foregroundStyle(.gray)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(preset.rawValue)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Text(preset.description)
+                                        .font(.caption)
+                                        .foregroundStyle(.gray)
+                                }
+
+                                Spacer()
                             }
-
-                            Spacer()
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                selectedPreset == preset
+                                    ? Theme.accentColor.opacity(0.15)
+                                    : Color.clear
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            selectedPreset == preset
-                                ? Theme.accentColor.opacity(0.15)
-                                : Color.clear
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                 }
             }
+            .scrollBounceBehavior(.basedOnSize)
             .padding(.horizontal, 16)
 
             HStack(spacing: 12) {
