@@ -12,7 +12,8 @@ contract extends it to the app-side sinks and pins the specific leaks
 fixed by the "no message content in logs" remediation:
 
   * `handlePythonEvent`'s `.inbound` case logged the full plaintext
-    (`content="…"`) — production path, every received message.
+    (`content="…"` and `content=\\(content, privacy: .public)`) —
+    production path, every received message.
   * DEBUG `test-send` / `test-inbound` deep-link hooks logged the content.
   * The RNode seam wire logged a `RNodeSeamMessage` whose `.send` /
     `.dataReceived` cases embed `Data` frame bytes.
@@ -37,21 +38,22 @@ RNODE_SEAM = ROOT / "Sources/Shared/RNodeSeam.swift"
 # Xcode-project source root; Tests/, app/ (Python), support/ are excluded).
 SWIFT_SOURCES = sorted((ROOT / "Sources").rglob("*.swift"))
 
-# Log sinks that reach disk and/or the unified log.
-DIAG_SINK_RE = re.compile(
-    r"(?:DiagLog|ExtensionDiagLog)\.log\((?P<arg>.*?)\)\s*$"
-)
-# os.Logger calls: `logger.info("…")`, `log.debug("…")`, etc. (the os.log
-# interpolations are what land in the unified log; `privacy: .public`
-# interpolations are what a log-archive reader can extract).
-OSLOG_CALL_RE = re.compile(
-    r"\blogger\.(?:debug|info|notice|warning|error|trace)\("
-    r"|\bself\.log\.(?:debug|info|notice|warning|error|trace)\("
-    r"|\blog\.(?:debug|info|notice|warning|error|trace)\("
+# Log sinks that reach disk and/or the unified log, matched against the
+# code outside string literals. Two shapes, both receiver-UNRESTRICTED so
+# that any receiver spelling the project uses — `logger`, `self.log`,
+# `sLogger`, `backgroundPropagationLogger`, a future `netLogger`, … — is
+# covered:
+#   * `DiagLog.log(…)` / `ExtensionDiagLog.log(…)` — any `.log(` call
+#     (the static diag sinks);
+#   * `<receiver>.<level>(…)` where level ∈ debug/info/notice/warning/
+#     error/trace/fatal — os.Logger style calls (`logger.info(…)` etc.).
+SINK_RE = re.compile(
+    r"\.log\("
+    r"|\b[A-Za-z_][A-Za-z0-9_]*\.(?:debug|info|notice|warning|error|trace|fatal)\("
 )
 
 # Interpolations that carry message-content variables. Matched against the
-# FIRST token of each `\(…)` interpolation so `messageHash` / `contentLength`
+# FIRST token of each `\(` interpolation so `messageHash` / `contentLength`
 # are NOT flagged (boundary-aware).
 CONTENT_TOKENS = {
     "content", "contentString", "plaintext", "messageContent", "body",
@@ -60,52 +62,154 @@ CONTENT_TOKENS = {
     # frame bytes in its default description.
     "message",
 }
-INTERPOLATION_RE = re.compile(r"\\\(.*?\)")
-FIRST_TOKEN_RE = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)")
 
 
-def _first_token(interp: str) -> str | None:
-    """The leading identifier of an interpolation, if any.
+def _first_token(inner: str) -> str | None:
+    """The leading identifier of a Swift expression, if any.
 
-    `\\(content)` -> `content`; `\\(content.utf8.count)` -> `content`;
-    `\\(self.message.content)` -> `self` (caller-qualified; handled by the
-    qualified checks); `\\("foo")` -> None.
+    `content` -> `content`; `content.utf8.count` -> `content`;
+    `String(describing: rawField)` -> `String`; `("foo")` -> None.
     """
-    m = FIRST_TOKEN_RE.match(interp)
+    m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", inner)
     return m.group(1) if m else None
 
 
-def _diagnostic_args(line: str) -> list[str]:
-    """Balanced-paren extraction of the argument text of each log call in
-    `line` (handles nested `\\(a.isEmpty ? 0 : b)` interpolation parens)."""
-    args: list[str] = []
-    for sink in list(DIAG_SINK_RE.finditer(line)) + list(OSLOG_CALL_RE.finditer(line)):
-        start = sink.end()  # position just after the opening "("
-        depth = 1
-        i = start
-        in_str = False
-        while i < len(line) and depth:
-            ch = line[i]
-            if in_str:
-                if ch == "\\":
-                    i += 1
-                elif ch == '"':
-                    in_str = False
-            elif ch == '"':
-                in_str = True
-            elif ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
+def _iter_log_calls(text: str) -> list[tuple[int, int, str]]:
+    """Return (start, end, argtext) for every log-sink call in `text`.
+
+    The scan is string-aware: characters inside single- or triple-quoted
+    string literals (and Swift interpolation expressions, which are code,
+    not string data) are never treated as call syntax, so a string literal
+    that merely *mentions* `logger.info(` can never mask or fake a real
+    sink. Calls are extracted over the full file text, so multiline
+    invocations (`DiagLog.log(\n    "…")`) are captured exactly like
+    single-line ones.
+    """
+    n = len(text)
+    calls: list[tuple[int, int, str]] = []
+    i = 0
+    in_line_comment = False
+    in_block_comment = 0
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
             i += 1
-        if depth == 0:
-            args.append(line[start:i - 1])
-    return args
+            continue
+        if in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment -= 1
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                in_block_comment += 1
+                i += 2
+                continue
+            i += 1
+            continue
+        if ch == "/" and nxt == "/":
+            in_line_comment = True
+            i += 2
+            continue
+        if ch == "/" and nxt == "*":
+            in_block_comment = 1
+            i += 2
+            continue
+        if ch == '"':
+            if text.startswith('"""', i):
+                end = text.find('"""', i + 3)
+                i = n if end < 0 else end + 3
+                continue
+            i += 1
+            while i < n:
+                c2 = text[i]
+                if c2 == "\\":
+                    i += 2
+                    continue
+                if c2 == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        m = SINK_RE.match(text, i)
+        if m:
+            start, end, argtext = _extract_balanced_args(text, m.end() - 1)
+            if end >= 0 and argtext is not None:
+                calls.append((start, end, argtext))
+        i += 1
+    return calls
+
+
+def _extract_balanced_args(text: str, open_paren: int):
+    """From `text[open_paren] == "("`, return (start, end, argtext) where
+    end is one past the matching `)` and argtext is the interior (string-
+    and comment-aware, so a `)` inside a literal or comment never
+    terminates the call). Returns (open_paren, -1, None) if unbalanced."""
+    n = len(text)
+    depth = 0
+    i = open_paren
+    in_line_comment = False
+    in_block_comment = 0
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+            i += 1
+            continue
+        if in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment -= 1
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                in_block_comment += 1
+                i += 2
+                continue
+            i += 1
+            continue
+        if ch == "/" and nxt == "/":
+            in_line_comment = True
+            i += 2
+            continue
+        if ch == "/" and nxt == "*":
+            in_block_comment = 1
+            i += 2
+            continue
+        if ch == '"':
+            if text.startswith('"""', i):
+                end = text.find('"""', i + 3)
+                i = n if end < 0 else end + 3
+                continue
+            i += 1
+            while i < n:
+                c2 = text[i]
+                if c2 == "\\":
+                    i += 2
+                    continue
+                if c2 == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return open_paren, i + 1, text[open_paren + 1:i]
+        i += 1
+    return open_paren, -1, None
 
 
 def _interpolations(arg: str) -> list[str]:
-    # Strip string-literal text so interpolation detection only sees real
-    # Swift interpolation escapes. A simple scan keeps this dependency-free.
+    # Scan only the string-literal text for `\(` escapes and capture each
+    # interpolation (nested-paren aware) INCLUDING its leading backslash,
+    # so detection sees the real Swift escape and nothing else. A simple
+    # scan keeps this dependency-free.
     out: list[str] = []
     in_str = False
     i = 0
@@ -113,20 +217,30 @@ def _interpolations(arg: str) -> list[str]:
         ch = arg[i]
         if in_str:
             if ch == "\\":
-                if i + 1 < len(arg) and arg[i + 1] == "(":
-                    # capture the interpolation (nested-paren aware)
-                    depth = 1
-                    j = i + 2
-                    s = i + 1
-                    while j < len(arg) and depth:
-                        if arg[j] == "(":
-                            depth += 1
-                        elif arg[j] == ")":
-                            depth -= 1
-                        j += 1
-                    out.append(arg[s:j])
-                    i = j
-                    continue
+                if i + 1 < len(arg):
+                    esc = arg[i + 1]
+                    if esc == "(":
+                        # Swift interpolation; capture the full escape
+                        # (nested-paren aware), leading backslash included
+                        depth = 1
+                        j = i + 2
+                        while j < len(arg) and depth:
+                            if arg[j] == "(":
+                                depth += 1
+                            elif arg[j] == ")":
+                                depth -= 1
+                            j += 1
+                        out.append(arg[i:j])
+                        i = j
+                        continue
+                    else:
+                        # an escaped character (\\, \", \n, …) — the pair
+                        # is literal text, never an interpolation
+                        i += 2
+                        continue
+                else:
+                    i += 1
+                continue
             elif ch == '"':
                 in_str = False
         elif ch == '"':
@@ -135,38 +249,138 @@ def _interpolations(arg: str) -> list[str]:
     return out
 
 
-def _content_bearing_interpolations(arg: str) -> list[str]:
+def _enclosing_scope_declares_string(text: str, expr_index: int, token: str) -> bool:
+    """True when a declaration of `token` typed as `String` is in scope at
+    `expr_index`.
+
+    `message` is a generic name: the only content-bearing `message` in this
+    codebase is `RNodeSeamMessage`, but plain `String` error/status
+    parameters named `message` (e.g. `setConnectionError(_ message: String)`,
+    and the sinks' own `log(_ message: String)` line-formatting bodies) are
+    not message content. Scan the text backwards from the expression,
+    string- and comment-aware, tracking brace/paren depth so only
+    declarations from the expression's own scope or an enclosing scope
+    count (an inner `let message: String` declared *after* the expression
+    must not apply)."""
+    n = len(text)
+    brace_depth = 0
+    in_line_comment = False
+    in_block_comment = 0
+    i = expr_index
+    while i > 0:
+        i -= 1
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+            continue
+        if in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment -= 1
+                continue
+            if ch == "/" and nxt == "*":
+                in_block_comment += 1
+                continue
+            continue
+        if ch == "/" and nxt == "/":
+            in_line_comment = True
+            i -= 1
+            continue
+        if ch == "/" and nxt == "*":
+            in_block_comment = 1
+            i -= 1
+            continue
+        if ch == '"':
+            if text[i:i + 3] == '"""':
+                j = text.rfind('"""', 0, i)
+                i = j if j >= 0 else -1
+                continue
+            j = i - 1
+            while j >= 0:
+                c2 = text[j]
+                if c2 == "\\":
+                    j -= 2
+                    continue
+                if c2 == '"':
+                    break
+                j -= 1
+            i = j
+            continue
+        # Paren depth is intentionally NOT tracked: the expression sits
+        # inside call parens, and backwards past them we must reach the
+        # enclosing signature's parameter list (`func f(_ message: String)`
+        # is inside its own `(...)`) to see the declaration.
+        if ch == "}":
+            brace_depth += 1
+        elif ch == "{":
+            brace_depth -= 1
+            if brace_depth < 0:
+                return False  # left the enclosing function scope
+        else:
+            if brace_depth == 0:
+                m = re.search(
+                    re.escape(token) + r"\s*:\s*String\b",
+                    text[max(0, i - 200):i + 1],
+                )
+                if m:
+                    return True
+    return False
+
+
+def _content_bearing_interpolations(
+    arg: str,
+    file_text: str | None = None,
+    call_index: int = 0,
+) -> list[str]:
     """Interpolations in `arg` whose value is a message-content variable.
 
-    Flags:
+    `arg` is the argument text of one call site in `file_text` starting at
+    `call_index` (used for the in-scope-type check below); pass None for
+    synthetic snippets. Entries from _interpolations() are the full escape
+    including the leading backslash, e.g. `\\(content)`. Flags:
       * `\\(content)` / `\\(body)` / … (bare content vars and their property
         chains, e.g. `\\(content.utf8.count)` is ALLOWED — byte counts are
-        metadata; so the rule only fires on the bare variable or a direct
-        `String(describing: <content var>)` dump);
+        metadata);
       * `\\(String(describing: rawField)…)`-style dumps of field payloads;
-      * `\\(message)` where `message` is an RNodeSeamMessage (frame bytes).
+      * `\\(message)` when `message` is not a `String` in scope (a bare
+        `RNodeSeamMessage` interpolates its `.send(data:)` frame bytes in
+        its default description). `\\(message.diagnosticLabel)` is always
+        ALLOWED — test 3 pins that property as metadata-only.
     """
     flagged: list[str] = []
     for interp in _interpolations(arg):
-        token = _first_token(interp)
+        # Entries are full escapes, e.g. `\\(content)` /
+        # `\\(String(describing: x))`. The leading `\\(` is the
+        # interpolation delimiter; the expression follows it.
+        inner = interp[2:] if interp.startswith("\\(") else interp
+        token = _first_token(inner)
         if token is None:
+            continue
+        if token == "message":
+            rest = inner[len(token):].lstrip()
+            if rest.startswith(".diagnosticLabel"):
+                # Metadata-only seam label (pinned by test 3).
+                continue
+            # Bare `message` / other chains: flag unless the in-scope
+            # declaration is a String (error/status text, the sinks' own
+            # `log(_ message: String)` line-formatting bodies).
+            if file_text is None:
+                # Synthetic snippet without file context: fail closed.
+                flagged.append(interp)
+            elif not _enclosing_scope_declares_string(file_text, call_index, token):
+                flagged.append(interp)
             continue
         if token in CONTENT_TOKENS:
             # Allow byte-count / length derivations (metadata, not content).
-            rest = interp[len(token):].lstrip()
+            rest = inner[len(token):].lstrip()
             if rest.startswith((".utf8.count", ".count", ".isEmpty")):
                 continue
             flagged.append(interp)
-        elif "String(describing:" in interp and token == "":
+        if "String(describing:" in inner and token == "String":
             # `\\(String(describing: rawField).prefix(200))` — the value is a
-            # raw field payload; the leading token is `String`.
-            m = re.search(r"String\(describing:\s*([A-Za-z_][A-Za-z0-9_.]*)\)", interp)
-            if m:
-                target = m.group(1).split(".")[-1]
-                if target in {"rawField", "rawData", "frameData", "payload", "content", "body"}:
-                    flagged.append(interp)
-        if "String(describing:" in interp and token == "String":
-            m = re.search(r"String\(describing:\s*([A-Za-z_][A-Za-z0-9_.]*)\)", interp)
+            # raw field payload.
+            m = re.search(r"String\(describing:\s*([A-Za-z_][A-Za-z0-9_.]*)\)", inner)
             if m:
                 target = m.group(1).split(".")[-1]
                 if target in {"rawField", "rawData", "frameData", "payload", "content", "body"}:
@@ -240,25 +454,125 @@ class NoMessageContentInLogsTests(unittest.TestCase):
         )
 
     # ── 5. Repo-wide sweep: no content-bearing log interpolations ─────
+    #    Multiline-call- and receiver-agnostic by construction (see
+    #    _iter_log_calls / SINK_RE above).
 
     def test_no_content_bearing_log_interpolations_anywhere(self) -> None:
         offenders: list[str] = []
         for path in SWIFT_SOURCES:
             rel = path.relative_to(ROOT).as_posix()
-            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                # Skip pure comment lines.
-                stripped = line.lstrip()
-                if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*"):
-                    continue
-                for arg in _diagnostic_args(line):
-                    for bad in _content_bearing_interpolations(arg):
-                        offenders.append(f"{rel}:{lineno}: {bad.strip()}")
+            text = path.read_text(encoding="utf-8")
+            for start, _end, arg in _iter_log_calls(text):
+                lineno = text.count("\n", 0, start) + 1
+                for bad in _content_bearing_interpolations(
+                    arg, file_text=text, call_index=start
+                ):
+                    offenders.append(f"{rel}:{lineno}: {bad.strip()}")
         self.assertEqual(
             offenders,
             [],
             "log sinks still carry message-content interpolations:\n"
             + "\n".join(offenders),
         )
+
+    # ── 6. The sweep itself must see what it claims to see ────────────
+    #    Pins the scanner against the two blind classes this contract was
+    #    written to close: multiline invocations and non-`logger`
+    #    receiver spellings. If a refactor makes _iter_log_calls miss
+    #    these, the contract silently weakens — these cases stop it.
+
+    def test_sweep_catches_multiline_and_unusual_receivers(self) -> None:
+        # NOTE: each fixture is a literal Swift source snippet; the file's
+        # `\\(` is ONE backslash in the Swift text (a real interpolation).
+        multiline = (
+            '        DiagLog.log(\n'
+            '            "inbound content=\\(content) seen"\n'
+            '        )\n'
+        )
+        found = [a for _s, _e, a in _iter_log_calls(multiline)]
+        self.assertEqual(len(found), 1, "multiline DiagLog.log call not captured")
+        self.assertEqual(
+            _content_bearing_interpolations(found[0]),
+            ["\\(content)"],
+            "multiline content interpolation not flagged",
+        )
+
+        unusual = '        sLogger.info("body arrived: \\(body) end")\n'
+        found = [a for _s, _e, a in _iter_log_calls(unusual)]
+        self.assertEqual(len(found), 1, "sLogger.info call not captured")
+        self.assertEqual(
+            _content_bearing_interpolations(found[0]),
+            ["\\(body)"],
+            "unusual-receiver content interpolation not flagged",
+        )
+
+        bg = '    backgroundPropagationLogger.error(\n' \
+             '        "sync failed content=\\(content)"\n' \
+             '    )\n'
+        found = [a for _s, _e, a in _iter_log_calls(bg)]
+        self.assertEqual(len(found), 1, "backgroundPropagationLogger call not captured")
+        self.assertEqual(
+            _content_bearing_interpolations(found[0]),
+            ["\\(content)"],
+        )
+
+        # A string literal that merely mentions a sink must not create a
+        # (fake) call nor mask a real one.
+        decoy = (
+            '    let hint = "remember to call logger.info(x)"\n'
+            '    self.log.warning("title=\\(title)")\n'
+        )
+        found = [a for _s, _e, a in _iter_log_calls(decoy)]
+        self.assertEqual(len(found), 1, "string-mentioned sink misparsed as a call")
+        self.assertEqual(_content_bearing_interpolations(found[0]), ["\\(title)"])
+
+        # `message` is type-dependent: a bare non-String `message`
+        # (RNodeSeamMessage: its default description embeds frame bytes)
+        # must be flagged; a `String` named `message` in scope is not.
+        seam = (
+            '    public func send(_ message: RNodeSeamMessage) {\n'
+            '        guard false else {\n'
+            '            ExtensionDiagLog.log("dropped \\(message)")\n'
+            '            return\n'
+            '        }\n'
+            '    }\n'
+        )
+        for _s, _e, a in _iter_log_calls(seam):
+            self.assertEqual(
+                _content_bearing_interpolations(a, file_text=seam, call_index=_s),
+                ["\\(message)"],
+                "bare RNodeSeamMessage interpolation not flagged",
+            )
+
+        seam_label = (
+            '    public func send(_ message: RNodeSeamMessage) {\n'
+            '        ExtensionDiagLog.log("dropped \\(message.diagnosticLabel)")\n'
+            '    }\n'
+        )
+        for _s, _e, a in _iter_log_calls(seam_label):
+            self.assertEqual(
+                _content_bearing_interpolations(a, file_text=seam_label, call_index=_s),
+                [],
+                "diagnosticLabel (metadata) wrongly flagged",
+            )
+
+        string_msg = (
+            '    func setConnectionError(_ message: String) {\n'
+            '        logger.warning("Connection error: \\(message)")\n'
+            '    }\n'
+        )
+        for _s, _e, a in _iter_log_calls(string_msg):
+            self.assertEqual(
+                _content_bearing_interpolations(a, file_text=string_msg, call_index=_s),
+                [],
+                "String-named `message` wrongly flagged as content",
+            )
+
+        # Metadata-only interpolations stay allowed (no false positives).
+        ok = '    logger.info("inbound len=\\(content.utf8.count) fields=\\(fields.count)")\n'
+        found = [a for _s, _e, a in _iter_log_calls(ok)]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(_content_bearing_interpolations(found[0]), [])
 
 
 if __name__ == "__main__":
