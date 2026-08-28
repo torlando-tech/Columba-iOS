@@ -219,7 +219,8 @@ struct ColumbaApp: App {
                     let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
                     let from = components?.queryItems?.first(where: { $0.name == "from" })?.value ?? ""
                     let content = components?.queryItems?.first(where: { $0.name == "content" })?.value ?? "synthetic"
-                    DiagLog.log("[TEST-INBOUND] from=\(from) content=\"\(content)\"")
+                    // NO-PII: log the content length, never the content itself.
+                    DiagLog.log("[TEST-INBOUND] from=\(from.prefix(8)) len=\(content.utf8.count)")
                     NotificationCenter.default.post(
                         name: Notification.Name("ColumbaTestInbound"),
                         object: nil,
@@ -420,8 +421,10 @@ struct ColumbaApp: App {
                     let imageFormat = q("image_format") ?? ""
                     let fileHex = q("file_hex") ?? ""
                     let fileName = q("file_name") ?? ""
-                    logger.info("test-send to=\(to, privacy: .public) content=\(content, privacy: .public)")
-                    DiagLog.log("[TEST-SEND] to=\(to) method=\(method.isEmpty ? "opportunistic" : method) content=\"\(content)\" image=\(imageHex.isEmpty ? 0 : imageHex.count/2)B(\(imageFormat)) file=\(fileHex.isEmpty ? 0 : fileHex.count/2)B(\(fileName))")
+                    // NO-PII: never log message content — diag.log and the
+                    // unified log are readable by anyone with the device.
+                    logger.info("test-send to=\(to, privacy: .public) len=\(content.utf8.count, privacy: .public)")
+                    DiagLog.log("[TEST-SEND] to=\(to.prefix(8)) method=\(method.isEmpty ? "opportunistic" : method) len=\(content.utf8.count) image=\(imageHex.isEmpty ? 0 : imageHex.count/2)B(\(imageFormat)) file=\(fileHex.isEmpty ? 0 : fileHex.count/2)B(\(fileName))")
                     NotificationCenter.default.post(
                         name: Notification.Name("ColumbaTestSend"),
                         object: nil,

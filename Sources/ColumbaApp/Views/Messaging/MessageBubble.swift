@@ -589,8 +589,11 @@ public struct Message: Identifiable, Equatable {
                     self.imageFormat = format
                 }
             } else if let rawField = fields[LXMessage.FIELD_IMAGE] {
-                // Image field exists but failed extraction — log for diagnosis
-                logger.warning("Image field 0x06 present but extraction failed: type=\(String(describing: type(of: rawField))), value=\(String(describing: rawField).prefix(200))")
+                // Image field exists but failed extraction — log for diagnosis.
+                // NO-PII: never log the field's payload bytes (image data) —
+                // only the shape of what extraction received.
+                let elementCount = (rawField as? [Any])?.count ?? 0
+                logger.warning("Image field 0x06 present but extraction failed: type=\(String(describing: type(of: rawField))), elements=\(elementCount)")
             }
             // FIELD_FILE_ATTACHMENTS (0x05) = [[filename, data], …]
             if let filesField = fields[LXMessage.FIELD_FILE_ATTACHMENTS] as? [Any] {

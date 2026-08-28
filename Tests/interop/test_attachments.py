@@ -304,15 +304,21 @@ def test_multiple_files_sideband_to_ios_selects_second(sim, sideband):
 
 
 def _wait_for_diag_inbound(sim, *, content: str, timeout: float = 30.0) -> None:
-    """Block until `[RNS] inbound` for this content lands in diag.log so
-    the Chats list has the conversation row Maestro will tap on."""
+    """Block until `[RNS] inbound` for this message lands in diag.log so
+    the Chats list has the conversation row Maestro will tap on.
+
+    Correlates on the line's `len=<utf8 byte count>` (the app no longer logs
+    message content — NO-PII contract; the body is unique per test via its
+    timestamp, so the byte length disambiguates within this launch's log)."""
+    expected_len = len(content.encode("utf-8"))
+    before_size = sim.diag_log.stat().st_size if sim.diag_log.exists() else 0
     deadline = time.time() + timeout
     while time.time() < deadline:
-        for line in reversed(sim._tail_diag(800)):
-            if "[RNS] inbound source=" in line and content in line:
+        for line in sim._read_diag_since(before_size):
+            if "[RNS] inbound source=" in line and f"len={expected_len} " in line:
                 return
         time.sleep(0.4)
-    pytest.fail(f"iOS didn't record inbound for {content!r} within {timeout}s")
+    pytest.fail(f"iOS didn't record inbound (len={expected_len}) within {timeout}s")
 
 
 # ─────────────────────────────────────────────────────────────────────────
