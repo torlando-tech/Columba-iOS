@@ -2941,7 +2941,11 @@ public final class AppServices {
                 }
             }
         case .inbound(let sourceHash, let messageHash, let content, let title, let fieldsPacked, let method, let t):
-            DiagLog.log("[RNS] inbound source=\(sourceHash) content=\"\(content)\" fields=\(fieldsPacked.count)B")
+            // NO-PII: envelope/metadata only (mirrors ExtensionDiagLog's contract).
+            // Never log message content, title, or field payload bytes — they land
+            // in Documents/diag.log and the unified log. Hashes are prefixed to
+            // keep the line correlatable without exposing full identity hashes.
+            DiagLog.log("[RNS] inbound source=\(sourceHash.prefix(8)) message=\(messageHash.prefix(8)) len=\(content.utf8.count) fields=\(fieldsPacked.count)B")
             guard let data = Data(hexString: sourceHash) else { return }
             let fields = fieldsPacked.isEmpty ? nil : LxmfFieldCodec.unpack(fieldsPacked)
             // Persist the base message (carrying its fields), then run side-channel

@@ -228,7 +228,7 @@ def test_text_sideband_to_ios(sim, sideband):
         content=body,
     ), "Sideband-side send_text returned False"
 
-    _wait_for_diag_inbound(sim, content=body)
+    _wait_for_diag_inbound(sim, sideband, content=body)
     sim.assert_bubble_visible(content=body)
 
 
@@ -251,7 +251,7 @@ def test_image_sideband_to_ios(sim, sideband):
     # Wait for iOS to record the inbound delivery so the conversation row
     # exists in Chats before Maestro tries to tap it. Sideband's send is
     # async — `send_image` returns on enqueue.
-    _wait_for_diag_inbound(sim, content=body)
+    _wait_for_diag_inbound(sim, sideband, content=body)
 
     sim.assert_bubble_visible(content=body, has_image=True)
     sim.assert_attachment_preview_and_export(image=True, expected_bytes=img)
@@ -271,7 +271,7 @@ def test_file_sideband_to_ios(sim, sideband):
         data=payload,
     ), "Sideband-side send_file returned False"
 
-    _wait_for_diag_inbound(sim, content=body)
+    _wait_for_diag_inbound(sim, sideband, content=body)
 
     sim.assert_bubble_visible(content=body, has_file_name=name)
     sim.assert_attachment_preview_and_export(
@@ -293,7 +293,7 @@ def test_multiple_files_sideband_to_ios_selects_second(sim, sideband):
         content=body,
         attachments=[(name, first), (name, second)],
     )
-    _wait_for_diag_inbound(sim, content=body)
+    _wait_for_diag_inbound(sim, sideband, content=body)
     sim.assert_bubble_visible(content=body, has_file_name=name, timeout=30)
     sim.assert_attachment_preview_and_export(
         file_name=name,
@@ -303,16 +303,29 @@ def test_multiple_files_sideband_to_ios_selects_second(sim, sideband):
     )
 
 
-def _wait_for_diag_inbound(sim, *, content: str, timeout: float = 30.0) -> None:
-    """Block until `[RNS] inbound` for this content lands in diag.log so
-    the Chats list has the conversation row Maestro will tap on."""
+def _wait_for_diag_inbound(sim, sideband, *, content: str, timeout: float = 30.0) -> None:
+    """Block until `[RNS] inbound` for THIS message lands in diag.log so
+    the Chats list has the conversation row Maestro will tap on.
+
+    Correlates on `source=<sender's first 8 hash hex>` + `len=<utf8 byte
+    count>`. The app logs envelope metadata only (NO-PII contract — never
+    the content), so the sender identity is the exact correlation key: any
+    same-length inbound from a different sender (or the same sender's
+    earlier message, pre-dating `before_size`) cannot satisfy the wait."""
+    expected_len = len(content.encode("utf-8"))
+    source8 = sideband.identity_hex[:8]
+    before_size = sim.diag_log.stat().st_size if sim.diag_log.exists() else 0
     deadline = time.time() + timeout
     while time.time() < deadline:
-        for line in reversed(sim._tail_diag(800)):
-            if "[RNS] inbound source=" in line and content in line:
+        for line in sim._read_diag_since(before_size):
+            if (f"[RNS] inbound source={source8} " in line
+                    and f"len={expected_len} " in line):
                 return
         time.sleep(0.4)
-    pytest.fail(f"iOS didn't record inbound for {content!r} within {timeout}s")
+    pytest.fail(
+        f"iOS didn't record inbound (source={source8} len={expected_len}) "
+        f"within {timeout}s"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────

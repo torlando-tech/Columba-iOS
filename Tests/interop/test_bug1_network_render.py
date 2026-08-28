@@ -36,17 +36,28 @@ import time
 import pytest
 
 
-def _wait_for_inbound(sim, *, content: str, timeout: float = 30.0) -> None:
+def _wait_for_inbound(sim, sideband, *, content: str, timeout: float = 30.0) -> None:
     """Block until the inbound message for `content` is recorded, so both the
     Chats row and the Network→Start-Chat thread have it to load. Marker:
-    `[RNS] inbound source=… content="…"` (was `[PY] inbound`; accept both)."""
+    `[RNS] inbound source=… len=…`. The app logs envelope metadata only
+    (NO-PII — never the content), so correlate on `source=<sender's first 8
+    hash hex>` + `len=<utf8 byte count>`: a same-length inbound from another
+    sender (or an earlier same-sender message pre-dating `before_size`) cannot
+    satisfy the wait and flake the later Maestro assertion."""
+    expected_len = len(content.encode("utf-8"))
+    source8 = sideband.identity_hex[:8]
+    before_size = sim.diag_log.stat().st_size if sim.diag_log.exists() else 0
     deadline = time.time() + timeout
     while time.time() < deadline:
-        for line in reversed(sim._tail_diag(800)):
-            if ("[RNS] inbound source=" in line or "[PY] inbound source=" in line) and content in line:
+        for line in sim._read_diag_since(before_size):
+            if (f"[RNS] inbound source={source8} " in line
+                    and f"len={expected_len} " in line):
                 return
         time.sleep(0.4)
-    pytest.fail(f"iOS didn't record inbound for {content!r} within {timeout}s")
+    pytest.fail(
+        f"iOS didn't record inbound (source={source8} len={expected_len}) "
+        f"within {timeout}s"
+    )
 
 
 def _peer_display_name(sim, sideband, *, timeout: float = 20.0) -> str:
@@ -83,7 +94,7 @@ def test_bug1_network_tab_renders_inbound_text(sim, sideband):
         content=body,
     ), "Sideband-side send_text returned False"
 
-    _wait_for_inbound(sim, content=body)
+    _wait_for_inbound(sim, sideband, content=body)
     peer = _peer_display_name(sim, sideband)
     print(f"[BUG1] peer row label = {peer!r}", flush=True)
 

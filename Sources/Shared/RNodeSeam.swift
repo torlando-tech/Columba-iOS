@@ -73,6 +73,19 @@ public enum RNodeSeamMessage: Equatable, Sendable {
         case dataReceived = 64, stateChanged, sendResult
     }
 
+    /// Metadata-only description for logs (NO-PII: never the `Data` payload
+    /// bytes of `.send` / `.dataReceived`). Byte counts only.
+    var diagnosticLabel: String {
+        switch self {
+        case .connect: "connect"
+        case .send(let reqId, let data): "send(reqId=\(reqId), \(data.count)B)"
+        case .disconnect: "disconnect"
+        case .dataReceived(let data): "dataReceived(\(data.count)B)"
+        case .stateChanged(let state, _): "stateChanged(\(state.rawValue))"
+        case .sendResult(let reqId, _): "sendResult(reqId=\(reqId))"
+        }
+    }
+
     // MARK: Encode
 
     public func encode() -> Data {
