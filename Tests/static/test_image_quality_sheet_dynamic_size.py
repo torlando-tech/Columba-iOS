@@ -13,16 +13,20 @@ The fix (see MessagingView.swift):
   1. The sheet's detent height is a `@ScaledMetric` that grows in lockstep
      with the user's Dynamic Type size, so the sheet makes room for larger
      text instead of clipping it.
-  2. The quality options live in a `ScrollView` as a safety net so that at
-     the largest text sizes the header and the Cancel/Attach buttons stay
-     visible and the options scroll, instead of the content being clipped.
-  3. The sheet's view + closures live in the `imageQualityPickerSheet`
+  2. The sheet's content is pinned to exactly that height with
+     `.frame(height: sheetHeight)`. Without this the sheet proposes unbounded
+     height to the content and clips both ends; with it, the header and the
+     Cancel/Attach buttons stay pinned while the quality options scroll.
+  3. The quality options live in a `ScrollView` so that at the largest text
+     sizes the options scroll instead of pushing the action buttons off the
+     screen.
+  4. The sheet's view + closures live in the `imageQualityPickerSheet`
      computed property rather than inline in `MessagingView.body`: the body
      sits at the Swift type-checker's expression-complexity limit, and
      inlining the sheet's closures makes it fail with "unable to type-check
      in reasonable time".
 
-This contract pins all three halves so the clipping (or the compile
+This contract pins all four halves so the clipping (or the compile
 regression) cannot silently return.
 """
 
@@ -108,6 +112,12 @@ class ImageQualitySheetDynamicSizeTests(unittest.TestCase):
 
     def test_picker_options_scroll_and_header_buttons_stay_pinned(self) -> None:
         body = _picker_body(self.source)
+
+        # The sheet's content must be pinned to exactly the (Dynamic-Type-
+        # scaled) detent height. This is the half that actually stops the
+        # clipping: without it the sheet proposes unbounded height and
+        # overflows both ends (issue #181).
+        self.assertIn(".frame(height: sheetHeight)", body)
 
         # The quality options are wrapped in a ScrollView so they can scroll
         # at very large text sizes instead of pushing the action buttons off

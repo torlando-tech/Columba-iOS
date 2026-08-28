@@ -842,12 +842,17 @@ struct MessagingView: View {
 
     // Image-quality bottom sheet. Kept as a standalone computed property so
     // its view + closures stay out of `body` (which is at the type-checker's
-    // expression-complexity limit). Sizing: a @ScaledMetric detent grows with
-    // Dynamic Type, and the options scroll inside as a safety net, so the
-    // header and Cancel/Attach buttons are never clipped at large text sizes
-    // (issue #181).
+    // expression-complexity limit). Sizing: the detent height is a
+    // @ScaledMetric that grows with Dynamic Type, and the content is pinned
+    // to exactly that height (`.frame(height:)`): the header and the
+    // Cancel/Attach buttons stay pinned while the quality options scroll in
+    // between. Without the fixed frame the sheet proposes unbounded height to
+    // the content and clips both ends instead of letting the ScrollView take
+    // effect (issue #181: header off the top, buttons off the bottom at
+    // large accessibility text).
     private var imageQualityPickerSheet: some View {
         ImageQualityPickerSheet(
+            sheetHeight: imageQualitySheetHeight,
             selectedPreset: $selectedImagePreset,
             onConfirm: {
                 if let raw = pendingRawImage {
@@ -1165,6 +1170,7 @@ struct MessagingView: View {
 
 @available(iOS 17.0, macOS 14.0, *)
 private struct ImageQualityPickerSheet: View {
+    var sheetHeight: CGFloat
     @Binding var selectedPreset: SettingsViewModel.ImageQualityPreset
     var onConfirm: () -> Void
     var onCancel: () -> Void
@@ -1239,6 +1245,13 @@ private struct ImageQualityPickerSheet: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
+        // Pin the whole content to exactly the (Dynamic-Type-scaled) detent
+        // height. This is what makes the ScrollView between the header and the
+        // buttons actually take effect: instead of the sheet proposing
+        // unbounded height and clipping both ends, the rows now scroll and the
+        // header + Cancel/Attach stay fully visible at every text size
+        // (issue #181).
+        .frame(height: sheetHeight)
         .background(Theme.backgroundSecondary)
     }
 }
