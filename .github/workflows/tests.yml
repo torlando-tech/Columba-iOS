@@ -349,6 +349,10 @@ jobs:
       - name: Run screenshot flows
         env:
           MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true'
+          # Cold simulator boot + first-run data migration can exceed the
+          # 60s default before the XCUITest driver is ready (observed
+          # ~110s), which fails the first flows with IOSDriverTimeoutException.
+          MAESTRO_DRIVER_STARTUP_TIMEOUT: '180000'
         run: |
           set -euo pipefail
           DEVICE_ID="${{ steps.sim.outputs.device_id }}"
