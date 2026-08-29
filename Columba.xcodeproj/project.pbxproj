@@ -535,12 +535,12 @@
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
 		F045 /* LoRaPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoRaPresets.swift; sourceTree = "<group>"; };
 		F048 /* MapLibreMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLibreMapView.swift; sourceTree = "<group>"; };
-		977911678B80FDC0021BFC8D /* PeerLocationFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationFormatting.swift; sourceTree = "<group>"};
-		A2BA54B809AFB1AB900074CD /* DirectionsLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectionsLauncher.swift; sourceTree = "<group>"};
-		E000A64C153F97167050B87D /* PeerContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerContactSheet.swift; sourceTree = "<group>"};
-		498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationFormattingTests.swift; sourceTree = "<group>"};
-		B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectionsLauncherTests.swift; sourceTree = "<group>"};
-		AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationRemovalTests.swift; sourceTree = "<group>"};
+		977911678B80FDC0021BFC8D /* PeerLocationFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationFormatting.swift; sourceTree = "<group>"; };
+		A2BA54B809AFB1AB900074CD /* DirectionsLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectionsLauncher.swift; sourceTree = "<group>"; };
+		E000A64C153F97167050B87D /* PeerContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerContactSheet.swift; sourceTree = "<group>"; };
+		498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationFormattingTests.swift; sourceTree = "<group>"; };
+		B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectionsLauncherTests.swift; sourceTree = "<group>"; };
+		AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationRemovalTests.swift; sourceTree = "<group>"; };
 		F049 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		F04A /* AddContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContactSheet.swift; sourceTree = "<group>"; };
 		F04B /* LocationSharingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSharingManager.swift; sourceTree = "<group>"; };
