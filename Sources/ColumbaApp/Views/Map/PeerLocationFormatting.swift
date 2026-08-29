@@ -57,14 +57,13 @@ enum PeerLocationFormatting {
     /// place in km above).
     static func formatDistanceAndDirection(
         userCoordinate: CLLocationCoordinate2D?,
-        peerLatitude: Double,
-        peerLongitude: Double
+        peerCoordinate: CLLocationCoordinate2D
     ) -> String {
         guard let userCoordinate else {
             return String(localized: "Location unknown")
         }
         let from = CLLocation(latitude: userCoordinate.latitude, longitude: userCoordinate.longitude)
-        let to = CLLocation(latitude: peerLatitude, longitude: peerLongitude)
+        let to = CLLocation(latitude: peerCoordinate.latitude, longitude: peerCoordinate.longitude)
         let meters = from.distance(from: to)
         let bearing = initialBearing(from: from, to: to)
         let distanceText = meters < 1000

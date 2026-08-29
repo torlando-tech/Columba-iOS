@@ -65,8 +65,7 @@ final class PeerLocationFormattingTests: XCTestCase {
     func test_distance_unknown_when_user_location_is_nil() {
         let text = PeerLocationFormatting.formatDistanceAndDirection(
             userCoordinate: nil,
-            peerLatitude: 37.7749,
-            peerLongitude: -122.4194
+            peerCoordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
         )
         XCTAssertEqual(text, "Location unknown")
     }
@@ -76,8 +75,7 @@ final class PeerLocationFormattingTests: XCTestCase {
         // 0.005 degrees ≈ 442 m.
         let text = PeerLocationFormatting.formatDistanceAndDirection(
             userCoordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-            peerLatitude: 37.7749,
-            peerLongitude: -122.4144
+            peerCoordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4144)
         )
         let components = text.split(separator: " ")
         XCTAssertEqual(components.count, 2)
@@ -92,8 +90,7 @@ final class PeerLocationFormattingTests: XCTestCase {
         // ~1.2 km due east (0.0136 deg ≈ 1203 m at 37.7N).
         let text = PeerLocationFormatting.formatDistanceAndDirection(
             userCoordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-            peerLatitude: 37.7749,
-            peerLongitude: -122.4058
+            peerCoordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4058)
         )
         XCTAssertEqual(text, "1.2km east")
     }

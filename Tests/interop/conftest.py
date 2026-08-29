@@ -84,8 +84,8 @@ def _yaml_escape(s: str) -> str:
     Backslash is escaped first so the sequences we introduce below aren't
     double-escaped."""
     return (
-        s.replace("\\", "\\")
-         .replace("\"", "\"")
+        s.replace("\\", "\\\\")
+         .replace("\"", "\\\"")
          .replace("\n", "\\n")
          .replace("\r", "\\r")
          .replace("\t", "\\t")

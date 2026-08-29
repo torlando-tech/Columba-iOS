@@ -252,8 +252,7 @@ struct MapView: View {
     /// Directions button: one installed maps app → launch it directly (fewer
     /// taps); both installed → let the user choose (Apple Maps first).
     private func launchDirections(for peer: PeerLocation) {
-        let coordinate = CLLocationCoordinate2D(latitude: peer.latitude, longitude: peer.longitude)
-        let providers = directionsLauncher.providers(for: coordinate)
+        let providers = directionsLauncher.providers(for: peer.coordinate)
         if providers.count == 1 {
             directionsLauncher.open(providers[0])
         } else {
@@ -261,9 +260,7 @@ struct MapView: View {
         }
     }
 
-    private var directionsLauncher: DirectionsLauncher {
-        DirectionsLauncher()
-    }
+    private let directionsLauncher = DirectionsLauncher()
 
     private func loadContacts() async {
         // Read conversations from the GRDB canonical store (Track A0) via the

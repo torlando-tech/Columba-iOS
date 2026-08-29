@@ -242,7 +242,7 @@ struct ChatsView: View {
             // Message tap lands somewhere coherent rather than silently
             // dropping the user's intent.
             conversation = Conversation(
-                id: hash.map { String(format: "%02x", $0) }.joined(),
+                id: hash.toHex(),
                 destinationHash: hash,
                 lastMessageTimestamp: Date()
             )

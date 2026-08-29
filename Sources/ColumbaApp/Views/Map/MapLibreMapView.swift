@@ -303,7 +303,7 @@ struct MapLibreMapView: UIViewRepresentable {
             // view to be reachable at all - an identifier alone is ignored by
             // the accessibility tree (the view is reused, so set these on
             // every refresh, not just first creation).
-            annotationView?.accessibilityIdentifier = "peer_pin_\(peerAnnotation.peerHash.map { String(format: "%02x", $0) }.joined())"
+            annotationView?.accessibilityIdentifier = "peer_pin_\(peerAnnotation.peerHash.toHex())"
             annotationView?.isAccessibilityElement = true
             annotationView?.accessibilityLabel = peerAnnotation.title ?? "Peer location"
             annotationView?.accessibilityTraits = .button

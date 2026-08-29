@@ -46,6 +46,13 @@ public struct PeerLocation: Identifiable, Equatable {
     /// Bearing in degrees.
     public var bearing: Double
 
+    /// The peer's coordinate as a single `CLLocationCoordinate2D` value.
+    /// Lets map/directions code treat the pin location as one type instead
+    /// of threading `latitude`/`longitude` doubles separately.
+    public var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
     /// Horizontal accuracy in meters.
     public var accuracy: Double
 
@@ -299,7 +306,7 @@ public final class LocationSharingManager: NSObject {
     /// - Parameter peerHash: 16-byte destination hash of the peer
     public func removePeerLocation(_ peerHash: Data) {
         guard peerLocations.removeValue(forKey: peerHash) != nil else { return }
-        let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
+        let hex = peerHash.prefix(4).toHex()
         logger.info("Removed peer \(hex) from map (user action)")
     }
 

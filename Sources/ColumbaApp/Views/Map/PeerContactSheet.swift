@@ -39,8 +39,7 @@ struct PeerContactSheet: View {
     private var distanceText: String {
         PeerLocationFormatting.formatDistanceAndDirection(
             userCoordinate: userCoordinate,
-            peerLatitude: peer.latitude,
-            peerLongitude: peer.longitude
+            peerCoordinate: peer.coordinate
         )
     }
 
