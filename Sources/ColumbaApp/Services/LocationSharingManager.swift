@@ -308,6 +308,13 @@ public final class LocationSharingManager: NSObject {
         guard peerLocations.removeValue(forKey: peerHash) != nil else { return }
         let hex = peerHash.prefix(4).toHex()
         logger.info("Removed peer \(hex) from map (user action)")
+        // Test-observable mirror of the removal. The pin is rendered on
+        // MapLibre's GL surface (not in the accessibility tree) and
+        // `peerLocations` is in-memory, so neither the accessibility tree nor
+        // the `map_peer_count` badge (order-dependent across peers) can prove
+        // that *this* pin dropped. The Tests/interop stale-removal case polls
+        // this line to assert the state actually changed.
+        DiagLog.log("[LOC-REMOVE] peer=\(hex)")
     }
 
     /// Handle incoming telemetry from a peer.
@@ -359,7 +366,7 @@ public final class LocationSharingManager: NSObject {
 
         peerLocations[peerHash] = peerLoc
 
-        let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
+        let hex = peerHash.prefix(4).toHex()
         logger.info("Updated peer \(hex) location: \(location.latitude), \(location.longitude)")
         // Test-observable mirror of the decoded inbound telemetry. The map
         // marker is rendered on MapLibre's GL surface and isn't reachable
