@@ -75,18 +75,22 @@ class MapPeerPinTapContractTests(unittest.TestCase):
 
     def test_map_view_uses_maplibre_selection_delegates(self):
         # MapLibre v6.25.1: selection is on by default (annotation view
-        # enabled flag); the delegate gets a void didSelect /
-        # didDeselect pair. No canSelectAnnotation property exists.
+        # enabled flag); the Swift-imported delegate gets a void didSelect /
+        # didDeselect pair (the ObjC names drop "Annotation" in Swift).
+        # No canSelectAnnotation property exists.
         self.assertIn(
-            "func mapView(_ mapView: MLNMapView, didSelectAnnotation annotation: MLNAnnotation)",
+            "func mapView(_ mapView: MLNMapView, didSelect annotation: MLNAnnotation)",
             self.map_libre,
         )
         self.assertIn(
-            "func mapView(_ mapView: MLNMapView, didDeselectAnnotation annotation: MLNAnnotation)",
+            "func mapView(_ mapView: MLNMapView, didDeselect annotation: MLNAnnotation)",
             self.map_libre,
         )
         # The wrong (Mapbox-era) API must not creep back in.
         self.assertNotIn("canSelectAnnotation", self.map_libre)
+        # The deprecated selectAnnotation(animated:) form must not be used;
+        # the completion-handler variant is the supported one.
+        self.assertNotIn("mapView.selectAnnotation(annotation, animated: true)", self.map_libre)
 
     def test_map_view_suppresses_builtin_callout(self):
         # Only the custom PeerContactSheet is the selection UI, so the
@@ -197,7 +201,11 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         )
 
     def test_chats_view_consumes_route_via_notification_conversation(self):
-        self.assertIn("@Binding var pendingPeerChat: Data? = nil", self.chats_view)
+        # A @Binding property CANNOT take `= nil` (the memberwise init
+        # parameter is Binding<Data?>, not Data?), so the declaration must
+        # have no default.
+        self.assertIn("@Binding var pendingPeerChat: Data?\n", self.chats_view)
+        self.assertNotIn("@Binding var pendingPeerChat: Data? = nil", self.chats_view)
         self.assertIn("private func consumePeerChatRoute() async", self.chats_view)
         # One-shot: clear before the async work.
         self.assertRegex(

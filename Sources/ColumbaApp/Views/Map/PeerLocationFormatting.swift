@@ -80,13 +80,13 @@ enum PeerLocationFormatting {
         if diffSeconds < 10 {
             return String(localized: "Updated just now")
         } else if diffSeconds < 60 {
-            return String(localized: "Updated %llds ago", Int(diffSeconds))
+            return String(localized: "Updated \(Int(diffSeconds))s ago")
         } else if diffSeconds < 3600 {
-            return String(localized: "Updated %lldm ago", Int(diffSeconds / 60))
+            return String(localized: "Updated \(Int(diffSeconds / 60))m ago")
         } else if diffSeconds < 86400 {
-            return String(localized: "Updated %lldh ago", Int(diffSeconds / 3600))
+            return String(localized: "Updated \(Int(diffSeconds / 3600))h ago")
         } else {
-            return String(localized: "Updated %lldd ago", Int(diffSeconds / 86400))
+            return String(localized: "Updated \(Int(diffSeconds / 86400))d ago")
         }
     }
 }

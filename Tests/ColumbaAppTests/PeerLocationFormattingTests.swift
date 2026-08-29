@@ -35,7 +35,9 @@ final class PeerLocationFormattingTests: XCTestCase {
 
     func test_compass_normalizes_negative_and_oversized_bearings() {
         XCTAssertEqual(PeerLocationFormatting.bearingToCompassDirection(-90), "west")
-        XCTAssertEqual(PeerLocationFormatting.bearingToCompassDirection(450), "northeast")
+        // 450 normalizes to 90 = due east (the test is about normalization,
+        // not a specific quadrant).
+        XCTAssertEqual(PeerLocationFormatting.bearingToCompassDirection(450), "east")
         XCTAssertEqual(PeerLocationFormatting.bearingToCompassDirection(-45), "northwest")
     }
 

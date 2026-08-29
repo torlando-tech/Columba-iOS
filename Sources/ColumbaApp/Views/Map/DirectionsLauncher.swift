@@ -90,7 +90,7 @@ struct DirectionsLauncher {
         if provider.id == "apple" {
             let placemark = MKPlacemark(coordinate: provider.coordinate)
             let item = MKMapItem(placemark: placemark)
-            item.openMaps(launchOptions: [
+            item.openInMaps(launchOptions: [
                 MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking,
             ])
         } else if let url = provider.url {

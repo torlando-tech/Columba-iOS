@@ -26,8 +26,10 @@ struct ChatsView: View {
     let notificationObserver: NotificationObserver
     /// Cross-tab route from the Map tab's peer contact sheet: the tapped
     /// peer's destination hash. Consumed (and cleared) by this view once the
-    /// conversation resolves - see `consumePeerChatRoute`.
-    @Binding var pendingPeerChat: Data? = nil
+    /// conversation resolves - see `consumePeerChatRoute`. (No default: a
+    /// `@Binding` property cannot take `= nil`, since the synthesized
+    /// memberwise init parameter is `Binding<Data?>`, not `Data?`.)
+    @Binding var pendingPeerChat: Data?
 
     // MARK: - State
 

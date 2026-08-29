@@ -178,7 +178,7 @@ struct MapLibreMapView: UIViewRepresentable {
             // telemetry tick for the selected peer re-runs this path and we
             // must not restart the selection animation on every update.
             if annotation !== coordinator.lastSelectedAnnotation {
-                mapView.selectAnnotation(annotation, animated: true)
+                mapView.selectAnnotation(annotation, animated: true, completionHandler: nil)
                 coordinator.lastSelectedAnnotation = annotation
             }
         } else if let last = coordinator.lastSelectedAnnotation {
@@ -264,12 +264,12 @@ struct MapLibreMapView: UIViewRepresentable {
         /// MapLibre annotation views are tappable by default (`enabled` is
         /// YES); this reports the tapped peer up to SwiftUI, which presents
         /// the contact sheet and re-asserts the selection highlight.
-        func mapView(_ mapView: MLNMapView, didSelectAnnotation annotation: MLNAnnotation) {
+        func mapView(_ mapView: MLNMapView, didSelect annotation: MLNAnnotation) {
             guard let peerAnnotation = annotation as? PeerPointAnnotation else { return }
             onPeerTapped?(peerAnnotation.peerHash)
         }
 
-        func mapView(_ mapView: MLNMapView, didDeselectAnnotation annotation: MLNAnnotation) {
+        func mapView(_ mapView: MLNMapView, didDeselect annotation: MLNAnnotation) {
             // MapLibre deselects the previous pin when a new one is tapped;
             // the SwiftUI binding (the source of truth) already points at the
             // newly selected peer, so there is nothing to mirror back. This

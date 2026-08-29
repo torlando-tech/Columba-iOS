@@ -9,14 +9,17 @@
 //
 
 #if os(iOS)
+import CoreLocation
 import XCTest
+import LXMFSwift
+import RNSAPI
 @testable import ColumbaApp
 
 @available(iOS 17.0, *)
 @MainActor
 final class PeerLocationRemovalTests: XCTestCase {
 
-    private static let peerHash: Data = (0...15).map { _ in UInt8(0xAB) }
+    private static let peerHash: Data = Data((0...15).map { _ in UInt8(0xAB) })
 
     /// Encode a valid FIELD_TELEMETRY payload with LXMF-swift's
     /// Sideband-compatible Telemeter codec - the same shape the inbound
@@ -75,7 +78,7 @@ final class PeerLocationRemovalTests: XCTestCase {
     func test_removing_unknown_hash_is_a_no_op() {
         let manager = makeManager()
         receiveTelemetry(manager)
-        let otherHash: Data = (0...15).map { _ in UInt8(0x01) }
+        let otherHash: Data = Data((0...15).map { _ in UInt8(0x01) })
 
         manager.removePeerLocation(otherHash)
 
