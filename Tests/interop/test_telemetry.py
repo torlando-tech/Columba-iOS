@@ -264,18 +264,49 @@ def test_cease_ios_to_sideband(sim, sideband):
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def _wait_for_loc_recv(sim, *, timeout: float = 30.0) -> str:
+def _wait_for_loc_recv(
+    sim,
+    *,
+    peer: str,
+    expect_lat: float | None = None,
+    expect_lon: float | None = None,
+    timeout: float = 30.0,
+) -> str:
     """Block until `LocationSharingManager.handleIncomingTelemetry` logs a
-    decoded inbound telemetry line (`[LOC-RECV] …`) to diag.log, and
-    return it. The line mirrors the decoded peer/lat/lon/icon because the
-    MapLibre marker itself isn't reachable from the accessibility tree."""
+    decoded inbound telemetry line (`[LOC-RECV] …`) to diag.log for the
+    expected peer, and return it. The line mirrors the decoded peer/lat/lon/
+    icon because the MapLibre marker itself isn't reachable from the
+    accessibility tree.
+
+    The match is pinned to the peer's first 8 hex chars (plus, when given,
+    the expected latitude/longitude to ~1e-4°) because diag.log is
+    append-only across launches and the unit-test bundle — hosted in the
+    same container — also writes `[LOC-RECV]` lines with its own fixture
+    peer. Matching any `[LOC-RECV]` returns the newest line, so a stale
+    unit-test line can be matched before the fresh Sideband frame arrives.
+
+    `peer` is the peer's identity_hex[:8] (lowercase) which matches the
+    production log's `hex = peerHash.prefix(4).toHex()` (first 8 hex chars)."""
+    lat_pat = re.compile(r"lat=(-?[\d.]+) lon=(-?[\d.]+)")
     deadline = time.time() + timeout
     while time.time() < deadline:
         for line in reversed(sim._tail_diag(800)):
-            if "[LOC-RECV]" in line:
+            if "[LOC-RECV]" not in line or f"peer={peer}" not in line:
+                continue
+            if expect_lat is None:
+                return line
+            m = lat_pat.search(line)
+            if not m:
+                continue
+            if (abs(float(m.group(1)) - expect_lat) < 1e-4
+                    and expect_lon is not None
+                    and abs(float(m.group(2)) - expect_lon) < 1e-4):
                 return line
         time.sleep(0.4)
-    pytest.fail(f"iOS never logged [LOC-RECV] for inbound telemetry within {timeout}s")
+    pytest.fail(
+        f"iOS never logged [LOC-RECV] peer={peer} for inbound telemetry "
+        f"within {timeout}s"
+    )
 
 
 def _wait_for_peer_display_name(sim, sideband, *, timeout: float = 20.0) -> str:
@@ -321,7 +352,15 @@ def test_location_sideband_to_ios(sim, sideband):
     # Decoded telemetry + icon round-trip (the part the GL marker can't
     # expose). Capture first — it's logged on receipt regardless of UI
     # state, so it's independent of the map-navigation step below.
-    line = _wait_for_loc_recv(sim)
+    # Pin the match to this peer + these coords so a stale `[LOC-RECV]`
+    # line (e.g. from the unit-test bundle, which shares the container)
+    # can't be matched before the fresh frame arrives.
+    line = _wait_for_loc_recv(
+        sim,
+        peer=sideband.identity_hex[:8].lower(),
+        expect_lat=expect_lat,
+        expect_lon=expect_lon,
+    )
     expected_name = _wait_for_peer_display_name(sim, sideband)
     m = re.search(
         r'\[LOC-RECV\] peer=(\w+) name=("(?:\\.|[^"\\])*") '
@@ -363,6 +402,16 @@ def test_location_sideband_to_ios(sim, sideband):
 # ─────────────────────────────────────────────────────────────────────────
 
 
+# Offset the peer pin EAST of the user's simulated fix so it is not concentric
+# with the user-location dot. At the exact user coordinate the 32pt pin sits
+# on top of the blue dot, so the Maestro tap lands on the dot (not the pin) and
+# the pin's a11y element is occluded/ambiguous (non-deterministic). At ~51°N,
+# 0.003° longitude ≈ 277m, which is well inside the on-screen view after
+# `map_center_on_user` (zoom 15, half-width ≈ 1.7km) yet clearly separated from
+# the user dot's tap target.
+_PIN_EAST_OFFSET_DEG = 0.003
+
+
 def _pin_id(sideband) -> str:
     """The a11y identifier of the Sideband peer's map pin."""
     return "peer_pin_" + sideband.identity_hex.lower()
@@ -391,7 +440,7 @@ def _set_sim_location_to_peer(sim, lat: float, lon: float) -> None:
 def _send_peer_telemetry(sim, sideband, lat: float, lon: float,
                          *, last_update: int | None = None) -> None:
     """Send one inbound location frame from Sideband and wait for iOS to
-    decode it (the `[LOC-RECV]` diag line)."""
+    decode it (the `[LOC-RECV]` diag line, pinned to this peer + coords)."""
     assert sideband.send_location_telemetry(
         dest_hex=sim.lxmf_delivery_hex,
         lat=lat,
@@ -399,7 +448,12 @@ def _send_peer_telemetry(sim, sideband, lat: float, lon: float,
         accuracy=12.0,
         last_update=last_update,
     ), "Sideband send_location_telemetry returned False"
-    _wait_for_loc_recv(sim)
+    _wait_for_loc_recv(
+        sim,
+        peer=sideband.identity_hex[:8].lower(),
+        expect_lat=lat,
+        expect_lon=lon,
+    )
 
 
 def test_peer_pin_tap_opens_contact_sheet(sim, sideband):
@@ -407,10 +461,12 @@ def test_peer_pin_tap_opens_contact_sheet(sim, sideband):
 
     Asserts the sheet's `peer_sheet_name` element (48pt icon row) appears,
     which only happens through the selection → onPeerTapped →
-    selectedPeerHash → sheet path."""
+    selectedPeerHash → sheet path. The peer is offset east of the user's
+    simulated fix (see `_PIN_EAST_OFFSET_DEG`) so the pin is a distinct,
+    unoccluded tap target."""
     lat, lon = 37.7749, -122.4194
     _set_sim_location_to_peer(sim, lat, lon)
-    _send_peer_telemetry(sim, sideband, lat, lon)
+    _send_peer_telemetry(sim, sideband, lat, lon + _PIN_EAST_OFFSET_DEG)
     sim.assert_peer_sheet_open(pin_id=_pin_id(sideband))
 
 
@@ -424,7 +480,7 @@ def test_peer_pin_message_route_opens_conversation(sim, sideband):
     stable a11y landmark on the messaging screen."""
     lat, lon = 40.7128, -74.0060
     _set_sim_location_to_peer(sim, lat, lon)
-    _send_peer_telemetry(sim, sideband, lat, lon)
+    _send_peer_telemetry(sim, sideband, lat, lon + _PIN_EAST_OFFSET_DEG)
     sim.assert_peer_sheet_message_opens_conversation(pin_id=_pin_id(sideband))
 
 
@@ -435,11 +491,15 @@ def test_stale_peer_pin_remove_clears_pin(sim, sideband):
     The frame is backdated ~10 minutes so the pin is stale immediately
     (isStale = now - lastUpdate > 300 s) without waiting out the freshness
     window. Asserts the stale-only Remove action is present, then that the
-    specific `peer_pin_<hex>` element is gone after the tap (asserting the
-    individual pin, not the map_peer_count badge, because the session
-    peer's pin can accumulate alongside other tests' pins)."""
+    app logged `[LOC-REMOVE] peer=<hex>` (the pin is rendered on MapLibre's
+    GL surface and the `map_peer_count` badge is order-dependent across
+    peers, so the diag line is the deterministic per-peer signal)."""
     lat, lon = 51.5074, -0.1278
     stale_ts = int(time.time()) - 10 * 60
     _set_sim_location_to_peer(sim, lat, lon)
-    _send_peer_telemetry(sim, sideband, lat, lon, last_update=stale_ts)
-    sim.assert_stale_peer_sheet_removes_pin(pin_id=_pin_id(sideband))
+    _send_peer_telemetry(sim, sideband, lat, lon + _PIN_EAST_OFFSET_DEG,
+                         last_update=stale_ts)
+    sim.assert_stale_peer_sheet_removes_pin(
+        pin_id=_pin_id(sideband),
+        expect_removed_peer=sideband.identity_hex[:8].lower(),
+    )

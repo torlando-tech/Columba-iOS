@@ -852,7 +852,10 @@ class Simulator:
             f"    timeout: {wait_ms}",
             "- takeScreenshot: { path: screenshots/peer-sheet }",
         ]
-        self._run_maestro_flow(lines, "peer_sheet", timeout=timeout)
+        # The flow has two `timeout`-long waits plus a preamble; give the
+        # subprocess a budget that covers both (a slow-but-working map must
+        # not be killed at the first wait's horizon).
+        self._run_maestro_flow(lines, "peer_sheet", timeout=timeout + 30)
 
     def assert_peer_sheet_message_opens_conversation(
         self, *, pin_id: str, timeout: float = 40.0
@@ -888,25 +891,33 @@ class Simulator:
             f"    timeout: {wait_ms}",
             "- takeScreenshot: { path: screenshots/peer-sheet-conversation }",
         ]
-        self._run_maestro_flow(lines, "peer_sheet_message", timeout=timeout)
+        # Three `timeout`-long waits + preamble; budget covers all of them.
+        self._run_maestro_flow(lines, "peer_sheet_message", timeout=timeout + 60)
 
     def assert_stale_peer_sheet_removes_pin(
-        self, *, pin_id: str, timeout: float = 40.0
+        self,
+        *,
+        pin_id: str,
+        expect_removed_peer: str,
+        timeout: float = 40.0,
     ) -> None:
         """Tap a stale peer's pin, assert the `peer_sheet_remove` action is
-        present (stale-only, Android parity), tap it, and assert that
-        specific pin disappears from the map.
+        present (stale-only, Android parity), tap it, and assert the app
+        dropped the pin.
 
         Pins the removal path: `onRemove` →
         `LocationSharingManager.removePeerLocation` → `peerLocations`
-        drops the entry → the GL annotation is removed and the sheet
+        drops the entry → the annotation is removed and the sheet
         auto-dismisses (its derived peer goes nil). A backdated frame makes
         the pin stale without waiting out the 5-minute freshness window.
 
-        The assertion is on the *specific* `peer_pin_<hex>` element going
-        away (not the `map_peer_count` badge) because the session-scoped
-        Sideband peer can accumulate alongside earlier tests' pins, so the
-        badge count is order-dependent while the individual pin is not."""
+        The drop is asserted off the `[LOC-REMOVE] peer=<hex>` diag line
+        (polling in Python, below) rather than the a11y tree: the pin
+        renders on MapLibre's GL surface, and this Maestro build has no
+        absence assertion (`gone:` is not a valid step property — the flow
+        would be rejected at parse time before any step ran). The diag
+        line is also per-peer, so it is not order-dependent the way the
+        `map_peer_count` badge is."""
         wait_ms = int(timeout * 1000)
         lines = self._map_tab_foreground_lines()
         lines += [
@@ -924,13 +935,28 @@ class Simulator:
             "- tapOn:",
             '      id: "peer_sheet_remove"',
             "- waitForAnimationToEnd: { timeout: 2000 }",
-            "- extendedWaitUntil:",
-            "    gone:",
-            f'      id: "{pin_id}"',
-            f"    timeout: {wait_ms}",
             "- takeScreenshot: { path: screenshots/peer-sheet-removed }",
         ]
-        self._run_maestro_flow(lines, "peer_sheet_remove", timeout=timeout)
+        # Two `timeout`-long waits + preamble; the `[LOC-REMOVE]` poll is a
+        # separate Python-side wait after the flow returns.
+        self._run_maestro_flow(lines, "peer_sheet_remove", timeout=timeout + 30)
+        self._wait_for_loc_remove(expect_removed_peer, timeout=timeout)
+
+    def _wait_for_loc_remove(self, peer_prefix: str, *, timeout: float = 30.0) -> str:
+        """Block until `removePeerLocation` logs `[LOC-REMOVE] peer=<hex>` for
+        the expected peer (prefix match, same idiom as `_wait_for_loc_recv`).
+        `peer_prefix` is the peer's first hex chars lowercased —
+        `removePeerLocation` logs `peerHash.prefix(4).toHex()`, which for the
+        20-byte Sideband identity is the first 8 hex chars."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for line in reversed(self._tail_diag(800)):
+                if f"[LOC-REMOVE] peer={peer_prefix}" in line:
+                    return line
+            time.sleep(0.4)
+        pytest.fail(
+            f"iOS never logged [LOC-REMOVE] peer={peer_prefix} within {timeout}s"
+        )
 
     @staticmethod
     def _parse_outcome(lines: list[str]) -> Optional[TestSendResult]:
