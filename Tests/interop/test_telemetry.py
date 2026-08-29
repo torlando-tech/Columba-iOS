@@ -344,3 +344,102 @@ def test_location_sideband_to_ios(sim, sideband):
 
     # Pin renders on the Map screen (proves peerLocations reached the UI).
     sim.assert_peer_pin_visible()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Tappable peer pin (#179) — tap → PeerContactSheet → Message/Remove.
+#
+# These drive the real map annotation view (a UIView, not the GL surface),
+# so they pin the selection path end-to-end: MLNAnnotationView →
+# mapView(_:didSelectAnnotation:) → onPeerTapped → selectedPeerHash →
+# sheet, and the cross-tab Message route + stale-removal escape hatch.
+#
+# The peer pin is addressed by `peer_pin_<hex>` where <hex> is the sender's
+# full RNS/LXMF identity hex (iOS keys peerLocations on message.sourceHash,
+# which equals the Sideband peer's identity_hex). The sim's location is set
+# to the peer's coordinate and the map is recentered on the user, so the
+# pin is guaranteed on-screen (an off-screen GL annotation is culled out of
+# the a11y tree and unaddressable).
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _pin_id(sideband) -> str:
+    """The a11y identifier of the Sideband peer's map pin."""
+    return "peer_pin_" + sideband.identity_hex.lower()
+
+
+def _set_sim_location_to_peer(sim, lat: float, lon: float) -> None:
+    """Grant location (idempotent), stamp a simulated fix at the peer's
+    coordinate, and re-push it a few times. CLLocationManager / MapLibre
+    `userLocation` delivery on the sim is racy — a single `location set`
+    before the manager is observing isn't reliably delivered, so we
+    re-push over a few seconds (same pattern as
+    `test_chat_toggle_starts_periodic_sharing`)."""
+    import subprocess
+    subprocess.run(
+        ["xcrun", "simctl", "privacy", sim.udid, "grant", "location",
+         "network.columba.Columba"], check=True, capture_output=True,
+    )
+    for _ in range(8):
+        subprocess.run(
+            ["xcrun", "simctl", "location", sim.udid, "set",
+             f"{lat},{lon}"], check=True, capture_output=True,
+        )
+        time.sleep(0.6)
+
+
+def _send_peer_telemetry(sim, sideband, lat: float, lon: float,
+                         *, last_update: int | None = None) -> None:
+    """Send one inbound location frame from Sideband and wait for iOS to
+    decode it (the `[LOC-RECV]` diag line)."""
+    assert sideband.send_location_telemetry(
+        dest_hex=sim.lxmf_delivery_hex,
+        lat=lat,
+        lon=lon,
+        accuracy=12.0,
+        last_update=last_update,
+    ), "Sideband send_location_telemetry returned False"
+    _wait_for_loc_recv(sim)
+
+
+def test_peer_pin_tap_opens_contact_sheet(sim, sideband):
+    """Tap the peer's map pin → the PeerContactSheet presents.
+
+    Asserts the sheet's `peer_sheet_name` element (48pt icon row) appears,
+    which only happens through the selection → onPeerTapped →
+    selectedPeerHash → sheet path."""
+    lat, lon = 37.7749, -122.4194
+    _set_sim_location_to_peer(sim, lat, lon)
+    _send_peer_telemetry(sim, sideband, lat, lon)
+    sim.assert_peer_sheet_open(pin_id=_pin_id(sideband))
+
+
+def test_peer_pin_message_route_opens_conversation(sim, sideband):
+    """Tap the pin → Message button → the peer's conversation opens.
+
+    Asserts the cross-tab route: onOpenPeerChat → MainTabView switches to
+    the Chats tab and holds pendingPeerChat → consumePeerChatRoute resolves
+    (creating the row for a telemetry-only peer) and pushes it via
+    notificationConversation. The `message_composer` input bar is the
+    stable a11y landmark on the messaging screen."""
+    lat, lon = 40.7128, -74.0060
+    _set_sim_location_to_peer(sim, lat, lon)
+    _send_peer_telemetry(sim, sideband, lat, lon)
+    sim.assert_peer_sheet_message_opens_conversation(pin_id=_pin_id(sideband))
+
+
+def test_stale_peer_pin_remove_clears_pin(sim, sideband):
+    """A stale peer's pin → the sheet shows `peer_sheet_remove` → tapping it
+    drops the pin from the map.
+
+    The frame is backdated ~10 minutes so the pin is stale immediately
+    (isStale = now - lastUpdate > 300 s) without waiting out the freshness
+    window. Asserts the stale-only Remove action is present, then that the
+    specific `peer_pin_<hex>` element is gone after the tap (asserting the
+    individual pin, not the map_peer_count badge, because the session
+    peer's pin can accumulate alongside other tests' pins)."""
+    lat, lon = 51.5074, -0.1278
+    stale_ts = int(time.time()) - 10 * 60
+    _set_sim_location_to_peer(sim, lat, lon)
+    _send_peer_telemetry(sim, sideband, lat, lon, last_update=stale_ts)
+    sim.assert_stale_peer_sheet_removes_pin(pin_id=_pin_id(sideband))

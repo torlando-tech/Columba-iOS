@@ -66,6 +66,15 @@
 		044 /* IdentityManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F044 /* IdentityManagerView.swift */; };
 		045 /* LoRaPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F045 /* LoRaPresets.swift */; };
 		048 /* MapLibreMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F048 /* MapLibreMapView.swift */; platformFilter = ios; };
+		60CC574F0906D247788E05C0 /* PeerLocationFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 977911678B80FDC0021BFC8D /* PeerLocationFormatting.swift */; platformFilter = ios;};
+		EC3A6E57174A92CF82D2D167 /* PeerLocationFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 977911678B80FDC0021BFC8D /* PeerLocationFormatting.swift */; platformFilter = ios;};
+		EC11D7B3ACB169889DFDCAD6 /* DirectionsLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2BA54B809AFB1AB900074CD /* DirectionsLauncher.swift */; platformFilter = ios;};
+		2FAC68C81FFB2F5877849D40 /* DirectionsLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2BA54B809AFB1AB900074CD /* DirectionsLauncher.swift */; platformFilter = ios;};
+		7BC38A40688391B27CAF196D /* PeerContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E000A64C153F97167050B87D /* PeerContactSheet.swift */; platformFilter = ios;};
+		3007EA9DFE6E9C7445D1977B /* PeerContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E000A64C153F97167050B87D /* PeerContactSheet.swift */; platformFilter = ios;};
+		CC067EE77A33341C829CBDE8 /* PeerLocationFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */;};
+		E4FCBD54560B74AC8CCB1C91 /* DirectionsLauncherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */;};
+		47B4E413633097429123BC2F /* PeerLocationRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */;};
 		049 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = P002 /* MapLibre */; };
 		049B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F049 /* QRScannerView.swift */; platformFilter = ios; };
 		04AB /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A /* AddContactSheet.swift */; };
@@ -526,6 +535,12 @@
 		F044 /* IdentityManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityManagerView.swift; sourceTree = "<group>"; };
 		F045 /* LoRaPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoRaPresets.swift; sourceTree = "<group>"; };
 		F048 /* MapLibreMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLibreMapView.swift; sourceTree = "<group>"; };
+		977911678B80FDC0021BFC8D /* PeerLocationFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationFormatting.swift; sourceTree = "<group>"};
+		A2BA54B809AFB1AB900074CD /* DirectionsLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectionsLauncher.swift; sourceTree = "<group>"};
+		E000A64C153F97167050B87D /* PeerContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerContactSheet.swift; sourceTree = "<group>"};
+		498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationFormattingTests.swift; sourceTree = "<group>"};
+		B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectionsLauncherTests.swift; sourceTree = "<group>"};
+		AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationRemovalTests.swift; sourceTree = "<group>"};
 		F049 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		F04A /* AddContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContactSheet.swift; sourceTree = "<group>"; };
 		F04B /* LocationSharingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSharingManager.swift; sourceTree = "<group>"; };
@@ -847,6 +862,9 @@
 			children = (
 				F021 /* MapView.swift */,
 				F048 /* MapLibreMapView.swift */,
+				977911678B80FDC0021BFC8D /* PeerLocationFormatting.swift */,
+				A2BA54B809AFB1AB900074CD /* DirectionsLauncher.swift */,
+				E000A64C153F97167050B87D /* PeerContactSheet.swift */,
 				F062 /* OfflineMapDownloadView.swift */,
 				F063 /* OfflineMapsScreen.swift */,
 			);
@@ -1035,6 +1053,9 @@
 				6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */,
 				30A79B9ECDB4166F8A36A670 /* CallManagerCallKitTests.swift */,
 				BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */,
+				498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */,
+				B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */,
+				AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */,
 				A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */,
 				APVT001 /* MessageAttachmentPreviewTests.swift */,
 				ACT01 /* AnnounceClassificationTests.swift */,
@@ -1398,6 +1419,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3007EA9DFE6E9C7445D1977B /* PeerContactSheet.swift in Sources */,
+				2FAC68C81FFB2F5877849D40 /* DirectionsLauncher.swift in Sources */,
+				EC3A6E57174A92CF82D2D167 /* PeerLocationFormatting.swift in Sources */,
 				9C2C61E20925DB726EC2C934 /* ColumbaApp.swift in Sources */,
 				BBF80EA2BC42E6E7FF17A171 /* Theme.swift in Sources */,
 				89551A07A2FB8693E6C465FC /* ChatsViewModel.swift in Sources */,
@@ -1581,6 +1605,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7BC38A40688391B27CAF196D /* PeerContactSheet.swift in Sources */,
+				EC11D7B3ACB169889DFDCAD6 /* DirectionsLauncher.swift in Sources */,
+				60CC574F0906D247788E05C0 /* PeerLocationFormatting.swift in Sources */,
 				BGPSYNCBUILD001 /* BackgroundPropagationSync.swift in Sources */,
 				001 /* ColumbaApp.swift in Sources */,
 				002 /* Theme.swift in Sources */,
@@ -1716,6 +1743,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				47B4E413633097429123BC2F /* PeerLocationRemovalTests.swift in Sources */,
+				E4FCBD54560B74AC8CCB1C91 /* DirectionsLauncherTests.swift in Sources */,
+				CC067EE77A33341C829CBDE8 /* PeerLocationFormattingTests.swift in Sources */,
 				BGPSYNCTESTBUILD001 /* BackgroundPropagationSyncTests.swift in Sources */,
 				T003 /* MicronParserTests.swift in Sources */,
 				2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */,

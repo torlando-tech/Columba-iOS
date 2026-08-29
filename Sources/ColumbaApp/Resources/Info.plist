@@ -31,6 +31,14 @@
 	<string>Columba shares your location with contacts you explicitly choose, so they can see where you are during an active sharing session.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Columba keeps sharing your location with the contacts you chose even when the app is in the background, so a sharing session you started doesn't silently stop. You can stop sharing at any time from the conversation or from Settings.</string>
+	<!-- The peer map contact sheet offers Google Maps as an external
+	     directions app. canOpenURL() only reports a scheme as installed if
+	     it is declared here (Apple's LSApplicationQueriesSchemes allowlist);
+	     without this entry the Google Maps row never appears in the chooser. -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>comgooglemaps</string>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Columba uses the microphone for encrypted voice calls over the mesh network.</string>
 	<key>UIAppFonts</key>

@@ -24,6 +24,10 @@ struct ChatsView: View {
     let appServices: AppServices
     let messageRepository: MessageRepository
     let notificationObserver: NotificationObserver
+    /// Cross-tab route from the Map tab's peer contact sheet: the tapped
+    /// peer's destination hash. Consumed (and cleared) by this view once the
+    /// conversation resolves - see `consumePeerChatRoute`.
+    @Binding var pendingPeerChat: Data? = nil
 
     // MARK: - State
 
@@ -153,6 +157,12 @@ struct ChatsView: View {
                 )
             }
             await viewModel?.loadConversations()
+            // A route may exist before this view mounts (MainTabView holds it
+            // until ChatsView consumes it), so `.onChange` alone is not enough.
+            await consumePeerChatRoute()
+        }
+        .onChange(of: pendingPeerChat) { _, _ in
+            Task { await consumePeerChatRoute() }
         }
         .alert("Delete Conversation", isPresented: Binding(
             get: { deletingConversation != nil },
@@ -203,6 +213,41 @@ struct ChatsView: View {
         if let conversation = vm.filteredConversations.first(where: { $0.id == hash }) {
             notificationConversation = conversation
         }
+    }
+
+    /// Consume the Map tab's peer-chat route: resolve the peer's conversation
+    /// (creating the row if the peer has only ever shared telemetry and never
+    /// exchanged a message) and push it via the existing `notificationConversation`
+    /// route. Clears `pendingPeerChat` before doing async work so a repeat
+    /// `.onChange` or view rebuild can't double-open the conversation.
+    @MainActor
+    private func consumePeerChatRoute() async {
+        guard let hash = pendingPeerChat else { return }
+        // Clear first: the route is one-shot.
+        pendingPeerChat = nil
+
+        // Resolve the conversation. A telemetry-only peer may have no row yet,
+        // so `ensureConversation` creates it, then we refetch.
+        var record = try? await messageRepository.fetchConversation(hash)
+        if record == nil {
+            try? await messageRepository.ensureConversation(hash, displayName: nil)
+            record = try? await messageRepository.fetchConversation(hash)
+        }
+
+        let conversation: Conversation
+        if let record {
+            conversation = Conversation(from: record)
+        } else {
+            // Ensure failed (DB error) - still open a shell conversation so the
+            // Message tap lands somewhere coherent rather than silently
+            // dropping the user's intent.
+            conversation = Conversation(
+                id: hash.map { String(format: "%02x", $0) }.joined(),
+                destinationHash: hash,
+                lastMessageTimestamp: Date()
+            )
+        }
+        notificationConversation = conversation
     }
 
     // MARK: - Subviews

@@ -15,6 +15,11 @@ import CoreLocation
 struct MapView: View {
     var appServices: AppServices
     var mapHttpEnabled: Bool = true
+    /// Cross-tab route raised by the peer contact sheet's Message button.
+    /// Carries the peer's destination hash up to MainTabView, which switches
+    /// to the Chats tab and hands the hash to ChatsView for opening the
+    /// conversation (session-route precedent: `shouldOpenInterfaceManagement`).
+    var onOpenPeerChat: ((Data) -> Void)? = nil
 
     private var locationSharingManager: LocationSharingManager? {
         appServices.locationSharingManager
@@ -30,6 +35,18 @@ struct MapView: View {
     @State private var offlineMapManager = OfflineMapManager()
     @State private var showShareSheet = false
     @State private var contacts: [ConversationRecord] = []
+    /// The tapped peer's hash. Non-nil presents the contact sheet and
+    /// highlights the pin. Derived from the live `peerLocations` dictionary,
+    /// so the sheet updates in place while telemetry keeps arriving; if the
+    /// peer's entry disappears (cease, stale cleanup, removal) the sheet
+    /// auto-dismisses via `onPeerGone`.
+    @State private var selectedPeerHash: Data?
+    /// The user's own coordinate for distance/direction math, mirrored up
+    /// from the map's userLocation callback.
+    @State private var userCoordinate: CLLocationCoordinate2D?
+    /// Maps-app choices for the directions chooser; non-nil presents the
+    /// "Apple Maps / Google Maps" picker.
+    @State private var directionsProvider: [DirectionsProvider]?
 
     var body: some View {
         NavigationStack {
@@ -37,10 +54,17 @@ struct MapView: View {
             MapLibreMapView(
                 centerOnUser: $centerOnUser,
                 metersPerPixel: $metersPerPixel,
+                selectedPeerHash: $selectedPeerHash,
                 showsUserLocation: locationAuthorized,
                 peerLocations: locationSharingManager.map { Array($0.peerLocations.values) } ?? [],
                 httpEnabled: mapHttpEnabled,
-                isDark: ThemeManager.shared.isDarkMode
+                isDark: ThemeManager.shared.isDarkMode,
+                onPeerTapped: { hash in
+                    selectedPeerHash = hash
+                },
+                onUserLocationChanged: { coordinate in
+                    userCoordinate = coordinate
+                }
             )
             .ignoresSafeArea()
 
@@ -123,6 +147,7 @@ struct MapView: View {
                                 .clipShape(Circle())
                                 .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
                         }
+                        .accessibilityIdentifier("map_center_on_user")
                     }
                     .padding(.trailing, 16)
                     .padding(.bottom, 8)
@@ -150,7 +175,94 @@ struct MapView: View {
             )
             .presentationDetents([.large])
         }
+        .sheet(isPresented: Binding(
+            get: { selectedPeerHash != nil && selectedPeer != nil },
+            set: { if !$0 { clearPeerSelection() } }
+        )) {
+            peerContactSheet
+        }
+        .confirmationDialog(
+            String(localized: "Open Directions in:"),
+            isPresented: Binding(
+                get: { directionsProvider != nil },
+                set: { if !$0 { directionsProvider = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            ForEach(directionsProvider ?? []) { provider in
+                Button(provider.name) {
+                    let chosen = provider
+                    directionsProvider = nil
+                    directionsLauncher.open(chosen)
+                }
+            }
+            Button(String(localized: "Cancel"), role: .cancel) {
+                directionsProvider = nil
+            }
+        }
         } // NavigationStack
+    }
+
+    // MARK: - Peer contact sheet (tappable pin)
+
+    /// The live peer behind `selectedPeerHash`. Re-derived on every update so
+    /// a newer telemetry tick refreshes the sheet in place while it is open.
+    private var selectedPeer: PeerLocation? {
+        guard let hash = selectedPeerHash else { return nil }
+        return locationSharingManager?.peerLocations[hash]
+    }
+
+    /// Auto-dismiss when the selected peer's entry disappears from
+    /// `peerLocations` (cease signal, stale cleanup, or Remove from map).
+    /// `.onChange` on the derived peer's id fires when the id goes nil too.
+    private var peerContactSheet: some View {
+        Group {
+            if let peer = selectedPeer {
+                PeerContactSheet(
+                    peer: peer,
+                    userCoordinate: userCoordinate,
+                    onDirections: { launchDirections(for: peer) },
+                    onMessage: {
+                        let hash = peer.id
+                        clearPeerSelection()
+                        onOpenPeerChat?(hash)
+                    },
+                    onRemove: {
+                        locationSharingManager?.removePeerLocation(peer.id)
+                        clearPeerSelection()
+                    },
+                    onDismiss: { clearPeerSelection() }
+                )
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .onChange(of: selectedPeer?.id) { _, id in
+            // The peer vanished from the live dictionary while the sheet was
+            // open: lift the selection so the sheet closes itself.
+            if id == nil, selectedPeerHash != nil {
+                clearPeerSelection()
+            }
+        }
+    }
+
+    private func clearPeerSelection() {
+        selectedPeerHash = nil
+    }
+
+    /// Directions button: one installed maps app → launch it directly (fewer
+    /// taps); both installed → let the user choose (Apple Maps first).
+    private func launchDirections(for peer: PeerLocation) {
+        let coordinate = CLLocationCoordinate2D(latitude: peer.latitude, longitude: peer.longitude)
+        let providers = directionsLauncher.providers(for: coordinate)
+        if providers.count == 1 {
+            directionsLauncher.open(providers[0])
+        } else {
+            directionsProvider = providers
+        }
+    }
+
+    private var directionsLauncher: DirectionsLauncher {
+        DirectionsLauncher()
     }
 
     private func loadContacts() async {

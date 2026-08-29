@@ -1418,6 +1418,69 @@
           }
         }
       }
+    },
+    "north": {
+      "comment": "Compass direction shown next to a peer pin distance in the map contact sheet."
+    },
+    "northeast": {
+      "comment": "Compass direction shown next to a peer pin distance in the map contact sheet."
+    },
+    "east": {
+      "comment": "Compass direction shown next to a peer pin distance in the map contact sheet."
+    },
+    "southeast": {
+      "comment": "Compass direction shown next to a peer pin distance in the map contact sheet."
+    },
+    "south": {
+      "comment": "Compass direction shown next to a peer pin distance in the map contact sheet."
+    },
+    "southwest": {
+      "comment": "Compass direction shown next to a peer pin distance in the map contact sheet."
+    },
+    "west": {
+      "comment": "Compass direction shown next to a peer pin distance in the map contact sheet."
+    },
+    "northwest": {
+      "comment": "Compass direction shown next to a peer pin distance in the map contact sheet."
+    },
+    "Location unknown": {
+      "comment": "Distance line in the map contact sheet when the user has not granted or is not yet providing a location."
+    },
+    "Updated just now": {
+      "comment": "Relative last-update line for a peer location that arrived in the last few seconds."
+    },
+    "Updated %llds ago": {
+      "comment": "Relative last-update line, seconds. %lld is the whole-second count."
+    },
+    "Updated %lldm ago": {
+      "comment": "Relative last-update line, minutes. %lld is the whole-minute count."
+    },
+    "Updated %lldh ago": {
+      "comment": "Relative last-update line, hours. %lld is the whole-hour count."
+    },
+    "Updated %lldd ago": {
+      "comment": "Relative last-update line, days. %lld is the whole-day count."
+    },
+    "Stale": {
+      "comment": "Badge on the profile icon in the map contact sheet when the peer location is outside the freshness window."
+    },
+    "Directions": {
+      "comment": "Action button label in the map peer contact sheet."
+    },
+    "Message": {
+      "comment": "Action button label in the map peer contact sheet; routes to the peer chat."
+    },
+    "Remove from map": {
+      "comment": "Action button label in the map peer contact sheet; hides this peer until it reports again."
+    },
+    "Open Directions in:": {
+      "comment": "Title of the confirmation dialog choosing the directions app when both Apple Maps and Google Maps are available."
+    },
+    "Apple Maps": {
+      "comment": "Name of the Apple Maps option in the directions chooser."
+    },
+    "Google Maps": {
+      "comment": "Name of the Google Maps option in the directions chooser."
     }
   },
   "version": "1.0"

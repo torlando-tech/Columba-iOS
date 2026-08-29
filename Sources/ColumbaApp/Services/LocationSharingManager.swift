@@ -284,6 +284,25 @@ public final class LocationSharingManager: NSObject {
         activePeers.contains(peerHash)
     }
 
+    /// Drop a peer's pin from the map (the contact sheet's "Remove from
+    /// map" action for stale peers).
+    ///
+    /// This clears the in-memory `peerLocations` entry only - it is NOT a
+    /// block. A peer that is still transmitting re-announces itself on its
+    /// next telemetry tick and its pin reappears (matching Android's
+    /// reappear-on-resume behavior); a peer that sends CEASE (or whose
+    /// sharing expires) disappears for good. No persistence is involved:
+    /// `peerLocations` is in-memory only (only *outgoing* sharing sessions
+    /// are persisted via `persistActivePeers`). If peer locations ever gain
+    /// persistence, removal must delete the stored row here too.
+    ///
+    /// - Parameter peerHash: 16-byte destination hash of the peer
+    public func removePeerLocation(_ peerHash: Data) {
+        guard peerLocations.removeValue(forKey: peerHash) != nil else { return }
+        let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
+        logger.info("Removed peer \(hex) from map (user action)")
+    }
+
     /// Handle incoming telemetry from a peer.
     ///
     /// - Parameters:
