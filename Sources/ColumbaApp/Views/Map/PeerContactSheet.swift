@@ -64,10 +64,22 @@ struct PeerContactSheet: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
+                        // `peer_sheet_name` lives on the name Text itself, NOT
+                        // on the sheet root. Putting it on the root together
+                        // with `.accessibilityElement(children: .contain)`
+                        // made the whole sheet one accessibility element: the
+                        // container's identifier was inherited by every
+                        // descendant (all buttons reported
+                        // `peer_sheet_name`) and the buttons' own
+                        // identifiers (`peer_sheet_message` etc.) never
+                        // surfaced, so Maestro could not address them. The
+                        // name Text is the stable element the interop suite
+                        // waits on to confirm the sheet presented.
                         Text(displayName)
                             .font(.title3.bold())
                             .foregroundStyle(Theme.textPrimary)
                             .lineLimit(1)
+                            .accessibilityIdentifier("peer_sheet_name")
                         if peer.isStale {
                             Text(String(localized: "Stale"))
                                 .font(.caption2.weight(.medium))
@@ -159,9 +171,15 @@ struct PeerContactSheet: View {
         }
         .padding(.bottom, 16)
         .background(Theme.backgroundPrimary)
-        .accessibilityIdentifier("peer_sheet_name")
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text(displayName))
+        // No `.accessibilityElement(children: .contain)` + root
+        // `accessibilityIdentifier` here: that combination collapses the
+        // whole sheet into one accessibility element, hides the buttons'
+        // own identifiers, and stamps the root id onto every descendant
+        // (verified in the live a11y hierarchy: the Directions/Message
+        // rows reported `resource-id: peer_sheet_name` and
+        // `peer_sheet_message`/`peer_sheet_directions`/`peer_sheet_remove`
+        // were absent). Leave the default `.contain`-ish traversal so each
+        // control keeps its own identifier and label.
         .onReceive(ticker) { tick in
             now = tick
         }

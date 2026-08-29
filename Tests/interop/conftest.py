@@ -465,6 +465,12 @@ class Simulator:
             "- tapOn: { text: \"Allow\", optional: true }",
             "- tapOn: { text: \"Don't Allow\", optional: true }",
             "- waitForAnimationToEnd: { timeout: 1500 }",
+        ]
+        # A contact sheet left open by a pin test is modal and covers the
+        # tab bar, so the Chats navigation below would no-op. Dismiss it
+        # first - a no-op when none is open.
+        lines += self._sheet_dismiss_lines()
+        lines += [
             "- back",
             "- waitForAnimationToEnd: { timeout: 800 }",
             "- back",
@@ -803,6 +809,13 @@ class Simulator:
             "- tapOn: { text: \"Allow\", optional: true }",
             "- tapOn: { text: \"Don't Allow\", optional: true }",
             "- waitForAnimationToEnd: { timeout: 1500 }",
+        ]
+        # A contact sheet left open by a previous pin flow is modal: it
+        # covers the tab bar (the "Map" tap below would be a no-op) and the
+        # map_center_on_user FAB (so the camera would never re-center to
+        # this test's city). Dismiss it first - a no-op when none is open.
+        lines += Simulator._sheet_dismiss_lines()
+        lines += [
             "- tapOn:",
             "    text: \"Map\"",
             "    optional: true",
@@ -814,6 +827,38 @@ class Simulator:
                 "- waitForAnimationToEnd: { timeout: 2500 }",
             ]
         return lines
+
+    @staticmethod
+    def _sheet_dismiss_lines() -> list[str]:
+        """Steps that dismiss a leftover `PeerContactSheet` if one is
+        open, harmlessly no-op if not. The pin flows leave the sheet
+        open over the map after a tap, and a modal sheet blocks the
+        `map_center_on_user` FAB (so the camera never re-centers to the
+        next test's city, leaving the offset pin off-screen / out of the
+        a11y tree) and the tab bar (so the attachment tests can't
+        navigate to Chats).
+
+        The sheet uses the default `.medium` detent, so its top edge
+        (drag handle) sits near the vertical middle of the screen. The
+        swipe therefore starts INSIDE the sheet (y: 55%) and drags down:
+        a SwiftUI sheet is dismissed by dragging it down from anywhere on
+        its content. A swipe from y: 12% would land on the map above the
+        medium sheet and pan the map instead of dismissing it (verified:
+        the pin flows' `map_center_on_user` taps were silently hitting
+        the still-open sheet). With no sheet open, a swipe at y: 55%
+        just scrolls the current view, which the centering/navigation
+        steps that follow correct. Idempotent, so it is safe to run at
+        the start of every flow that assumes a clean starting
+        state."""
+        return [
+            "- swipe:",
+            "    direction: DOWN",
+            "    coordinate:",
+            "      x: 50%",
+            "      y: 55%",
+            "    distance: 45%",
+            "- waitForAnimationToEnd: { timeout: 2500 }",
+        ]
 
     def _run_maestro_flow(self, lines: list[str], tag: str, *, timeout: float = 60.0) -> None:
         flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_{tag}_{os.getpid()}.yaml"
