@@ -133,6 +133,22 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         self.assertIn("def get_last_receive_rssi(self)", driver)
         self.assertIn("return rssi if rssi != _RSSI_UNKNOWN else None", driver)
 
+    def test_peer_rssi_never_falls_back_to_discovery_cache(self) -> None:
+        # getPeerRssi must report ONLY a fresh readRSSI() sample from an
+        # established central client. Falling back to lastDiscoveryReport
+        # (scan-time RSSI) would persist and display a stale value for
+        # peripheral-role or disconnected peers, which have no readable
+        # RSSI. Regression: Greptile P2 on PR #190 (stale discovery RSSI).
+        source = BRIDGE.read_text()
+        start = source.index("public func getPeerRssi(address: String)")
+        end = source.index("public func getPeerRole(address: String)")
+        body = source[start:end]
+        # Strip comment lines so the assertion checks the code, not prose.
+        code = "\n".join(l.split("//", 1)[0] for l in body.splitlines())
+        self.assertIn("client.state == .established", code)
+        self.assertIn("client.rssi", code)
+        self.assertNotIn("lastDiscoveryReport", code)
+
     def test_stalled_central_handshake_times_out_and_releases_peer(self) -> None:
         source = BRIDGE.read_text()
         self.assertIn("private let connectionTimeout: TimeInterval = 30.0", source)
