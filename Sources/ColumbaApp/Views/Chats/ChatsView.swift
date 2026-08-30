@@ -275,16 +275,26 @@ struct ChatsView: View {
         // for its window and re-runs this check at settle
         // (consumePeerChatRoute), so the deferred tap is still delivered -
         // it just must not race the peer push now.
-        if let conversation = vm.conversations.first(where: { $0.id == hash }),
-           NotificationService.pendingConversationHash == hash,
-           !isResolvingPeerChat {
-            NotificationService.pendingConversationHash = nil
-            notificationConversation = conversation
+        guard let conversation = vm.conversations.first(where: { $0.id == hash }),
+              NotificationService.pendingConversationHash == hash,
+              !isResolvingPeerChat else {
+            // The slot now belongs to a newer tap (or a peer route owns
+            // navigation). If a newer tap owns it, route it now - a no-op
+            // refresh fires no list-change callback, so waiting for the
+            // next trigger would strand it. If a peer route owns it, this
+            // returns immediately and the route delivers the tap at settle.
+            if NotificationService.pendingConversationHash != nil,
+               NotificationService.pendingConversationHash != hash {
+                await checkPendingNotification()
+            }
+            // Otherwise the row is still not in storage, or a peer route is
+            // mid-resolution: leave the slot intact so the peer-route
+            // settle, the next list change, or an activation retries
+            // instead of dropping the tap.
+            return
         }
-        // Otherwise the row is still not in storage, a newer tap owns the
-        // slot, or a peer route is mid-resolution: leave the slot intact so
-        // the peer-route settle, the next list change, or an activation
-        // retries instead of dropping the tap.
+        NotificationService.pendingConversationHash = nil
+        notificationConversation = conversation
     }
 
     /// Consume the Map tab's peer-chat route: resolve the peer's conversation

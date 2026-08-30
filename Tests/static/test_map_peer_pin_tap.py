@@ -263,7 +263,16 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         # cases the stale continuation must not assign the destination.
         self.assertRegex(
             self.chats_view,
-            r"if let conversation = vm\.conversations\.first\(where: \{ \$0\.id == hash \}\),\s*\n\s*NotificationService\.pendingConversationHash == hash,\s*\n\s*!isResolvingPeerChat \{",
+            r"guard let conversation = vm\.conversations\.first\(where: \{ \$0\.id == hash \}\),\s*\n\s*NotificationService\.pendingConversationHash == hash,\s*\n\s*!isResolvingPeerChat else \{",
+        )
+        # Handoff: when a NEWER tap owns the slot, the stale continuation
+        # re-runs the check for the current hash (bounded: each recursive
+        # call only happens for a different hash, so the newest tap's own
+        # call owns the slot and stops the chain) - otherwise a no-op
+        # refresh would strand the newer tap until an unrelated trigger.
+        self.assertRegex(
+            self.chats_view,
+            r"if NotificationService\.pendingConversationHash != nil,\s*\n\s*NotificationService\.pendingConversationHash != hash \{\s*\n\s*await checkPendingNotification\(\)\s*\n\s*\}",
         )
         self.assertIn("NotificationService.pendingConversationHash = nil", check_body)
         # The retry trigger observes the canonical list (an active search
