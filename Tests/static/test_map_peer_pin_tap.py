@@ -12,7 +12,9 @@ the Maestro interop flow cannot fully cover on their own:
 - MapView presents the PeerContactSheet, wires Directions / Message /
   Remove, and exposes the onOpenPeerChat cross-tab route.
 - MainTabView holds the pendingPeerChat state and switches to the Chats tab.
-- ChatsView consumes the route via the notificationConversation push.
+- ChatsView consumes the route via a dedicated `peerConversation` push
+  (never the shared notification route, which a concurrent notification
+  tap owns) and defers notifications while the route resolves.
 - LocationSharingManager implements removePeerLocation and the non-iOS
   Compat.swift stub keeps the API available for cross-platform code.
 - Every new Swift file is registered in the hand-maintained pbxproj
@@ -200,26 +202,42 @@ class MapPeerPinTapContractTests(unittest.TestCase):
             re.DOTALL,
         )
 
-    def test_chats_view_consumes_route_via_notification_conversation(self):
+    def test_chats_view_consumes_route_via_peer_conversation_route(self):
         # A @Binding property CANNOT take `= nil` (the memberwise init
         # parameter is Binding<Data?>, not Data?), so the declaration must
         # have no default.
         self.assertIn("@Binding var pendingPeerChat: Data?\n", self.chats_view)
         self.assertNotIn("@Binding var pendingPeerChat: Data? = nil", self.chats_view)
         self.assertIn("private func consumePeerChatRoute() async", self.chats_view)
-        # One-shot: clear before the async work.
+        # One-shot: clear before the async work; a route already resolving
+        # is never re-entered (double-open guard).
         self.assertRegex(
             self.chats_view,
-            r"guard let hash = pendingPeerChat else \{ return \}\s*\n\s*// Clear first.*\n\s*pendingPeerChat = nil",
+            r"guard let hash = pendingPeerChat, !isResolvingPeerChat else \{ return \}\s*\n\s*// Clear first.*\n\s*pendingPeerChat = nil",
             re.DOTALL,
         )
         # Telemetry-only peers get a conversation row created, then pushed
-        # through the existing notification-conversation route.
+        # through the dedicated peer-conversation route.
         self.assertIn(
             "messageRepository.ensureConversation(hash, displayName: nil)",
             self.chats_view,
         )
-        self.assertIn("notificationConversation = conversation", self.chats_view)
+        # Race fix: the async peer route pushes its OWN destination state,
+        # so a notification tap (or vice versa) can never make the last
+        # async assignment win a single shared binding.
+        self.assertIn("@State private var peerConversation: Conversation?", self.chats_view)
+        self.assertIn("@State private var isResolvingPeerChat: Bool = false", self.chats_view)
+        self.assertIn(".navigationDestination(item: $peerConversation)", self.chats_view)
+        self.assertIn("peerConversation = conversation", self.chats_view)
+        # The peer route body must never touch the notification route state.
+        route_body = (
+            self.chats_view.split("private func consumePeerChatRoute() async")[1]
+            .split("\n    // MARK:")[0]
+        )
+        self.assertNotIn("notificationConversation", route_body)
+        # While the route resolves (or after it pushes), a notification tap
+        # defers instead of competing for navigation.
+        self.assertIn("if isResolvingPeerChat || peerConversation != nil {", self.chats_view)
 
     # MARK: - Removal + non-iOS stub
 
