@@ -507,6 +507,9 @@ struct MessageDetailView: View {
 
     private func snrCard(_ snr: Double) -> some View {
         let (quality, color): (String, Color) = {
+            // Five tiers, matching Android's `SignalQualityInfo.getSnrInfo`
+            // thresholds (>10 / 5-10 / 0-5 / -5-0 / <-5) for cross-platform
+            // parity.
             switch snr {
             case 10...:
                 return ("Excellent quality", .green)
@@ -514,8 +517,10 @@ struct MessageDetailView: View {
                 return ("Good quality", .green)
             case 0..<5:
                 return ("Fair quality", .orange)
-            default:
+            case -5..<0:
                 return ("Poor quality", .red)
+            default:
+                return ("Very poor quality", .red)
             }
         }()
 

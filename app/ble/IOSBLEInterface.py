@@ -77,6 +77,31 @@ class IOSBLEInterface(BLEInterface):
 
         RNS.log(f"iOS BLE Interface '{self.name}' initialized", RNS.LOG_INFO)
 
+    def get_rssi(self):
+        """Get the RSSI of the most recently received message, in dBm.
+
+        Called at message-delivery time by the Python bridge's
+        `_signal_metrics` to extract a signal-strength metric for the
+        receiving-interface card. Mirrors Android's
+        `AndroidBLEInterface.get_rssi()` -> `driver.get_last_receive_rssi()`.
+
+        Returns:
+            RSSI in dBm (negative int), or None when unavailable.
+
+        Note:
+            iOS BLE does not provide per-packet RSSI like RNode hardware.
+            This returns the last known connection RSSI from the Swift
+            bridge, which is updated from `readRSSI()` polling on the
+            established central-side link (falling back to the last
+            scan-time discovery report). Returns None for peripheral-role
+            peers, for which Core Bluetooth exposes no RSSI — the
+            "dependent on BLE role" behavior called out in the issue.
+        """
+        driver = getattr(self, "driver", None)
+        if driver is None:
+            return None
+        return driver.get_last_receive_rssi()
+
 
 # Required by Reticulum's external-interface loader.
 interface_class = IOSBLEInterface

@@ -405,7 +405,7 @@ class NoMessageContentInLogsTests(unittest.TestCase):
         source = APPSERVICES.read_text(encoding="utf-8")
         case = re.search(
             r"case \.inbound\(let sourceHash, let messageHash, let content, let title, "
-            r"let fieldsPacked, let method, let t\):\n"
+            r"let fieldsPacked, let method, let rssi, let snr, let t\):\n"
             r"(?P<body>.*?)\n            guard let data = Data\(hexString: sourceHash\)",
             source,
             re.DOTALL,

@@ -114,15 +114,24 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         self.assertIn("slot: .onMtuNegotiated", central_migration)
         self.assertIn("args: [address, client.mtu]", central_migration)
 
-    def test_python_can_query_native_peer_role_and_mtu(self) -> None:
+    def test_python_can_query_native_peer_role_mtu_and_rssi(self) -> None:
         bindings = BINDINGS.read_text()
         driver = DRIVER.read_text()
-        for symbol in ("columba_ble_get_peer_role", "columba_ble_get_peer_mtu"):
+        for symbol in (
+            "columba_ble_get_peer_role",
+            "columba_ble_get_peer_mtu",
+            "columba_ble_get_peer_rssi",
+        ):
             self.assertIn(f'@_cdecl("{symbol}")', bindings)
             self.assertIn(f'"{symbol}"', driver)
         self.assertIn("def get_peer_mtu(self, address: str)", driver)
         self.assertIn('return "central"', driver)
         self.assertIn('return "peripheral"', driver)
+        # The RSSI query must resolve the Int32.min "unknown" sentinel to
+        # None so the detail cards stay hidden when no sample is available.
+        self.assertIn("def get_peer_rssi(self, address: str)", driver)
+        self.assertIn("def get_last_receive_rssi(self)", driver)
+        self.assertIn("return rssi if rssi != _RSSI_UNKNOWN else None", driver)
 
     def test_stalled_central_handshake_times_out_and_releases_peer(self) -> None:
         source = BRIDGE.read_text()

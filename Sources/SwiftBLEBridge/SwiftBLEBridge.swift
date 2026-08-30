@@ -742,7 +742,18 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
         }
     }
     public func getPeerRssi(address: String) -> Int? {
-        queue.sync { lastDiscoveryReport[address]?.rssi }
+        queue.sync {
+            // Prefer the fresh `readRSSI()` sample from an established
+            // central-side GATT client (the same value getConnectionDetails
+            // surfaces for the central role); fall back to the last scan-time
+            // discovery report. Peripheral-role peers have no RSSI — Core
+            // Bluetooth doesn't expose the central's RSSI to us — so they
+            // simply have no gattClients entry and resolve to nil.
+            if let client = gattClients[address] {
+                return client.rssi ?? lastDiscoveryReport[address]?.rssi
+            }
+            return lastDiscoveryReport[address]?.rssi
+        }
     }
     public func getPeerRole(address: String) -> BleConnectionRole? {
         queue.sync {

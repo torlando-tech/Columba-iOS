@@ -184,6 +184,20 @@ public func columba_ble_get_peer_mtu(_ address: UnsafePointer<CChar>?) -> Int32 
     return Int32(SwiftBLEBridge.shared.getPeerMtu(address: addr) ?? 0)
 }
 
+/// Return the most recent RSSI (dBm) for a peer, or `Int32.min` as the
+/// "unknown" sentinel when no sample is available (null pointer, peer not
+/// connected, peripheral-role peer with no readable RSSI, or no sample yet).
+///
+/// A real RSSI is always a small negative dBm value (-30 … -120 in practice),
+/// so `Int32.min` can never be confused with a legitimate reading. The Python
+/// `IOSBLEDriver` maps the sentinel back to `None`.
+@_used
+@_cdecl("columba_ble_get_peer_rssi")
+public func columba_ble_get_peer_rssi(_ address: UnsafePointer<CChar>?) -> Int32 {
+    guard let addr = decodeCString(address) else { return Int32.min }
+    return SwiftBLEBridge.shared.getPeerRssi(address: addr).map(Int32.init) ?? Int32.min
+}
+
 // MARK: - Config
 
 @_used

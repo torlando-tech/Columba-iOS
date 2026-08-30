@@ -423,7 +423,7 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         switch e {
         case let .announce(d, a, asp, pk, ifn, h, t):
             return .announce(destHash: d, appDataHex: a, aspect: asp, publicKeysHex: pk, interfaceName: ifn, hops: h, t: t)
-        case let .inbound(s, mh, c, ti, fh, method, t):
+        case let .inbound(s, mh, c, ti, fh, method, rssi, snr, t):
             // fieldsHex = MessagePack-packed LXMF field map (hex), extracted by
             // rns_bridge.py's delivery callback; decode to the neutral fieldsPacked.
             let deliveryMethod: LXDeliveryMethod?
@@ -434,7 +434,7 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
             case "paper": deliveryMethod = .paper
             default: deliveryMethod = nil
             }
-            return .inbound(sourceHash: s, messageHash: mh, content: c, title: ti, fieldsPacked: (try? fh.hexToData()) ?? Data(), method: deliveryMethod, t: t)
+            return .inbound(sourceHash: s, messageHash: mh, content: c, title: ti, fieldsPacked: (try? fh.hexToData()) ?? Data(), method: deliveryMethod, rssi: rssi, snr: snr, t: t)
         case let .state(s, t):
             return .state(s, t: t)
         case let .delivery(m, s, method, t):

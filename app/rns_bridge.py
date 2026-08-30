@@ -446,6 +446,84 @@ def _inbound_delivery_method_name(message: Any) -> str:
     return ""
 
 
+def _receiving_interface(message: Any) -> Any | None:
+    """Resolve the `RNS.Interface` a message arrived on, best-effort.
+
+    Two sources in priority order (mirrors Columba Android's event_bridge):
+      1. The torlando-tech LXMF fork sets `message.receiving_interface` on
+         inbound opportunistic messages. Upstream LXMF leaves it off entirely,
+         so getattr-guard.
+      2. Fallback to `RNS.Transport.path_table[source_hash][5]` for
+         link-based (DIRECT) deliveries and any case where the LXMF annotation
+         didn't fire — every reachable destination has a path_table entry
+         whose index 5 is the receiving Interface object.
+
+    Returns `None` when neither source yields an interface; the caller treats
+    that as "no signal metrics available" and omits them from the event.
+    """
+    recv_iface = getattr(message, "receiving_interface", None)
+    if recv_iface is not None:
+        return recv_iface
+    source_hash_bytes = getattr(message, "source_hash", None)
+    if source_hash_bytes is None:
+        return None
+    try:
+        path_entry = RNS.Transport.path_table.get(source_hash_bytes)
+        if path_entry is not None and len(path_entry) > 5:
+            return path_entry[5]
+    except Exception as e:  # noqa: BLE001 — fallback is best-effort
+        RNS.log(f"rns_bridge: path_table fallback failed: {e}", RNS.LOG_DEBUG)
+    return None
+
+
+def _signal_metrics(interface_obj: Any) -> tuple[int | None, float | None]:
+    """Extract (rssi, snr) from a receiving `RNS.Interface` at delivery time.
+
+    Mirrors Columba Android's event_bridge `_signal_metrics` plus the legacy
+    `signal_quality.extract_signal_metrics` BLE peer-interface fallback:
+    RNode-class interfaces expose `get_rssi()` + `get_snr()`; TCP / Auto /
+    Backbone interfaces don't, so the result is `(None, None)` for those. BLE
+    peer sub-interfaces (`ble_reticulum.BLEPeerInterface`) don't expose
+    `get_rssi` themselves but carry a `parent_interface` that does, so we try
+    the object itself and then its parent. BLE has no SNR on any platform.
+
+    Best-effort: any attribute-access / call exception falls back to `None`,
+    because a signal-metrics failure must never wedge inbound message delivery.
+    The values are interface-wide "latest received" stats captured at delivery
+    time, not per-packet (same semantics as Android).
+    """
+    rssi = None
+    snr = None
+    if interface_obj is None:
+        return rssi, snr
+    candidates = [interface_obj]
+    parent = getattr(interface_obj, "parent_interface", None)
+    if parent is not None:
+        candidates.append(parent)
+    for candidate in candidates:
+        if rssi is None:
+            get_rssi = getattr(candidate, "get_rssi", None)
+            if callable(get_rssi):
+                try:
+                    v = get_rssi()
+                    if v is not None:
+                        rssi = int(v)
+                except Exception as e:  # noqa: BLE001
+                    RNS.log(f"rns_bridge: get_rssi failed: {e}", RNS.LOG_DEBUG)
+        if snr is None:
+            get_snr = getattr(candidate, "get_snr", None)
+            if callable(get_snr):
+                try:
+                    v = get_snr()
+                    if v is not None:
+                        snr = float(v)
+                except Exception as e:  # noqa: BLE001
+                    RNS.log(f"rns_bridge: get_snr failed: {e}", RNS.LOG_DEBUG)
+        if rssi is not None and snr is not None:
+            break
+    return rssi, snr
+
+
 def _delivery_callback(message: "LXMF.LXMessage") -> None:
     """Fires for every inbound LXMF message routed to our delivery destination."""
     try:
@@ -479,6 +557,14 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
         # targeting; dropping the callback here would lose the whole message.
         RNS.log("Inbound LXMF message has no recoverable wire hash", RNS.LOG_ERROR)
     message_hash = canonical_hash.hex() if canonical_hash is not None else ""
+    # Signal metrics for the receiving interface (RNode: RSSI + SNR; BLE: RSSI
+    # only, and only for the central role that has an RSSI to report; TCP /
+    # Auto / propagated: none). Best-effort — a failure here must not lose the
+    # message, so both fall back to None when the interface is unknown or the
+    # metric is unavailable. Mirrors Columba Android's event_bridge delivery
+    # payload. `receiving_interface`/`receiving_hops` resolution lives in
+    # `_receiving_interface`; the metric extraction lives in `_signal_metrics`.
+    rssi, snr = _signal_metrics(_receiving_interface(message))
     _put(
         "inbound",
         source_hash=src,
@@ -487,6 +573,8 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
         title=title,
         fields_hex=fields_hex,
         method=_inbound_delivery_method_name(message),
+        rssi=rssi,
+        snr=snr,
     )
 
 

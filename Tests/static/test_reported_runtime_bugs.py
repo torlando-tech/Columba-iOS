@@ -121,9 +121,9 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
 
         py_backend = PY_BACKEND.read_text()
         self.assertIsNotNone(re.search(
-            r"case let \.inbound\(s, mh, c, ti, fh, method, t\):.*?"
+            r"case let \.inbound\(s, mh, c, ti, fh, method, rssi, snr, t\):.*?"
             r"\.inbound\(sourceHash: s, messageHash: mh, content: c.*?"
-            r"method: deliveryMethod",
+            r"method: deliveryMethod, rssi: rssi, snr: snr, t: t",
             py_backend,
             re.DOTALL,
         ))
@@ -133,7 +133,8 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             swift_backend,
             r"\.inbound\(sourceHash: message\.sourceHash\.hexHash, "
             r"messageHash: message\.hash\.hexHash, content:.*?"
-            r"method: Self\.mapDeliveryMethod\(message\.method\)",
+            r"method: Self\.mapDeliveryMethod\(message\.method\), "
+            r"rssi: nil, snr: nil, t: Date\(\)\)",
         )
         self.assertIn("case .paper: return .paper", swift_backend)
 
@@ -148,6 +149,9 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         persist_source = persist.group(0)
         self.assertIn("messageHashHex: String", persist_source)
         self.assertIn("method: LXDeliveryMethod?", persist_source)
+        self.assertIn("rssi: Double? = nil, snr: Double? = nil", persist_source)
+        self.assertIn("message.rssi = rssi", persist_source)
+        self.assertIn("message.snr = snr", persist_source)
         self.assertIn("Data(hexString: messageHashHex)", persist_source)
         self.assertIn("parsedHash.count == 32", persist_source)
         self.assertIn("Data([0x00]) + Data(SHA256.hash(data: seed))", persist_source)
@@ -167,9 +171,9 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         self.assertIn('self.deliveryMethod = "paper"', bubble)
         self.assertIsNotNone(re.search(
             r"case \.inbound\(let sourceHash, let messageHash, let content,"
-            r".*?let method, let t\):.*?"
+            r".*?let method, let rssi, let snr, let t\):.*?"
             r"persistInboundFromPython\(sourceHash: data, messageHashHex: messageHash,"
-            r".*?method: method, timestamp: t\)",
+            r".*?method: method, rssi: rssi, snr: snr, timestamp: t\)",
             app_services,
             re.DOTALL,
         ))
