@@ -218,15 +218,15 @@ struct ChatsView: View {
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            checkPendingNotification()
+            Task { await checkPendingNotification() }
         }
         #else
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            checkPendingNotification()
+            Task { await checkPendingNotification() }
         }
         #endif
         .onChange(of: viewModel?.filteredConversations) { _, _ in
-            checkPendingNotification()
+            Task { await checkPendingNotification() }
         }
     }
 
@@ -237,7 +237,14 @@ struct ChatsView: View {
     /// check when it settles, so the tap is not lost. (Once the peer
     /// conversation is pushed, a new notification simply stacks on top of
     /// it - ordinary `item:` navigation behavior, no shared state.)
-    private func checkPendingNotification() {
+    ///
+    /// The check is async: it only consumes the pending hash after
+    /// confirming the conversation row exists, refreshing from storage
+    /// first if the in-memory snapshot is stale (a just-arrived message).
+    /// If the row is genuinely absent it restores the hash so a later
+    /// trigger retries instead of dropping the tap.
+    @MainActor
+    private func checkPendingNotification() async {
         guard let hash = NotificationService.pendingConversationHash,
               let vm = viewModel else { return }
         if isResolvingPeerChat {
@@ -247,9 +254,23 @@ struct ChatsView: View {
             // opens (stacking on top of the peer conversation).
             return
         }
+        // Claim the hash up front so concurrent triggers (activation +
+        // list change) cannot double-open the same conversation.
         NotificationService.pendingConversationHash = nil
         if let conversation = vm.filteredConversations.first(where: { $0.id == hash }) {
             notificationConversation = conversation
+            return
+        }
+        // The row may not be in the in-memory snapshot yet (a message that
+        // just arrived): re-read from storage, then look again.
+        await vm.refreshConversations()
+        if let conversation = vm.filteredConversations.first(where: { $0.id == hash }) {
+            notificationConversation = conversation
+        } else {
+            // Not in storage either - restore the hash so the next list
+            // change or activation retries, instead of silently dropping
+            // the user's tap.
+            NotificationService.pendingConversationHash = hash
         }
     }
 
@@ -299,7 +320,7 @@ struct ChatsView: View {
         // (its pending hash left in place). Deliver it now that the peer
         // route has settled, so it stacks on top instead of waiting for an
         // unrelated activation or list change.
-        checkPendingNotification()
+        await checkPendingNotification()
     }
 
     // MARK: - Subviews

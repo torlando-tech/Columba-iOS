@@ -240,7 +240,20 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         # route re-runs the check when it settles (retry at route end).
         self.assertIn("if isResolvingPeerChat {", self.chats_view)
         self.assertNotIn("peerConversation != nil {", self.chats_view)
-        self.assertIn("checkPendingNotification()\n    }", route_body)
+        self.assertIn("await checkPendingNotification()", route_body)
+        # The check only consumes the pending hash after confirming the row
+        # exists: it refreshes from storage against a stale snapshot and
+        # restores the hash if the conversation is genuinely missing, so a
+        # tap can never be permanently discarded.
+        self.assertIn("@MainActor\n    private func checkPendingNotification() async", self.chats_view)
+        check_body = (
+            self.chats_view.split("private func checkPendingNotification() async")[1]
+            .split("\n    /// Consume the Map tab")[0]
+        )
+        self.assertIn("await vm.refreshConversations()", check_body)
+        self.assertIn("NotificationService.pendingConversationHash = hash", check_body)
+        # All call sites drive the async check from a Task.
+        self.assertIn("Task { await checkPendingNotification() }", self.chats_view)
 
     # MARK: - Removal + non-iOS stub
 
