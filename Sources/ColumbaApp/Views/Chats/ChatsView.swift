@@ -24,6 +24,12 @@ struct ChatsView: View {
     let appServices: AppServices
     let messageRepository: MessageRepository
     let notificationObserver: NotificationObserver
+    /// Cross-tab route from the Map tab's peer contact sheet: the tapped
+    /// peer's destination hash. Consumed (and cleared) by this view once the
+    /// conversation resolves - see `consumePeerChatRoute`. (No default: a
+    /// `@Binding` property cannot take `= nil`, since the synthesized
+    /// memberwise init parameter is `Binding<Data?>`, not `Data?`.)
+    @Binding var pendingPeerChat: Data?
 
     // MARK: - State
 
@@ -39,8 +45,21 @@ struct ChatsView: View {
     /// Contact selected for peer details navigation.
     @State private var selectedContact: Contact?
 
-    /// Conversation to navigate to programmatically (e.g. from notification tap).
+    /// Conversation to navigate to from a tapped notification. Owned by
+    /// `checkPendingNotification` (sync) only.
     @State private var notificationConversation: Conversation?
+
+    /// Conversation to navigate to from the Map tab's peer contact sheet.
+    /// Owned by `consumePeerChatRoute` (async) only. Kept separate from
+    /// `notificationConversation` so the asynchronous resolution can never
+    /// clobber a navigation the user started from a notification (or vice
+    /// versa) - see `consumePeerChatRoute`.
+    @State private var peerConversation: Conversation?
+
+    /// Set while the peer-chat route is resolving (between reading
+    /// `pendingPeerChat` and pushing `peerConversation`). A notification
+    /// tapped during that window must not overwrite the in-flight route.
+    @State private var isResolvingPeerChat: Bool = false
 
     /// Conversation pending deletion (confirmation alert).
     @State private var deletingConversation: Conversation?
@@ -140,6 +159,16 @@ struct ChatsView: View {
                     messageRepository: messageRepository
                 )
             }
+            // Dedicated destination for the Map tab's peer-chat route so the
+            // async push below can never fight the notification route for a
+            // single `item:` binding.
+            .navigationDestination(item: $peerConversation) { conversation in
+                MessagingView(
+                    conversation: conversation,
+                    appServices: appServices,
+                    messageRepository: messageRepository
+                )
+            }
         }
         .preferredColorScheme(.dark)
         .tint(Theme.accentColor)
@@ -153,6 +182,12 @@ struct ChatsView: View {
                 )
             }
             await viewModel?.loadConversations()
+            // A route may exist before this view mounts (MainTabView holds it
+            // until ChatsView consumes it), so `.onChange` alone is not enough.
+            await consumePeerChatRoute()
+        }
+        .onChange(of: pendingPeerChat) { _, _ in
+            Task { await consumePeerChatRoute() }
         }
         .alert("Delete Conversation", isPresented: Binding(
             get: { deletingConversation != nil },
@@ -183,25 +218,141 @@ struct ChatsView: View {
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            checkPendingNotification()
+            Task { await checkPendingNotification() }
         }
         #else
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            checkPendingNotification()
+            Task { await checkPendingNotification() }
         }
         #endif
-        .onChange(of: viewModel?.filteredConversations) { _, _ in
-            checkPendingNotification()
+        .onChange(of: viewModel?.conversations) { _, _ in
+            Task { await checkPendingNotification() }
         }
     }
 
     /// Navigate to conversation from a tapped notification.
-    private func checkPendingNotification() {
+    ///
+    /// Deferred while a Map-tab peer-chat route is resolving: the peer
+    /// route owns navigation for that in-flight window and re-runs this
+    /// check when it settles, so the tap is not lost. (Once the peer
+    /// conversation is pushed, a new notification simply stacks on top of
+    /// it - ordinary `item:` navigation behavior, no shared state.)
+    ///
+    /// Lookups use the unfiltered `conversations` list so an active search
+    /// query cannot hide the tapped conversation. The pending slot is only
+    /// consumed by the tap that still owns it (checked again after the
+    /// async refresh), so a stale continuation never opens an older
+    /// conversation over a newer tap, and a row not yet in storage leaves
+    /// the slot intact for the next list change or activation to retry.
+    @MainActor
+    private func checkPendingNotification() async {
         guard let hash = NotificationService.pendingConversationHash,
               let vm = viewModel else { return }
-        NotificationService.pendingConversationHash = nil
-        if let conversation = vm.filteredConversations.first(where: { $0.id == hash }) {
+        if isResolvingPeerChat {
+            // The map route owns navigation for this window. Leave the
+            // pending hash in place - `consumePeerChatRoute` re-runs this
+            // check when it finishes resolving, so the notification still
+            // opens (stacking on top of the peer conversation).
+            return
+        }
+        // Unfiltered lookup: an active search query must not hide the
+        // conversation the notification points at. No suspension between
+        // this read and the clear below, so the claim is race-free.
+        if let conversation = vm.conversations.first(where: { $0.id == hash }) {
+            NotificationService.pendingConversationHash = nil
             notificationConversation = conversation
+            return
+        }
+        // The row may not be in the in-memory snapshot yet (a message that
+        // just arrived): re-read from storage, then look again.
+        await vm.refreshConversations()
+        // Consume and route only if this tap still owns the pending slot.
+        // A newer tap that replaced the slot during the refresh is routed
+        // by its own check; a stale continuation must not open the older
+        // conversation (or briefly replace the newer route). Re-check route
+        // ownership too: `refreshConversations()` above is a suspension, so a
+        // map peer route may have started while it ran. It owns navigation
+        // for its window and re-runs this check at settle
+        // (consumePeerChatRoute), so the deferred tap is still delivered -
+        // it just must not race the peer push now.
+        guard let conversation = vm.conversations.first(where: { $0.id == hash }),
+              NotificationService.pendingConversationHash == hash,
+              !isResolvingPeerChat else {
+            // The slot now belongs to a newer tap (or a peer route owns
+            // navigation). If a newer tap owns it, route it now - a no-op
+            // refresh fires no list-change callback, so waiting for the
+            // next trigger would strand it. If a peer route owns it, this
+            // returns immediately and the route delivers the tap at settle.
+            if NotificationService.pendingConversationHash != nil,
+               NotificationService.pendingConversationHash != hash {
+                await checkPendingNotification()
+            }
+            // Otherwise the row is still not in storage, or a peer route is
+            // mid-resolution: leave the slot intact so the peer-route
+            // settle, the next list change, or an activation retries
+            // instead of dropping the tap.
+            return
+        }
+        NotificationService.pendingConversationHash = nil
+        notificationConversation = conversation
+    }
+
+    /// Consume the Map tab's peer-chat route: resolve the peer's conversation
+    /// (creating the row if the peer has only ever shared telemetry and never
+    /// exchanged a message) and push it via the dedicated `peerConversation`
+    /// route - never the shared notification route, which a concurrent
+    /// notification tap could be using. Clears `pendingPeerChat` before doing
+    /// async work so a repeat `.onChange` or view rebuild can't double-open
+    /// the conversation.
+    @MainActor
+    private func consumePeerChatRoute() async {
+        guard let hash = pendingPeerChat, !isResolvingPeerChat else { return }
+        // Clear first: the route is one-shot.
+        pendingPeerChat = nil
+        // Flag the in-flight window so a notification tapped mid-resolution
+        // (checkPendingNotification) defers instead of competing.
+        isResolvingPeerChat = true
+
+        // Resolve the conversation. A telemetry-only peer may have no row yet,
+        // so `ensureConversation` creates it, then we refetch.
+        var record = try? await messageRepository.fetchConversation(hash)
+        if record == nil {
+            try? await messageRepository.ensureConversation(hash, displayName: nil)
+            record = try? await messageRepository.fetchConversation(hash)
+        }
+
+        let conversation: Conversation
+        if let record {
+            conversation = Conversation(from: record)
+        } else {
+            // Ensure failed (DB error) - still open a shell conversation so the
+            // Message tap lands somewhere coherent rather than silently
+            // dropping the user's intent.
+            conversation = Conversation(
+                id: hash.toHex(),
+                destinationHash: hash,
+                lastMessageTimestamp: Date()
+            )
+        }
+        // Peer route owns this state exclusively, so no concurrent writer can
+        // overwrite the push (unlike the shared notification route).
+        peerConversation = conversation
+        isResolvingPeerChat = false
+
+        // A notification tapped during the resolution window was deferred
+        // (its pending hash left in place). Deliver it now that the peer
+        // route has settled, so it stacks on top instead of waiting for an
+        // unrelated activation or list change.
+        await checkPendingNotification()
+
+        // A second Map Message tapped while this route was resolving was
+        // rejected by the in-flight guard and left in `pendingPeerChat`.
+        // Its only other trigger (`.onChange`) needs a fresh change, so
+        // retry here at settle - otherwise it is stranded. Bounded: each
+        // pass clears a non-nil slot, so the recursion stops when the
+        // queue is empty.
+        if pendingPeerChat != nil {
+            await consumePeerChatRoute()
         }
     }
 

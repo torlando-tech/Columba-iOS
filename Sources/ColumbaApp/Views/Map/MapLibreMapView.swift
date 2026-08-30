@@ -27,10 +27,21 @@ func mapStyleURL(forDarkMode dark: Bool) -> URL {
 struct MapLibreMapView: UIViewRepresentable {
     @Binding var centerOnUser: Bool
     @Binding var metersPerPixel: Double
+    /// The peer hash whose pin is currently selected (drives the contact
+    /// sheet in MapView and the map's selection highlight).
+    @Binding var selectedPeerHash: Data?
     var showsUserLocation: Bool
     var peerLocations: [PeerLocation]
     var httpEnabled: Bool
     var isDark: Bool
+    /// Called on the main thread when the user taps a peer pin. MapView
+    /// sets `selectedPeerHash`, which both presents the contact sheet and
+    /// re-asserts the selection highlight from `updateUIView`.
+    var onPeerTapped: ((Data) -> Void)?
+    /// Mirrors `MLNMapView.userLocation?.coordinate` up to SwiftUI so the
+    /// contact sheet can compute distance/direction before the map has
+    /// rendered a fix.
+    var onUserLocationChanged: ((CLLocationCoordinate2D?) -> Void)?
 
     func makeUIView(context: Context) -> MLNMapView {
         // Set up network delegate to block HTTP when toggle is off.
@@ -67,6 +78,8 @@ struct MapLibreMapView: UIViewRepresentable {
 
         // Update network blocking state when HTTP toggle changes
         context.coordinator.httpEnabled = httpEnabled
+        context.coordinator.onPeerTapped = onPeerTapped
+        context.coordinator.onUserLocationChanged = onUserLocationChanged
 
         // Swap style URL when color scheme changes; lastStyleURL avoids
         // a no-op assignment (which would still trigger a reload) on every
@@ -89,6 +102,11 @@ struct MapLibreMapView: UIViewRepresentable {
 
         // Update peer annotations
         updatePeerAnnotations(on: mapView, coordinator: context.coordinator)
+        // Keep the map's selection coherent across peer churn: re-assert the
+        // highlight when a newer telemetry tick rebuilt the selected peer's
+        // annotation, and clear it when the selection was lifted (sheet
+        // dismissed, peer removed, stale pin vanished).
+        updateSelection(on: mapView, coordinator: context.coordinator)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -146,6 +164,31 @@ struct MapLibreMapView: UIViewRepresentable {
         }
     }
 
+    /// Keep MapLibre's built-in selection highlight in sync with the
+    /// SwiftUI-owned `selectedPeerHash`. Selection is keyed on the peer hash
+    /// (the source of truth), never on the annotation object: MapLibre
+    /// reuses and rebuilds annotation views on every telemetry tick, so an
+    /// object-identity-based selection can go stale. Also drops the highlight
+    /// when the selection is cleared (sheet dismissed, peer removed, stale
+    /// pin vanished) so a dimmed ghost pin can't linger.
+    private func updateSelection(on mapView: MLNMapView, coordinator: Coordinator) {
+        if let selectedHash = selectedPeerHash,
+           let annotation = coordinator.peerAnnotations[selectedHash] {
+            // No-op when the same annotation is already selected: a newer
+            // telemetry tick for the selected peer re-runs this path and we
+            // must not restart the selection animation on every update.
+            if annotation !== coordinator.lastSelectedAnnotation {
+                mapView.selectAnnotation(annotation, animated: true, completionHandler: nil)
+                coordinator.lastSelectedAnnotation = annotation
+            }
+        } else if let last = coordinator.lastSelectedAnnotation {
+            if mapView.selectedAnnotations.contains(where: { $0 === last }) {
+                mapView.deselectAnnotation(last, animated: true)
+            }
+            coordinator.lastSelectedAnnotation = nil
+        }
+    }
+
     // MARK: - Coordinator
 
     final class Coordinator: NSObject, MLNMapViewDelegate, MLNNetworkConfigurationDelegate {
@@ -162,6 +205,17 @@ struct MapLibreMapView: UIViewRepresentable {
 
         /// Tracks peer annotations by hash for efficient updates.
         var peerAnnotations: [Data: PeerPointAnnotation] = [:]
+
+        /// Fired when the user taps a peer pin (main thread).
+        var onPeerTapped: ((Data) -> Void)?
+
+        /// Mirrors the map's user-location coordinate up to SwiftUI.
+        var onUserLocationChanged: ((CLLocationCoordinate2D?) -> Void)?
+
+        /// Last annotation the representable selected programmatically.
+        /// Guards against re-selecting the same object every tick (which
+        /// would restart the selection animation on every peer update).
+        var lastSelectedAnnotation: MLNAnnotation?
 
         init(metersPerPixel: Binding<Double>) {
             _metersPerPixel = metersPerPixel
@@ -196,11 +250,38 @@ struct MapLibreMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, didUpdate userLocation: MLNUserLocation?) {
-            guard !didCenterOnFirstLocation,
-                  let coordinate = userLocation?.coordinate,
+            let coordinate = userLocation?.coordinate
+            let valid = coordinate.flatMap { CLLocationCoordinate2DIsValid($0) ? $0 : nil }
+            onUserLocationChanged?(valid)
+            guard !didCenterOnFirstLocation, let coordinate,
                   CLLocationCoordinate2DIsValid(coordinate) else { return }
             didCenterOnFirstLocation = true
             mapView.setCenter(coordinate, zoomLevel: 13, animated: true)
+        }
+
+        // MARK: - Annotation selection (peer pin taps)
+
+        /// MapLibre annotation views are tappable by default (`enabled` is
+        /// YES); this reports the tapped peer up to SwiftUI, which presents
+        /// the contact sheet and re-asserts the selection highlight.
+        func mapView(_ mapView: MLNMapView, didSelect annotation: MLNAnnotation) {
+            guard let peerAnnotation = annotation as? PeerPointAnnotation else { return }
+            onPeerTapped?(peerAnnotation.peerHash)
+        }
+
+        func mapView(_ mapView: MLNMapView, didDeselect annotation: MLNAnnotation) {
+            // MapLibre deselects the previous pin when a new one is tapped;
+            // the SwiftUI binding (the source of truth) already points at the
+            // newly selected peer, so there is nothing to mirror back. This
+            // hook exists so a future "tap empty map to close the sheet"
+            // behavior has a natural place to clear `selectedPeerHash`.
+        }
+
+        /// Suppress the built-in MapLibre callout bubble: the contact sheet
+        /// (driven by `onPeerTapped`) is the only selection UI, so a
+        /// redundant title/subtitle callout would flash on every tap.
+        func mapView(_ mapView: MLNMapView, annotationCanShowCallout annotation: MLNAnnotation) -> Bool {
+            return annotation is PeerPointAnnotation ? false : true
         }
 
         func mapView(_ mapView: MLNMapView, viewFor annotation: MLNAnnotation) -> MLNAnnotationView? {
@@ -215,6 +296,17 @@ struct MapLibreMapView: UIViewRepresentable {
                 annotationView = MLNAnnotationView(annotation: annotation, reuseIdentifier: reuseId)
                 annotationView?.frame = CGRect(x: 0, y: 0, width: 32, height: 32)
             }
+            // XCUITest/Maestro addressability: the pin itself is a real UIView
+            // (unlike the GL-drawn map), so the interop suite can tap it
+            // directly instead of guessing where the marker landed.
+            // `accessibilityElement = true` + a label are required for the
+            // view to be reachable at all - an identifier alone is ignored by
+            // the accessibility tree (the view is reused, so set these on
+            // every refresh, not just first creation).
+            annotationView?.accessibilityIdentifier = "peer_pin_\(peerAnnotation.peerHash.toHex())"
+            annotationView?.isAccessibilityElement = true
+            annotationView?.accessibilityLabel = peerAnnotation.title ?? "Peer location"
+            annotationView?.accessibilityTraits = .button
 
             // Create marker circle with MDI icon or initial fallback
             let markerColor: UIColor

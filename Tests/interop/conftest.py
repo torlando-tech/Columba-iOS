@@ -465,6 +465,12 @@ class Simulator:
             "- tapOn: { text: \"Allow\", optional: true }",
             "- tapOn: { text: \"Don't Allow\", optional: true }",
             "- waitForAnimationToEnd: { timeout: 1500 }",
+        ]
+        # A contact sheet left open by a pin test is modal and covers the
+        # tab bar, so the Chats navigation below would no-op. Dismiss it
+        # first - a no-op when none is open.
+        lines += self._sheet_dismiss_lines()
+        lines += [
             "- back",
             "- waitForAnimationToEnd: { timeout: 800 }",
             "- back",
@@ -779,6 +785,223 @@ class Simulator:
             )
         finally:
             flow_path.unlink(missing_ok=True)
+
+    # ---- tappable peer pin (#179) --------------------------------------
+
+    @staticmethod
+    def _map_tab_foreground_lines(*, center_on_user: bool = True) -> list[str]:
+        """Warm-foreground + Map-tab navigation preamble shared by the
+        peer-sheet flows. `stopApp: false` keeps `peerLocations` (in-memory)
+        intact — a cold relaunch would empty it. Same pattern as
+        `assert_peer_pin_visible`.
+
+        When `center_on_user` is set (the default for the pin-tap flows),
+        tap `map_center_on_user` so the camera lands on the simulated fix
+        — which the test sets to the peer's own coordinate — guaranteeing
+        the pin is on-screen and therefore addressable by Maestro. Without
+        this the map center is wherever a prior test / first-fix left it
+        and an off-screen GL annotation is culled out of the a11y tree."""
+        lines = [
+            "appId: " + BUNDLE_ID,
+            "---",
+            "- launchApp: { stopApp: false }",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            "- tapOn: { text: \"Allow\", optional: true }",
+            "- tapOn: { text: \"Don't Allow\", optional: true }",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+        ]
+        # A contact sheet left open by a previous pin flow is modal: it
+        # covers the tab bar (the "Map" tap below would be a no-op) and the
+        # map_center_on_user FAB (so the camera would never re-center to
+        # this test's city). Dismiss it first - a no-op when none is open.
+        lines += Simulator._sheet_dismiss_lines()
+        lines += [
+            "- tapOn:",
+            "    text: \"Map\"",
+            "    optional: true",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+        ]
+        if center_on_user:
+            lines += [
+                "- tapOn: { id: \"map_center_on_user\", optional: true }",
+                "- waitForAnimationToEnd: { timeout: 2500 }",
+            ]
+        return lines
+
+    @staticmethod
+    def _sheet_dismiss_lines() -> list[str]:
+        """Steps that dismiss a leftover `PeerContactSheet` if one is
+        open, harmlessly no-op if not. The pin flows leave the sheet
+        open over the map after a tap, and a modal sheet blocks the
+        `map_center_on_user` FAB (so the camera never re-centers to the
+        next test's city, leaving the offset pin off-screen / out of the
+        a11y tree) and the tab bar (so the attachment tests can't
+        navigate to Chats).
+
+        The sheet uses the default `.medium` detent, so its top edge
+        (drag handle) sits near the vertical middle of the screen. The
+        swipe therefore starts INSIDE the sheet (y: 55%) and drags down:
+        a SwiftUI sheet is dismissed by dragging it down from anywhere on
+        its content. A swipe from y: 12% would land on the map above the
+        medium sheet and pan the map instead of dismissing it (verified:
+        the pin flows' `map_center_on_user` taps were silently hitting
+        the still-open sheet). With no sheet open, a swipe at y: 55%
+        just scrolls the current view, which the centering/navigation
+        steps that follow correct. Idempotent, so it is safe to run at
+        the start of every flow that assumes a clean starting
+        state."""
+        return [
+            "- swipe:",
+            "    direction: DOWN",
+            "    coordinate:",
+            "      x: 50%",
+            "      y: 55%",
+            "    distance: 45%",
+            "- waitForAnimationToEnd: { timeout: 2500 }",
+        ]
+
+    def _run_maestro_flow(self, lines: list[str], tag: str, *, timeout: float = 60.0) -> None:
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_{tag}_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        try:
+            _sh(["maestro", "--device", self.udid, "test", str(flow_path)], timeout=timeout + 30)
+        except subprocess.CalledProcessError as e:
+            pytest.fail(
+                f"Maestro flow {tag!r} failed. stderr:\n{e.stderr or e.stdout}"
+            )
+        finally:
+            flow_path.unlink(missing_ok=True)
+
+    def assert_peer_sheet_open(self, *, pin_id: str, timeout: float = 40.0) -> None:
+        """Tap the peer pin (a11y id `peer_pin_<hex>`) and assert the
+        `PeerContactSheet` presents with its `peer_sheet_name` element.
+
+        Pins the tap → sheet path end-to-end: `MLNAnnotationView`
+        (accessibility element) → `mapView(_:didSelectAnnotation:)` →
+        `onPeerTapped` → `selectedPeerHash` → sheet. The `extendedWaitUntil`
+        on the pin covers the async GL annotation build after the inbound
+        telemetry decodes."""
+        wait_ms = int(timeout * 1000)
+        lines = self._map_tab_foreground_lines()
+        lines += [
+            "- extendedWaitUntil:",
+            "    visible:",
+            f"      id: \"{pin_id}\"",
+            f"    timeout: {wait_ms}",
+            "- tapOn:",
+            f"      id: \"{pin_id}\"",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            "- extendedWaitUntil:",
+            "    visible:",
+            "      id: \"peer_sheet_name\"",
+            f"    timeout: {wait_ms}",
+            "- takeScreenshot: { path: screenshots/peer-sheet }",
+        ]
+        # The flow has two `timeout`-long waits plus a preamble; give the
+        # subprocess a budget that covers both (a slow-but-working map must
+        # not be killed at the first wait's horizon).
+        self._run_maestro_flow(lines, "peer_sheet", timeout=timeout + 30)
+
+    def assert_peer_sheet_message_opens_conversation(
+        self, *, pin_id: str, timeout: float = 40.0
+    ) -> None:
+        """Tap the pin, tap the sheet's Message button, and assert the
+        peer's conversation opened (the `message_composer` input bar is the
+        stable a11y landmark on the messaging screen).
+
+        Pins the cross-tab route: `onOpenPeerChat` → MainTabView switches to
+        the Chats tab and holds `pendingPeerChat` → `consumePeerChatRoute`
+        resolves the conversation (creating the row for a telemetry-only
+        peer) and pushes it via the dedicated `peerConversation` route."""
+        wait_ms = int(timeout * 1000)
+        lines = self._map_tab_foreground_lines()
+        lines += [
+            "- extendedWaitUntil:",
+            "    visible:",
+            f"      id: \"{pin_id}\"",
+            f"    timeout: {wait_ms}",
+            "- tapOn:",
+            f"      id: \"{pin_id}\"",
+            "- extendedWaitUntil:",
+            "    visible:",
+            "      id: \"peer_sheet_message\"",
+            f"    timeout: {wait_ms}",
+            "- takeScreenshot: { path: screenshots/peer-sheet-message }",
+            "- tapOn:",
+            "      id: \"peer_sheet_message\"",
+            "- waitForAnimationToEnd: { timeout: 3000 }",
+            "- extendedWaitUntil:",
+            "    visible:",
+            "      id: \"message_composer\"",
+            f"    timeout: {wait_ms}",
+            "- takeScreenshot: { path: screenshots/peer-sheet-conversation }",
+        ]
+        # Three `timeout`-long waits + preamble; budget covers all of them.
+        self._run_maestro_flow(lines, "peer_sheet_message", timeout=timeout + 60)
+
+    def assert_stale_peer_sheet_removes_pin(
+        self,
+        *,
+        pin_id: str,
+        expect_removed_peer: str,
+        timeout: float = 40.0,
+    ) -> None:
+        """Tap a stale peer's pin, assert the `peer_sheet_remove` action is
+        present (stale-only, Android parity), tap it, and assert the app
+        dropped the pin.
+
+        Pins the removal path: `onRemove` →
+        `LocationSharingManager.removePeerLocation` → `peerLocations`
+        drops the entry → the annotation is removed and the sheet
+        auto-dismisses (its derived peer goes nil). A backdated frame makes
+        the pin stale without waiting out the 5-minute freshness window.
+
+        The drop is asserted off the `[LOC-REMOVE] peer=<hex>` diag line
+        (polling in Python, below) rather than the a11y tree: the pin
+        renders on MapLibre's GL surface, and this Maestro build has no
+        absence assertion (`gone:` is not a valid step property — the flow
+        would be rejected at parse time before any step ran). The diag
+        line is also per-peer, so it is not order-dependent the way the
+        `map_peer_count` badge is."""
+        wait_ms = int(timeout * 1000)
+        lines = self._map_tab_foreground_lines()
+        lines += [
+            "- extendedWaitUntil:",
+            "    visible:",
+            f'      id: "{pin_id}"',
+            f"    timeout: {wait_ms}",
+            "- tapOn:",
+            f'      id: "{pin_id}"',
+            "- extendedWaitUntil:",
+            "    visible:",
+            '      id: "peer_sheet_remove"',
+            f"    timeout: {wait_ms}",
+            "- takeScreenshot: { path: screenshots/peer-sheet-stale }",
+            "- tapOn:",
+            '      id: "peer_sheet_remove"',
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            "- takeScreenshot: { path: screenshots/peer-sheet-removed }",
+        ]
+        # Two `timeout`-long waits + preamble; the `[LOC-REMOVE]` poll is a
+        # separate Python-side wait after the flow returns.
+        self._run_maestro_flow(lines, "peer_sheet_remove", timeout=timeout + 30)
+        self._wait_for_loc_remove(expect_removed_peer, timeout=timeout)
+
+    def _wait_for_loc_remove(self, peer_prefix: str, *, timeout: float = 30.0) -> str:
+        """Block until `removePeerLocation` logs `[LOC-REMOVE] peer=<hex>` for
+        the expected peer (prefix match, same idiom as `_wait_for_loc_recv`).
+        `peer_prefix` is the peer's first hex chars lowercased —
+        `removePeerLocation` logs `peerHash.prefix(4).toHex()`, which for the
+        20-byte Sideband identity is the first 8 hex chars."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for line in reversed(self._tail_diag(800)):
+                if f"[LOC-REMOVE] peer={peer_prefix}" in line:
+                    return line
+            time.sleep(0.4)
+        pytest.fail(
+            f"iOS never logged [LOC-REMOVE] peer={peer_prefix} within {timeout}s"
+        )
 
     @staticmethod
     def _parse_outcome(lines: list[str]) -> Optional[TestSendResult]:

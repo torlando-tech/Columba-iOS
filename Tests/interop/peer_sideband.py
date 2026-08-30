@@ -377,6 +377,7 @@ class SidebandPeer:
         bearing: float = 0.0,
         accuracy: float = 1.0,
         icon: Optional[tuple] = None,
+        last_update: Optional[int] = None,
     ) -> bool:
         """Send a canonical Sideband-format `FIELD_TELEMETRY` blob —
         msgpack-encoded `Telemeter` dict with `SID_TIME` + `SID_LOCATION`.
@@ -409,7 +410,7 @@ class SidebandPeer:
             "speed": speed,
             "bearing": bearing,
             "accuracy": accuracy,
-            "last_update": int(time.time()),
+            "last_update": last_update if last_update is not None else int(time.time()),
         }
         packed = t.packed()
         fields = {LXMF.FIELD_TELEMETRY: packed}

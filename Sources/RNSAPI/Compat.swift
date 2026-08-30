@@ -2252,7 +2252,8 @@ public final class LocationSharingManager: @unchecked Sendable {
         iconAppearance: IconAppearance? = nil
     ) {}
     public func stopAllSharing() async {}
-    public func setBackgroundState(_ isBackground: Bool) {}
+    public func setBackgroundState(_ inBackground: Bool) {}
+    public func removePeerLocation(_ peerHash: Data) {}
 }
 #endif
 

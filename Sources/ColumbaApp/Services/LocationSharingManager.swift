@@ -46,6 +46,13 @@ public struct PeerLocation: Identifiable, Equatable {
     /// Bearing in degrees.
     public var bearing: Double
 
+    /// The peer's coordinate as a single `CLLocationCoordinate2D` value.
+    /// Lets map/directions code treat the pin location as one type instead
+    /// of threading `latitude`/`longitude` doubles separately.
+    public var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
     /// Horizontal accuracy in meters.
     public var accuracy: Double
 
@@ -284,6 +291,32 @@ public final class LocationSharingManager: NSObject {
         activePeers.contains(peerHash)
     }
 
+    /// Drop a peer's pin from the map (the contact sheet's "Remove from
+    /// map" action for stale peers).
+    ///
+    /// This clears the in-memory `peerLocations` entry only - it is NOT a
+    /// block. A peer that is still transmitting re-announces itself on its
+    /// next telemetry tick and its pin reappears (matching Android's
+    /// reappear-on-resume behavior); a peer that sends CEASE (or whose
+    /// sharing expires) disappears for good. No persistence is involved:
+    /// `peerLocations` is in-memory only (only *outgoing* sharing sessions
+    /// are persisted via `persistActivePeers`). If peer locations ever gain
+    /// persistence, removal must delete the stored row here too.
+    ///
+    /// - Parameter peerHash: 16-byte destination hash of the peer
+    public func removePeerLocation(_ peerHash: Data) {
+        guard peerLocations.removeValue(forKey: peerHash) != nil else { return }
+        let hex = peerHash.prefix(4).toHex()
+        logger.info("Removed peer \(hex) from map (user action)")
+        // Test-observable mirror of the removal. The pin is rendered on
+        // MapLibre's GL surface (not in the accessibility tree) and
+        // `peerLocations` is in-memory, so neither the accessibility tree nor
+        // the `map_peer_count` badge (order-dependent across peers) can prove
+        // that *this* pin dropped. The Tests/interop stale-removal case polls
+        // this line to assert the state actually changed.
+        DiagLog.log("[LOC-REMOVE] peer=\(hex)")
+    }
+
     /// Handle incoming telemetry from a peer.
     ///
     /// - Parameters:
@@ -333,7 +366,7 @@ public final class LocationSharingManager: NSObject {
 
         peerLocations[peerHash] = peerLoc
 
-        let hex = peerHash.prefix(4).map { String(format: "%02x", $0) }.joined()
+        let hex = peerHash.prefix(4).toHex()
         logger.info("Updated peer \(hex) location: \(location.latitude), \(location.longitude)")
         // Test-observable mirror of the decoded inbound telemetry. The map
         // marker is rendered on MapLibre's GL surface and isn't reachable

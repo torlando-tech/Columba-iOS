@@ -96,6 +96,14 @@ struct MainTabView: View {
     /// Session-scoped route request raised by the disconnected-interface banner.
     /// Settings consumes it after its navigation stack and interface model exist.
     @State private var shouldOpenInterfaceManagement: Bool = false
+    /// Session-scoped route request raised by the Map tab's peer contact
+    /// sheet ("Message" button): the peer's destination hash. MainTabView
+    /// switches to Chats and hands the hash to ChatsView, which resolves the
+    /// conversation (creating it if the peer has only ever shared telemetry)
+    /// and pushes it via the existing `notificationConversation` route. Held
+    /// here (not on MapView) so the route survives until ChatsView is mounted
+    /// and explicitly clears it - same lifecycle as `shouldOpenInterfaceManagement`.
+    @State private var pendingPeerChat: Data? = nil
     /// Which app-root voice-call cover (if any) is showing, driven off
     /// callManager.callState so a call's UI shows from any tab and survives
     /// navigating away from the chat. A single optional makes the two covers
@@ -130,7 +138,8 @@ struct MainTabView: View {
             ChatsView(
                 appServices: appServices,
                 messageRepository: messageRepository,
-                notificationObserver: notificationObserver
+                notificationObserver: notificationObserver,
+                pendingPeerChat: $pendingPeerChat
             )
             .tabItem {
                 Label(Tab.chats.title, systemImage: Tab.chats.icon)
@@ -154,7 +163,14 @@ struct MainTabView: View {
             // Map Tab
             MapView(
                 appServices: appServices,
-                mapHttpEnabled: mapHttpEnabled
+                mapHttpEnabled: mapHttpEnabled,
+                onOpenPeerChat: { hash in
+                    // The Map tab can't push onto the Chats tab's stack, so the
+                    // request is held on MainTabView (survives until ChatsView
+                    // consumes it) and ChatsView is switched to now.
+                    selectedTab = .chats
+                    pendingPeerChat = hash
+                }
             )
                 .tabItem {
                     Label(Tab.map.title, systemImage: Tab.map.icon)

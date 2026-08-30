@@ -12,6 +12,7 @@ RESOURCES = REPOSITORY_ROOT / "Sources/ColumbaApp/Resources"
 SHIPPING_ENTITLEMENTS = RESOURCES / "ColumbaApp.entitlements"
 MODEL_B_ENTITLEMENTS = RESOURCES / "ColumbaModelBApp.entitlements"
 PROJECT_FILE = REPOSITORY_ROOT / "Columba.xcodeproj/project.pbxproj"
+APP_INFO_PLIST = RESOURCES / "Info.plist"
 SHIPPING_ENTITLEMENTS_EXPECTED = {
     "com.apple.security.application-groups": ["group.network.columba.Columba"],
     "keychain-access-groups": [
@@ -34,12 +35,21 @@ class HostEntitlementsContractTests(unittest.TestCase):
         with MODEL_B_ENTITLEMENTS.open("rb") as plist_file:
             cls.model_b = plistlib.load(plist_file)
         cls.project = PROJECT_FILE.read_text(encoding="utf-8")
+        with APP_INFO_PLIST.open("rb") as plist_file:
+            cls.app_info_plist = plistlib.load(plist_file)
 
     def test_shipping_host_entitlements_match_complete_contract(self) -> None:
         self.assertEqual(self.shipping, SHIPPING_ENTITLEMENTS_EXPECTED)
 
     def test_model_b_host_entitlements_match_complete_contract(self) -> None:
         self.assertEqual(self.model_b, MODEL_B_ENTITLEMENTS_EXPECTED)
+
+    def test_app_plist_whitelists_google_maps_query_scheme(self) -> None:
+        # The directions chooser gates the Google Maps row on
+        # canOpenURL("comgooglemaps://"), which always reports false unless
+        # the scheme is declared here.
+        schemes = self.app_info_plist.get("LSApplicationQueriesSchemes", [])
+        self.assertIn("comgooglemaps", schemes)
 
     def test_app_targets_use_isolated_entitlements(self) -> None:
         for filename in ("ColumbaApp.entitlements", "ColumbaModelBApp.entitlements"):
