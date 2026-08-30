@@ -232,20 +232,19 @@ struct ChatsView: View {
 
     /// Navigate to conversation from a tapped notification.
     ///
-    /// Skipped while a Map-tab peer-chat route is resolving or already
-    /// pushed: `consumePeerChatRoute` owns the peer navigation end to end,
-    /// so a notification tapped during that window cannot make the map
-    /// route's final push land behind the user's finger (or vice versa).
+    /// Deferred while a Map-tab peer-chat route is resolving: the peer
+    /// route owns navigation for that in-flight window and re-runs this
+    /// check when it settles, so the tap is not lost. (Once the peer
+    /// conversation is pushed, a new notification simply stacks on top of
+    /// it - ordinary `item:` navigation behavior, no shared state.)
     private func checkPendingNotification() {
         guard let hash = NotificationService.pendingConversationHash,
               let vm = viewModel else { return }
-        if isResolvingPeerChat || peerConversation != nil {
+        if isResolvingPeerChat {
             // The map route owns navigation for this window. Leave the
-            // pending hash in place - the same `pendingConversationHash`
-            // state already re-runs this check on the next conversation
-            // list change or app activation, so the notification is still
-            // delivered (stacking two destinations is not supported by the
-            // `item:` navigation APIs).
+            // pending hash in place - `consumePeerChatRoute` re-runs this
+            // check when it finishes resolving, so the notification still
+            // opens (stacking on top of the peer conversation).
             return
         }
         NotificationService.pendingConversationHash = nil
@@ -267,9 +266,8 @@ struct ChatsView: View {
         // Clear first: the route is one-shot.
         pendingPeerChat = nil
         // Flag the in-flight window so a notification tapped mid-resolution
-        // (checkPendingNotification) can't push a competing destination.
+        // (checkPendingNotification) defers instead of competing.
         isResolvingPeerChat = true
-        defer { isResolvingPeerChat = false }
 
         // Resolve the conversation. A telemetry-only peer may have no row yet,
         // so `ensureConversation` creates it, then we refetch.
@@ -295,6 +293,13 @@ struct ChatsView: View {
         // Peer route owns this state exclusively, so no concurrent writer can
         // overwrite the push (unlike the shared notification route).
         peerConversation = conversation
+        isResolvingPeerChat = false
+
+        // A notification tapped during the resolution window was deferred
+        // (its pending hash left in place). Deliver it now that the peer
+        // route has settled, so it stacks on top instead of waiting for an
+        // unrelated activation or list change.
+        checkPendingNotification()
     }
 
     // MARK: - Subviews

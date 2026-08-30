@@ -235,9 +235,12 @@ class MapPeerPinTapContractTests(unittest.TestCase):
             .split("\n    // MARK:")[0]
         )
         self.assertNotIn("notificationConversation", route_body)
-        # While the route resolves (or after it pushes), a notification tap
-        # defers instead of competing for navigation.
-        self.assertIn("if isResolvingPeerChat || peerConversation != nil {", self.chats_view)
+        # While the route resolves, a notification tap defers instead of
+        # competing for navigation - but the deferred tap is NOT lost: the
+        # route re-runs the check when it settles (retry at route end).
+        self.assertIn("if isResolvingPeerChat {", self.chats_view)
+        self.assertNotIn("peerConversation != nil {", self.chats_view)
+        self.assertIn("checkPendingNotification()\n    }", route_body)
 
     # MARK: - Removal + non-iOS stub
 
