@@ -225,7 +225,7 @@ struct ChatsView: View {
             Task { await checkPendingNotification() }
         }
         #endif
-        .onChange(of: viewModel?.filteredConversations) { _, _ in
+        .onChange(of: viewModel?.conversations) { _, _ in
             Task { await checkPendingNotification() }
         }
     }
@@ -239,12 +239,11 @@ struct ChatsView: View {
     /// it - ordinary `item:` navigation behavior, no shared state.)
     ///
     /// Lookups use the unfiltered `conversations` list so an active search
-    /// query cannot hide the tapped conversation, and the pending hash is
-    /// only consumed once the row has actually resolved - from the
-    /// in-memory snapshot, or from storage after one refresh when the
-    /// snapshot is stale - so a tap is never silently discarded. A newer
-    /// tap that replaces the pending slot during the refresh is untouched
-    /// (existing single-slot "latest tap wins" semantics).
+    /// query cannot hide the tapped conversation. The pending slot is only
+    /// consumed by the tap that still owns it (checked again after the
+    /// async refresh), so a stale continuation never opens an older
+    /// conversation over a newer tap, and a row not yet in storage leaves
+    /// the slot intact for the next list change or activation to retry.
     @MainActor
     private func checkPendingNotification() async {
         guard let hash = NotificationService.pendingConversationHash,
@@ -267,18 +266,18 @@ struct ChatsView: View {
         // The row may not be in the in-memory snapshot yet (a message that
         // just arrived): re-read from storage, then look again.
         await vm.refreshConversations()
-        if let conversation = vm.conversations.first(where: { $0.id == hash }) {
-            // Only clear the slot if this tap is still the pending one: a
-            // newer tap that arrived during the refresh owns the slot now,
-            // and clearing it would discard that tap.
-            if NotificationService.pendingConversationHash == hash {
-                NotificationService.pendingConversationHash = nil
-            }
+        // Consume and route only if this tap still owns the pending slot.
+        // A newer tap that replaced the slot during the refresh is routed
+        // by its own check; a stale continuation must not open the older
+        // conversation (or briefly replace the newer route).
+        if let conversation = vm.conversations.first(where: { $0.id == hash }),
+           NotificationService.pendingConversationHash == hash {
+            NotificationService.pendingConversationHash = nil
             notificationConversation = conversation
         }
-        // Otherwise the row is not in storage yet: leave the pending slot
-        // (this tap, or a newer one that replaced it) in place so the next
-        // list change or activation retries instead of dropping the tap.
+        // Otherwise the row is still not in storage (or a newer tap owns
+        // the slot): leave the slot intact so the next list change or
+        // activation retries instead of dropping the tap.
     }
 
     /// Consume the Map tab's peer-chat route: resolve the peer's conversation

@@ -245,8 +245,9 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         # has resolved, and never blocks on a stale snapshot: unfiltered
         # lookup, one refresh from storage when the snapshot is stale, and
         # the slot left intact when the row is not in storage yet (retry on
-        # the next trigger) - so a tap is never silently discarded and an
-        # active search query cannot hide the tapped conversation.
+        # the next trigger) - so a tap is never silently discarded, a stale
+        # continuation can't open an older conversation, and an active
+        # search query cannot hide the tapped conversation.
         self.assertIn("@MainActor\n    private func checkPendingNotification() async", self.chats_view)
         check_body = (
             self.chats_view.split("private func checkPendingNotification() async")[1]
@@ -255,10 +256,18 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         self.assertIn("vm.conversations.first(where: { $0.id == hash })", check_body)
         self.assertNotIn("vm.filteredConversations.first(where: { $0.id == hash })", check_body)
         self.assertIn("await vm.refreshConversations()", check_body)
-        # Post-refresh clear is guarded: a newer tap that replaced the
-        # slot during the refresh is never clobbered.
-        self.assertIn("if NotificationService.pendingConversationHash == hash {", check_body)
+        # Post-refresh consume+route is guarded by slot ownership: a newer
+        # tap that replaced the slot during the refresh owns the route, so
+        # the stale continuation must not assign the destination.
+        self.assertRegex(
+            self.chats_view,
+            r"if let conversation = vm\.conversations\.first\(where: \{ \$0\.id == hash \}\),\s*\n\s*NotificationService\.pendingConversationHash == hash \{",
+        )
         self.assertIn("NotificationService.pendingConversationHash = nil", check_body)
+        # The retry trigger observes the canonical list (an active search
+        # can filter it out, which would strand the pending tap).
+        self.assertIn(".onChange(of: viewModel?.conversations) { _, _ in", self.chats_view)
+        self.assertNotIn(".onChange(of: viewModel?.filteredConversations) { _, _ in", self.chats_view)
         # All call sites drive the async check from a Task.
         self.assertIn("Task { await checkPendingNotification() }", self.chats_view)
 
