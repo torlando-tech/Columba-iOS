@@ -149,6 +149,28 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         self.assertIn("client.rssi", code)
         self.assertNotIn("lastDiscoveryReport", code)
 
+    def test_peer_rssi_rejects_stale_poll_samples(self) -> None:
+        # If readRSSI() keeps failing, client.rssi stays unversioned and
+        # silently ages. getPeerRssi must bound sample age (2 poll
+        # intervals) via rssiSampledAt, which didReadRSSI stamps on every
+        # accepted sample. Regression: Greptile P2 iteration 2 on PR #190
+        # ("Cached RSSI remains stale").
+        bridge = BRIDGE.read_text()
+        start = bridge.index("public func getPeerRssi(address: String)")
+        end = bridge.index("public func getPeerRole(address: String)")
+        body = bridge[start:end]
+        code = "\n".join(l.split("//", 1)[0] for l in body.splitlines())
+        self.assertIn("client.rssiSampledAt", code)
+        self.assertIn("2 * rssiPollInterval", code)
+        # Every accepted sample must be versioned at write time.
+        write = bridge.index("gattClients[address]?.rssi = value")
+        self.assertIn(
+            "gattClients[address]?.rssiSampledAt = Date()",
+            bridge[write:write + 200],
+        )
+        client = CLIENT.read_text()
+        self.assertIn("var rssiSampledAt: Date?", client)
+
     def test_stalled_central_handshake_times_out_and_releases_peer(self) -> None:
         source = BRIDGE.read_text()
         self.assertIn("private let connectionTimeout: TimeInterval = 30.0", source)

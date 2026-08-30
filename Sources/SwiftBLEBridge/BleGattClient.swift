@@ -58,6 +58,10 @@ internal final class BleGattClient {
     /// completes. The bridge polls periodically post-connect.
     var rssi: Int?
 
+    /// When `rssi` was last sampled. nil until the first successful
+    /// `readRSSI()` lands. Used to reject stale samples at delivery time.
+    var rssiSampledAt: Date?
+
     /// Outbound fragments awaiting CoreBluetooth transmit-queue space.
     /// writeValue(.withoutResponse) silently drops once the per-peripheral
     /// queue is full (iOS 11+), so frames are queued here and drained as space
