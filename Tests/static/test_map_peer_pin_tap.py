@@ -256,12 +256,14 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         self.assertIn("vm.conversations.first(where: { $0.id == hash })", check_body)
         self.assertNotIn("vm.filteredConversations.first(where: { $0.id == hash })", check_body)
         self.assertIn("await vm.refreshConversations()", check_body)
-        # Post-refresh consume+route is guarded by slot ownership: a newer
-        # tap that replaced the slot during the refresh owns the route, so
-        # the stale continuation must not assign the destination.
+        # Post-refresh consume+route is guarded by slot ownership AND route
+        # ownership: a newer tap that replaced the slot during the refresh
+        # owns the route, and a peer route that started during the refresh
+        # (a suspension point) owns navigation until it settles - in both
+        # cases the stale continuation must not assign the destination.
         self.assertRegex(
             self.chats_view,
-            r"if let conversation = vm\.conversations\.first\(where: \{ \$0\.id == hash \}\),\s*\n\s*NotificationService\.pendingConversationHash == hash \{",
+            r"if let conversation = vm\.conversations\.first\(where: \{ \$0\.id == hash \}\),\s*\n\s*NotificationService\.pendingConversationHash == hash,\s*\n\s*!isResolvingPeerChat \{",
         )
         self.assertIn("NotificationService.pendingConversationHash = nil", check_body)
         # The retry trigger observes the canonical list (an active search

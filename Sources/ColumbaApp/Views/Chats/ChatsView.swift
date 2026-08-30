@@ -269,15 +269,22 @@ struct ChatsView: View {
         // Consume and route only if this tap still owns the pending slot.
         // A newer tap that replaced the slot during the refresh is routed
         // by its own check; a stale continuation must not open the older
-        // conversation (or briefly replace the newer route).
+        // conversation (or briefly replace the newer route). Re-check route
+        // ownership too: `refreshConversations()` above is a suspension, so a
+        // map peer route may have started while it ran. It owns navigation
+        // for its window and re-runs this check at settle
+        // (consumePeerChatRoute), so the deferred tap is still delivered -
+        // it just must not race the peer push now.
         if let conversation = vm.conversations.first(where: { $0.id == hash }),
-           NotificationService.pendingConversationHash == hash {
+           NotificationService.pendingConversationHash == hash,
+           !isResolvingPeerChat {
             NotificationService.pendingConversationHash = nil
             notificationConversation = conversation
         }
-        // Otherwise the row is still not in storage (or a newer tap owns
-        // the slot): leave the slot intact so the next list change or
-        // activation retries instead of dropping the tap.
+        // Otherwise the row is still not in storage, a newer tap owns the
+        // slot, or a peer route is mid-resolution: leave the slot intact so
+        // the peer-route settle, the next list change, or an activation
+        // retries instead of dropping the tap.
     }
 
     /// Consume the Map tab's peer-chat route: resolve the peer's conversation
