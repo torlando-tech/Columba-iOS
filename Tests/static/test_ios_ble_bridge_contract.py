@@ -114,15 +114,62 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         self.assertIn("slot: .onMtuNegotiated", central_migration)
         self.assertIn("args: [address, client.mtu]", central_migration)
 
-    def test_python_can_query_native_peer_role_and_mtu(self) -> None:
+    def test_python_can_query_native_peer_role_mtu_and_rssi(self) -> None:
         bindings = BINDINGS.read_text()
         driver = DRIVER.read_text()
-        for symbol in ("columba_ble_get_peer_role", "columba_ble_get_peer_mtu"):
+        for symbol in (
+            "columba_ble_get_peer_role",
+            "columba_ble_get_peer_mtu",
+            "columba_ble_get_peer_rssi",
+        ):
             self.assertIn(f'@_cdecl("{symbol}")', bindings)
             self.assertIn(f'"{symbol}"', driver)
         self.assertIn("def get_peer_mtu(self, address: str)", driver)
         self.assertIn('return "central"', driver)
         self.assertIn('return "peripheral"', driver)
+        # The RSSI query must resolve the Int32.min "unknown" sentinel to
+        # None so the detail cards stay hidden when no sample is available.
+        self.assertIn("def get_peer_rssi(self, address: str)", driver)
+        self.assertIn("def get_last_receive_rssi(self)", driver)
+        self.assertIn("return rssi if rssi != _RSSI_UNKNOWN else None", driver)
+
+    def test_peer_rssi_never_falls_back_to_discovery_cache(self) -> None:
+        # getPeerRssi must report ONLY a fresh readRSSI() sample from an
+        # established central client. Falling back to lastDiscoveryReport
+        # (scan-time RSSI) would persist and display a stale value for
+        # peripheral-role or disconnected peers, which have no readable
+        # RSSI. Regression: Greptile P2 on PR #190 (stale discovery RSSI).
+        source = BRIDGE.read_text()
+        start = source.index("public func getPeerRssi(address: String)")
+        end = source.index("public func getPeerRole(address: String)")
+        body = source[start:end]
+        # Strip comment lines so the assertion checks the code, not prose.
+        code = "\n".join(l.split("//", 1)[0] for l in body.splitlines())
+        self.assertIn("client.state == .established", code)
+        self.assertIn("client.rssi", code)
+        self.assertNotIn("lastDiscoveryReport", code)
+
+    def test_peer_rssi_rejects_stale_poll_samples(self) -> None:
+        # If readRSSI() keeps failing, client.rssi stays unversioned and
+        # silently ages. getPeerRssi must bound sample age (2 poll
+        # intervals) via rssiSampledAt, which didReadRSSI stamps on every
+        # accepted sample. Regression: Greptile P2 iteration 2 on PR #190
+        # ("Cached RSSI remains stale").
+        bridge = BRIDGE.read_text()
+        start = bridge.index("public func getPeerRssi(address: String)")
+        end = bridge.index("public func getPeerRole(address: String)")
+        body = bridge[start:end]
+        code = "\n".join(l.split("//", 1)[0] for l in body.splitlines())
+        self.assertIn("client.rssiSampledAt", code)
+        self.assertIn("2 * rssiPollInterval", code)
+        # Every accepted sample must be versioned at write time.
+        write = bridge.index("gattClients[address]?.rssi = value")
+        self.assertIn(
+            "gattClients[address]?.rssiSampledAt = Date()",
+            bridge[write:write + 200],
+        )
+        client = CLIENT.read_text()
+        self.assertIn("var rssiSampledAt: Date?", client)
 
     def test_stalled_central_handshake_times_out_and_releases_peer(self) -> None:
         source = BRIDGE.read_text()

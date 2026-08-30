@@ -742,7 +742,28 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
         }
     }
     public func getPeerRssi(address: String) -> Int? {
-        queue.sync { lastDiscoveryReport[address]?.rssi }
+        queue.sync {
+            // Only report a FRESH `readRSSI()` sample from an established
+            // central-side GATT client. No discovery/scan-time fallback:
+            // `lastDiscoveryReport` holds the RSSI from the initial scan,
+            // which can be arbitrarily stale by delivery time, and
+            // peripheral-role peers (no gattClients entry) have no readable
+            // RSSI at all. Returning nil lets the UI omit the card rather
+            // than persist and display a misleading value.
+            //
+            // Freshness guard: the poll task refreshes `client.rssi` every
+            // ~3s, but if every `readRSSI()` in a window fails or returns a
+            // sentinel the stored value goes unversioned and silently ages.
+            // A sample older than 2 poll intervals is no longer "current",
+            // so reject it.
+            let maxSampleAge: TimeInterval = 2 * rssiPollInterval
+            if let client = gattClients[address], client.state == .established,
+               let rssi = client.rssi, let sampledAt = client.rssiSampledAt,
+               Date().timeIntervalSince(sampledAt) <= maxSampleAge {
+                return rssi
+            }
+            return nil
+        }
     }
     public func getPeerRole(address: String) -> BleConnectionRole? {
         queue.sync {
@@ -1269,6 +1290,7 @@ extension SwiftBLEBridge: CBPeripheralDelegate {
         // doesn't overwrite a good RSSI that getConnectionDetails() surfaces.
         guard value != 127, value != -127, value != 0 else { return }
         gattClients[address]?.rssi = value
+        gattClients[address]?.rssiSampledAt = Date()
     }
 }
 

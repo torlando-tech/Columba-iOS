@@ -2739,7 +2739,7 @@ public final class AppServices {
     /// run side-channel handling (reactions/replies/telemetry/icon/cease) through
     /// IncomingMessageHandler. Returns nil if blocked or persistence failed.
     @discardableResult
-    private func persistInboundFromPython(sourceHash: Data, messageHashHex: String, content: String, title: String, fields: [UInt8: Any]?, method: LXDeliveryMethod?, timestamp: Date) async -> LXMessage? {
+    private func persistInboundFromPython(sourceHash: Data, messageHashHex: String, content: String, title: String, fields: [UInt8: Any]?, method: LXDeliveryMethod?, rssi: Double? = nil, snr: Double? = nil, timestamp: Date) async -> LXMessage? {
         // Route Python-path inbound persistence through the GRDB canonical
         // store (the same one the UI reads and the Swift/NE path writes), via
         // the shared MessageRepository's RNSAPI-typed methods — NOT the
@@ -2813,6 +2813,12 @@ public final class AppServices {
             message.incoming = true
             message.timestamp = timestamp.timeIntervalSince1970
             message.state = .received
+            // Receiving-interface signal metrics, captured at delivery time by
+            // the Python bridge. Nil when the interface is unknown or the
+            // metric is unavailable (the detail cards stay hidden). Copied onto
+            // the GRDB record by `MessageRepository.mapToGRDBMessage`.
+            message.rssi = rssi
+            message.snr = snr
 
             try await repo.saveMessage(message)
             // `saveMessage` must create/update the conversation before this
@@ -2940,20 +2946,25 @@ public final class AppServices {
                     DiagLog.log("[RNS] stamped display name onto convo \(data.map { String(format: "%02x", $0) }.joined().prefix(8))")
                 }
             }
-        case .inbound(let sourceHash, let messageHash, let content, let title, let fieldsPacked, let method, let t):
+        case .inbound(let sourceHash, let messageHash, let content, let title, let fieldsPacked, let method, let rssi, let snr, let t):
             // NO-PII: envelope/metadata only (mirrors ExtensionDiagLog's contract).
             // Never log message content, title, or field payload bytes — they land
             // in Documents/diag.log and the unified log. Hashes are prefixed to
             // keep the line correlatable without exposing full identity hashes.
-            DiagLog.log("[RNS] inbound source=\(sourceHash.prefix(8)) message=\(messageHash.prefix(8)) len=\(content.utf8.count) fields=\(fieldsPacked.count)B")
+            // rssi/snr are numeric radio metrics, not message content — safe to log.
+            let rssiText = rssi.map { "\($0)" } ?? "-"
+            let snrText = snr.map { "\($0)" } ?? "-"
+            DiagLog.log("[RNS] inbound source=\(sourceHash.prefix(8)) message=\(messageHash.prefix(8)) len=\(content.utf8.count) fields=\(fieldsPacked.count)B rssi=\(rssiText) snr=\(snrText)")
             guard let data = Data(hexString: sourceHash) else { return }
             let fields = fieldsPacked.isEmpty ? nil : LxmfFieldCodec.unpack(fieldsPacked)
-            // Persist the base message (carrying its fields), then run side-channel
+            // Persist the base message (carrying its fields + the receiving
+            // interface's signal metrics), then run side-channel
             // handling (reactions / replies / telemetry / icon / cease) through
             // IncomingMessageHandler — the router.delegate, wired in ColumbaApp.
-            // Same path for both backends (Python sends empty fields until its
-            // bridge plumbing lands; the Swift backend populates them now).
-            if let saved = await persistInboundFromPython(sourceHash: data, messageHashHex: messageHash, content: content, title: title, fields: fields, method: method, timestamp: t),
+            // Same path for both backends (the Swift/NE backend passes nil
+            // metrics; the Python backend populates them from the delivery
+            // callback).
+            if let saved = await persistInboundFromPython(sourceHash: data, messageHashHex: messageHash, content: content, title: title, fields: fields, method: method, rssi: rssi, snr: snr, timestamp: t),
                fields != nil, let router = self.router {
                 if let handler = router.delegate as? IncomingMessageHandler {
                     _ = await handler.handleInbound(saved).value

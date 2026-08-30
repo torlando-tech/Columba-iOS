@@ -68,7 +68,7 @@ public final class PythonBridge: @unchecked Sendable {
 
     public enum Event: Equatable, Sendable {
         case announce(destHash: String, appDataHex: String, aspect: String, publicKeysHex: String, interfaceName: String, hops: Int, t: Date)
-        case inbound(sourceHash: String, messageHash: String, content: String, title: String, fieldsHex: String, method: String, t: Date)
+        case inbound(sourceHash: String, messageHash: String, content: String, title: String, fieldsHex: String, method: String, rssi: Double?, snr: Double?, t: Date)
         case state(String, t: Date)
 
         /// Delivery lifecycle event for an outbound message, keyed by its LXMF
@@ -887,7 +887,13 @@ public final class PythonBridge: @unchecked Sendable {
                 let title = pyStringFromDict(item, key: "title") ?? ""
                 let fieldsHex = pyStringFromDict(item, key: "fields_hex") ?? ""
                 let method = pyStringFromDict(item, key: "method") ?? ""
-                out.append(.inbound(sourceHash: h, messageHash: messageHash, content: c, title: title, fieldsHex: fieldsHex, method: method, t: t))
+                // Signal metrics captured at delivery time by rns_bridge.py.
+                // Absent (nil) when the receiving interface is unknown or the
+                // metric is unavailable — PyFloat_AsDouble accepts both the
+                // int rssi and the float snr.
+                let rssi = pyDoubleFromDict(item, key: "rssi")
+                let snr = pyDoubleFromDict(item, key: "snr")
+                out.append(.inbound(sourceHash: h, messageHash: messageHash, content: c, title: title, fieldsHex: fieldsHex, method: method, rssi: rssi, snr: snr, t: t))
             case "state":
                 let v = pyStringFromDict(item, key: "value") ?? "?"
                 out.append(.state(v, t: t))

@@ -40,6 +40,8 @@ class InboundDeliveryMethodTests(unittest.TestCase):
             and node.name in {
                 "_canonical_inbound_hash",
                 "_inbound_delivery_method_name",
+                "_receiving_interface",
+                "_signal_metrics",
                 "_delivery_callback",
             }
         }
@@ -47,6 +49,8 @@ class InboundDeliveryMethodTests(unittest.TestCase):
             {
                 "_canonical_inbound_hash",
                 "_inbound_delivery_method_name",
+                "_receiving_interface",
+                "_signal_metrics",
                 "_delivery_callback",
             },
             set(functions),
@@ -54,13 +58,20 @@ class InboundDeliveryMethodTests(unittest.TestCase):
         namespace = {
             "Any": Any,
             "LXMF": types.SimpleNamespace(LXMessage=FakeMessage),
-            "RNS": types.SimpleNamespace(LOG_ERROR=1, log=lambda *_args: None),
+            "RNS": types.SimpleNamespace(
+                LOG_ERROR=1,
+                LOG_DEBUG=2,
+                log=lambda *_args: None,
+                Transport=types.SimpleNamespace(path_table={}),
+            ),
             "_put": lambda kind, **payload: events.append((kind, payload)),
         }
         module = ast.Module(
             body=[
                 functions["_canonical_inbound_hash"],
                 functions["_inbound_delivery_method_name"],
+                functions["_receiving_interface"],
+                functions["_signal_metrics"],
                 functions["_delivery_callback"],
             ],
             type_ignores=[],

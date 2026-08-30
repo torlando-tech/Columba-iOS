@@ -97,6 +97,14 @@ _columba_ble_get_peer_role = _decl(
 _columba_ble_get_peer_mtu = _decl(
     "columba_ble_get_peer_mtu", [ctypes.c_char_p], ctypes.c_int32
 )
+# RSSI query returns a signed dBm value or `Int32.min` as the "unknown"
+# sentinel (see `columba_ble_get_peer_rssi` in BleNativeBindings.swift).
+_columba_ble_get_peer_rssi = _decl(
+    "columba_ble_get_peer_rssi", [ctypes.c_char_p], ctypes.c_int32
+)
+# `Int32.min` — the C-side "no RSSI available" sentinel. A real RSSI is always
+# a small negative dBm value, so it can never collide with this.
+_RSSI_UNKNOWN = -2**31
 _columba_ble_configure_power = _decl(
     "columba_ble_configure_power", [ctypes.c_char_p], ctypes.c_int32
 )
@@ -133,6 +141,12 @@ class IOSBLEDriver(BLEDriverInterface):
         # address) and to surface `on_address_changed` to BLEInterface.
         self._address_to_identity: dict[str, str] = {}
         self._identity_to_address: dict[str, str] = {}
+        # Address of the most recent peer that sent us data. Used by
+        # `get_last_receive_rssi()` so a delivery-time RSSI query (from the
+        # Python bridge's `_signal_metrics`) can be attributed to the peer
+        # that just delivered the message. Mirrors Android's
+        # `android_ble_driver._last_receive_address`. Cleared on stop().
+        self._last_receive_address: str | None = None
         self._lock = threading.Lock()
         # Power preset captured in `set_power_mode` — passed to Swift via
         # `configure_power` so the Settings/DiagLog status output reflects
@@ -211,6 +225,11 @@ class IOSBLEDriver(BLEDriverInterface):
                 RNS.log(f"IOSBLEDriver: on_device_disconnected raised: {e}", RNS.LOG_ERROR)
 
     def _raw_on_data_received(self, address: str, data: bytes) -> None:
+        # Track the last sender so a delivery-time RSSI query can be
+        # attributed to the peer that just delivered data (mirrors
+        # Android's `on_data_received`). Done before the callback check so a
+        # missing upstream slot doesn't leave the attribution stale.
+        self._last_receive_address = address
         if self.on_data_received is None:
             return
         try:
@@ -325,6 +344,7 @@ class IOSBLEDriver(BLEDriverInterface):
             self._address_to_identity.clear()
             self._identity_to_address.clear()
             self._connected_peers.clear()
+            self._last_receive_address = None
 
     def set_identity(self, identity_bytes: bytes) -> None:
         if _columba_ble_set_identity is None:
@@ -469,6 +489,37 @@ class IOSBLEDriver(BLEDriverInterface):
             return None
         mtu = int(_columba_ble_get_peer_mtu(address.encode("utf-8")))
         return mtu if mtu > 0 else None
+
+    def get_peer_rssi(self, address: str) -> Optional[int]:
+        """Most recent RSSI (dBm) for a peer, or None when unavailable.
+
+        The value is the latest `readRSSI()` sample from the established
+        central-side GATT client (falling back to the last scan-time discovery
+        report) — surfaced by `columba_ble_get_peer_rssi`. Returns None for
+        peripheral-role peers: Core Bluetooth does not expose the central's
+        RSSI to us. Best-effort — any failure resolves to None.
+        """
+        if _columba_ble_get_peer_rssi is None:
+            return None
+        try:
+            rssi = int(_columba_ble_get_peer_rssi(address.encode("utf-8")))
+        except Exception as e:  # noqa: BLE001 — metric failure must not raise
+            RNS.log(f"IOSBLEDriver: get_peer_rssi failed: {e}", RNS.LOG_DEBUG)
+            return None
+        return rssi if rssi != _RSSI_UNKNOWN else None
+
+    def get_last_receive_rssi(self) -> Optional[int]:
+        """RSSI (dBm) of the most recent peer that sent us data, or None.
+
+        Called at delivery time by the Python bridge's `_signal_metrics` so
+        the receiving-interface card can show the signal strength of the link
+        that just delivered a message. Mirrors Android's
+        `android_ble_driver.get_last_receive_rssi()`.
+        """
+        address = self._last_receive_address
+        if address is None:
+            return None
+        return self.get_peer_rssi(address)
 
     def request_identity_resync(self, address: str) -> bool:
         if _columba_ble_request_identity_resync is None:

@@ -5,6 +5,7 @@ _columba_ble_connect
 _columba_ble_disconnect
 _columba_ble_get_peer_mtu
 _columba_ble_get_peer_role
+_columba_ble_get_peer_rssi
 _columba_ble_request_identity_resync
 _columba_ble_send
 _columba_ble_set_identity
