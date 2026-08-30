@@ -912,7 +912,7 @@ class Simulator:
         Pins the cross-tab route: `onOpenPeerChat` → MainTabView switches to
         the Chats tab and holds `pendingPeerChat` → `consumePeerChatRoute`
         resolves the conversation (creating the row for a telemetry-only
-        peer) and pushes it via `notificationConversation`."""
+        peer) and pushes it via the dedicated `peerConversation` route."""
         wait_ms = int(timeout * 1000)
         lines = self._map_tab_foreground_lines()
         lines += [

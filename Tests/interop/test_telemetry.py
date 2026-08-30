@@ -475,8 +475,8 @@ def test_peer_pin_message_route_opens_conversation(sim, sideband):
 
     Asserts the cross-tab route: onOpenPeerChat → MainTabView switches to
     the Chats tab and holds pendingPeerChat → consumePeerChatRoute resolves
-    (creating the row for a telemetry-only peer) and pushes it via
-    notificationConversation. The `message_composer` input bar is the
+    (creating the row for a telemetry-only peer) and pushes it via the
+    dedicated peerConversation route. The `message_composer` input bar is the
     stable a11y landmark on the messaging screen."""
     lat, lon = 40.7128, -74.0060
     _set_sim_location_to_peer(sim, lat, lon)
