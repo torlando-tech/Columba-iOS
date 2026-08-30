@@ -2952,8 +2952,8 @@ public final class AppServices {
             // in Documents/diag.log and the unified log. Hashes are prefixed to
             // keep the line correlatable without exposing full identity hashes.
             // rssi/snr are numeric radio metrics, not message content — safe to log.
-            let rssiText = rssi.map(String.init) ?? "-"
-            let snrText = snr.map(String.init) ?? "-"
+            let rssiText = rssi.map { "\($0)" } ?? "-"
+            let snrText = snr.map { "\($0)" } ?? "-"
             DiagLog.log("[RNS] inbound source=\(sourceHash.prefix(8)) message=\(messageHash.prefix(8)) len=\(content.utf8.count) fields=\(fieldsPacked.count)B rssi=\(rssiText) snr=\(snrText)")
             guard let data = Data(hexString: sourceHash) else { return }
             let fields = fieldsPacked.isEmpty ? nil : LxmfFieldCodec.unpack(fieldsPacked)
