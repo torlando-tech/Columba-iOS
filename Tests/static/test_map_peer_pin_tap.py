@@ -241,6 +241,15 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         self.assertIn("if isResolvingPeerChat {", self.chats_view)
         self.assertNotIn("peerConversation != nil {", self.chats_view)
         self.assertIn("await checkPendingNotification()", route_body)
+        # Settle-time retry for a second peer route: a Map Message tapped
+        # while the first route was resolving was rejected by the
+        # in-flight guard and left in pendingPeerChat; its onChange needs a
+        # fresh change, so the settle path must retry it (bounded: each
+        # pass clears a non-nil slot).
+        self.assertRegex(
+            self.chats_view,
+            r"if pendingPeerChat != nil \{\s*\n\s*await consumePeerChatRoute\(\)\s*\n\s*\}",
+        )
         # The check is async, only consumes the pending hash after the row
         # has resolved, and never blocks on a stale snapshot: unfiltered
         # lookup, one refresh from storage when the snapshot is stale, and

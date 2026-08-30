@@ -344,6 +344,16 @@ struct ChatsView: View {
         // route has settled, so it stacks on top instead of waiting for an
         // unrelated activation or list change.
         await checkPendingNotification()
+
+        // A second Map Message tapped while this route was resolving was
+        // rejected by the in-flight guard and left in `pendingPeerChat`.
+        // Its only other trigger (`.onChange`) needs a fresh change, so
+        // retry here at settle - otherwise it is stranded. Bounded: each
+        // pass clears a non-nil slot, so the recursion stops when the
+        // queue is empty.
+        if pendingPeerChat != nil {
+            await consumePeerChatRoute()
+        }
     }
 
     // MARK: - Subviews
