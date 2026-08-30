@@ -238,11 +238,13 @@ struct ChatsView: View {
     /// conversation is pushed, a new notification simply stacks on top of
     /// it - ordinary `item:` navigation behavior, no shared state.)
     ///
-    /// The check is async: it only consumes the pending hash after
-    /// confirming the conversation row exists, refreshing from storage
-    /// first if the in-memory snapshot is stale (a just-arrived message).
-    /// If the row is genuinely absent it restores the hash so a later
-    /// trigger retries instead of dropping the tap.
+    /// Lookups use the unfiltered `conversations` list so an active search
+    /// query cannot hide the tapped conversation, and the pending hash is
+    /// only consumed once the row has actually resolved - from the
+    /// in-memory snapshot, or from storage after one refresh when the
+    /// snapshot is stale - so a tap is never silently discarded. A newer
+    /// tap that replaces the pending slot during the refresh is untouched
+    /// (existing single-slot "latest tap wins" semantics).
     @MainActor
     private func checkPendingNotification() async {
         guard let hash = NotificationService.pendingConversationHash,
@@ -254,24 +256,29 @@ struct ChatsView: View {
             // opens (stacking on top of the peer conversation).
             return
         }
-        // Claim the hash up front so concurrent triggers (activation +
-        // list change) cannot double-open the same conversation.
-        NotificationService.pendingConversationHash = nil
-        if let conversation = vm.filteredConversations.first(where: { $0.id == hash }) {
+        // Unfiltered lookup: an active search query must not hide the
+        // conversation the notification points at. No suspension between
+        // this read and the clear below, so the claim is race-free.
+        if let conversation = vm.conversations.first(where: { $0.id == hash }) {
+            NotificationService.pendingConversationHash = nil
             notificationConversation = conversation
             return
         }
         // The row may not be in the in-memory snapshot yet (a message that
         // just arrived): re-read from storage, then look again.
         await vm.refreshConversations()
-        if let conversation = vm.filteredConversations.first(where: { $0.id == hash }) {
+        if let conversation = vm.conversations.first(where: { $0.id == hash }) {
+            // Only clear the slot if this tap is still the pending one: a
+            // newer tap that arrived during the refresh owns the slot now,
+            // and clearing it would discard that tap.
+            if NotificationService.pendingConversationHash == hash {
+                NotificationService.pendingConversationHash = nil
+            }
             notificationConversation = conversation
-        } else {
-            // Not in storage either - restore the hash so the next list
-            // change or activation retries, instead of silently dropping
-            // the user's tap.
-            NotificationService.pendingConversationHash = hash
         }
+        // Otherwise the row is not in storage yet: leave the pending slot
+        // (this tap, or a newer one that replaced it) in place so the next
+        // list change or activation retries instead of dropping the tap.
     }
 
     /// Consume the Map tab's peer-chat route: resolve the peer's conversation

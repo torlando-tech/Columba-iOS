@@ -241,17 +241,24 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         self.assertIn("if isResolvingPeerChat {", self.chats_view)
         self.assertNotIn("peerConversation != nil {", self.chats_view)
         self.assertIn("await checkPendingNotification()", route_body)
-        # The check only consumes the pending hash after confirming the row
-        # exists: it refreshes from storage against a stale snapshot and
-        # restores the hash if the conversation is genuinely missing, so a
-        # tap can never be permanently discarded.
+        # The check is async, only consumes the pending hash after the row
+        # has resolved, and never blocks on a stale snapshot: unfiltered
+        # lookup, one refresh from storage when the snapshot is stale, and
+        # the slot left intact when the row is not in storage yet (retry on
+        # the next trigger) - so a tap is never silently discarded and an
+        # active search query cannot hide the tapped conversation.
         self.assertIn("@MainActor\n    private func checkPendingNotification() async", self.chats_view)
         check_body = (
             self.chats_view.split("private func checkPendingNotification() async")[1]
             .split("\n    /// Consume the Map tab")[0]
         )
+        self.assertIn("vm.conversations.first(where: { $0.id == hash })", check_body)
+        self.assertNotIn("vm.filteredConversations.first(where: { $0.id == hash })", check_body)
         self.assertIn("await vm.refreshConversations()", check_body)
-        self.assertIn("NotificationService.pendingConversationHash = hash", check_body)
+        # Post-refresh clear is guarded: a newer tap that replaced the
+        # slot during the refresh is never clobbered.
+        self.assertIn("if NotificationService.pendingConversationHash == hash {", check_body)
+        self.assertIn("NotificationService.pendingConversationHash = nil", check_body)
         # All call sites drive the async check from a Task.
         self.assertIn("Task { await checkPendingNotification() }", self.chats_view)
 
