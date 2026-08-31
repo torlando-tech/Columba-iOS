@@ -222,14 +222,15 @@ private struct UIMonospaceLine: UIViewRepresentable {
             let copy = UIAction(
                 title: "Copy",
                 image: UIImage(systemName: "doc.on.doc"),
-                handler: {
+                handler: { _ in
                     UIPasteboard.general.string = text
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
             )
             return UIContextMenuConfiguration(
-                preview: UIContextMenuPreview.none,
-                menuProvider: { _ in UIMenu(children: [copy]) }
+                identifier: nil,
+                previewProvider: nil,
+                actionProvider: { _ in UIMenu(children: [copy]) }
             )
         }
 
