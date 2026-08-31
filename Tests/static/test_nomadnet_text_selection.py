@@ -39,9 +39,12 @@ def _read(path: Path) -> str:
 class NomadNetTextSelectionTests(unittest.TestCase):
     def test_wrapping_modes_enable_native_text_selection(self):
         source = _read(MICRON_DOC)
-        # Selection is gated off in the UILabel-based scroll mode and on
-        # elsewhere, so the modifier must reference isScrollMode.
-        self.assertIn(".textSelection(isScrollMode ? .disabled : .enabled)", source)
+        # Selection is only applied in the wrapping modes: the body branches on
+        # isScrollMode and applies .textSelection(.enabled) in the else branch.
+        # (A single `.textSelection(x ? .disabled : .enabled)` ternary does not
+        # compile - the two literals are unrelated types.)
+        self.assertIn(".textSelection(.enabled)", source)
+        self.assertIn("if isScrollMode {", source)
 
     def test_monospace_lines_offer_long_press_copy_context_menu(self):
         source = _read(MICRON_LINE)

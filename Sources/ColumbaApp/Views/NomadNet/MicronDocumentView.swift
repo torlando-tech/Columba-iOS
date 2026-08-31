@@ -26,6 +26,21 @@ struct MicronDocumentView: View {
     var partialAncestry: Set<String> = []
 
     var body: some View {
+        // Android parity (#188): page text must be selectable/copyable.
+        // `.textSelection` only reaches SwiftUI `Text`, so it is applied in
+        // the wrapping modes (real Text) and NOT in `.monospaceScroll`
+        // (UIKit UILabels, which get a long-press "Copy" context menu in
+        // MonospaceLineView instead; the toolbar "Copy Page" covers all).
+        if isScrollMode {
+            documentContent
+        } else {
+            documentContent
+                .textSelection(.enabled)
+        }
+    }
+
+    /// The rendered document content, shared by both selection strategies.
+    private var documentContent: some View {
         VStack(alignment: .leading, spacing: isScrollMode ? 0 : 2) {
             ForEach(Array(document.elements.enumerated()), id: \.offset) { index, element in
                 renderElement(element, index: index)
@@ -33,13 +48,6 @@ struct MicronDocumentView: View {
         }
         .padding(.horizontal, appliesDocumentPadding && !isScrollMode ? 12 : 0)
         .padding(.vertical, appliesDocumentPadding && !isScrollMode ? 8 : 0)
-        // Android parity (#188): in the wrapping modes the body text is real
-        // SwiftUI `Text`, so enable the native long-press select/copy behavior
-        // (the iOS equivalent of Android's Compose `SelectionContainer`).
-        // `.monospaceScroll` renders UIKit UILabels, which this modifier cannot
-        // reach; those lines get a long-press "Copy" context menu instead
-        // (MonospaceLineView) and the toolbar "Copy Page" covers the whole page.
-        .textSelection(isScrollMode ? .disabled : .enabled)
         .accessibilityIdentifier("nomadnet_document")
     }
 
