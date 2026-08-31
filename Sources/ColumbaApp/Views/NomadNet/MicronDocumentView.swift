@@ -230,7 +230,7 @@ struct MicronDocumentView: View {
     private func headingSize(level: Int) -> CGFloat {
         switch min(max(level, 1), 3) {
         case 1:
-            return UIFontMetrics(forTextStyle: .title).scaledValue(for: 28)
+            return UIFontMetrics(forTextStyle: .title1).scaledValue(for: 28)
         case 2:
             return UIFontMetrics(forTextStyle: .title2).scaledValue(for: 22)
         default:
