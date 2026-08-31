@@ -48,7 +48,6 @@ struct MicronDocumentView: View {
         }
         .padding(.horizontal, appliesDocumentPadding && !isScrollMode ? 12 : 0)
         .padding(.vertical, appliesDocumentPadding && !isScrollMode ? 8 : 0)
-        .accessibilityIdentifier("nomadnet_document")
     }
 
     private var isScrollMode: Bool { style == .monospaceScroll }
