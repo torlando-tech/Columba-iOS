@@ -618,11 +618,12 @@ final class MicronParserTests: XCTestCase {
         let size = CGSize(width: 320, height: 160)
         let host = UIHostingController(
             rootView: MonospaceLineView(
-                spans: spans,
+                lines: [MicronTextLine(spans: spans)],
                 fontSize: 18,
-                cellHeight: 32,
-                alignment: .left,
-                bold: false
+                monospaced: true,
+                // indentLevel is 0, so the indent unit is unused here.
+                indentUnit: 10,
+                cellHeight: 32
             )
             .frame(width: 300, height: 32, alignment: .leading)
             .padding(10)
@@ -893,11 +894,11 @@ final class MicronParserTests: XCTestCase {
         let style = MicronRenderStyle.monospaceScroll
         let host = UIHostingController(
             rootView: MonospaceLineView(
-                spans: [.text("MMMM", .plain)],
+                lines: [MicronTextLine(spans: [.text("MMMM", .plain)])],
                 fontSize: style.fontSize,
-                cellHeight: style.approxCharWidth * 2,
-                alignment: .left,
-                bold: false
+                monospaced: true,
+                indentUnit: style.approxCharWidth,
+                cellHeight: style.approxCharWidth * 2
             )
             .frame(width: 200, height: 40, alignment: .leading)
         )
