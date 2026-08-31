@@ -223,11 +223,18 @@ struct MicronDocumentView: View {
         }
     }
 
+    /// Wrap-mode heading size, scaled with the user's accessibility
+    /// text-size setting via UIFontMetrics (mirrors the previous semantic
+    /// .title / .title2 / .title3 SwiftUI fonts, whose base sizes are 28 /
+    /// 22 / 20 pt at the default content size).
     private func headingSize(level: Int) -> CGFloat {
         switch min(max(level, 1), 3) {
-        case 1: return 28
-        case 2: return 22
-        default: return 20
+        case 1:
+            return UIFontMetrics(forTextStyle: .title).scaledValue(for: 28)
+        case 2:
+            return UIFontMetrics(forTextStyle: .title2).scaledValue(for: 22)
+        default:
+            return UIFontMetrics(forTextStyle: .title3).scaledValue(for: 20)
         }
     }
 

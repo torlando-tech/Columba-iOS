@@ -404,6 +404,7 @@ private struct UISelectableTextRun: UIViewRepresentable {
         private var lastFontKey: (fontSize: CGFloat, monospaced: Bool, bold: Bool)?
         private var lastColors: (default: Color?, link: Color?)?
         private var lastWidth: CGFloat = 0
+        private var lastViewportWidth: CGFloat = 0
         private var lastIsScroll: Bool?
 
         /// Rebuilds the text view's content only when the run input or the
@@ -420,6 +421,7 @@ private struct UISelectableTextRun: UIViewRepresentable {
                     && fontKey == lastFontKey
                     && colors == lastColors
                     && width == lastWidth
+                    && run.viewportWidth == lastViewportWidth
                     && isScroll == lastIsScroll {
                     return
                 }
@@ -428,6 +430,7 @@ private struct UISelectableTextRun: UIViewRepresentable {
             lastFontKey = fontKey
             lastColors = colors
             lastWidth = width
+            lastViewportWidth = run.viewportWidth
             lastIsScroll = isScroll
 
             // The text container can be rebuilt on some iOS versions;
