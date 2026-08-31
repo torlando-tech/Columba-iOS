@@ -166,6 +166,8 @@ private struct UIMonospaceLine: UIViewRepresentable {
         label.lineBreakMode = .byClipping
         label.backgroundColor = .clear
         label.isUserInteractionEnabled = true
+        label.accessibilityIdentifier = "nomadnet_line"
+        label.accessibilityLabel = "NomadNet line"
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.setContentHuggingPriority(.required, for: .vertical)
@@ -173,6 +175,11 @@ private struct UIMonospaceLine: UIViewRepresentable {
 
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.didTap(_:)))
         label.addGestureRecognizer(tap)
+        // Android parity (#188): long-press a line to copy it. `.textSelection`
+        // cannot reach a UILabel, so use the native iOS long-press idiom. The
+        // tap recognizer (links) and the long-press context menu coexist.
+        let contextMenu = UIContextMenuInteraction(delegate: context.coordinator)
+        label.addInteraction(contextMenu)
         context.coordinator.onTap = onTap
         return label
     }
@@ -188,7 +195,7 @@ private struct UIMonospaceLine: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     @MainActor
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIContextMenuInteractionDelegate {
         var onTap: ((Int) -> Void)?
 
         @objc func didTap(_ sender: UITapGestureRecognizer) {
@@ -199,6 +206,28 @@ private struct UIMonospaceLine: UIViewRepresentable {
             if index != NSNotFound {
                 onTap?(index)
             }
+        }
+
+        /// Long-press context menu: a single "Copy" action that copies the
+        /// line's visible text (issue #188). Returns nil for blank lines so
+        /// the menu does not appear over empty space.
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            configurationForMenuAt location: CGPoint
+        ) -> UIMenu? {
+            guard let label = interaction.view as? UILabel,
+                  let text = label.text,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return nil }
+            let copy = UIAction(
+                title: "Copy",
+                image: UIImage(systemName: "doc.on.doc"),
+                handler: { _ in
+                    UIPasteboard.general.string = text
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+            )
+            return UIMenu(title: "", children: [copy])
         }
 
         private func characterIndex(at location: CGPoint, in label: UILabel, attributedText: NSAttributedString) -> Int {
