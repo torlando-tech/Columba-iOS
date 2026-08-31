@@ -412,12 +412,18 @@ private struct UISelectableTextRun: UIViewRepresentable {
             let isScroll = run.cellHeight != nil
             let fontKey = (fontSize: run.fontSize, monospaced: run.monospaced, bold: run.bold)
             let colors = (default: run.defaultForegroundColor, link: run.linkForegroundColor)
-            guard run.lines != lastLines
-                || fontKey != lastFontKey
-                || colors != lastColors
-                || width != lastWidth
-                || isScroll != lastIsScroll
-            else { return }
+            // If everything matches what was already applied, this is a
+            // no-op layout pass. (Tuples need no optional promotion, so the
+            // stored values are unwrapped first.)
+            if let lastLines, let lastFontKey, let lastColors {
+                if run.lines == lastLines
+                    && fontKey == lastFontKey
+                    && colors == lastColors
+                    && width == lastWidth
+                    && isScroll == lastIsScroll {
+                    return
+                }
+            }
             lastLines = run.lines
             lastFontKey = fontKey
             lastColors = colors
