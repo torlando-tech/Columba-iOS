@@ -112,10 +112,10 @@ struct MicronDocumentView: View {
                 result.append(.literalBlock(text: text, indentLevel: indentLevel))
             case .formField(let field, let indentLevel):
                 flush()
-                result.append(.formField(field, indentLevel))
+                result.append(.formField(field, indentLevel: indentLevel))
             case .partial(let partial, let indentLevel):
                 flush()
-                result.append(.partial(partial, indentLevel))
+                result.append(.partial(partial, indentLevel: indentLevel))
             }
         }
         flush()
@@ -170,7 +170,7 @@ struct MicronDocumentView: View {
                 lines: [MicronTextLine(
                     spans: spans,
                     alignment: alignment,
-                    indentLevel: headingIndentLevel(level)
+                    indentLevel: headingIndentLevel(level: level)
                 )],
                 fontSize: headingFontSize,
                 monospaced: style.usesMonospace,
