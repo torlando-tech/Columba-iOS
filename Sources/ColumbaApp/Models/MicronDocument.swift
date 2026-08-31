@@ -15,6 +15,41 @@ public struct MicronDocument: Sendable, Equatable {
     }
 }
 
+extension MicronDocument {
+    /// Readable plain-text rendering of the page, in document order, for
+    /// copy/share (the "Copy Page" toolbar action, issue #188).
+    ///
+    /// Mirrors what a user would see as text: headings and paragraphs emit
+    /// their visible span text (links emit their label), literal blocks are
+    /// preserved verbatim, dividers become a dashed line. Interactive form
+    /// fields and async partials are excluded - they are not page prose.
+    public var plainText: String {
+        var lines: [String] = []
+        for element in elements {
+            switch element {
+            case .heading(_, let spans, _),
+                 .paragraph(let spans, _, _):
+                let line = spans.map { span -> String in
+                    switch span {
+                    case .text(let content, _): return content
+                    case .link(let link): return link.label
+                    }
+                }.joined()
+                if !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                    lines.append(line)
+                }
+            case .divider(_, _):
+                lines.append("────────")
+            case .literalBlock(let text, _):
+                lines.append(text)
+            case .formField(_, _), .partial(_, _):
+                break
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
 // MARK: - Page Headers
 
 public struct MicronPageHeaders: Sendable, Equatable {

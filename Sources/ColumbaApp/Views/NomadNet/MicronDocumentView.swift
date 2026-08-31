@@ -3,6 +3,20 @@ import SwiftUI
 import RNSAPI
 
 /// Renders a parsed MicronDocument as SwiftUI views.
+///
+/// Android parity (#188): page text is selectable/copyable with the native
+/// selection UI (highlight + two draggable handles + the system
+/// Copy / Look Up / Translate / Share menu).
+///
+/// Text is rendered as one selectable `UITextView` PER RUN
+/// (`MonospaceLineView`), where a run is a maximal stretch of consecutive
+/// prose lines (paragraphs + dividers). Headings (full-width band),
+/// literal blocks (own band in wrap mode), form fields, and partials each
+/// break the run, so interactive elements stay outside the selectable text.
+/// Because a run is a single `UITextView`, the two selection handles can be
+/// dragged across newlines - a multi-line paragraph or code block selects as
+/// one unit. The toolbar "Copy Page" remains a whole-page fallback in every
+/// mode.
 @available(iOS 17.0, macOS 14.0, *)
 struct MicronDocumentView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -14,154 +28,188 @@ struct MicronDocumentView: View {
     var loadingPartials: Set<String> = []
     var onLinkTapped: ((MicronLink) -> Void)?
     var style: MicronRenderStyle = .monospaceScroll
-    /// Viewport width for the SCROLL mode. Each row gets at least this width so
-    /// `\`c`/`\`r` alignment centers/right-aligns content relative to the screen,
-    /// not the document's max line width. Mirrors Android's
+    /// Viewport width for the SCROLL mode. Each row gets at least this width
+    /// so ``c``/``r`` alignment centers/right-aligns content relative to the
+    /// screen, not the document's max line width. Mirrors Android's
     /// `Modifier.widthIn(min = viewportLineWidth)` (NomadNetBrowserScreen.kt:474).
     /// Without this, a single wide row (e.g. the chat-room's 550-char trailing-
     /// whitespace line) sets the VStack width and centered shorter rows end up
     /// scrolled offscreen-right.
+    ///
+    /// In the WRAP modes this value is not used: runs track the width proposed
+    /// by the enclosing ScrollView (and fall back to their intrinsic
+    /// width when no width is proposed), so long text wraps within the
+    /// viewport.
     var viewportWidth: CGFloat = 0
     var appliesDocumentPadding = true
     var partialAncestry: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: isScrollMode ? 0 : 2) {
-            ForEach(Array(document.elements.enumerated()), id: \.offset) { index, element in
-                renderElement(element, index: index)
+            ForEach(runs.indices, id: \.self) { index in
+                renderRun(runs[index])
             }
         }
+        // Wrap-mode document inset. In scroll mode the ZoomableScrollView owns
+        // the layout (no inset); per-line indents handle section nesting.
         .padding(.horizontal, appliesDocumentPadding && !isScrollMode ? 12 : 0)
         .padding(.vertical, appliesDocumentPadding && !isScrollMode ? 8 : 0)
     }
 
-    private var isScrollMode: Bool { style == .monospaceScroll }
-
-    /// Exact pixel-grid cell height for square rendering of block-drawing characters.
-    private var cellHeight: CGFloat { style.approxCharWidth * 2 }
-
-    private var bodyFont: Font {
-        style.swiftUIFont
+    /// Width of one section-indent column (monospace char width, or 8pt in
+    /// proportional mode - mirrors `indentationWidth`).
+    private var indentUnit: CGFloat {
+        style.usesMonospace ? style.approxCharWidth : 8
     }
 
+    // MARK: - Run grouping
+
+    enum Run {
+        /// Consecutive prose lines (paragraphs + dividers), selectable as one
+        /// unit so selection handles span newlines.
+        case text([MicronTextLine])
+        case heading(level: Int, spans: [MicronSpan], alignment: MicronAlignment)
+        case literalBlock(text: String, indentLevel: Int)
+        case formField(MicronFormField, indentLevel: Int)
+        case partial(MicronPartial, indentLevel: Int)
+    }
+
+    /// Groups the document's elements into runs. A run of paragraphs and
+    /// dividers merges into a single selectable text block; a heading,
+    /// literal block, form field, or partial breaks the run (they get their
+    /// own band in wrap mode, or stay interactive, respectively).
+    private var runs: [Run] {
+        var result: [Run] = []
+        var prose: [MicronTextLine] = []
+        func flush() {
+            if !prose.isEmpty {
+                result.append(.text(prose))
+                prose = []
+            }
+        }
+        for element in document.elements {
+            switch element {
+            case .heading(let level, let spans, let alignment):
+                flush()
+                result.append(.heading(level: level, spans: spans, alignment: alignment))
+            case .paragraph(let spans, let alignment, let indentLevel):
+                prose.append(MicronTextLine(spans: spans, alignment: alignment, indentLevel: indentLevel))
+            case .divider(let character, let indentLevel):
+                let count = isScrollMode
+                    ? dividerCount(indentLevel: indentLevel)
+                    : 40
+                let divChar = character.map(String.init) ?? "─"
+                prose.append(
+                    MicronTextLine(
+                        spans: [.text(String(repeating: divChar, count: count), .plain)],
+                        alignment: .left,
+                        indentLevel: indentLevel,
+                        colorOverride: isScrollMode ? nil : .secondary
+                    )
+                )
+            case .literalBlock(let text, let indentLevel):
+                flush()
+                result.append(.literalBlock(text: text, indentLevel: indentLevel))
+            case .formField(let field, let indentLevel):
+                flush()
+                result.append(.formField(field, indentLevel: indentLevel))
+            case .partial(let partial, let indentLevel):
+                flush()
+                result.append(.partial(partial, indentLevel: indentLevel))
+            }
+        }
+        flush()
+        return result
+    }
+
+    private var isScrollMode: Bool { style == .monospaceScroll }
+
+    /// Exact pixel-grid cell height for square rendering of block-drawing
+    /// characters (scroll mode only; wrap modes use `cellHeight = nil`).
+    private var cellHeight: CGFloat? {
+        isScrollMode ? style.approxCharWidth * 2 : nil
+    }
+
+    /// Divider line length in scroll mode: fill the section's available
+    /// width (mirrors the previous per-line divider width).
+    private func dividerCount(indentLevel: Int) -> Int {
+        viewportWidth > 0
+            ? max(1, Int(sectionViewportWidth(columns: indentLevel) / style.approxCharWidth))
+            : 80
+    }
+
+    // MARK: - Run rendering
+
     @ViewBuilder
-    private func renderElement(_ element: MicronElement, index: Int) -> some View {
-        switch element {
+    private func renderRun(_ run: Run) -> some View {
+        switch run {
+        case .text(let lines):
+            // A prose run: full-viewport container in scroll mode so the
+            // per-line indents align centered/right content against the
+            // screen; each line carries its own indent.
+            MonospaceLineView(
+                lines: lines,
+                fontSize: style.fontSize,
+                monospaced: style.usesMonospace,
+                indentUnit: indentUnit,
+                cellHeight: cellHeight,
+                viewportWidth: isScrollMode ? viewportWidth : 0,
+                onLinkTapped: onLinkTapped
+            )
+
         case .heading(let level, let spans, let alignment):
             let palette = MicronHeadingPalette.style(level: level, colorScheme: colorScheme)
-            if isScrollMode {
-                // UIKit-backed line with strict paragraph line-height so block chars stack tight
-                MonospaceLineView(
+            let isScroll = isScrollMode
+            // Headings: bold, and larger proportional title fonts in the wrap
+            // modes (matching the previous .title/.title2/.title3); in scroll
+            // mode the body monospace size, bold (the previous behavior).
+            let headingFontSize: CGFloat = isScroll
+                ? style.fontSize
+                : headingSize(level: level)
+            MonospaceLineView(
+                lines: [MicronTextLine(
                     spans: spans,
-                    fontSize: style.fontSize,
-                    cellHeight: cellHeight,
                     alignment: alignment,
-                    bold: true,
-                    defaultForegroundColor: palette.foreground,
-                    linkForegroundColor: palette.foreground,
-                    onLinkTapped: onLinkTapped
-                )
-                .padding(.leading, headingIndentWidth(level: level))
-                .frame(minWidth: viewportWidth, alignment: alignment.swiftUI)
-                .background(palette.background)
-            } else {
-                renderSpans(
-                    spans,
-                    onLinkTapped: onLinkTapped,
-                    linkForegroundColor: palette.foreground
-                )
-                    .font(headingFont(level: level))
-                    .bold()
-                    .foregroundStyle(palette.foreground)
-                    .padding(.leading, headingIndentWidth(level: level))
-                    .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                    .background(palette.background)
-                    .padding(.top, level == 1 ? 12 : 8)
-                    .padding(.bottom, 4)
-            }
-
-        case .paragraph(let spans, let alignment, let indentLevel):
-            if isScrollMode {
-                MonospaceLineView(
-                    spans: spans,
-                    fontSize: style.fontSize,
-                    cellHeight: cellHeight,
-                    alignment: alignment,
-                    bold: false,
-                    onLinkTapped: onLinkTapped
-                )
-                .frame(
-                    minWidth: sectionViewportWidth(columns: indentLevel),
-                    alignment: alignment.swiftUI
-                )
-                .padding(.horizontal, indentationWidth(columns: indentLevel))
-            } else {
-                renderSpans(spans, onLinkTapped: onLinkTapped)
-                    .font(bodyFont)
-                    .lineLimit(nil)
-                    .frame(maxWidth: .infinity, alignment: alignment.swiftUI)
-                    .padding(.horizontal, indentationWidth(columns: indentLevel))
-            }
-
-        case .divider(let character, let indentLevel):
-            if isScrollMode {
-                // Use a full-width horizontal line character for scroll mode
-                let divChar = character.map(String.init) ?? "─"
-                let dividerCount = viewportWidth > 0
-                    ? max(1, Int(sectionViewportWidth(columns: indentLevel) / style.approxCharWidth))
-                    : 80
-                MonospaceLineView(
-                    spans: [.text(String(repeating: divChar, count: dividerCount), .plain)],
-                    fontSize: style.fontSize,
-                    cellHeight: cellHeight,
-                    alignment: .left,
-                    bold: false,
-                    onLinkTapped: nil
-                )
-                .frame(
-                    minWidth: sectionViewportWidth(columns: indentLevel),
-                    alignment: .leading
-                )
-                .padding(.horizontal, indentationWidth(columns: indentLevel))
-            } else if let ch = character {
-                Text(String(repeating: ch, count: 40))
-                    .font(bodyFont)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, indentationWidth(columns: indentLevel))
-            } else {
-                Divider()
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, indentationWidth(columns: indentLevel))
-            }
+                    indentLevel: headingIndentLevel(level: level)
+                )],
+                fontSize: headingFontSize,
+                monospaced: style.usesMonospace,
+                indentUnit: indentUnit,
+                bold: true,
+                cellHeight: cellHeight,
+                viewportWidth: isScroll ? viewportWidth : 0,
+                defaultForegroundColor: palette.foreground,
+                linkForegroundColor: palette.foreground,
+                onLinkTapped: onLinkTapped
+            )
+            .background(palette.background)
+            .padding(.top, isScroll ? 0 : (level == 1 ? 12 : 8))
+            .padding(.bottom, isScroll ? 0 : 4)
 
         case .literalBlock(let text, let indentLevel):
+            let literalLines = text.split(separator: "\n", omittingEmptySubsequences: false).map {
+                MicronTextLine(spans: [.text(String($0), .plain)], alignment: .left, indentLevel: indentLevel)
+            }
+            let block = MonospaceLineView(
+                lines: literalLines,
+                fontSize: style.fontSize,
+                monospaced: style.usesMonospace,
+                indentUnit: indentUnit,
+                cellHeight: cellHeight,
+                viewportWidth: isScrollMode ? viewportWidth : 0,
+                onLinkTapped: nil
+            )
             if isScrollMode {
-                // Split literal blocks into individual lines so each gets exact cell height
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
-                        MonospaceLineView(
-                            spans: [.text(String(line), .plain)],
-                            fontSize: style.fontSize,
-                            cellHeight: cellHeight,
-                            alignment: .left,
-                            bold: false,
-                            onLinkTapped: nil
-                        )
-                    }
-                }
-                .padding(.horizontal, indentationWidth(columns: indentLevel))
+                // No band in scroll mode: the code block sits on the page
+                // background, indented by the per-line head/tail indent.
+                block
             } else {
-                Text(text)
-                    .font(bodyFont)
+                // Wrap mode: a gray rounded band around the code, full width.
+                block
                     .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.platformSystemGray6)
                     .cornerRadius(6)
                     .padding(.vertical, 4)
-                    .padding(.horizontal, indentationWidth(columns: indentLevel))
             }
 
         case .formField(let field, let indentLevel):
@@ -173,6 +221,25 @@ struct MicronDocumentView: View {
             renderPartial(partial, indentLevel: indentLevel)
                 .padding(.horizontal, indentationWidth(columns: indentLevel))
         }
+    }
+
+    /// Wrap-mode heading size, scaled with the user's accessibility
+    /// text-size setting via UIFontMetrics (mirrors the previous semantic
+    /// .title / .title2 / .title3 SwiftUI fonts, whose base sizes are 28 /
+    /// 22 / 20 pt at the default content size).
+    private func headingSize(level: Int) -> CGFloat {
+        switch min(max(level, 1), 3) {
+        case 1:
+            return UIFontMetrics(forTextStyle: .title1).scaledValue(for: 28)
+        case 2:
+            return UIFontMetrics(forTextStyle: .title2).scaledValue(for: 22)
+        default:
+            return UIFontMetrics(forTextStyle: .title3).scaledValue(for: 20)
+        }
+    }
+
+    private func headingIndentLevel(level: Int) -> Int {
+        max(0, (level - 1) * 2)
     }
 
     // MARK: - Partial Rendering
@@ -191,7 +258,7 @@ struct MicronDocumentView: View {
                     loadingPartials: loadingPartials,
                     onLinkTapped: onLinkTapped,
                     style: style,
-                    viewportWidth: sectionViewportWidth(columns: indentLevel),
+                    viewportWidth: isScrollMode ? sectionViewportWidth(columns: indentLevel) : 0,
                     appliesDocumentPadding: false,
                     partialAncestry: partialAncestry.union([key])
                 )
@@ -201,7 +268,7 @@ struct MicronDocumentView: View {
                 ProgressView()
                     .scaleEffect(0.7)
                 Text("Loading...")
-                    .font(bodyFont)
+                    .font(style.swiftUIFont)
                     .foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
@@ -212,6 +279,7 @@ struct MicronDocumentView: View {
 
     @ViewBuilder
     private func renderFormField(_ field: MicronFormField) -> some View {
+        let bodyFont = style.swiftUIFont
         switch field {
         case .textInput(let width, let name, _):
             TextField(name, text: binding(for: name))
@@ -265,27 +333,8 @@ struct MicronDocumentView: View {
         )
     }
 
-    private func checkboxBinding(for key: String) -> Binding<Bool> {
-        Binding(
-            get: { checkboxFields[key] ?? false },
-            set: { checkboxFields[key] = $0 }
-        )
-    }
-
-    private func headingFont(level: Int) -> Font {
-        switch level {
-        case 1: return .title
-        case 2: return .title2
-        default: return .title3
-        }
-    }
-
     private func indentationWidth(columns: Int) -> CGFloat {
         CGFloat(columns) * (style.usesMonospace ? style.approxCharWidth : 8)
-    }
-
-    private func headingIndentWidth(level: Int) -> CGFloat {
-        indentationWidth(columns: max(0, (level - 1) * 2))
     }
 
     private func sectionViewportWidth(columns: Int) -> CGFloat {
@@ -311,95 +360,6 @@ private enum MicronHeadingPalette {
             MicronTextStyle.colorFrom3Hex(foregroundHex) ?? .primary,
             MicronTextStyle.colorFrom3Hex(backgroundHex) ?? .clear
         )
-    }
-}
-
-// MARK: - Span Rendering
-
-/// Renders an array of MicronSpans into a single wrapping Text view.
-///
-/// Uses `AttributedString` with inline `.link` attributes so SwiftUI can
-/// wrap naturally at word boundaries. Link taps are intercepted via a
-/// custom URL scheme (`micron-link://<index>`) that `OpenURLAction` maps
-/// back to the originating `MicronLink`.
-@available(iOS 17.0, macOS 14.0, *)
-func renderSpans(
-    _ spans: [MicronSpan],
-    onLinkTapped: ((MicronLink) -> Void)?,
-    linkForegroundColor: Color? = nil
-) -> some View {
-    MicronSpansText(
-        spans: spans,
-        onLinkTapped: onLinkTapped,
-        linkForegroundColor: linkForegroundColor
-    )
-}
-
-@available(iOS 17.0, macOS 14.0, *)
-struct MicronSpansText: View {
-    let spans: [MicronSpan]
-    var onLinkTapped: ((MicronLink) -> Void)?
-    var linkForegroundColor: Color? = nil
-
-    var body: some View {
-        Text(buildAttributed())
-            .environment(\.openURL, OpenURLAction { url in
-                if url.scheme == "micron-link",
-                   let host = url.host,
-                   let idx = Int(host),
-                   idx < links.count {
-                    onLinkTapped?(links[idx])
-                    return .handled
-                }
-                return .systemAction
-            })
-    }
-
-    /// Indices of link spans, in document order. The attributed string uses
-    /// `micron-link://<index>` so the openURL handler can route back to the
-    /// exact span without relying on label uniqueness.
-    private var links: [MicronLink] {
-        spans.compactMap { span in
-            if case .link(let link) = span { return link }
-            return nil
-        }
-    }
-
-    private func buildAttributed() -> AttributedString {
-        var result = AttributedString("")
-        var linkIndex = 0
-        for span in spans {
-            switch span {
-            case .text(let content, let style):
-                result.append(styledAttributed(content, style: style))
-            case .link(let link):
-                var piece = AttributedString(link.label)
-                piece.foregroundColor = linkForegroundColor ?? .accentColor
-                piece.underlineStyle = .single
-                if let url = URL(string: "micron-link://\(linkIndex)") {
-                    piece.link = url
-                }
-                result.append(piece)
-                linkIndex += 1
-            }
-        }
-        return result
-    }
-
-    private func styledAttributed(_ content: String, style: MicronTextStyle) -> AttributedString {
-        var piece = AttributedString(content)
-        var intents: InlinePresentationIntent = []
-        if style.bold { intents.insert(.stronglyEmphasized) }
-        if style.italic { intents.insert(.emphasized) }
-        if !intents.isEmpty { piece.inlinePresentationIntent = intents }
-        if style.underline { piece.underlineStyle = .single }
-        if let fg = style.foregroundColor, let color = MicronTextStyle.colorFromStyleHex(fg) {
-            piece.foregroundColor = color
-        }
-        if let bg = style.backgroundColor, let color = MicronTextStyle.colorFromStyleHex(bg) {
-            piece.backgroundColor = color
-        }
-        return piece
     }
 }
 #endif

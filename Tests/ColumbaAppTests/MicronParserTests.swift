@@ -618,11 +618,12 @@ final class MicronParserTests: XCTestCase {
         let size = CGSize(width: 320, height: 160)
         let host = UIHostingController(
             rootView: MonospaceLineView(
-                spans: spans,
+                lines: [MicronTextLine(spans: spans)],
                 fontSize: 18,
-                cellHeight: 32,
-                alignment: .left,
-                bold: false
+                monospaced: true,
+                // indentLevel is 0, so the indent unit is unused here.
+                indentUnit: 10,
+                cellHeight: 32
             )
             .frame(width: 300, height: 32, alignment: .leading)
             .padding(10)
@@ -893,11 +894,11 @@ final class MicronParserTests: XCTestCase {
         let style = MicronRenderStyle.monospaceScroll
         let host = UIHostingController(
             rootView: MonospaceLineView(
-                spans: [.text("MMMM", .plain)],
+                lines: [MicronTextLine(spans: [.text("MMMM", .plain)])],
                 fontSize: style.fontSize,
-                cellHeight: style.approxCharWidth * 2,
-                alignment: .left,
-                bold: false
+                monospaced: true,
+                indentUnit: style.approxCharWidth,
+                cellHeight: style.approxCharWidth * 2
             )
             .frame(width: 200, height: 40, alignment: .leading)
         )
@@ -908,11 +909,13 @@ final class MicronParserTests: XCTestCase {
         host.view.frame = window.bounds
         host.view.layoutIfNeeded()
 
-        guard let label = descendants(of: host.view, matching: UILabel.self).first,
-              let attributed = label.attributedText,
+        // The monospace block is a non-editable selectable UITextView (issue
+        // #188); read the rendered font from its attributed text.
+        guard let textView = descendants(of: host.view, matching: UITextView.self).first,
+              let attributed = textView.attributedText,
               attributed.length > 0,
               let renderedFont = attributed.attribute(.font, at: 0, effectiveRange: nil) as? UIFont else {
-            XCTFail("Expected a rendered monospace UILabel font")
+            XCTFail("Expected a rendered monospace UITextView font")
             return
         }
         let renderedWidth = ("M" as NSString).size(withAttributes: [.font: renderedFont]).width
@@ -2367,5 +2370,75 @@ final class DeliveryProofMonotonicityTests: XCTestCase {
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: sending), failed)
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: sent), sent)
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: delivered), delivered)
+    }
+}
+
+/// Issue #188: `MicronDocument.plainText` renders the page as readable
+/// text for the "Copy Page" action. Pure model test - no parser coupling.
+final class MicronDocumentPlainTextTests: XCTestCase {
+    private func link(_ label: String, _ url: MicronURL) -> MicronLink {
+        MicronLink(label: label, url: url, fieldNames: nil)
+    }
+
+    func testHeadingsAndParagraphsJoinInDocumentOrder() {
+        let doc = MicronDocument(elements: [
+            .heading(level: 1, spans: [.text("Title", .plain)], alignment: .left),
+            .paragraph(spans: [.text("First line", .plain)], alignment: .left, indentLevel: 0),
+            .paragraph(spans: [.text("Second line", .plain)], alignment: .left, indentLevel: 1),
+        ])
+        XCTAssertEqual(doc.plainText, "Title\nFirst line\nSecond line")
+    }
+
+    func testLinksEmitTheirLabelNotTheirURL() {
+        let doc = MicronDocument(elements: [
+            .paragraph(
+                spans: [
+                    .text("See ", .plain),
+                    .link(link("the docs", .samePage(path: "/page/docs.mu"))),
+                ],
+                alignment: .left,
+                indentLevel: 0
+            ),
+        ])
+        XCTAssertEqual(doc.plainText, "See the docs")
+    }
+
+    func testLiteralBlockPreservedVerbatim() {
+        let doc = MicronDocument(elements: [
+            .literalBlock(text: "line one\nline two", indentLevel: 2),
+        ])
+        XCTAssertEqual(doc.plainText, "line one\nline two")
+    }
+
+    func testDividerBecomesDashLine() {
+        let doc = MicronDocument(elements: [
+            .paragraph(spans: [.text("Above", .plain)], alignment: .left, indentLevel: 0),
+            .divider(character: "-", indentLevel: 0),
+            .paragraph(spans: [.text("Below", .plain)], alignment: .left, indentLevel: 0),
+        ])
+        XCTAssertEqual(doc.plainText, "Above\n────────\nBelow")
+    }
+
+    func testFormFieldsAndPartialsAreExcluded() {
+        let doc = MicronDocument(elements: [
+            .paragraph(spans: [.text("Visible", .plain)], alignment: .left, indentLevel: 0),
+            .formField(.textInput(width: 20, name: "g", defaultValue: ""), indentLevel: 0),
+            .formField(.checkbox(name: "agree", value: "yes", label: "Agree", checked: false), indentLevel: 0),
+            .partial(MicronPartial(url: "/partial/x.mu", refreshInterval: nil, partialId: nil, fieldNames: nil), indentLevel: 0),
+            .paragraph(spans: [.text("Still visible", .plain)], alignment: .left, indentLevel: 0),
+        ])
+        XCTAssertEqual(doc.plainText, "Visible\nStill visible")
+    }
+
+    func testWhitespaceOnlyParagraphIsDropped() {
+        let doc = MicronDocument(elements: [
+            .paragraph(spans: [.text("   ", .plain)], alignment: .left, indentLevel: 0),
+            .paragraph(spans: [.text("Real", .plain)], alignment: .left, indentLevel: 0),
+        ])
+        XCTAssertEqual(doc.plainText, "Real")
+    }
+
+    func testEmptyDocumentIsEmpty() {
+        XCTAssertEqual(MicronDocument().plainText, "")
     }
 }
