@@ -213,8 +213,8 @@ private struct UIMonospaceLine: UIViewRepresentable {
         /// the menu does not appear over empty space.
         func contextMenuInteraction(
             _ interaction: UIContextMenuInteraction,
-            configurationForMenuAt location: CGPoint
-        ) -> UIMenu? {
+            configurationForMenuAtLocation location: CGPoint
+        ) -> UIContextMenuConfiguration? {
             guard let label = interaction.view as? UILabel,
                   let text = label.text,
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -222,12 +222,15 @@ private struct UIMonospaceLine: UIViewRepresentable {
             let copy = UIAction(
                 title: "Copy",
                 image: UIImage(systemName: "doc.on.doc"),
-                handler: { _ in
+                handler: {
                     UIPasteboard.general.string = text
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
             )
-            return UIMenu(title: "", children: [copy])
+            return UIContextMenuConfiguration(
+                preview: UIContextMenuPreview.none,
+                menuProvider: { _ in UIMenu(children: [copy]) }
+            )
         }
 
         private func characterIndex(at location: CGPoint, in label: UILabel, attributedText: NSAttributedString) -> Int {
