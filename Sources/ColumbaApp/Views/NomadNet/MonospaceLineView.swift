@@ -166,8 +166,9 @@ private struct UIMonospaceLine: UIViewRepresentable {
         label.lineBreakMode = .byClipping
         label.backgroundColor = .clear
         label.isUserInteractionEnabled = true
+        // Automation target only. Do NOT set accessibilityLabel: the default
+        // label is the line's text, which is what VoiceOver must announce.
         label.accessibilityIdentifier = "nomadnet_line"
-        label.accessibilityLabel = "NomadNet line"
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.setContentHuggingPriority(.required, for: .vertical)
