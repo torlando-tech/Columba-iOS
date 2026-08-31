@@ -608,58 +608,6 @@ final class MicronParserTests: XCTestCase {
     }
 
     @MainActor
-    func testDEBUGDumpHeadingAttributes() {
-        let document = MicronParser.parse(">>PlainHeading\n>>`[Key Link`:/page/x.mu]")
-        let host = UIHostingController(
-            rootView: MicronDocumentView(
-                document: document,
-                formFields: .constant([:]),
-                checkboxFields: .constant([:]),
-                radioFields: .constant([:]),
-                style: .monospaceScroll,
-                viewportWidth: 320
-            )
-            .frame(width: 320, alignment: .leading)
-            .environment(\.colorScheme, .dark)
-            .padding(10)
-            .frame(width: 340, height: 200, alignment: .topLeading)
-            .background(Color.black)
-            .ignoresSafeArea()
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 340, height: 200))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        host.view.frame = window.bounds
-        host.view.layoutIfNeeded()
-        let textViews = descendants(of: host.view, matching: UITextView.self)
-        print("DEBUG-TV-count=\(textViews.count)")
-        for (i, tv) in textViews.enumerated() {
-            print("DEBUG-TV[\(i)] text=\(String(describing: tv.text))")
-            print("DEBUG-TV[\(i)] textColor=\(tv.textColor) tintColor=\(tv.tintColor) linkTextAttributes=\(String(describing: tv.linkTextAttributes))")
-            guard let a = tv.attributedText, a.length > 0 else { continue }
-            for loc in 0..<min(a.length, 3) {
-                let fc = a.attribute(.foregroundColor, at: loc, effectiveRange: nil) as? UIColor
-                if let fc {
-                    var r: CGFloat = 0
-                    var g: CGFloat = 0
-                    var b: CGFloat = 0
-                    var al: CGFloat = 0
-                    if fc.getRed(&r, green: &g, blue: &b, alpha: &al) {
-                        print("DEBUG-TV[\(i)]@\(loc) fg=\(Int(r * 255)),\(Int(g * 255)),\(Int(b * 255)) a=\(String(format: "%.2f", al))")
-                    } else {
-                        print("DEBUG-TV[\(i)]@\(loc) fg=\(fc)")
-                    }
-                } else {
-                    print("DEBUG-TV[\(i)]@\(loc) fg=NIL")
-                }
-                let lk = a.attribute(.link, at: loc, effectiveRange: nil)
-                print("DEBUG-TV[\(i)]@\(loc) link=\(String(describing: lk))")
-            }
-        }
-    }
-
-    @MainActor
     func testRngitTrueColorsReachMonospaceRenderer() throws {
         let document = MicronParser.parse("`BT282828`FT8b949e# Add tasks")
         guard case .paragraph(let spans, _, _) = document.elements.first else {
