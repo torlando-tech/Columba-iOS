@@ -38,6 +38,29 @@ struct MonospaceLineView: View {
     var linkForegroundColor: Color? = nil
     var onLinkTapped: ((MicronLink) -> Void)?
 
+    /// Primary initializer: one selectable block per element, where a literal
+    /// code block passes all of its lines at once (so selection can span the
+    /// block) and a heading/paragraph passes a single line.
+    init(
+        lines: [[MicronSpan]],
+        fontSize: CGFloat,
+        cellHeight: CGFloat,
+        alignment: MicronAlignment,
+        bold: Bool,
+        defaultForegroundColor: Color? = nil,
+        linkForegroundColor: Color? = nil,
+        onLinkTapped: ((MicronLink) -> Void)? = nil
+    ) {
+        self.lines = lines
+        self.fontSize = fontSize
+        self.cellHeight = cellHeight
+        self.alignment = alignment
+        self.bold = bold
+        self.defaultForegroundColor = defaultForegroundColor
+        self.linkForegroundColor = linkForegroundColor
+        self.onLinkTapped = onLinkTapped
+    }
+
     /// Single-line convenience (headings, paragraphs, dividers).
     init(
         spans: [MicronSpan],
@@ -136,7 +159,7 @@ private struct UISelectableMonospaceBlock: UIViewRepresentable {
         textView.isOpaque = false
         textView.backgroundColor = .clear
         textView.textContainerInset = .zero
-        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer.lineFragmentPadding = 0
         textView.contentInsetAdjustmentBehavior = .never
         // Automation target only. Do NOT set accessibilityLabel: the default
         // label is the block's text, which is what VoiceOver must announce.
@@ -148,7 +171,7 @@ private struct UISelectableMonospaceBlock: UIViewRepresentable {
     func updateUIView(_ textView: UITextView, context: Context) {
         // The text container can be rebuilt on some iOS versions; re-assert the
         // zero padding so the left edge and no-wrap width stay exact.
-        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer.lineFragmentPadding = 0
         let attr = buildAttributedString()
         if textView.text != attr.string {
             textView.attributedText = attr
