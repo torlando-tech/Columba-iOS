@@ -157,6 +157,14 @@ struct NomadNetBrowserView: View {
                 Label("Copy Address", systemImage: "doc.on.doc")
             }
 
+            if viewModel.currentDocument != nil {
+                Button {
+                    copyPage()
+                } label: {
+                    Label("Copy Page", systemImage: "doc.on.clipboard")
+                }
+            }
+
             #if os(iOS)
             Button {
                 showingAddressShareSheet = true
@@ -188,12 +196,25 @@ struct NomadNetBrowserView: View {
     }
 
     private func copyAddress() {
+        copyText(viewModel.shareableAddress)
+    }
+
+    /// Copies the loaded page's readable plain text to the pasteboard (issue
+    /// #188). Available in every rendering mode - the wrapping modes also
+    /// offer native long-press selection, and monospace lines offer a
+    /// long-press "Copy", so this is the whole-page fallback.
+    private func copyPage() {
+        guard let text = viewModel.currentDocument?.plainText, !text.isEmpty else { return }
+        copyText(text)
+    }
+
+    private func copyText(_ text: String) {
         #if canImport(UIKit)
-        UIPasteboard.general.string = viewModel.shareableAddress
+        UIPasteboard.general.string = text
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         #elseif canImport(AppKit)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(viewModel.shareableAddress, forType: .string)
+        NSPasteboard.general.setString(text, forType: .string)
         #endif
     }
 

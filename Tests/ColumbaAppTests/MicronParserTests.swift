@@ -2369,3 +2369,73 @@ final class DeliveryProofMonotonicityTests: XCTestCase {
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: failed, incoming: delivered), delivered)
     }
 }
+
+/// Issue #188: `MicronDocument.plainText` renders the page as readable
+/// text for the "Copy Page" action. Pure model test - no parser coupling.
+final class MicronDocumentPlainTextTests: XCTestCase {
+    private func link(_ label: String, _ url: MicronURL) -> MicronLink {
+        MicronLink(label: label, url: url, fieldNames: nil)
+    }
+
+    func testHeadingsAndParagraphsJoinInDocumentOrder() {
+        let doc = MicronDocument(elements: [
+            .heading(level: 1, spans: [.text("Title", .plain)], alignment: .left),
+            .paragraph(spans: [.text("First line", .plain)], alignment: .left, indentLevel: 0),
+            .paragraph(spans: [.text("Second line", .plain)], alignment: .left, indentLevel: 1),
+        ])
+        XCTAssertEqual(doc.plainText, "Title\nFirst line\nSecond line")
+    }
+
+    func testLinksEmitTheirLabelNotTheirURL() {
+        let doc = MicronDocument(elements: [
+            .paragraph(
+                spans: [
+                    .text("See ", .plain),
+                    .link(link("the docs", .samePage(path: "/page/docs.mu"))),
+                ],
+                alignment: .left,
+                indentLevel: 0
+            ),
+        ])
+        XCTAssertEqual(doc.plainText, "See the docs")
+    }
+
+    func testLiteralBlockPreservedVerbatim() {
+        let doc = MicronDocument(elements: [
+            .literalBlock(text: "line one\nline two", indentLevel: 2),
+        ])
+        XCTAssertEqual(doc.plainText, "line one\nline two")
+    }
+
+    func testDividerBecomesDashLine() {
+        let doc = MicronDocument(elements: [
+            .paragraph(spans: [.text("Above", .plain)], alignment: .left, indentLevel: 0),
+            .divider(character: "-", indentLevel: 0),
+            .paragraph(spans: [.text("Below", .plain)], alignment: .left, indentLevel: 0),
+        ])
+        XCTAssertEqual(doc.plainText, "Above\n────────\nBelow")
+    }
+
+    func testFormFieldsAndPartialsAreExcluded() {
+        let doc = MicronDocument(elements: [
+            .paragraph(spans: [.text("Visible", .plain)], alignment: .left, indentLevel: 0),
+            .formField(.textInput(width: 20, name: "g", defaultValue: ""), indentLevel: 0),
+            .formField(.checkbox(name: "agree", value: "yes", label: "Agree", checked: false), indentLevel: 0),
+            .partial(MicronPartial(url: "/partial/x.mu", refreshInterval: nil, partialId: nil, fieldNames: nil), indentLevel: 0),
+            .paragraph(spans: [.text("Still visible", .plain)], alignment: .left, indentLevel: 0),
+        ])
+        XCTAssertEqual(doc.plainText, "Visible\nStill visible")
+    }
+
+    func testWhitespaceOnlyParagraphIsDropped() {
+        let doc = MicronDocument(elements: [
+            .paragraph(spans: [.text("   ", .plain)], alignment: .left, indentLevel: 0),
+            .paragraph(spans: [.text("Real", .plain)], alignment: .left, indentLevel: 0),
+        ])
+        XCTAssertEqual(doc.plainText, "Real")
+    }
+
+    func testEmptyDocumentIsEmpty() {
+        XCTAssertEqual(MicronDocument().plainText, "")
+    }
+}

@@ -33,6 +33,14 @@ struct MicronDocumentView: View {
         }
         .padding(.horizontal, appliesDocumentPadding && !isScrollMode ? 12 : 0)
         .padding(.vertical, appliesDocumentPadding && !isScrollMode ? 8 : 0)
+        // Android parity (#188): in the wrapping modes the body text is real
+        // SwiftUI `Text`, so enable the native long-press select/copy behavior
+        // (the iOS equivalent of Android's Compose `SelectionContainer`).
+        // `.monospaceScroll` renders UIKit UILabels, which this modifier cannot
+        // reach; those lines get a long-press "Copy" context menu instead
+        // (MonospaceLineView) and the toolbar "Copy Page" covers the whole page.
+        .textSelection(isScrollMode ? .disabled : .enabled)
+        .accessibilityIdentifier("nomadnet_document")
     }
 
     private var isScrollMode: Bool { style == .monospaceScroll }
