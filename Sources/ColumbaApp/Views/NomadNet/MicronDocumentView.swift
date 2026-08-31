@@ -28,9 +28,11 @@ struct MicronDocumentView: View {
     var body: some View {
         // Android parity (#188): page text must be selectable/copyable.
         // `.textSelection` only reaches SwiftUI `Text`, so it is applied in
-        // the wrapping modes (real Text) and NOT in `.monospaceScroll`
-        // (UIKit UILabels, which get a long-press "Copy" context menu in
-        // MonospaceLineView instead; the toolbar "Copy Page" covers all).
+        // the wrapping modes (real Text). In `.monospaceScroll` the content is
+        // UIKit-backed, so each block is itself a selectable `UITextView`
+        // (MonospaceLineView) that surfaces the native long-press selection UI
+        // (highlight + two handles + system Copy/Look Up/Translate menu). The
+        // toolbar "Copy Page" remains a whole-page fallback in every mode.
         if isScrollMode {
             documentContent
         } else {
@@ -154,19 +156,18 @@ struct MicronDocumentView: View {
 
         case .literalBlock(let text, let indentLevel):
             if isScrollMode {
-                // Split literal blocks into individual lines so each gets exact cell height
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
-                        MonospaceLineView(
-                            spans: [.text(String(line), .plain)],
-                            fontSize: style.fontSize,
-                            cellHeight: cellHeight,
-                            alignment: .left,
-                            bold: false,
-                            onLinkTapped: nil
-                        )
-                    }
-                }
+                // One selectable block per literal block: its lines render
+                // inside a single selectable UITextView so a long-press yields
+                // the two-handle selection across the whole block (issue #188),
+                // and each line keeps its exact cell height for tight stacking.
+                MonospaceLineView(
+                    lines: text.split(separator: "\n", omittingEmptySubsequences: false).map { [.text(String($0), .plain)] },
+                    fontSize: style.fontSize,
+                    cellHeight: cellHeight,
+                    alignment: .left,
+                    bold: false,
+                    onLinkTapped: nil
+                )
                 .padding(.horizontal, indentationWidth(columns: indentLevel))
             } else {
                 Text(text)

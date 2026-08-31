@@ -908,11 +908,13 @@ final class MicronParserTests: XCTestCase {
         host.view.frame = window.bounds
         host.view.layoutIfNeeded()
 
-        guard let label = descendants(of: host.view, matching: UILabel.self).first,
-              let attributed = label.attributedText,
+        // The monospace block is a non-editable selectable UITextView (issue
+        // #188); read the rendered font from its attributed text.
+        guard let textView = descendants(of: host.view, matching: UITextView.self).first,
+              let attributed = textView.attributedText,
               attributed.length > 0,
               let renderedFont = attributed.attribute(.font, at: 0, effectiveRange: nil) as? UIFont else {
-            XCTFail("Expected a rendered monospace UILabel font")
+            XCTFail("Expected a rendered monospace UITextView font")
             return
         }
         let renderedWidth = ("M" as NSString).size(withAttributes: [.font: renderedFont]).width
