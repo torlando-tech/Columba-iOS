@@ -7,15 +7,29 @@ import UIKit
 import AppKit
 #endif
 
-/// Renders a single line of micron content with exact cell height,
-/// no font leading/padding, and tight glyph stacking. This is the only
-/// way to get block-drawing characters (▀▄█) to stack without gaps in
-/// SwiftUI, since `.frame(height:)` crops but doesn't remove font leading.
+/// Renders one or more lines of monospace content as a single **selectable**
+/// block (issue #188, Android parity).
 ///
-/// Used only in monospaceScroll mode.
+/// Backed by a non-editable, selectable ``UITextView`` so a long-press produces
+/// the native iOS selection UI - highlighted text with two draggable handles and
+/// the system Copy / Look Up / Translate / Share menu - exactly like the message
+/// bubble's "Select Text" (``SelectableMessageTextView``). A ``UILabel`` (the
+/// earlier backing) cannot expose that selection UI, which is why the per-line
+/// "Copy" context menu was replaced: whole-line copy was not granular enough.
+///
+/// A single paragraph or heading is one line; a literal/code block is several
+/// lines rendered as one block, so selection (and its two handles) can span
+/// multiple lines of code.
+///
+/// Rendering keeps the strict square-cell paragraph style (minimum == maximum
+/// line height == ``cellHeight``, zero line spacing) so block-drawing characters
+/// (▀▄█) stack tight, and each block is sized to its content so lines never wrap
+/// (this mode is no-wrap). Links render via the native ``.link`` attribute and
+/// are routed back to the caller through ``onLinkTapped``; they coexist with
+/// long-press selection.
 @available(iOS 17.0, macOS 14.0, *)
 struct MonospaceLineView: View {
-    let spans: [MicronSpan]
+    let lines: [[MicronSpan]]
     let fontSize: CGFloat
     let cellHeight: CGFloat
     let alignment: MicronAlignment
@@ -24,30 +38,138 @@ struct MonospaceLineView: View {
     var linkForegroundColor: Color? = nil
     var onLinkTapped: ((MicronLink) -> Void)?
 
-    var body: some View {
-        #if os(iOS)
-        UIMonospaceLine(
-            attributedString: buildAttributedString(),
+    /// Single-line convenience (headings, paragraphs, dividers).
+    init(
+        spans: [MicronSpan],
+        fontSize: CGFloat,
+        cellHeight: CGFloat,
+        alignment: MicronAlignment,
+        bold: Bool,
+        defaultForegroundColor: Color? = nil,
+        linkForegroundColor: Color? = nil,
+        onLinkTapped: ((MicronLink) -> Void)? = nil
+    ) {
+        self.init(
+            lines: [spans],
+            fontSize: fontSize,
             cellHeight: cellHeight,
             alignment: alignment,
-            onTap: handleTap
+            bold: bold,
+            defaultForegroundColor: defaultForegroundColor,
+            linkForegroundColor: linkForegroundColor,
+            onLinkTapped: onLinkTapped
         )
-        .frame(height: cellHeight)
-        #else
-        // macOS fallback — plain Text with manual spacing (gaps may be visible on macOS)
-        Text(spans.map { span -> String in
-            switch span {
-            case .text(let s, _): return s
-            case .link(let l): return l.label
-            }
-        }.joined())
-        .font(.system(size: fontSize, design: .monospaced))
-        .lineLimit(1)
-        .frame(height: cellHeight, alignment: alignment.swiftUI)
-        #endif
     }
 
-    #if os(iOS)
+    var body: some View {
+        #if os(iOS)
+        UISelectableMonospaceBlock(
+            lines: lines,
+            fontSize: fontSize,
+            cellHeight: cellHeight,
+            alignment: alignment,
+            bold: bold,
+            defaultForegroundColor: defaultForegroundColor,
+            linkForegroundColor: linkForegroundColor,
+            onLinkTapped: onLinkTapped
+        )
+        #else
+        // macOS fallback — plain Text rows with manual spacing (gaps may be
+        // visible on macOS; the selectable behavior is iOS-only).
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, spans in
+                Text(spans.map { span -> String in
+                    switch span {
+                    case .text(let s, _): return s
+                    case .link(let l): return l.label
+                    }
+                }.joined())
+                .font(.system(size: fontSize, design: .monospaced))
+                .lineLimit(1)
+                .frame(height: cellHeight, alignment: alignment.swiftUI)
+            }
+        }
+        #endif
+    }
+}
+
+#if os(iOS)
+
+/// UIKit wrapper: a non-editable, selectable ``UITextView`` that renders
+/// monospace lines with a strict square-cell paragraph style. The native
+/// long-press selection (two handles + system menu) comes from
+/// ``UITextView/isSelectable``.
+@available(iOS 17.0, *)
+private struct UISelectableMonospaceBlock: UIViewRepresentable {
+    let lines: [[MicronSpan]]
+    let fontSize: CGFloat
+    let cellHeight: CGFloat
+    let alignment: MicronAlignment
+    let bold: Bool
+    var defaultForegroundColor: Color? = nil
+    var linkForegroundColor: Color? = nil
+    var onLinkTapped: ((MicronLink) -> Void)?
+
+    /// Ordered link spans (document order). ``micron-link://<index>`` maps here.
+    private var links: [MicronLink] {
+        lines.flatMap { line in
+            line.compactMap { span in
+                if case .link(let l) = span { return l }
+                return nil
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onLinkTapped: onLinkTapped, links: links)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.isEditable = false
+        // isSelectable (not isEditable) is what surfaces the native selection
+        // UI: long-press -> highlight + two draggable handles + system menu.
+        textView.isSelectable = true
+        // The outer ZoomableScrollView owns all scrolling; this block must not
+        // scroll on its own (no nested scrolling, no clipping).
+        textView.isScrollEnabled = false
+        textView.isOpaque = false
+        textView.backgroundColor = .clear
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.contentInsetAdjustmentBehavior = .never
+        // Automation target only. Do NOT set accessibilityLabel: the default
+        // label is the block's text, which is what VoiceOver must announce.
+        textView.accessibilityIdentifier = "nomadnet_line"
+        textView.delegate = context.coordinator
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        // The text container can be rebuilt on some iOS versions; re-assert the
+        // zero padding so the left edge and no-wrap width stay exact.
+        textView.textContainer?.lineFragmentPadding = 0
+        let attr = buildAttributedString()
+        if textView.text != attr.string {
+            textView.attributedText = attr
+        }
+        context.coordinator.links = links
+        context.coordinator.onLinkTapped = onLinkTapped
+    }
+
+    /// Intrinsic size of the block: as wide as its longest line (so no line
+    /// wraps - this mode is no-wrap) and exactly one ``cellHeight`` tall per
+    /// line. The SwiftUI call site wraps this in `.frame(minWidth:alignment:)`
+    /// for centering / right-alignment of narrow rows, mirroring the previous
+    /// label behavior and Android's `widthIn(min = viewportLineWidth)`.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = contentWidth()
+        let height = CGFloat(lines.count) * cellHeight
+        return CGSize(width: width, height: height)
+    }
+
+    // MARK: - Attributed text
+
     private func buildAttributedString() -> NSAttributedString {
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
@@ -55,7 +177,7 @@ struct MonospaceLineView: View {
         paragraph.maximumLineHeight = cellHeight
         paragraph.lineSpacing = 0
         paragraph.lineHeightMultiple = 0
-        // Always render content left-aligned within the UILabel. SwiftUI
+        // Always render content left-aligned within the text view. SwiftUI
         // `.frame(alignment:)` at the call site handles visual centering /
         // right-alignment for narrow rows. This avoids Core Text's
         // trailing-whitespace stripping under .center / .right alignment.
@@ -66,38 +188,54 @@ struct MonospaceLineView: View {
             bold: bold
         )
 
-        for span in spans {
-            switch span {
-            case .text(let text, let style):
-                var attrs: [NSAttributedString.Key: Any] = [
-                    .font: font(for: style, base: baseFont),
-                    .paragraphStyle: paragraph,
-                ]
-                if let fg = style.foregroundColor,
-                   let color = MicronTextStyle.colorFromStyleHex(fg) {
-                    attrs[.foregroundColor] = UIColor(color)
-                } else if let defaultForegroundColor {
-                    attrs[.foregroundColor] = UIColor(defaultForegroundColor)
-                } else {
-                    attrs[.foregroundColor] = UIColor.label
-                }
-                if let bg = style.backgroundColor,
-                   let color = MicronTextStyle.colorFromStyleHex(bg) {
-                    attrs[.backgroundColor] = UIColor(color)
-                }
-                if style.underline {
-                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-                }
-                result.append(NSAttributedString(string: text, attributes: attrs))
+        var linkIndex = 0
+        for (lineIndex, line) in lines.enumerated() {
+            for span in line {
+                switch span {
+                case .text(let text, let style):
+                    var attrs: [NSAttributedString.Key: Any] = [
+                        .font: font(for: style, base: baseFont),
+                        .paragraphStyle: paragraph,
+                    ]
+                    if let fg = style.foregroundColor,
+                       let color = MicronTextStyle.colorFromStyleHex(fg) {
+                        attrs[.foregroundColor] = UIColor(color)
+                    } else if let defaultForegroundColor {
+                        attrs[.foregroundColor] = UIColor(defaultForegroundColor)
+                    } else {
+                        attrs[.foregroundColor] = UIColor.label
+                    }
+                    if let bg = style.backgroundColor,
+                       let color = MicronTextStyle.colorFromStyleHex(bg) {
+                        attrs[.backgroundColor] = UIColor(color)
+                    }
+                    if style.underline {
+                        attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                    }
+                    result.append(NSAttributedString(string: text, attributes: attrs))
 
-            case .link(let link):
-                let attrs: [NSAttributedString.Key: Any] = [
-                    .font: baseFont,
-                    .paragraphStyle: paragraph,
-                    .foregroundColor: UIColor(linkForegroundColor ?? .accentColor),
-                    .underlineStyle: NSUnderlineStyle.single.rawValue,
-                ]
-                result.append(NSAttributedString(string: link.label, attributes: attrs))
+                case .link(let link):
+                    // Native .link: a tap routes through
+                    // UITextViewDelegate.textView(_:shouldInteractWith:in:) and
+                    // coexists with long-press text selection.
+                    var attrs: [NSAttributedString.Key: Any] = [
+                        .font: baseFont,
+                        .paragraphStyle: paragraph,
+                        .foregroundColor: UIColor(linkForegroundColor ?? .accentColor),
+                        .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    ]
+                    if let url = URL(string: "micron-link://\(linkIndex)") {
+                        attrs[.link] = url
+                    }
+                    result.append(NSAttributedString(string: link.label, attributes: attrs))
+                    linkIndex += 1
+                }
+            }
+            if lineIndex < lines.count - 1 {
+                result.append(NSAttributedString(
+                    string: "\n",
+                    attributes: [.font: baseFont, .paragraphStyle: paragraph]
+                ))
             }
         }
         return result
@@ -118,139 +256,55 @@ struct MonospaceLineView: View {
         return font
     }
 
-    private func handleTap(at index: Int) {
-        // Find the link span whose label range contains this index
-        var offset = 0
-        for span in spans {
-            switch span {
-            case .text(let t, _):
-                offset += t.count
-            case .link(let link):
-                let end = offset + link.label.count
-                if index >= offset && index < end {
-                    onLinkTapped?(link)
-                    return
+    /// Rendered width of the widest line. The font is monospace, so a line's
+    /// width is its character count times the advance (the existing metric test
+    /// pins the rendered advance to `approxCharWidth`). The advance is measured
+    /// with the same regular font `approxCharWidth` uses, plus 1pt of headroom
+    /// so the longest line never wraps on sub-pixel rounding.
+    private func contentWidth() -> CGFloat {
+        let baseFont = MicronRenderStyle.uiMonospaceFont(fontSize: fontSize)
+        let advance = ("M" as NSString).size(withAttributes: [.font: baseFont]).width
+        let maxChars = lines.map { line in
+            line.reduce(0) { acc, span in
+                switch span {
+                case .text(let s, _): return acc + s.count
+                case .link(let l): return acc + l.label.count
                 }
-                offset = end
             }
-        }
-    }
-    #endif
-}
-
-#if os(iOS)
-
-/// UIKit wrapper: a UILabel with strict line-height paragraph style.
-@available(iOS 17.0, *)
-private struct UIMonospaceLine: UIViewRepresentable {
-    let attributedString: NSAttributedString
-    let cellHeight: CGFloat
-    let alignment: MicronAlignment
-    var onTap: ((Int) -> Void)?
-
-    /// Return only the label's intrinsic content width. SwiftUI `.frame`
-    /// at the call site handles minimum-width / alignment for narrow rows,
-    /// which avoids Core Text's trailing-whitespace stripping under
-    /// `textAlignment = .center` (a row ending in a regular space would
-    /// otherwise center as if it were one cell narrower than its sibling
-    /// rows that have no trailing space, breaking column alignment in
-    /// ASCII art — see fr33n0w/thechatroom letter "T").
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UILabel, context: Context) -> CGSize? {
-        let intrinsicWidth = uiView.intrinsicContentSize.width
-        return CGSize(width: intrinsicWidth, height: cellHeight)
+        }.max() ?? 0
+        return max(advance, CGFloat(maxChars) * advance + 1)
     }
 
-    func makeUIView(context: Context) -> UILabel {
-        let label = UILabel()
-        label.numberOfLines = 1
-        label.lineBreakMode = .byClipping
-        label.backgroundColor = .clear
-        label.isUserInteractionEnabled = true
-        // Automation target only. Do NOT set accessibilityLabel: the default
-        // label is the line's text, which is what VoiceOver must announce.
-        label.accessibilityIdentifier = "nomadnet_line"
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.setContentHuggingPriority(.required, for: .vertical)
-        label.setContentCompressionResistancePriority(.required, for: .vertical)
-
-        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.didTap(_:)))
-        label.addGestureRecognizer(tap)
-        // Android parity (#188): long-press a line to copy it. `.textSelection`
-        // cannot reach a UILabel, so use the native iOS long-press idiom. The
-        // tap recognizer (links) and the long-press context menu coexist.
-        let contextMenu = UIContextMenuInteraction(delegate: context.coordinator)
-        label.addInteraction(contextMenu)
-        context.coordinator.onTap = onTap
-        return label
-    }
-
-    func updateUIView(_ uiView: UILabel, context: Context) {
-        uiView.attributedText = attributedString
-        context.coordinator.onTap = onTap
-        // Always left — SwiftUI .frame(alignment:) handles visual centering
-        // outside the label so trailing whitespace isn't stripped.
-        uiView.textAlignment = .left
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    // MARK: - Coordinator
 
     @MainActor
-    final class Coordinator: NSObject, UIContextMenuInteractionDelegate {
-        var onTap: ((Int) -> Void)?
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var onLinkTapped: ((MicronLink) -> Void)?
+        var links: [MicronLink]
 
-        @objc func didTap(_ sender: UITapGestureRecognizer) {
-            guard let label = sender.view as? UILabel,
-                  let attr = label.attributedText else { return }
-            let location = sender.location(in: label)
-            let index = characterIndex(at: location, in: label, attributedText: attr)
-            if index != NSNotFound {
-                onTap?(index)
+        init(onLinkTapped: ((MicronLink) -> Void)?, links: [MicronLink]) {
+            self.onLinkTapped = onLinkTapped
+            self.links = links
+            super.init()
+        }
+
+        /// Intercept our `micron-link://` links and route them to the caller.
+        /// Returning `false` consumes the tap (no system URL open). Any other
+        /// link is left to the system (there are none in practice).
+        func textView(
+            _ textView: UITextView,
+            shouldInteractWith url: URL,
+            in characterRange: NSRange
+        ) -> Bool {
+            guard url.scheme == "micron-link",
+                  let host = url.host,
+                  let idx = Int(host),
+                  idx < links.count
+            else {
+                return true
             }
-        }
-
-        /// Long-press context menu: a single "Copy" action that copies the
-        /// line's visible text (issue #188). Returns nil for blank lines so
-        /// the menu does not appear over empty space.
-        func contextMenuInteraction(
-            _ interaction: UIContextMenuInteraction,
-            configurationForMenuAtLocation location: CGPoint
-        ) -> UIContextMenuConfiguration? {
-            guard let label = interaction.view as? UILabel,
-                  let text = label.text,
-                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            else { return nil }
-            let copy = UIAction(
-                title: "Copy",
-                image: UIImage(systemName: "doc.on.doc"),
-                handler: { _ in
-                    UIPasteboard.general.string = text
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                }
-            )
-            return UIContextMenuConfiguration(
-                identifier: nil,
-                previewProvider: nil,
-                actionProvider: { _ in UIMenu(children: [copy]) }
-            )
-        }
-
-        private func characterIndex(at location: CGPoint, in label: UILabel, attributedText: NSAttributedString) -> Int {
-            let textContainer = NSTextContainer(size: label.bounds.size)
-            textContainer.lineFragmentPadding = 0
-            textContainer.lineBreakMode = label.lineBreakMode
-            textContainer.maximumNumberOfLines = label.numberOfLines
-            let layoutManager = NSLayoutManager()
-            layoutManager.addTextContainer(textContainer)
-            let textStorage = NSTextStorage(attributedString: attributedText)
-            textStorage.addLayoutManager(layoutManager)
-
-            let index = layoutManager.characterIndex(
-                for: location,
-                in: textContainer,
-                fractionOfDistanceBetweenInsertionPoints: nil
-            )
-            return index
+            onLinkTapped?(links[idx])
+            return false
         }
     }
 }

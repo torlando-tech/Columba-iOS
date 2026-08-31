@@ -200,9 +200,9 @@ struct NomadNetBrowserView: View {
     }
 
     /// Copies the loaded page's readable plain text to the pasteboard (issue
-    /// #188). Available in every rendering mode - the wrapping modes also
-    /// offer native long-press selection, and monospace lines offer a
-    /// long-press "Copy", so this is the whole-page fallback.
+    /// #188). Available in every rendering mode - the other modes also
+    /// offer native long-press selection (handles + system menu), so this is
+    /// the whole-page fallback.
     private func copyPage() {
         guard let text = viewModel.currentDocument?.plainText, !text.isEmpty else { return }
         copyText(text)
