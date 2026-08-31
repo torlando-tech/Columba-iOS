@@ -435,6 +435,12 @@ private struct UISelectableTextRun: UIViewRepresentable {
             // stay exact.
             textView.textContainer.lineFragmentPadding = 0
             let effectiveWidth = max(1, width)
+            // UITextView draws .link-attributed text in its tintColor,
+            // ignoring the .foregroundColor set on the link spans. A run has
+            // exactly one link color (per-run parameter), so mirror it onto
+            // the tintColor: heading links inherit the palette foreground,
+            // prose links use the accent color.
+            textView.tintColor = UIColor(run.linkForegroundColor ?? .accentColor)
             textView.textContainer.widthTracksTextView = false
             if isScroll, let cellHeight = run.cellHeight {
                 textView.textContainer.size = CGSize(
