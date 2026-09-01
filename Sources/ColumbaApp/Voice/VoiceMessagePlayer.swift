@@ -151,16 +151,31 @@ public final class VoiceMessagePlayer {
         let url = try renderToTempFile(attachment)
         tempFiles.append(url)
         let filePlayer = try AVAudioPlayer(contentsOf: url)
-        let ready = filePlayer.prepareToPlay()
-        DiagLog.log("[VOICE-PLAY] prepareToPlay=\(ready) duration=\(filePlayer.duration)")
-        guard ready else {
+        filePlayer.numberOfLoops = 0
+        filePlayer.volume = 1.0
+        // prepareToPlay() is NOT a reliable gate for Ogg/Opus: AVFoundation's
+        // format reader returns false for streaming formats even when play()
+        // works (it still reads duration correctly, as seen in diag). Gate on
+        // the actual play() result (isPlaying) instead, with a brief poll for
+        // the first decode buffer.
+        _ = filePlayer.prepareToPlay()
+        filePlayer.play()
+        var playing = filePlayer.isPlaying
+        if !playing {
+            // First buffer may not be decoded synchronously for a streaming
+            // format; give it a short, bounded window before declaring defeat.
+            for _ in 0..<10 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                if filePlayer.isPlaying { playing = true; break }
+            }
+        }
+        let playErr = filePlayer.error
+        DiagLog.log("[VOICE-PLAY] isPlaying=\(playing) duration=\(filePlayer.duration) error=\(String(describing: playErr))")
+        guard playing else {
             DiagLog.log("[VOICE-PLAY] UNPLAYABLE url=\(url.lastPathComponent)")
             throw PlayerError.unplayable
         }
-        filePlayer.numberOfLoops = 0
-        filePlayer.volume = 1.0
         player = filePlayer
-        filePlayer.play()
         var st = states[key] ?? PlaybackState()
         st.status = .playing
         if st.durationMs == 0 { st.durationMs = Int((filePlayer.duration * 1_000).rounded()) }
