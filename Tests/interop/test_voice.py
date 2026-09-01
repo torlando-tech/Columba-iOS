@@ -33,11 +33,9 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).parent
-sys_path_added = False
 import sys
 if str(HERE / "fixtures") not in sys.path:
     sys.path.insert(0, str(HERE / "fixtures"))
-    sys_path_added = True
 
 from make_voice_fixtures import generate_all  # noqa: E402
 
@@ -112,14 +110,16 @@ def test_codec2_ios_to_sideband(sim, sideband, voice_fixtures, name, mode):
     _assert_audio_field(lxm, expected_mode=mode, expected_bytes=payload)
 
 
-def test_opus_ios_to_sideband(sim, sideband, voice_fixtures):
-    """iOS sends a Medium-Quality (24k mono) Ogg/Opus note; Sideband must
-    capture field 7 with mode 0x10 and the byte-identical Ogg. Sideband
-    persisting the Ogg without error is the wire half of the granule-fix
-    story (the decode half is pinned by OggOpusFileWriterTests + the
-    Sideband→iOS Opus cell below)."""
-    payload = _fix(voice_fixtures, "opus_medium", "ogg")
-    body = f"v-opus-medium-{int(time.time() * 1000)}"
+@pytest.mark.parametrize("name", ["opus_medium", "opus_high", "opus_max"])
+def test_opus_ios_to_sideband(sim, sideband, voice_fixtures, name):
+    """iOS sends an Ogg/Opus note at one of the three Opus profile
+    rates (24k mono / 48k mono / 48k stereo); Sideband must capture
+    field 7 with mode 0x10 and the byte-identical Ogg. Sideband
+    persisting the Ogg without error is the wire half of the
+    granule-fix story (the decode half is pinned by
+    OggOpusFileWriterTests + the Sideband->iOS Opus cells below)."""
+    payload = _fix(voice_fixtures, name, "ogg")
+    body = f"v-opus-{name}-{int(time.time() * 1000)}"
     result = sim.test_send(
         to_hex=sideband.identity_hex,
         content=body,
@@ -128,12 +128,15 @@ def test_opus_ios_to_sideband(sim, sideband, voice_fixtures):
         audio_mode=AM_OPUS_OGG,
     )
     assert result.error is None, f"iOS-side send failed: {result.error}"
+    assert result.sent_hash_hex, "iOS didn't surface a message hash"
     lxm = sideband.wait_for_tapped_message(
         from_hex=sim.lxmf_delivery_hex,
         field_id=FIELD_AUDIO,
         content_match=body,
         timeout=30.0,
     )
+    assert lxm.signature_validated, "Sideband couldn't verify iOS's signature"
+    assert lxm.hash.hex() == result.sent_hash_hex
     _assert_audio_field(lxm, expected_mode=AM_OPUS_OGG, expected_bytes=payload)
 
 
