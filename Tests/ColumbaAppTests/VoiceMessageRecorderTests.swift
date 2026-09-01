@@ -16,6 +16,7 @@
 //
 
 import XCTest
+import LXSTSwift
 @testable import ColumbaApp
 
 // MARK: - File-scope capture fakes (nonisolated, safe for the capture thread)
