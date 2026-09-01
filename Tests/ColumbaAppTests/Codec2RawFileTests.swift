@@ -153,7 +153,8 @@ final class Codec2RawFileTests: XCTestCase {
         XCTAssertEqual(Int(littleEndian16(wav, 22)), 1)       // mono
         XCTAssertEqual(Int(littleEndian32(wav, 24)), 8_000)   // rate
         XCTAssertEqual(Int(littleEndian32(wav, 28)), 16_000)  // byte rate
-        XCTAssertEqual(Int(littleEndian16(wav, 32)), 16)      // bits
+        XCTAssertEqual(Int(littleEndian16(wav, 32)), 2)       // block align
+        XCTAssertEqual(Int(littleEndian16(wav, 34)), 16)      // bits per sample
         XCTAssertEqual(wav[36..<40], Data("data".utf8))
         XCTAssertEqual(Int(littleEndian32(wav, 40)), decoded.samples.count * 2)
     }
