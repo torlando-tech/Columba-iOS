@@ -99,6 +99,7 @@ public final class VoiceMessagePlayer {
             do {
                 try await self?.startPlayback(key: key, attachment: attachment)
             } catch {
+                DiagLog.log("[VOICE-PLAY] ERROR key=\(key.prefix(8)) \(error.localizedDescription)")
                 self?.markError(key, error.localizedDescription)
             }
         }
@@ -146,10 +147,14 @@ public final class VoiceMessagePlayer {
     // MARK: - Playback start (off the main-actor hot path)
 
     private func startPlayback(key: String, attachment: AudioAttachment) async throws {
+        DiagLog.log("[VOICE-PLAY] start key=\(key.prefix(8)) mode=0x\(String(format: "%02x", attachment.mode.rawValue)) bytes=\(attachment.bytes.count)")
         let url = try renderToTempFile(attachment)
         tempFiles.append(url)
         let filePlayer = try AVAudioPlayer(contentsOf: url)
-        guard filePlayer.prepareToPlay() else {
+        let ready = filePlayer.prepareToPlay()
+        DiagLog.log("[VOICE-PLAY] prepareToPlay=\(ready) duration=\(filePlayer.duration)")
+        guard ready else {
+            DiagLog.log("[VOICE-PLAY] UNPLAYABLE url=\(url.lastPathComponent)")
             throw PlayerError.unplayable
         }
         filePlayer.numberOfLoops = 0
@@ -160,6 +165,7 @@ public final class VoiceMessagePlayer {
         st.status = .playing
         if st.durationMs == 0 { st.durationMs = Int((filePlayer.duration * 1_000).rounded()) }
         states[key] = st
+        DiagLog.log("[VOICE-PLAY] PLAYING durationMs=\(st.durationMs)")
         startProgressPolling()
     }
 
