@@ -106,17 +106,21 @@ def generate_all(out_dir: str) -> dict:
     #     absorbs the cut). 0.25s keeps even the 48k-stereo Maximum under
     #     that cap while still exercising the Opus container, granules, and
     #     each profile's rate/channel config.
-    #   * _long (2.0s): Sideband->iOS is mesh-sent (no URL cap), and the
+    #   * _long (6.0s): Sideband->iOS is mesh-sent (no URL cap), and the
     #     playback assertion needs the clip still playing when Maestro
-    #     checks the progress row - a sub-second clip finishes before the
-    #     assert runs and the bubble returns to its idle play button.
+    #     checks the progress row. Measured: a 2.0s clip finishes before
+    #     the optional progress tap + assert run (the bubble returns to
+    #     its idle play button and the assert false-negatives); a 4.0s
+    #     clip provably reaches the progress row mid-playback (live
+    #     hierarchy diagnostic, 2026-09-01). 6.0s leaves a comfortable
+    #     ~3.5s window for Maestro's tap + assert round-trip.
     opus_profiles = [
         ("opus_medium", 24000, 1, "6k"),    # voiceMedium: 24k mono
         ("opus_high", 48000, 1, "10k"),     # voiceHigh: 48k mono
         ("opus_max", 48000, 2, "16k"),      # voiceMax: 48k stereo
     ]
     for name, rate, ch, br in opus_profiles:
-        for suffix, secs in (("short", 0.25), ("long", 2.0)):
+        for suffix, secs in (("short", 0.25), ("long", 6.0)):
             if ch == 2:
                 mono = sine_pcm(rate, secs)
                 stereo = bytearray()
