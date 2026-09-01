@@ -534,6 +534,17 @@ final class AVEngineVoiceCapture: VoicePcmCapture {
         try session.setActive(true)
         let input = engine.inputNode
         let hardware = input.inputFormat(forBus: 0)
+        // Defensive: a degenerate input format (zero sample rate/channel
+        // count, seen when no usable input device is present) makes
+        // `installTap(onBus:format:)` throw an ObjC NSException that Swift
+        // `try/catch` cannot intercept - a hard SIGABRT. The recorder's
+        // `captureHasInput` guard should prevent reaching this path, but keep
+        // the belt-and-braces check here so a format change between the guard
+        // and the tap can never abort the process.
+        guard hardware.sampleRate > 0, Int(hardware.channelCount) > 0 else {
+            try? session.setActive(false)
+            throw VoiceRecorderError.unsupported
+        }
         deliveredRate = max(1, Int(hardware.sampleRate))
         // Deliver mono to the tap; the encode loop handles the profile's rate/channels.
         input.installTap(onBus: 0, bufferSize: 1024, format: hardware) { [weak self] buffer, _ in
