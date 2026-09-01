@@ -955,7 +955,7 @@ struct MessagingView: View {
     private func openVoicePanel(format: VoiceMessageFormat) {
         selectedVoiceFormat = format
         voicePanelOpen = true
-        if AVAudioSession.sharedInstance().recordPermission() == .granted {
+        if AVAudioSession.sharedInstance().recordPermission == .granted {
             startVoiceRecording(format: format)
         }
     }

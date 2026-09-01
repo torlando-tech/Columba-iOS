@@ -191,8 +191,8 @@ final class VoiceMessageRecorderTests: XCTestCase {
         // file (done in onCaptureDone on the main actor).
         XCTAssertTrue(await VoiceTestSupport.awaitFile(at: out, exists: false, timeout: 5),
                       "cancelled in-flight file must be deleted")
-        XCTAssertEqual(factory.capture.closeCount, 1)
-        XCTAssertEqual(factory.capture.stopCount, 1)
+        XCTAssertEqual(factory.madeCaptures.first?.closeCount, 1)
+        XCTAssertEqual(factory.madeCaptures.first?.stopCount, 1)
         XCTAssertNil(recorder.selectedRecording)
         if case .idle = recorder.state {} else { XCTFail("expected .idle, got \(recorder.state)") }
     }

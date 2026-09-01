@@ -51,7 +51,7 @@ public struct VoiceDraftRow: View {
     // MARK: - Permission (app-level, mirrors Android's ContextCompat check)
 
     private var micPermission: AVAudioSession.RecordPermission {
-        AVAudioSession.sharedInstance().recordPermission()
+        AVAudioSession.sharedInstance().recordPermission
     }
 
     private var hasPermission: Bool { micPermission == .granted }
@@ -270,7 +270,7 @@ public struct VoiceDraftRow: View {
                     .foregroundStyle(Theme.textPrimary)
                     .accessibilityIdentifier("voice_panel_ready")
                 if let errorText {
-                    Text(String(localized: "Recording error: %@", errorText))
+                    Text(String(format: String(localized: "Recording error: %@"), errorText))
                         .font(.caption)
                         .foregroundStyle(Color.red)
                         .lineLimit(2)
@@ -389,7 +389,7 @@ public struct VoiceDraftRow: View {
     private func progressText(_ currentMs: Int, _ totalMs: Int) -> String {
         let current = formatElapsed(currentMs)
         let total = totalMs > 0 ? formatElapsed(totalMs) : "--:--"
-        return String(localized: "%@ of %@", current, total)
+        return String(format: String(localized: "%@ of %@"), current, total)
     }
 }
 
