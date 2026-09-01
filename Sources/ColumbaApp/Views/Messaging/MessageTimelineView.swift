@@ -87,7 +87,8 @@ struct MessageTimelineView: UIViewControllerRepresentable {
     let onOpenImage: (Message) -> Void
     let onOpenFileAttachment: (Message, Int) -> Void
     /// Shared voice player for field-7 audio messages in the timeline.
-    let voicePlayer: VoiceMessagePlayer?
+    /// nil = voice-unavailable fallback (rendered non-playable).
+    let voicePlayer: VoiceMessagePlayer? = nil
 
     func makeUIViewController(context: Context) -> MessageTimelineViewController {
         let controller = MessageTimelineViewController()
