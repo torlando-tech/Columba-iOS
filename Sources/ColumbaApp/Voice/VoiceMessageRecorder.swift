@@ -34,7 +34,7 @@ import AVFoundation
 /// A source of raw int16 PCM (mono at a known rate) for one recording session.
 /// `read` blocks up to a short timeout and returns the number of mono samples
 /// delivered (0 on timeout / end), so a blocking read is interruptible by stop.
-protocol VoicePcmCapture: AnyObject {
+public protocol VoicePcmCapture: AnyObject {
     var isSupported: Bool { get }
     var sampleRate: Int { get }
     func start() throws
@@ -46,8 +46,9 @@ protocol VoicePcmCapture: AnyObject {
 }
 
 /// Factory for capture sessions (injected in tests; the real one wraps
-/// AVAudioEngine).
-protocol VoicePcmCaptureFactory: AnyObject {
+/// AVAudioEngine). Public so `VoiceMessageRecorder`'s public initializer can
+/// expose it.
+public protocol VoicePcmCaptureFactory: AnyObject {
     func makeCapture(channels: Int, sampleRateHint: Int) -> VoicePcmCapture
 }
 
@@ -131,10 +132,17 @@ public final class VoiceMessageRecorder {
     @ObservationIgnored private var deadlineTask: Task<Void, Never>?
     @ObservationIgnored private var workerFailure: Error? = nil
 
-    public init(captureFactory: any VoicePcmCaptureFactory = AVEngineVoiceCaptureFactory()) {
-        self.captureFactory = captureFactory
+    /// Production initializer: AVAudioEngine-backed capture.
+    public init() {
+        self.captureFactory = AVEngineVoiceCaptureFactory()
     }
 
+    /// Test initializer: inject a capture factory (fakes). Internal because it
+    /// only exists so `@testable` tests can drive the state machine without a
+    /// real microphone; the public no-arg `init()` is the production entry.
+    init(captureFactory: any VoicePcmCaptureFactory) {
+        self.captureFactory = captureFactory
+    }
     public var isRecording: Bool {
         if case .recording = state { return true }
         return false
@@ -283,7 +291,7 @@ public final class VoiceMessageRecorder {
         // Snapshot the encode inputs so the capture thread only reads a plain
         // `running` latch (matching AudioManager's "snapshot then detach").
         guard let fmt = format, let out = outputFile, let cap = capture else {
-            Task { @MainActor in self?.onCaptureDone(failed: nil) }
+            Task { @MainActor in self.onCaptureDone(failed: nil) }
             return
         }
         // The loop runs nonisolated on the capture thread; the latch (not the
@@ -513,7 +521,7 @@ final class AVEngineVoiceCapture: VoicePcmCapture {
     }
 
     var isSupported: Bool {
-        AVAudioSession.sharedInstance().recordPermission() == .granted
+        AVAudioSession.sharedInstance().recordPermission == .granted
     }
     var sampleRate: Int { deliveredRate }
 
@@ -573,7 +581,7 @@ final class AVEngineVoiceCapture: VoicePcmCapture {
 
     func close() {
         stop()
-        if let s = AVAudioSession.sharedInstance() { try? s.setActive(false) }
+        try? AVAudioSession.sharedInstance().setActive(false)
     }
 }
 

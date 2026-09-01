@@ -141,7 +141,7 @@ public struct VoiceMessageBubble: View {
     private func progressText(_ currentMs: Int, _ totalMs: Int) -> String {
         let current = formatTime(currentMs)
         let total = totalMs > 0 ? formatTime(totalMs) : "--:--"
-        return String(localized: "%@ of %@", current, total)
+        return String(format: String(localized: "%@ of %@"), current, total)
     }
 }
 
