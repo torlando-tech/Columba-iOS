@@ -34,7 +34,7 @@ final class Codec2RawFileTests: XCTestCase {
         let full = try codec.encode(frame)
         XCTAssertEqual(full.count, geo.bytesPerFrame + 1)
         XCTAssertEqual(full[0], 0x05, "LXST header byte for codec2_2400")
-        XCTAssertEqual(full[1...], raw as [UInt8])
+        XCTAssertEqual(Array(full[1...]), Array(raw))
     }
 
     func testEncodeFrameRejectsEmpty() {
@@ -126,7 +126,7 @@ final class Codec2RawFileTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("columba-voice-tests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let url = Codec2RawFile.writeWave(decoded, to: dir.appendingPathComponent("v.wav"))
+        let url = try Codec2RawFile.writeWave(decoded, to: dir.appendingPathComponent("v.wav"))
 
         let wav = try Data(contentsOf: url)
         XCTAssertEqual(wav.prefix(4), Data("RIFF".utf8))
