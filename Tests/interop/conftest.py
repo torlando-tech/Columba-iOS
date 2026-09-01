@@ -922,9 +922,10 @@ class Simulator:
             _sh(["maestro", "--device", self.udid, "test", str(flow_path)],
                 timeout=timeout + 30)
         except subprocess.CalledProcessError as e:
+            out = e.output if isinstance(e.output, str) else (e.output or b"").decode("utf-8", "replace")
             pytest.fail(
                 f"voice bubble assertion failed (playable={playable}): "
-                f"{(e.output or b'').decode('utf-8', 'replace')[-1200:]}"
+                f"{(out or e.stderr or '')[-1200:]}"
             )
         finally:
             flow_path.unlink(missing_ok=True)
@@ -993,9 +994,10 @@ class Simulator:
             _sh(["maestro", "--device", self.udid, "test", str(flow_path)],
                 timeout=timeout + 30)
         except subprocess.CalledProcessError as e:
+            out = e.output if isinstance(e.output, str) else (e.output or b"").decode("utf-8", "replace")
             pytest.fail(
                 f"voice playback did not reach a playable state: "
-                f"{(e.output or b'').decode('utf-8', 'replace')[-1200:]}"
+                f"{(out or e.stderr or '')[-1200:]}"
             )
         finally:
             flow_path.unlink(missing_ok=True)
