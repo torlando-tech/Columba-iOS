@@ -161,7 +161,7 @@ public final class OggOpusFileWriter {
     private func appendPage(payload: [UInt8], lacing: [UInt8], granule: UInt64, bos: Bool) throws {
         guard lacing.count >= 1, lacing.count <= 255 else { throw OggOpusFileError("lacing-range") }
         var header = [UInt8](repeating: 0, count: OggOpusGranule.oggHeaderSize)
-        header[0..<4] = OggOpusGranule.capturePattern
+        header.replaceSubrange(0..<4, with: OggOpusGranule.capturePattern)
         header[4] = 0x02                       // version
         header[5] = bos ? 0x02 : 0x00          // flags: 0x02 = begin of stream
         for i in 0..<8 { header[6 + i] = UInt8((granule >> (i * 8)) & 0xFF) }
@@ -207,8 +207,10 @@ public final class OggOpusFileWriter {
             throw error
         }
         do {
+            var resulting: URL?
             try FileManager.default.replaceItem(at: url, withItemAt: tmp,
-                                                backingItemURL: nil, options: [])
+                                                backupItemName: nil,
+                                                resultingItemURL: &resulting)
         } catch {
             // Fall back to a plain replace if the filesystem refuses.
             try? FileManager.default.removeItem(at: url)
