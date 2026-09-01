@@ -342,7 +342,7 @@ public struct VoiceDraftRow: View {
                 Button(action: {
                     player.stopCurrent()
                     onRemove()
-                }) label: {
+                }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 22))
                         .foregroundStyle(Theme.textSecondary)
