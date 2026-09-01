@@ -341,6 +341,8 @@ class Simulator:
         image_format: Optional[str] = None,
         file_bytes: Optional[bytes] = None,
         file_name: Optional[str] = None,
+        audio_bytes: Optional[bytes] = None,
+        audio_mode: Optional[int] = None,
         wait: float = 30.0,
     ) -> TestSendResult:
         """Drive `lxma://test-send?…` via Maestro (so the iOS "Open in
@@ -357,6 +359,9 @@ class Simulator:
         if file_bytes is not None and file_name:
             params.append(f"file_hex={file_bytes.hex()}")
             params.append(f"file_name={quote(file_name, safe='')}")
+        if audio_bytes is not None and audio_mode is not None:
+            params.append(f"audio_mode={audio_mode}")
+            params.append(f"audio_hex={audio_bytes.hex()}")
         url = "lxma://test-send?" + "&".join(params)
 
         # Snapshot file position so we only scan lines written AFTER the
@@ -829,6 +834,138 @@ class Simulator:
         return lines
 
     @staticmethod
+    def assert_voice_bubble_visible(
+        self,
+        *,
+        peer_display_name: str = "Anonymous Peer",
+        content: Optional[str] = None,
+        playable: bool = True,
+        timeout: float = 30.0,
+    ) -> None:
+        """Navigate to the conversation and assert the field-7 voice
+        bubble rendered. `playable=True` additionally asserts the play
+        control is present (the decode succeeded).
+
+        Pins the render half of the inbound voice path: LXMRouter
+        delivery -> IncomingMessageHandler -> LXMFDatabase ->
+        Message.audioAttachment -> MessageBubble -> VoiceMessageBubble.
+        A non-playable decode (unrecognized mode / corrupted payload)
+        surfaces `voice_bubble_unavailable` / `voice_bubble_unsupported`
+        instead of the play control, so this assertion is the decode
+        verdict.
+        """
+        lines = [
+            'appId: ' + BUNDLE_ID,
+            '---',
+            "- tapOn: { text: \"Allow\", optional: true }",
+            "- tapOn: { text: \"Don't Allow\", optional: true }",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+        ]
+        lines += self._sheet_dismiss_lines()
+        lines += [
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            "- tapOn:",
+            "    text: \"Chats\"",
+            "    optional: true",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            f'- tapOn: \"{_yaml_escape(peer_display_name)}\"',
+            "- waitForAnimationToEnd: { timeout: 2500 }",
+        ]
+        if content is not None:
+            lines += [
+                "- assertVisible:",
+                f'    text: \"{_yaml_escape(content)}\"',
+            ]
+        # The bubble title is present whenever a field-7 attachment
+        # decoded at all.
+        lines += [
+            "- assertVisible:",
+            '    id: "voice_bubble_title"',
+        ]
+        if playable:
+            lines += [
+                "- assertVisible:",
+                '    id: "voice_bubble_play"',
+            ]
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_voice_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        try:
+            _sh(["maestro", "--device", self.udid, "test", str(flow_path)],
+                timeout=timeout + 30)
+        except subprocess.CalledProcessError as e:
+            pytest.fail(
+                f"voice bubble assertion failed (playable={playable}): "
+                f"{(e.output or b'').decode('utf-8', 'replace')[-1200:]}"
+            )
+        finally:
+            flow_path.unlink(missing_ok=True)
+
+    def assert_voice_playback_advances(
+        self,
+        *,
+        content: str,
+        peer_display_name: str = "Anonymous Peer",
+        timeout: float = 25.0,
+    ) -> None:
+        """Tap the voice bubble's play control and assert the player
+        state machine left `.loading` and reached a playable steady
+        state (progress text + play control present). This is the
+        actual decode + AVAudioPlayer exercise: a malformed Ogg granule
+        or undecodable payload surfaces `voice_bubble_unavailable` / an
+        error row instead.
+
+        We do NOT assert audible output (headless sim); we assert the
+        player reached a playable state, which is exactly what the Ogg
+        granule fix changes (granule parse failure vs success).
+        """
+        lines = [
+            'appId: ' + BUNDLE_ID,
+            '---',
+            "- tapOn: { text: \"Allow\", optional: true }",
+            "- tapOn: { text: \"Don't Allow\", optional: true }",
+            "- waitForAnimationToEnd: { timeout: 1500 }",
+        ]
+        lines += self._sheet_dismiss_lines()
+        lines += [
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            "- back",
+            "- waitForAnimationToEnd: { timeout: 800 }",
+            "- tapOn:",
+            "    text: \"Chats\"",
+            "    optional: true",
+            "- waitForAnimationToEnd: { timeout: 2000 }",
+            f'- tapOn: \"{_yaml_escape(peer_display_name)}\"',
+            "- waitForAnimationToEnd: { timeout: 2500 }",
+            "- assertVisible:",
+            '    id: "voice_bubble_play"',
+            "- tapOn:",
+            '    id: "voice_bubble_play"',
+            "- waitForAnimationToEnd: { timeout: 4000 }",
+            # After prepare+toggle the state is .playing or .paused (a
+            # short clip may have completed). Either way the progress
+            # text is present and no unavailable/error row is shown.
+            "- assertVisible:",
+            '    id: "voice_bubble_progress"',
+            "- assertVisible:",
+            '    id: "voice_bubble_play"',
+        ]
+        flow_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"_interop_voiceplay_{os.getpid()}.yaml"
+        flow_path.write_text("\n".join(lines) + "\n")
+        try:
+            _sh(["maestro", "--device", self.udid, "test", str(flow_path)],
+                timeout=timeout + 30)
+        except subprocess.CalledProcessError as e:
+            pytest.fail(
+                f"voice playback did not reach a playable state: "
+                f"{(e.output or b'').decode('utf-8', 'replace')[-1200:]}"
+            )
+        finally:
+            flow_path.unlink(missing_ok=True)
+
     def _sheet_dismiss_lines() -> list[str]:
         """Steps that dismiss a leftover `PeerContactSheet` if one is
         open, harmlessly no-op if not. The pin flows leave the sheet
