@@ -23,15 +23,21 @@ final class Codec2RawFileTests: XCTestCase {
     // MARK: - Encode (header stripped)
 
     func testEncodeFrameStripsHeaderByte() throws {
-        let codec = try makeCodec(.codec2_2400)
+        // Codec2 is a STATEFUL codec: consecutive encode() calls on the same
+        // instance keep internal state and produce different bytes. So the
+        // "encodeFrame strips the header" invariant is checked by encoding the
+        // SAME pcm with a FRESH codec on each side - then the only difference
+        // between `codec.encode(frame)` and `encodeFrame` is the header byte.
         let geo = Codec2RawFile.geometry(for: .codec2_2400)
         let frame = VoiceTestSupport.pcm(count: geo.samplesPerFrame)
-        let raw = try Codec2RawFile.encodeFrame(pcm: frame, codec: codec)
+        let a = try makeCodec(.codec2_2400)
+        let b = try makeCodec(.codec2_2400)
+        let raw = try Codec2RawFile.encodeFrame(pcm: frame, codec: a)
         // Raw frame size = bytesPerFrame (header byte removed).
         XCTAssertEqual(raw.count, geo.bytesPerFrame)
         // LXSTSwift encode prepends the header byte; stripping it must leave
-        // exactly the frame bytes.
-        let full = try codec.encode(frame)
+        // exactly the frame bytes (encoded fresh, so the payload is identical).
+        let full = try b.encode(frame)
         XCTAssertEqual(full.count, geo.bytesPerFrame + 1)
         XCTAssertEqual(full[0], 0x05, "LXST header byte for codec2_2400")
         XCTAssertEqual(Array(full[1...]), Array(raw))
@@ -131,6 +137,9 @@ final class Codec2RawFileTests: XCTestCase {
         let decoded = try Codec2RawFile.decode(raw, mode: .codec2_1600, codec: codec)
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("columba-voice-tests-\(UUID().uuidString)", isDirectory: true)
+        // writeWave writes the WAV to `url` without creating the parent dir
+        // (the production player creates its own). Create it here.
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = try Codec2RawFile.writeWave(decoded, to: dir.appendingPathComponent("v.wav"))
 

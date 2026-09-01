@@ -45,13 +45,23 @@ final class FailingReadVoiceCaptureFactory: VoicePcmCaptureFactory, @unchecked S
 @MainActor
 final class VoiceMessageRecorderTests: XCTestCase {
 
-    private static let c2Frames = 300
-    private static let c2Samples = 320 * c2Frames   // codec2_2400: 320 spf
+    /// Feed 300 frames' worth of samples. The samples-per-frame for a given
+    /// Codec2 mode is derived from the LIVE codec (see
+    /// `Codec2RawFile.geometry(of:)`), so we size the buffer off the live
+    /// geometry rather than hardcoding an spf that may differ from what the
+    /// bundled codec2 actually uses. codec2_2400 is 160 samples/frame in the
+    /// C codec (NOT 320), so the old `320 * 300` buffer over-fed 2x and the
+    /// (correct) recorder produced 600 frames instead of 300.
+    private static func c2Samples(for mode: Codec2Mode, frames: Int) -> Int {
+        let codec = try! Codec2Codec(mode: mode)
+        let geo = Codec2RawFile.geometry(of: codec)
+        return geo.samplesPerFrame * frames
+    }
 
     // MARK: - Codec2 finalization
 
     func testStartThenStopFinalizesCodec2File() async throws {
-        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples))
+        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples(for: .codec2_2400, frames: 300)))
         let recorder = VoiceMessageRecorder(captureFactory: factory)
         defer { recorder.teardownEnginePreservingSelection() }
 
@@ -91,7 +101,8 @@ final class VoiceMessageRecorderTests: XCTestCase {
         let bytesPerFrame = Codec2RawFile.geometry(for: .codec2_2400).bytesPerFrame
         let frames = rec.sizeBytes / bytesPerFrame
         XCTAssertEqual(rec.sizeBytes, frames * bytesPerFrame)
-        // ~300 frames of 320 samples (8 kHz -> 8 kHz resample is ~identity).
+        // ~300 frames of 160 samples (codec2_2400 live spf; 8 kHz -> 8 kHz
+        // resample is ~identity, so 300*160 = 48,000 samples -> 300 frames).
         XCTAssertTrue((295...305).contains(frames), "expected ~300 frames, got \(frames)")
         _ = try Codec2RawFile.decodePayload(rec.audio.bytes, mode: .codec2_2400)
         // Audio bytes mirror the file exactly (dual-write consistency).
@@ -201,7 +212,7 @@ final class VoiceMessageRecorderTests: XCTestCase {
     // MARK: - Cancel deletes in-flight file
 
     func testCancelDeletesInFlightFileAndGoesIdle() async throws {
-        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples))
+        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples(for: .codec2_2400, frames: 300)))
         let recorder = VoiceMessageRecorder(captureFactory: factory)
         defer { recorder.teardownEnginePreservingSelection() }
         let out = try recorder.start(format: .codec2_2400)
@@ -234,7 +245,7 @@ final class VoiceMessageRecorderTests: XCTestCase {
     // MARK: - Double start rejected
 
     func testDoubleStartRejected() async throws {
-        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples))
+        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples(for: .codec2_2400, frames: 300)))
         let recorder = VoiceMessageRecorder(captureFactory: factory)
         defer { recorder.teardownEnginePreservingSelection() }
         _ = try recorder.start(format: .codec2_2400)
@@ -250,7 +261,7 @@ final class VoiceMessageRecorderTests: XCTestCase {
     // MARK: - Finalized file retained across teardown
 
     func testTeardownRetainsFinalizedRecording() async throws {
-        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples))
+        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples(for: .codec2_2400, frames: 300)))
         let recorder = VoiceMessageRecorder(captureFactory: factory)
         let out = try recorder.start(format: .codec2_2400)
         // Let the finite fake buffer drain and the loop settle so the stop
@@ -275,7 +286,7 @@ final class VoiceMessageRecorderTests: XCTestCase {
     // MARK: - removeSelected
 
     func testRemoveSelectedDeletesFileAndClearsState() async throws {
-        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples))
+        let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples(for: .codec2_2400, frames: 300)))
         let recorder = VoiceMessageRecorder(captureFactory: factory)
         defer { recorder.teardownEnginePreservingSelection() }
         let out = try recorder.start(format: .codec2_2400)
