@@ -169,8 +169,7 @@ public final class VoiceMessagePlayer {
                 if filePlayer.isPlaying { playing = true; break }
             }
         }
-        let playErr = filePlayer.error
-        DiagLog.log("[VOICE-PLAY] isPlaying=\(playing) duration=\(filePlayer.duration) error=\(String(describing: playErr))")
+        DiagLog.log("[VOICE-PLAY] isPlaying=\(playing) duration=\(filePlayer.duration)")
         guard playing else {
             DiagLog.log("[VOICE-PLAY] UNPLAYABLE url=\(url.lastPathComponent)")
             throw PlayerError.unplayable
