@@ -89,9 +89,10 @@ public enum Codec2RawFile {
         codec: Codec2Codec
     ) throws -> DecodedCodec2 {
         guard bytes.count > 0 else { throw Codec2FileError.noFrames }
-        guard let c2 = mode.codec2Mode else { throw Codec2FileError.noFrames } // not a Codec2 mode
-        guard let header = mode.codec2HeaderByte else { throw Codec2FileError.noFrames }
-        let geometry = geometry(for: c2)
+        guard mode.codec2Mode != nil, let header = mode.codec2HeaderByte else {
+            throw Codec2FileError.noFrames // not a Codec2 mode
+        }
+        let geometry = geometry(of: codec)
         guard geometry.bytesPerFrame > 0 else { throw Codec2FileError.incompleteFrame }
         let frameCount = bytes.count / geometry.bytesPerFrame
         guard frameCount > 0 else { throw Codec2FileError.incompleteFrame }
@@ -149,21 +150,72 @@ public enum Codec2RawFile {
         return url
     }
 
-    // MARK: - Codec geometry (static; LXSTSwift keeps samplesPerFrame/bytesPerFrame
-    // private, so we use the authoritative libcodec2 table. `bytesPerFrame` is
-    // self-consistent as bitrate × samplesPerFrame / 8000.)
+    // MARK: - Codec geometry (derived from the LIVE codec)
+    //
+    // Android reads samplesPerFrame/bytesPerFrame straight from the native
+    // handle (NativeCodec2.getSamplesPerFrame/getFrameBytes). LXSTSwift reads
+    // the same live values at init but keeps them `private`, and it is a remote
+    // SPM dependency we do not fork. So we DERIVE the geometry from the codec
+    // itself: samplesPerFrame is the smallest PCM length that encodes to one
+    // frame (encode() throws below that), and bytesPerFrame is that one frame's
+    // byte count (minus the prepended mode-header byte). Result is cached per
+    // mode (keyed by the mode header byte). This guarantees the geometry always
+    // matches what the linked libcodec2 actually produces - no hardcoded table
+    // to drift. (An earlier hardcoded table computed bytesPerFrame in BITS,
+    // which was 8x too large and broke every Codec2 encode/decode assertion.)
 
-    /// (samplesPerFrame, bytesPerFrame) per Codec2 mode.
+    private static let geoLock = NSLock()
+    private static var geoCache: [UInt8: (samplesPerFrame: Int, bytesPerFrame: Int)] = [:]
+
+    /// Geometry for a codec already in the requested mode (preferred: avoids
+    /// building a second codec instance).
+    public static func geometry(of codec: Codec2Codec) -> (samplesPerFrame: Int, bytesPerFrame: Int) {
+        let key = codec.modeHeader
+        geoLock.lock()
+        if let cached = geoCache[key] { geoLock.unlock(); return cached }
+        geoLock.unlock()
+        let derived = probeGeometry(codec)
+        geoLock.lock(); geoCache[key] = derived; geoLock.unlock()
+        return derived
+    }
+
+    /// Geometry for a mode (convenience: builds a codec, then derives).
     public static func geometry(for mode: Codec2Mode) -> (samplesPerFrame: Int, bytesPerFrame: Int) {
-        switch mode {
-        case .codec2_700C:  return (160, 14)
-        case .codec2_1200:  return (240, 36)
-        case .codec2_1300:  return (240, 39)
-        case .codec2_1400:  return (240, 42)
-        case .codec2_1600:  return (240, 48)
-        case .codec2_2400:  return (320, 96)
-        case .codec2_3200:  return (320, 128)
+        let key = UInt8(mode.rawValue)
+        geoLock.lock()
+        if let cached = geoCache[key] { geoLock.unlock(); return cached }
+        geoLock.unlock()
+        guard let codec = try? Codec2Codec(mode: mode) else {
+            return (0, 0) // fail closed: callers guard bytesPerFrame > 0
         }
+        let derived = probeGeometry(codec)
+        geoLock.lock(); geoCache[key] = derived; geoLock.unlock()
+        return derived
+    }
+
+    /// Find (samplesPerFrame, bytesPerFrame) by probing the live codec.
+    /// `encode(N)` throws exactly when N < samplesPerFrame (fewer than one
+    /// frame), so binary-searching the success boundary yields samplesPerFrame.
+    /// Then encode exactly that many samples and measure the frame's byte count
+    /// (minus the leading mode-header byte LXSTSwift prepends).
+    private static func probeGeometry(_ codec: Codec2Codec) -> (samplesPerFrame: Int, bytesPerFrame: Int) {
+        guard (try? codec.encode(probePCM(4096))) != nil else { return (0, 0) }
+        var lo = 1, hi = 4096
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if (try? codec.encode(probePCM(mid))) != nil { hi = mid } else { lo = mid + 1 }
+        }
+        let spf = lo
+        guard let full = try? codec.encode(probePCM(spf)), full.count > 1 else { return (0, 0) }
+        return (spf, full.count - 1) // drop the leading mode-header byte
+    }
+
+    /// Deterministic probe PCM (content is irrelevant; encode only cares about
+    /// the sample count relative to samplesPerFrame).
+    private static func probePCM(_ n: Int) -> [Int16] {
+        var a = [Int16](repeating: 0, count: n)
+        for i in 0..<n { a[i] = Int16((i * 37) % 2000 - 1000) }
+        return a
     }
 
     // MARK: - Endianness

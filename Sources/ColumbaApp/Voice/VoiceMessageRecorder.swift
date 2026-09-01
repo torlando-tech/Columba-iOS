@@ -389,7 +389,7 @@ public final class VoiceMessageRecorder {
         latch: VoiceStopLatch
     ) throws {
         guard let codec = try? Codec2Codec(mode: mode) else { throw VoiceRecorderError.codecUnavailable }
-        let geo = Codec2RawFile.geometry(for: mode)
+        let geo = Codec2RawFile.geometry(of: codec)
         let deviceRate = max(1, capture.sampleRate)
         let cap = max(4096, geo.samplesPerFrame * 4)
         var buffer = [Int16](repeating: 0, count: cap)
