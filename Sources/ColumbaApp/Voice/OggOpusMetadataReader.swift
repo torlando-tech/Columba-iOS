@@ -66,7 +66,7 @@ public enum OggOpusMetadataReader {
         guard let parsedPreSkip = preSkip, finalGranule > 0 else { return nil }
         let playableSamples = finalGranule - Int64(parsedPreSkip)
         guard playableSamples > 0 else { return nil }
-        let durationMs = ((playableSamples * 1_000) / Int64(sampleRate)).clamped(to: 1...Int.max)
+        let durationMs = ((playableSamples * 1_000) / Int64(sampleRate)).clamped(to: 1...Int64.max)
         return OggOpusMetadata(durationMs: Int(durationMs),
                                preSkip: parsedPreSkip,
                                finalGranule: Int(finalGranule))
@@ -90,6 +90,6 @@ public enum OggOpusMetadataReader {
 
 extension Int64 {
     func clamped(to range: ClosedRange<Int64>) -> Int64 {
-        min(max(self, range.lowerBound), range.upperBound)
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }
