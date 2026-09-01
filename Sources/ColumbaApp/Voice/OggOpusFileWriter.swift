@@ -207,7 +207,7 @@ public final class OggOpusFileWriter {
             throw error
         }
         do {
-            var resulting: URL?
+            var resulting: NSURL?
             try FileManager.default.replaceItem(at: url, withItemAt: tmp,
                                                 backupItemName: nil,
                                                 resultingItemURL: &resulting)
