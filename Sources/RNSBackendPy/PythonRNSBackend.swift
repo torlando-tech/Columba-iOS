@@ -282,7 +282,8 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         if let customMeta { extra[LxmfFields.FIELD_CUSTOM_META] = customMeta }
         return try await sendLxmfMessage(
             destHashHex: destHashHex, content: "", method: .opportunistic,
-            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
+            imageData: nil, imageFormat: nil, fileAttachments: nil,
+            audioAttachment: nil, iconAppearance: nil,
             replyToMessageHashHex: nil, replyQuotedContent: nil, extraFields: extra
         )
     }
