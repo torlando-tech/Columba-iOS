@@ -394,6 +394,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         imageData: Data?,
         imageFormat: String?,
         fileAttachments: [RnsFileAttachment]?,
+        audioAttachment: RnsAudio?,
         iconAppearance: IconAppearance?,
         replyToMessageHashHex: String?,
         replyQuotedContent: String?,
@@ -406,7 +407,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         // method, fieldsData)`.
         let fields = LxmfFieldCodec.buildFieldMap(
             imageData: imageData, imageFormat: imageFormat,
-            fileAttachments: fileAttachments, iconAppearance: iconAppearance,
+            fileAttachments: fileAttachments, audioAttachment: audioAttachment, iconAppearance: iconAppearance,
             replyToMessageHashHex: replyToMessageHashHex, replyQuotedContent: replyQuotedContent,
             extraFields: extraFields)
         let fieldsData = fields.isEmpty ? Data() : LxmfFieldCodec.pack(fields)

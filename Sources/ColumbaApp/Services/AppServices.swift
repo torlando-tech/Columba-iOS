@@ -1762,6 +1762,7 @@ public final class AppServices {
                         imageData: imageData,
                         imageFormat: imageFormat.isEmpty ? nil : imageFormat,
                         fileAttachments: fileAttachments,
+                        audioAttachment: nil,
                         iconAppearance: nil,
                         replyToMessageHashHex: nil,
                         replyQuotedContent: nil,

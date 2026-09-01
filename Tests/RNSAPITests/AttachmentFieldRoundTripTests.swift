@@ -36,7 +36,7 @@ final class AttachmentFieldRoundTripTests: XCTestCase {
         let imageBytes = Data((0..<256).map { UInt8($0) })
         let fields = LxmfFieldCodec.buildFieldMap(
             imageData: imageBytes, imageFormat: "jpeg",
-            fileAttachments: nil, iconAppearance: nil,
+            fileAttachments: nil, audioAttachment: nil, iconAppearance: nil,
             replyToMessageHashHex: nil, replyQuotedContent: nil,
             extraFields: nil
         )
@@ -80,7 +80,7 @@ final class AttachmentFieldRoundTripTests: XCTestCase {
         let imageBytes = Data((0..<10_000).map { _ in UInt8.random(in: 0...255, using: &rng) })
         let fields = LxmfFieldCodec.buildFieldMap(
             imageData: imageBytes, imageFormat: "webp",
-            fileAttachments: nil, iconAppearance: nil,
+            fileAttachments: nil, audioAttachment: nil, iconAppearance: nil,
             replyToMessageHashHex: nil, replyQuotedContent: nil,
             extraFields: nil
         )
@@ -101,7 +101,7 @@ final class AttachmentFieldRoundTripTests: XCTestCase {
         let b = RnsFileAttachment(name: "log.bin", data: Data([0x00, 0xFF, 0x42]))
         let fields = LxmfFieldCodec.buildFieldMap(
             imageData: nil, imageFormat: nil,
-            fileAttachments: [a, b],
+            fileAttachments: [a, b], audioAttachment: nil,
             iconAppearance: nil,
             replyToMessageHashHex: nil, replyQuotedContent: nil,
             extraFields: nil
@@ -215,7 +215,7 @@ final class AttachmentFieldRoundTripTests: XCTestCase {
     func testEmptyFieldMapProducesEmptyPackedAndNilUnpack() {
         let empty = LxmfFieldCodec.buildFieldMap(
             imageData: nil, imageFormat: nil,
-            fileAttachments: nil, iconAppearance: nil,
+            fileAttachments: nil, audioAttachment: nil, iconAppearance: nil,
             replyToMessageHashHex: nil, replyQuotedContent: nil,
             extraFields: nil
         )

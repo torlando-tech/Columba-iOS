@@ -43,6 +43,10 @@ struct MessageBubble: View {
     var onOpenFileAttachment: ((Int) -> Void)?
     /// Callback for opening delivery details from a failed status indicator.
     var onShowDeliveryFailure: (() -> Void)?
+    /// Shared voice player for field-7 audio messages (one per conversation
+    /// screen, so a single voice message plays at a time). nil means the
+    /// bubble cannot offer playback (audio is rendered as unavailable).
+    var voicePlayer: VoiceMessagePlayer? = nil
 
     // MARK: - Theme (delegates to Theme/ThemeManager)
 
@@ -79,6 +83,18 @@ struct MessageBubble: View {
                                 .padding(.vertical, 4)
                         }
                         .buttonStyle(.plain)
+                    }
+
+                    // Voice message (field 7). Rendered above the text, with
+                    // its own play/waveform/progress surface.
+                    if message.audioAttachment != nil {
+                        if let voicePlayer {
+                            VoiceMessageBubble(message: message, player: voicePlayer)
+                        } else {
+                            // No player wired (e.g. a preview): show the
+                            // non-playable attachment so the bubble is not blank.
+                            VoiceMessageBubbleUnavailable()
+                        }
                     }
 
                     // Inline image
@@ -338,6 +354,7 @@ public struct Message: Identifiable, Equatable {
     public var imageData: Data?
     public var imageFormat: String?
     public var attachments: [FileAttachment]?
+    public var audioAttachment: AudioAttachment?
 
     // Metadata for message details
     public var deliveryMethod: String?
@@ -375,7 +392,18 @@ public struct Message: Identifiable, Equatable {
 
     /// True if message has no visible content (telemetry-only messages).
     public var isEmpty: Bool {
-        content.isEmpty && imageData == nil && (attachments == nil || attachments!.isEmpty)
+        content.isEmpty && imageData == nil
+            && (attachments == nil || attachments!.isEmpty)
+            && audioAttachment == nil
+    }
+
+    /// Decode `FIELD_AUDIO` (0x07) `[mode, bytes]` from a field map, lenient
+    /// on the integer type of the mode element. Returns nil when the field is
+    /// absent or malformed; a `.custom` (unsupported) mode still yields an
+    /// attachment the UI renders as a non-playable bubble.
+    static func audioAttachment(from fields: [UInt8: Any]?) -> AudioAttachment? {
+        guard let fields else { return nil }
+        return AudioAttachment.fromWireValue(fields[LXMessage.FIELD_AUDIO])
     }
 
     /// Create a new message.
@@ -389,6 +417,7 @@ public struct Message: Identifiable, Equatable {
         imageData: Data? = nil,
         imageFormat: String? = nil,
         attachments: [FileAttachment]? = nil,
+        audioAttachment: AudioAttachment? = nil,
         replyToId: String? = nil,
         replyToPreview: String? = nil,
         reactions: [ReactionDisplay] = [],
@@ -404,6 +433,7 @@ public struct Message: Identifiable, Equatable {
         self.imageData = imageData
         self.imageFormat = imageFormat
         self.attachments = attachments
+        self.audioAttachment = audioAttachment
         self.replyToId = replyToId
         self.replyToPreview = replyToPreview
         self.reactions = reactions
@@ -467,6 +497,10 @@ public struct Message: Identifiable, Equatable {
             }
             if !atts.isEmpty { self.attachments = atts }
         }
+
+        // Extract audio field (0x07): [mode_int, bytes]. Lenient `[Int, Data]`
+        // acceptance; an unsupported mode still yields a (non-playable) bubble.
+        self.audioAttachment = Self.audioAttachment(from: lxMessage.fields)
 
         // Extract reply_to from FIELD_APP_DATA (0x10)
         if let appData = lxMessage.fields?[LXMessage.FIELD_APP_DATA] as? [String: Any],
@@ -610,6 +644,8 @@ public struct Message: Identifiable, Equatable {
                 }
                 if !atts.isEmpty { self.attachments = atts }
             }
+            // FIELD_AUDIO (0x07) = [mode_int, bytes]
+            self.audioAttachment = Self.audioAttachment(from: fields)
 
             // Fallback: extract reply_to from packed fields if DB column was nil
             if self.replyToId == nil,

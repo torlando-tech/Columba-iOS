@@ -247,6 +247,15 @@
 		9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */; };
 		A1B2C3D4E5F60718293A4B5E /* MessageBubbleLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */; };
 		APVT002 /* MessageAttachmentPreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = APVT001 /* MessageAttachmentPreviewTests.swift */; };
+		MAFLD02 /* MessageAudioFieldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MAFLD01 /* MessageAudioFieldTests.swift */; };
+		VMRCD02 /* VoiceMessageRecorderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = VMRCD01 /* VoiceMessageRecorderTests.swift */; };
+		VMPLT02 /* VoiceMessagePlayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = VMPLT01 /* VoiceMessagePlayerTests.swift */; };
+		C2RFT02 /* Codec2RawFileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2RFT01 /* Codec2RawFileTests.swift */; };
+		OGFWR02 /* OggOpusFileWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OGFWR01 /* OggOpusFileWriterTests.swift */; };
+		OGGR002 /* OggOpusGranuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OGGR001 /* OggOpusGranuleTests.swift */; };
+		VMFT002 /* VoiceMessageFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = VMFT001 /* VoiceMessageFormatTests.swift */; };
+		AMOD002 /* AudioModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AMOD001 /* AudioModeTests.swift */; };
+		VTSU002 /* VoiceTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = VTSU001 /* VoiceTestSupport.swift */; };
 		9673457897893BF9DE512A0F /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006 /* SettingsViewModel.swift */; };
 		973B4BBFD50C0935D1525F8E /* NomadNetBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F081 /* NomadNetBrowserView.swift */; };
 		97FCC1B1FF91DD6EF2706B04 /* LoRaPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F045 /* LoRaPresets.swift */; };
@@ -367,6 +376,30 @@
 		RMLT003 /* RuntimeActivityMonitorLeaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */; };
 		TMP002 /* ThemeManagerPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TMP001 /* ThemeManagerPersistenceTests.swift */; };
 		T003 /* MicronParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FT03 /* MicronParserTests.swift */; };
+		VBSA0 /* AudioMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CA0 /* AudioMode.swift */; };
+		VBMA0 /* AudioMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CA0 /* AudioMode.swift */; };
+		VBSB0 /* Codec2RawFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CB0 /* Codec2RawFile.swift */; };
+		VBMB0 /* Codec2RawFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CB0 /* Codec2RawFile.swift */; };
+		VBSC0 /* OggOpusFileWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CC0 /* OggOpusFileWriter.swift */; };
+		VBMC0 /* OggOpusFileWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CC0 /* OggOpusFileWriter.swift */; };
+		VBSD0 /* OggOpusGranule.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CD0 /* OggOpusGranule.swift */; };
+		VBMD0 /* OggOpusGranule.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CD0 /* OggOpusGranule.swift */; };
+		VBSE0 /* OggOpusMetadataReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CE0 /* OggOpusMetadataReader.swift */; };
+		VBME0 /* OggOpusMetadataReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CE0 /* OggOpusMetadataReader.swift */; };
+		VBSF0 /* VoiceDraftRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CF0 /* VoiceDraftRow.swift */; };
+		VBMF0 /* VoiceDraftRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CF0 /* VoiceDraftRow.swift */; };
+		VBSJ0 /* VoiceMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CJ0 /* VoiceMessageBubble.swift */; };
+		VBMJ0 /* VoiceMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CJ0 /* VoiceMessageBubble.swift */; };
+		VBSK0 /* VoiceMessageFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CK0 /* VoiceMessageFormat.swift */; };
+		VBMK0 /* VoiceMessageFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CK0 /* VoiceMessageFormat.swift */; };
+		VBSL0 /* VoiceMessagePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CL0 /* VoiceMessagePlayer.swift */; };
+		VBML0 /* VoiceMessagePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CL0 /* VoiceMessagePlayer.swift */; };
+		VBSM0 /* VoiceMessageRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CM0 /* VoiceMessageRecorder.swift */; };
+		VBMM0 /* VoiceMessageRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CM0 /* VoiceMessageRecorder.swift */; };
+		VBSP0 /* VoiceQualityPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CP0 /* VoiceQualityPickerSheet.swift */; };
+		VBMP0 /* VoiceQualityPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CP0 /* VoiceQualityPickerSheet.swift */; };
+		VBSR0 /* VoiceWaveformBars.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CR0 /* VoiceWaveformBars.swift */; };
+		VBMR0 /* VoiceWaveformBars.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CR0 /* VoiceWaveformBars.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -468,6 +501,15 @@
 		BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageFormattedTimeTests.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageBubbleLayoutTests.swift; sourceTree = "<group>"; };
 		APVT001 /* MessageAttachmentPreviewTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageAttachmentPreviewTests.swift; sourceTree = "<group>"; };
+		MAFLD01 /* MessageAudioFieldTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageAudioFieldTests.swift; sourceTree = "<group>"; };
+		VMRCD01 /* VoiceMessageRecorderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceMessageRecorderTests.swift; sourceTree = "<group>"; };
+		VMPLT01 /* VoiceMessagePlayerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceMessagePlayerTests.swift; sourceTree = "<group>"; };
+		C2RFT01 /* Codec2RawFileTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Codec2RawFileTests.swift; sourceTree = "<group>"; };
+		OGFWR01 /* OggOpusFileWriterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OggOpusFileWriterTests.swift; sourceTree = "<group>"; };
+		OGGR001 /* OggOpusGranuleTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OggOpusGranuleTests.swift; sourceTree = "<group>"; };
+		VMFT001 /* VoiceMessageFormatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceMessageFormatTests.swift; sourceTree = "<group>"; };
+		AMOD001 /* AudioModeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioModeTests.swift; sourceTree = "<group>"; };
+		VTSU001 /* VoiceTestSupport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceTestSupport.swift; sourceTree = "<group>"; };
 		BF48C97880B30682DC35613C /* CeaseTelemetry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CeaseTelemetry.swift; sourceTree = "<group>"; };
 		BGTF /* BackgroundTransportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTransportView.swift; sourceTree = "<group>"; };
 		BKF002 /* BackendFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFactory.swift; sourceTree = "<group>"; };
@@ -619,6 +661,18 @@
 		TMP001 /* ThemeManagerPersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThemeManagerPersistenceTests.swift; sourceTree = "<group>"; };
 		SRB002 /* SwiftRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwiftRNSBackend.swift; path = Sources/RNSBackendSwift/SwiftRNSBackend.swift; sourceTree = SOURCE_ROOT; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		V0CA0 /* AudioMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioMode.swift; sourceTree = "<group>"; };
+		V0CB0 /* Codec2RawFile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Codec2RawFile.swift; sourceTree = "<group>"; };
+		V0CC0 /* OggOpusFileWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OggOpusFileWriter.swift; sourceTree = "<group>"; };
+		V0CD0 /* OggOpusGranule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OggOpusGranule.swift; sourceTree = "<group>"; };
+		V0CE0 /* OggOpusMetadataReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OggOpusMetadataReader.swift; sourceTree = "<group>"; };
+		V0CF0 /* VoiceDraftRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceDraftRow.swift; sourceTree = "<group>"; };
+		V0CJ0 /* VoiceMessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessageBubble.swift; sourceTree = "<group>"; };
+		V0CK0 /* VoiceMessageFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessageFormat.swift; sourceTree = "<group>"; };
+		V0CL0 /* VoiceMessagePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessagePlayer.swift; sourceTree = "<group>"; };
+		V0CM0 /* VoiceMessageRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessageRecorder.swift; sourceTree = "<group>"; };
+		V0CP0 /* VoiceQualityPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceQualityPickerSheet.swift; sourceTree = "<group>"; };
+		V0CR0 /* VoiceWaveformBars.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceWaveformBars.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1067,6 +1121,15 @@
 				RFT001 /* RuntimeFlavorTests.swift */,
 				RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */,
 				TMP001 /* ThemeManagerPersistenceTests.swift */,
+				MAFLD01 /* MessageAudioFieldTests.swift */,
+				VMRCD01 /* VoiceMessageRecorderTests.swift */,
+				VMPLT01 /* VoiceMessagePlayerTests.swift */,
+				C2RFT01 /* Codec2RawFileTests.swift */,
+				OGFWR01 /* OggOpusFileWriterTests.swift */,
+				OGGR001 /* OggOpusGranuleTests.swift */,
+				VMFT001 /* VoiceMessageFormatTests.swift */,
+				AMOD001 /* AudioModeTests.swift */,
+				VTSU001 /* VoiceTestSupport.swift */,
 			);
 			path = Tests/ColumbaAppTests;
 			sourceTree = "<group>";
@@ -1158,9 +1221,29 @@
 				GVIEWS /* Views */,
 				GSVC /* Services */,
 				GRES /* Resources */,
+				GVOC /* Voice */,
 				9A4EC6E91C9E0CAAD134372D /* Python */,
 			);
 			path = Sources/ColumbaApp;
+			sourceTree = "<group>";
+		};
+		GVOC /* Voice */ = {
+			isa = PBXGroup;
+			children = (
+				V0CA0 /* AudioMode.swift */,
+				V0CB0 /* Codec2RawFile.swift */,
+				V0CC0 /* OggOpusFileWriter.swift */,
+				V0CD0 /* OggOpusGranule.swift */,
+				V0CE0 /* OggOpusMetadataReader.swift */,
+				V0CF0 /* VoiceDraftRow.swift */,
+				V0CJ0 /* VoiceMessageBubble.swift */,
+				V0CK0 /* VoiceMessageFormat.swift */,
+				V0CL0 /* VoiceMessagePlayer.swift */,
+				V0CM0 /* VoiceMessageRecorder.swift */,
+				V0CP0 /* VoiceQualityPickerSheet.swift */,
+				V0CR0 /* VoiceWaveformBars.swift */,
+			);
+			path = Voice;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -1443,6 +1526,18 @@
 				MDB002 /* MessageBody.swift in Sources */,
 				D93546FFCB0106CF3F68B2C5 /* MessageDetailView.swift in Sources */,
 				D709D8EDF36F85DEB5AABEC4 /* MessageInputBar.swift in Sources */,
+				VBMA0 /* AudioMode.swift in Sources */,
+				VBMB0 /* Codec2RawFile.swift in Sources */,
+				VBMC0 /* OggOpusFileWriter.swift in Sources */,
+				VBMD0 /* OggOpusGranule.swift in Sources */,
+				VBME0 /* OggOpusMetadataReader.swift in Sources */,
+				VBMF0 /* VoiceDraftRow.swift in Sources */,
+				VBMJ0 /* VoiceMessageBubble.swift in Sources */,
+				VBMK0 /* VoiceMessageFormat.swift in Sources */,
+				VBML0 /* VoiceMessagePlayer.swift in Sources */,
+				VBMM0 /* VoiceMessageRecorder.swift in Sources */,
+				VBMP0 /* VoiceQualityPickerSheet.swift in Sources */,
+				VBMR0 /* VoiceWaveformBars.swift in Sources */,
 				A48DAD459DFDFDC94AC92B5A /* SettingsView.swift in Sources */,
 				31F207DBD45E2CA682A3F830 /* MyIdentityView.swift in Sources */,
 				22C0D4CEA5878FC810F04D1A /* ExpandableSettingsCard.swift in Sources */,
@@ -1630,6 +1725,18 @@
 				MDB001 /* MessageBody.swift in Sources */,
 				073 /* MessageDetailView.swift in Sources */,
 				015 /* MessageInputBar.swift in Sources */,
+				VBSA0 /* AudioMode.swift in Sources */,
+				VBSB0 /* Codec2RawFile.swift in Sources */,
+				VBSC0 /* OggOpusFileWriter.swift in Sources */,
+				VBSD0 /* OggOpusGranule.swift in Sources */,
+				VBSE0 /* OggOpusMetadataReader.swift in Sources */,
+				VBSF0 /* VoiceDraftRow.swift in Sources */,
+				VBSJ0 /* VoiceMessageBubble.swift in Sources */,
+				VBSK0 /* VoiceMessageFormat.swift in Sources */,
+				VBSL0 /* VoiceMessagePlayer.swift in Sources */,
+				VBSM0 /* VoiceMessageRecorder.swift in Sources */,
+				VBSP0 /* VoiceQualityPickerSheet.swift in Sources */,
+				VBSR0 /* VoiceWaveformBars.swift in Sources */,
 				016 /* SettingsView.swift in Sources */,
 				017 /* MyIdentityView.swift in Sources */,
 				018 /* ExpandableSettingsCard.swift in Sources */,
@@ -1762,6 +1869,15 @@
 				RFT002 /* RuntimeFlavorTests.swift in Sources */,
 				RMLT002 /* RuntimeActivityMonitorLeaseTests.swift in Sources */,
 				TMP002 /* ThemeManagerPersistenceTests.swift in Sources */,
+				MAFLD02 /* MessageAudioFieldTests.swift in Sources */,
+				VMRCD02 /* VoiceMessageRecorderTests.swift in Sources */,
+				VMPLT02 /* VoiceMessagePlayerTests.swift in Sources */,
+				C2RFT02 /* Codec2RawFileTests.swift in Sources */,
+				OGFWR02 /* OggOpusFileWriterTests.swift in Sources */,
+				OGGR002 /* OggOpusGranuleTests.swift in Sources */,
+				VMFT002 /* VoiceMessageFormatTests.swift in Sources */,
+				AMOD002 /* AudioModeTests.swift in Sources */,
+				VTSU002 /* VoiceTestSupport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

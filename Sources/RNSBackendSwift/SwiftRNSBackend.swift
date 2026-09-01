@@ -287,6 +287,7 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         imageData: Data?,
         imageFormat: String?,
         fileAttachments: [RnsFileAttachment]?,
+        audioAttachment: RnsAudio?,
         iconAppearance: RNSAPI.IconAppearance?,
         replyToMessageHashHex: String?,
         replyQuotedContent: String?,
@@ -299,7 +300,7 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         // so both backends encode identically). LXMessage.fields is [UInt8: Any].
         let fields = LxmfFieldCodec.buildFieldMap(
             imageData: imageData, imageFormat: imageFormat,
-            fileAttachments: fileAttachments, iconAppearance: iconAppearance,
+            fileAttachments: fileAttachments, audioAttachment: audioAttachment, iconAppearance: iconAppearance,
             replyToMessageHashHex: replyToMessageHashHex, replyQuotedContent: replyQuotedContent,
             extraFields: extraFields)
 

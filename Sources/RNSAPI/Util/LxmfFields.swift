@@ -73,6 +73,39 @@ public enum LxmfFields {
     /// Sideband-compatible `FIELD_TELEMETRY` location share here. (Replaces the
     /// previously-invented 0x70, matching Android's migration.)
     public static let FIELD_CUSTOM_META: UInt8 = 0xFD
+
+    // MARK: - FIELD_AUDIO mode values
+    //
+    // `FIELD_AUDIO` (0x07) is `[mode, bytes]`. `mode` is one of the upstream
+    // LXMF audio-mode constants below. These WIRE values are defined by
+    // upstream LXMF (`LXMF/LXMF.py`), match Android Columba's `LxmfFields`, and
+    // are the values Sideband/MeshChatX read. NOTE they are a DIFFERENT
+    // numbering scheme from the LXST `Codec2Mode` header byte (700C=0x00,
+    // 1200=0x01, … 3200=0x06) — map by bitrate, never by raw value. See
+    // `AudioMode.codec2Mode` in ColumbaApp.
+
+    /// Codec2 450 PWB — not offered by Columba's picker; parse-only.
+    public static let AM_CODEC2_450PWB: UInt8 = 0x01
+    /// Codec2 450 — not offered by Columba's picker; parse-only.
+    public static let AM_CODEC2_450: UInt8 = 0x02
+    /// Codec2 700C.
+    public static let AM_CODEC2_700C: UInt8 = 0x03
+    /// Codec2 1200.
+    public static let AM_CODEC2_1200: UInt8 = 0x04
+    /// Codec2 1300 — not offered by Columba's picker; parse-only.
+    public static let AM_CODEC2_1300: UInt8 = 0x05
+    /// Codec2 1400 — not offered by Columba's picker; parse-only.
+    public static let AM_CODEC2_1400: UInt8 = 0x06
+    /// Codec2 1600 — not offered by Columba's picker; parse-only.
+    public static let AM_CODEC2_1600: UInt8 = 0x07
+    /// Codec2 2400.
+    public static let AM_CODEC2_2400: UInt8 = 0x08
+    /// Codec2 3200.
+    public static let AM_CODEC2_3200: UInt8 = 0x09
+    /// Ogg/Opus (the only Opus mode Columba emits; stored as an Ogg file).
+    public static let AM_OPUS_OGG: UInt8 = 0x10
+    /// Custom / unspecified audio mode (the client must self-describe).
+    public static let AM_CUSTOM: UInt8 = 0xFF
 }
 
 /// The message-body presentation Columba currently supports.
