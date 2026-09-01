@@ -37,6 +37,22 @@ public struct VoiceMessageBubble: View {
 
     private var key: String { message.id }
 
+    /// Stable, harness-computable tag for the message content (FNV-1a 32-bit,
+    /// lowercase hex). The conversation accumulates one voice bubble per
+    /// inbound note, so every per-bubble a11y identifier is
+    /// `<base>_<tag>`: the interop harness (Python) computes the identical
+    /// tag from the content it sent and targets THAT bubble instead of the
+    /// first matching id. (SwiftUI applies the LAST accessibilityIdentifier
+    /// on a view, so these are single identifiers, not base+tag pairs.)
+    private var contentTag: String {
+        var h: UInt32 = 0x811C9DC5
+        for b in message.content.utf8 {
+            h ^= UInt32(b)
+            h = h &* 0x01000193
+        }
+        return String(format: "%08x", h)
+    }
+
     public var body: some View {
         if let attachment = message.audioAttachment {
             // `.custom` (an unrecognized wire mode) is non-playable: map it to
@@ -68,13 +84,13 @@ public struct VoiceMessageBubble: View {
             Text(String(localized: "Voice message"))
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Theme.textSecondary)
-                .accessibilityIdentifier("voice_bubble_title")
+                .accessibilityIdentifier("voice_bubble_title_\(contentTag)")
 
             if state.status == .loading {
                 Text(String(localized: "Loading voice message"))
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
-                    .accessibilityIdentifier("voice_bubble_loading")
+                    .accessibilityIdentifier("voice_bubble_loading_\(contentTag)")
             } else if let err = state.errorMessage {
                 stateView(errorMessage: err)
             } else {
@@ -92,7 +108,7 @@ public struct VoiceMessageBubble: View {
                             ? String(localized: "Pause voice message")
                             : String(localized: "Play voice message")
                     )
-                    .accessibilityIdentifier("voice_bubble_play")
+                    .accessibilityIdentifier("voice_bubble_play_\(contentTag)")
 
                     VoiceWaveformBars(peaks: waveform, progress: progressFraction)
                         .accessibilityHidden(true)
@@ -101,7 +117,7 @@ public struct VoiceMessageBubble: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Theme.textSecondary)
                         .accessibilityLabel("Playback progress")
-                        .accessibilityIdentifier("voice_bubble_progress")
+                        .accessibilityIdentifier("voice_bubble_progress_\(contentTag)")
                 }
             }
         }
@@ -126,8 +142,8 @@ public struct VoiceMessageBubble: View {
         .lineLimit(2)
         .accessibilityIdentifier(
             errorMessage == "unsupported"
-                ? "voice_bubble_unsupported"
-                : "voice_bubble_unavailable"
+                ? "voice_bubble_unsupported_\(contentTag)"
+                : "voice_bubble_unavailable_\(contentTag)"
         )
     }
 
