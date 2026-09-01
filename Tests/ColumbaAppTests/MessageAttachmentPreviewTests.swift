@@ -522,7 +522,8 @@ final class MessageAttachmentRoutingTests: XCTestCase {
             onShowDeliveryFailure: { _ in },
             onOpenLink: { _ in },
             onOpenImage: onOpenImage,
-            onOpenFileAttachment: onOpenFile
+            onOpenFileAttachment: onOpenFile,
+            voicePlayer: nil
         )
     }
 }
