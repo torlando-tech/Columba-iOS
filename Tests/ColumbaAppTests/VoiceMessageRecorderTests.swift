@@ -59,8 +59,8 @@ final class VoiceMessageRecorderTests: XCTestCase {
         XCTAssertTrue(recorder.isRecording)
         if case .recording = recorder.state {} else { XCTFail("expected .recording") }
         // The capture thread creates the file; wait for it (bounded).
-        XCTAssertTrue(await VoiceTestSupport.awaitFile(at: out, exists: true),
-                      "capture thread should create the .c2 file")
+        let fileCreated = await VoiceTestSupport.awaitFile(at: out, exists: true)
+        XCTAssertTrue(fileCreated, "capture thread should create the .c2 file")
 
         recorder.stop()
         let state = await waitForRecorderState(recorder) { s in
@@ -189,8 +189,8 @@ final class VoiceMessageRecorderTests: XCTestCase {
         recorder.cancel()
         // cancel() is non-blocking: wait for the loop to delete the in-flight
         // file (done in onCaptureDone on the main actor).
-        XCTAssertTrue(await VoiceTestSupport.awaitFile(at: out, exists: false, timeout: 5),
-                      "cancelled in-flight file must be deleted")
+        let fileDeleted = await VoiceTestSupport.awaitFile(at: out, exists: false, timeout: 5)
+        XCTAssertTrue(fileDeleted, "cancelled in-flight file must be deleted")
         XCTAssertEqual(factory.madeCaptures.first?.closeCount, 1)
         XCTAssertEqual(factory.madeCaptures.first?.stopCount, 1)
         XCTAssertNil(recorder.selectedRecording)

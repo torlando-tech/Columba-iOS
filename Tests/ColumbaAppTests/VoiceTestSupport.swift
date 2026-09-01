@@ -82,7 +82,7 @@ enum VoiceTestSupport {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if FileManager.default.fileExists(atPath: url.path) == exists { return true }
-            await Task.sleep(nanoseconds: 20_000_000)
+            try? await Task.sleep(nanoseconds: 20_000_000)
         }
         return FileManager.default.fileExists(atPath: url.path) == exists
     }
@@ -167,7 +167,7 @@ func waitForRecorderState(
     let deadline = Date().addingTimeInterval(timeout)
     while !done(recorder.state) {
         if Date() > deadline { break }
-        await Task.sleep(nanoseconds: 50_000_000)
+        try? await Task.sleep(nanoseconds: 50_000_000)
     }
     return recorder.state
 }
@@ -182,7 +182,7 @@ func waitForPlayerStatus(
     let deadline = Date().addingTimeInterval(timeout)
     while !done(player.state(for: key).status) {
         if Date() > deadline { break }
-        await Task.sleep(nanoseconds: 50_000_000)
+        try? await Task.sleep(nanoseconds: 50_000_000)
     }
     return player.state(for: key).status
 }

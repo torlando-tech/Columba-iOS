@@ -47,7 +47,7 @@ final class OggOpusFileWriterTests: XCTestCase {
 
         // Page 0: OpusHead, BOS set, granule -1.
         let h0 = page(pages, data, 0)
-        XCTAssertEqual(data[h0.payloadStart..<h0.payloadStart + 8],
+        XCTAssertEqual(Array(data[h0.payloadStart..<h0.payloadStart + 8]),
                        Array("OpusHead".utf8))
         XCTAssertEqual(data[h0.payloadStart + 8], 1)                 // version
         XCTAssertEqual(data[h0.payloadStart + 9], 2)                 // channels
@@ -58,7 +58,7 @@ final class OggOpusFileWriterTests: XCTestCase {
 
         // Page 1: OpusTags, no BOS.
         let h1 = page(pages, data, 1)
-        XCTAssertEqual(data[h1.payloadStart..<h1.payloadStart + 8], Array("OpusTags".utf8))
+        XCTAssertEqual(Array(data[h1.payloadStart..<h1.payloadStart + 8]), Array("OpusTags".utf8))
         XCTAssertEqual(h1.header[5] & 0x02, 0x00)
 
         // Every page's CRC must validate.
