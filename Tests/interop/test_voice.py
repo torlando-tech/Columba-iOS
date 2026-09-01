@@ -110,16 +110,22 @@ def test_codec2_ios_to_sideband(sim, sideband, voice_fixtures, name, mode):
     _assert_audio_field(lxm, expected_mode=mode, expected_bytes=payload)
 
 
-@pytest.mark.parametrize("name", ["opus_medium", "opus_high", "opus_max"])
+@pytest.mark.parametrize("name", ["opus_medium_short", "opus_high_short", "opus_max_short"])
 def test_opus_ios_to_sideband(sim, sideband, voice_fixtures, name):
     """iOS sends an Ogg/Opus note at one of the three Opus profile
     rates (24k mono / 48k mono / 48k stereo); Sideband must capture
     field 7 with mode 0x10 and the byte-identical Ogg. Sideband
     persisting the Ogg without error is the wire half of the
     granule-fix story (the decode half is pinned by
-    OggOpusFileWriterTests + the Sideband->iOS Opus cells below)."""
+    OggOpusFileWriterTests + the Sideband->iOS Opus cells below).
+
+    The `_short` (0.25s) fixture is used because this direction rides
+    the lxma://test-send deep link, which truncates long custom-scheme
+    URLs (a 1757B/3065B Ogg both arrived at ~954B); 0.25s keeps every
+    profile under the cap while still exercising the Opus container,
+    granules, and rate/channel config."""
     payload = _fix(voice_fixtures, name, "ogg")
-    body = f"v-opus-{name}-{int(time.time() * 1000)}"
+    body = f"v-{name}-{int(time.time() * 1000)}"
     result = sim.test_send(
         to_hex=sideband.identity_hex,
         content=body,
@@ -152,8 +158,9 @@ def test_opus_ios_to_sideband(sim, sideband, voice_fixtures, name):
     ("c2_3200", AM_CODEC2_3200),
 ])
 def test_codec2_sideband_to_ios(sim, sideband, voice_fixtures, name, mode):
-    """Sideband sends a Codec2 voice note; iOS persists it and the bubble
-    renders a playable play-control (not the 'unavailable' state)."""
+    """Sideband sends a Codec2 voice note; iOS persists it, renders a
+    playable voice bubble, and actually plays it (the player decodes the
+    raw frames to a temp WAV and reaches the progress row)."""
     payload = _fix(voice_fixtures, name, "c2")
     body = f"v-c2-{name}-from-sideband-{int(time.time() * 1000)}"
     assert sideband.send_audio(
@@ -164,18 +171,25 @@ def test_codec2_sideband_to_ios(sim, sideband, voice_fixtures, name, mode):
     ), "Sideband-side send_audio returned False"
     _wait_for_diag_inbound(sim, sideband, content=body)
     sim.assert_voice_bubble_visible(content=body, playable=True)
+    sim.assert_voice_playback_advances(content=body, timeout=25.0)
 
 
-@pytest.mark.parametrize("name", ["opus_medium", "opus_high", "opus_max"])
+@pytest.mark.parametrize("name", ["opus_medium_long", "opus_high_long", "opus_max_long"])
 def test_opus_sideband_to_ios(sim, sideband, voice_fixtures, name):
     """Sideband sends an Ogg/Opus note (Sideband toolchain's ffmpeg
-    output); iOS must decode it and render a PLAYABLE voice bubble. This
-    is the load-bearing cell of the plan's interop matrix - the exact
+    output); iOS must decode it and render a PLAYABLE voice bubble, and
+    the player must reach the progress row without an error. This is
+    the load-bearing cell of the plan's interop matrix - the exact
     path that failed on Android before the granule fix. A malformed
     granule would surface voice_bubble_unavailable/error, not the play
-    control."""
+    control or progress row.
+
+    The `_long` (2.0s) fixture is used because the playback assertion
+    needs the clip still playing when Maestro checks the progress row;
+    a sub-second clip finishes first and the bubble returns to its idle
+    play button."""
     payload = _fix(voice_fixtures, name, "ogg")
-    body = f"v-opus-{name}-from-sideband-{int(time.time() * 1000)}"
+    body = f"v-{name}-from-sideband-{int(time.time() * 1000)}"
     assert sideband.send_audio(
         dest_hex=sim.lxmf_delivery_hex,
         content=body,

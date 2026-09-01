@@ -98,31 +98,37 @@ def generate_all(out_dir: str) -> dict:
         info["src"] = "pycodec2"
         manifest[f"c2_{bitrate}"] = info
 
+    # Two Opus fixture sets, because the two matrix directions take
+    # different transport paths:
+    #   * _short (0.25s): iOS->Sideband rides the lxma://test-send deep link,
+    #     and iOS truncates long custom-scheme URLs at a fixed point
+    #     (measured cap ~954B payload; audio_hex is the last param and
+    #     absorbs the cut). 0.25s keeps even the 48k-stereo Maximum under
+    #     that cap while still exercising the Opus container, granules, and
+    #     each profile's rate/channel config.
+    #   * _long (2.0s): Sideband->iOS is mesh-sent (no URL cap), and the
+    #     playback assertion needs the clip still playing when Maestro
+    #     checks the progress row - a sub-second clip finishes before the
+    #     assert runs and the bubble returns to its idle play button.
     opus_profiles = [
         ("opus_medium", 24000, 1, "6k"),    # voiceMedium: 24k mono
         ("opus_high", 48000, 1, "10k"),     # voiceHigh: 48k mono
         ("opus_max", 48000, 2, "16k"),      # voiceMax: 48k stereo
     ]
-    # 0.5s clips: the iOS->Sideband cells ride the lxma://test-send deep link,
-    # and the custom-scheme URL is truncated at a fixed point (~954B payload).
-    # 0.5s keeps every Opus fixture under that cap while still exercising the
-    # Opus container, granules, and rate/channel config. (Codec2 cells use
-    # 2.0s above and already pass byte-identical - they prove the field-7
-    # packing path.)
-    OPUS_SECS = 0.5
     for name, rate, ch, br in opus_profiles:
-        if ch == 2:
-            mono = sine_pcm(rate, OPUS_SECS)
-            stereo = bytearray()
-            for i in range(0, len(mono), 2):
-                stereo += mono[i:i + 2] + mono[i:i + 2]
-            pcm = bytes(stereo)
-        else:
-            pcm = sine_pcm(rate, OPUS_SECS)
-        info = encode_opus(pcm, rate, ch, br, f"{out_dir}/{name}.ogg")
-        info["wire_mode"] = 0x10
-        info["src"] = f"ffmpeg-libopus-{rate}hz-{ch}ch-{OPUS_SECS}s"
-        manifest[name] = info
+        for suffix, secs in (("short", 0.25), ("long", 2.0)):
+            if ch == 2:
+                mono = sine_pcm(rate, secs)
+                stereo = bytearray()
+                for i in range(0, len(mono), 2):
+                    stereo += mono[i:i + 2] + mono[i:i + 2]
+                pcm = bytes(stereo)
+            else:
+                pcm = sine_pcm(rate, secs)
+            info = encode_opus(pcm, rate, ch, br, f"{out_dir}/{name}_{suffix}.ogg")
+            info["wire_mode"] = 0x10
+            info["src"] = f"ffmpeg-libopus-{rate}hz-{ch}ch-{secs}s"
+            manifest[f"{name}_{suffix}"] = info
 
     import json
     with open(f"{out_dir}/manifest.json", "w") as f:
