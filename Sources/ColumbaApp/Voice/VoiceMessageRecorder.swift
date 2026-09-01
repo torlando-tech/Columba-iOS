@@ -535,12 +535,13 @@ final class AVEngineVoiceCapture: VoicePcmCapture {
         let input = engine.inputNode
         let hardware = input.inputFormat(forBus: 0)
         // Defensive: a degenerate input format (zero sample rate/channel
-        // count, seen when no usable input device is present) makes
+        // count, as seen when no usable input device is present - a simulator
+        // with no mic, a BT-only route, a busy/absent input) makes
         // `installTap(onBus:format:)` throw an ObjC NSException that Swift
-        // `try/catch` cannot intercept - a hard SIGABRT. The recorder's
-        // `captureHasInput` guard should prevent reaching this path, but keep
-        // the belt-and-braces check here so a format change between the guard
-        // and the tap can never abort the process.
+        // `try/catch` cannot intercept - a hard SIGABRT. `isSupported` only
+        // checks the permission, so this is the guard that keeps the recorder
+        // from aborting the process: fail with `unsupported` and let the UI
+        // publish its "not supported on this device" panel state.
         guard hardware.sampleRate > 0, Int(hardware.channelCount) > 0 else {
             try? session.setActive(false)
             throw VoiceRecorderError.unsupported
