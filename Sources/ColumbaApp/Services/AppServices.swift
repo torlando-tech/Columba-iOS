@@ -1728,6 +1728,8 @@ public final class AppServices {
             let imageFormat = (note.userInfo?["image_format"] as? String) ?? ""
             let fileHex = (note.userInfo?["file_hex"] as? String) ?? ""
             let fileName = (note.userInfo?["file_name"] as? String) ?? ""
+            let audioModeStr = (note.userInfo?["audio_mode"] as? String) ?? ""
+            let audioHex = (note.userInfo?["audio_hex"] as? String) ?? ""
             // Resolve delivery method. `direct`/`propagated` ride a Link or
             // a propagation node, respectively; everything else (including
             // empty) goes opportunistic — matches LXDeliveryMethod's three
@@ -1749,6 +1751,17 @@ public final class AppServices {
             } else {
                 fileAttachments = nil
             }
+            // FIELD_AUDIO (0x07) = [mode_int, bytes]. Accepts the mode as a
+            // hex ("0x10") or decimal ("16") string; the payload is hex. Bad
+            // input drops the field (loud in the inbound tap), never crashes.
+            let audioAttachment: RnsAudio?
+            if !audioHex.isEmpty,
+               let mode = Int(audioModeStr.isEmpty ? "0" : audioModeStr.replacingOccurrences(of: "0x", with: ""), radix: audioModeStr.lowercased().hasPrefix("0x") ? 16 : 10),
+               let data = try? audioHex.hexToData() {
+                audioAttachment = RnsAudio(mode: mode, bytes: data)
+            } else {
+                audioAttachment = nil
+            }
             Task { @MainActor in
                 guard let backend = self.backend else {
                     DiagLog.log("[TEST-SEND] no backend")
@@ -1762,7 +1775,7 @@ public final class AppServices {
                         imageData: imageData,
                         imageFormat: imageFormat.isEmpty ? nil : imageFormat,
                         fileAttachments: fileAttachments,
-                        audioAttachment: nil,
+                        audioAttachment: audioAttachment,
                         iconAppearance: nil,
                         replyToMessageHashHex: nil,
                         replyQuotedContent: nil,
