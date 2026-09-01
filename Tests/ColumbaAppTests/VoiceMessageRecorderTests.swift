@@ -243,6 +243,28 @@ final class VoiceMessageRecorderTests: XCTestCase {
         XCTAssertNil(recorder.selectedRecording)
     }
 
+    // MARK: - Capture start() throwing .unsupported (degenerate input format)
+
+    func testCaptureStartThrowingUnsupportedPublishesTerminalUnsupported() async {
+        // Mirrors the production abort guard: the capture reports supported
+        // (permission granted) but start() throws .unsupported when the
+        // input format is degenerate (no usable input device). The recorder
+        // must surface the dedicated unsupported state, not a generic
+        // captureStartFailed, so the composer shows the "not supported on
+        // this device" row (Android !isSupported parity).
+        let factory = FakeVoiceCaptureFactory(startError: VoiceRecorderError.unsupported, supported: true)
+        let recorder = VoiceMessageRecorder(captureFactory: factory)
+        XCTAssertThrowsError(try recorder.start(format: .opusMedium)) {
+            XCTAssertEqual($0 as? VoiceRecorderError, .unsupported)
+        }
+        if case .failed = recorder.state {} else { XCTFail("expected .failed, got \(recorder.state)") }
+        XCTAssertTrue(recorder.lastFailureWasUnsupported)
+        XCTAssertEqual(recorder.errorMessage, "Voice messages are not supported on this device.")
+        // The capture must be closed and no partial file left behind.
+        XCTAssertEqual(factory.madeCaptures.first?.closeCount, 1)
+        XCTAssertNil(recorder.selectedRecording)
+    }
+
     // MARK: - Double start rejected
 
     func testDoubleStartRejected() async throws {

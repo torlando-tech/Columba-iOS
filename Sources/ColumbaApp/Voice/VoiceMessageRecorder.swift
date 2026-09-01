@@ -183,6 +183,18 @@ public final class VoiceMessageRecorder {
             try? FileManager.default.removeItem(at: out)
             self.capture = nil
             self.outputFile = nil
+            // Preserve the unsupported distinction so the composer can show
+            // the dedicated "not supported on this device" row (Android
+            // `!isSupported` parity) rather than a generic failure. This
+            // covers the degenerate-input-format abort guard in the capture
+            // (no usable input device), not just the `isSupported` pre-check.
+            if error is VoiceRecorderError, (error as? VoiceRecorderError) == .unsupported {
+                let msg = String(localized: "Voice messages are not supported on this device.")
+                errorMessage = msg
+                lastFailureWasUnsupported = true
+                state = .failed(message: msg)
+                throw VoiceRecorderError.unsupported
+            }
             errorMessage = error.localizedDescription
             state = .failed(message: errorMessage!)
             throw VoiceRecorderError.captureStartFailed
