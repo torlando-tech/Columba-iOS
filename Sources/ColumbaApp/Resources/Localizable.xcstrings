@@ -1481,6 +1481,416 @@
     },
     "Google Maps": {
       "comment": "Name of the Google Maps option in the directions chooser."
+    },
+    "Select Voice Message Quality": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select Voice Message Quality"
+          }
+        }
+      }
+    },
+    "Choose the recording format and bandwidth": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose the recording format and bandwidth"
+          }
+        }
+      }
+    },
+    "Record": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record"
+          }
+        }
+      }
+    },
+    "Codec2 1200": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codec2 1200"
+          }
+        }
+      }
+    },
+    "Very low bandwidth voice": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Very low bandwidth voice"
+          }
+        }
+      }
+    },
+    "Codec2 2400": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codec2 2400"
+          }
+        }
+      }
+    },
+    "Low bandwidth voice": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Low bandwidth voice"
+          }
+        }
+      }
+    },
+    "Codec2 3200": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codec2 3200"
+          }
+        }
+      }
+    },
+    "Clearer speech at low bandwidth": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clearer speech at low bandwidth"
+          }
+        }
+      }
+    },
+    "Medium Quality": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Medium Quality"
+          }
+        }
+      }
+    },
+    "Opus 8 kbps mono - good balance of quality and bandwidth": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opus 8 kbps mono - good balance of quality and bandwidth"
+          }
+        }
+      }
+    },
+    "High Quality": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "High Quality"
+          }
+        }
+      }
+    },
+    "Opus 16 kbps mono - higher fidelity audio": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opus 16 kbps mono - higher fidelity audio"
+          }
+        }
+      }
+    },
+    "Maximum Quality": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximum Quality"
+          }
+        }
+      }
+    },
+    "Opus 32 kbps stereo - best audio, requires more bandwidth": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opus 32 kbps stereo - best audio, requires more bandwidth"
+          }
+        }
+      }
+    },
+    "Voice": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice"
+          }
+        }
+      }
+    },
+    "Record a voice message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record a voice message"
+          }
+        }
+      }
+    },
+    "Voice message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice message"
+          }
+        }
+      }
+    },
+    "Start recording": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start recording"
+          }
+        }
+      }
+    },
+    "Stop recording": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop recording"
+          }
+        }
+      }
+    },
+    "Cancel recording": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel recording"
+          }
+        }
+      }
+    },
+    "Remove recording": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove recording"
+          }
+        }
+      }
+    },
+    "Microphone permission is required to record a voice message.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone permission is required to record a voice message."
+          }
+        }
+      }
+    },
+    "Voice messages are not supported on this device.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice messages are not supported on this device."
+          }
+        }
+      }
+    },
+    "Recording": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recording"
+          }
+        }
+      }
+    },
+    "Finalizing": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finalizing"
+          }
+        }
+      }
+    },
+    "Selected voice message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected voice message"
+          }
+        }
+      }
+    },
+    "Recording error: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recording error: %@"
+          }
+        }
+      }
+    },
+    "Ready to record a voice message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ready to record a voice message"
+          }
+        }
+      }
+    },
+    "Grant microphone access": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grant microphone access"
+          }
+        }
+      }
+    },
+    "Microphone access is disabled. Enable it in app settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone access is disabled. Enable it in app settings."
+          }
+        }
+      }
+    },
+    "Open settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open settings"
+          }
+        }
+      }
+    },
+    "Voice recording is unavailable during a call.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice recording is unavailable during a call."
+          }
+        }
+      }
+    },
+    "Play voice message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play voice message"
+          }
+        }
+      }
+    },
+    "Pause voice message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pause voice message"
+          }
+        }
+      }
+    },
+    "Loading voice message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading voice message"
+          }
+        }
+      }
+    },
+    "Voice message unavailable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice message unavailable"
+          }
+        }
+      }
+    },
+    "Unsupported voice message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unsupported voice message"
+          }
+        }
+      }
+    },
+    "%@ of %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ of %@"
+          }
+        }
+      }
+    },
+    "Unable to play voice message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to play voice message"
+          }
+        }
+      }
+    },
+    "Voice message recording produced no audio.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice message recording produced no audio."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

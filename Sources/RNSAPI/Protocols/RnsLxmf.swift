@@ -22,6 +22,22 @@ public struct RnsFileAttachment: Sendable, Equatable {
     }
 }
 
+/// A voice-message audio payload carried in `FIELD_AUDIO` (0x07) as
+/// `[mode, bytes]`. `mode` is the canonical wire audio-mode value from
+/// `LxmfFields.AM_*` (Codec2 modes 0x03-0x09, AM_OPUS_OGG 0x10, AM_CUSTOM
+/// 0xFF). Kept as a raw Int so the RNSAPI layer does not depend on the app
+/// layer's `AudioMode` enum.
+public struct RnsAudio: Sendable, Equatable {
+    public let mode: Int
+    public let bytes: Data
+    public init(mode: Int, bytes: Data) {
+        self.mode = mode
+        self.bytes = bytes
+    }
+    /// The `FIELD_AUDIO` wire value: `[mode, bytes]`.
+    public var fieldValue: [Any] { [mode, bytes] }
+}
+
 public protocol RnsLxmf: AnyObject, Sendable {
 
     /// Send an LXMF message. Structured fields are passed typed; `extraFields`
@@ -38,6 +54,7 @@ public protocol RnsLxmf: AnyObject, Sendable {
         imageData: Data?,
         imageFormat: String?,
         fileAttachments: [RnsFileAttachment]?,
+        audioAttachment: RnsAudio?,
         iconAppearance: IconAppearance?,
         replyToMessageHashHex: String?,
         replyQuotedContent: String?,
@@ -56,6 +73,7 @@ public protocol RnsLxmf: AnyObject, Sendable {
         imageData: Data?,
         imageFormat: String?,
         fileAttachments: [RnsFileAttachment]?,
+        audioAttachment: RnsAudio?,
         iconAppearance: IconAppearance?,
         replyToMessageHashHex: String?,
         replyQuotedContent: String?,
@@ -90,6 +108,7 @@ public extension RnsLxmf {
         imageData: Data?,
         imageFormat: String?,
         fileAttachments: [RnsFileAttachment]?,
+        audioAttachment: RnsAudio?,
         iconAppearance: IconAppearance?,
         replyToMessageHashHex: String?,
         replyQuotedContent: String?,
@@ -102,6 +121,7 @@ public extension RnsLxmf {
             imageData: imageData,
             imageFormat: imageFormat,
             fileAttachments: fileAttachments,
+            audioAttachment: audioAttachment,
             iconAppearance: iconAppearance,
             replyToMessageHashHex: replyToMessageHashHex,
             replyQuotedContent: replyQuotedContent,
@@ -114,7 +134,8 @@ public extension RnsLxmf {
                          method: LXDeliveryMethod = .opportunistic) async throws -> SendOutcome {
         try await sendLxmfMessage(
             destHashHex: destHashHex, content: content, method: method,
-            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
+            imageData: nil, imageFormat: nil, fileAttachments: nil, audioAttachment: nil,
+            iconAppearance: nil,
             replyToMessageHashHex: nil, replyQuotedContent: nil, extraFields: nil
         )
     }

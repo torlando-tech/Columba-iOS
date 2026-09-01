@@ -38,6 +38,7 @@ public enum LxmfFieldCodec {
         imageData: Data?,
         imageFormat: String?,
         fileAttachments: [RnsFileAttachment]?,
+        audioAttachment: RnsAudio?,
         iconAppearance: IconAppearance?,
         replyToMessageHashHex: String?,
         replyQuotedContent: String?,
@@ -49,6 +50,11 @@ public enum LxmfFieldCodec {
         }
         if let fileAttachments, !fileAttachments.isEmpty {
             fields[LxmfFields.FIELD_FILE_ATTACHMENTS] = fileAttachments.map { [$0.name, $0.data] as [Any] }
+        }
+        if let audioAttachment {
+            // FIELD_AUDIO (0x07) = [mode, bytes]. The mode is a plain Int so it
+            // encodes as a MessagePack int (matching Android's `[mode, bytes]`).
+            fields[LxmfFields.FIELD_AUDIO] = audioAttachment.fieldValue
         }
         if let iconAppearance {
             fields[LxmfFields.FIELD_ICON_APPEARANCE] = iconAppearance.toLXMFFieldValue()
