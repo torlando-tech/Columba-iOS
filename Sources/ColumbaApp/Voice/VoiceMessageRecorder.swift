@@ -15,8 +15,8 @@
 //     the composer.
 //
 //  Threading model (matches AudioManager): the blocking read/encode loop runs on
-a dedicated `Thread`; it snapshots the format/output/capture into locals and
-only reads the locked `VoiceStopLatch` stop flag. All observable state is published by
+//  a dedicated `Thread`; it snapshots the format/output/capture into locals and
+//  only reads the locked `VoiceStopLatch` stop flag. All observable state is published by
 //  hopping back to the `@MainActor` in `onCaptureDone`. `stop()`/`cancel()` are
 //  NON-blocking: they flip the flag(s) and return; the loop self-terminates
 //  (the capture `read` times out at 50 ms) and publishes the terminal state.
