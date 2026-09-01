@@ -92,22 +92,28 @@ final class Codec2RawFileTests: XCTestCase {
     }
 
     func testDecodeRejectsWrongCodecGeometry() throws {
-        // Encode at 1200 (36-byte frames) but decode as 2400 (96-byte frames)
-        // -> the byte count is not a whole number of 96-byte frames.
-        let codec1200 = try makeCodec(.codec2_1200)
-        let raw = try Codec2RawFile.encodeAll(pcm: VoiceTestSupport.pcm(count: 240 * 4), codec: codec1200)
+        // A payload whose byte count is NOT a whole number of frames must be
+        // rejected as incomplete, regardless of the exact frame size. Sized as
+        // (frames × bytesPerFrame) + 1 from the LIVE geometry so the test is
+        // robust to the real codec's bytesPerFrame (the old version assumed
+        // 1200/2400 frame sizes whose ratio happened to work with the buggy
+        // 8x-inflated table).
         let codec2400 = try makeCodec(.codec2_2400)
-        XCTAssertThrowsError(try Codec2RawFile.decode(raw, mode: .codec2_2400, codec: codec2400)) {
+        let geo = Codec2RawFile.geometry(of: codec2400)
+        let raw = try Codec2RawFile.encodeAll(
+            pcm: VoiceTestSupport.pcm(count: geo.samplesPerFrame * 4), codec: codec2400)
+        var bad = [UInt8](raw); bad.append(0xAB) // one extra byte
+        XCTAssertThrowsError(try Codec2RawFile.decode(Data(bad), mode: .codec2_2400, codec: codec2400)) {
             XCTAssertEqual($0 as? Codec2FileError, .incompleteFrame)
         }
     }
 
     func testDecodeEnforcesFiveMinuteCeiling() {
-        // 2400 geometry: 96-byte frames, 320 samples/frame. A payload sized as
-        // a whole number of 2400 frames whose decoded samples exceed 5 minutes
-        // (8000*300) must be rejected BEFORE any allocation (wide arithmetic).
+        // A payload sized as a whole number of 2400 frames whose decoded
+        // samples exceed 5 minutes (8000*300) must be rejected BEFORE any
+        // allocation (wide arithmetic). Uses the live geometry's frame size.
         let geo = Codec2RawFile.geometry(for: .codec2_2400)
-        // frames such that frames*320 > 2_400_000 (5 min at 8k).
+        // frames such that frames*spf > 2_400_000 (5 min at 8k).
         let frames = 8_000 * 300 / geo.samplesPerFrame + 1
         let payload = Data(repeating: 0x00, count: frames * geo.bytesPerFrame)
         XCTAssertThrowsError(try Codec2RawFile.decode(payload, mode: .codec2_2400, codec: try! makeCodec(.codec2_2400))) {
@@ -154,20 +160,29 @@ final class Codec2RawFileTests: XCTestCase {
         XCTAssertEqual(decoded.samples.count, geo.samplesPerFrame * frames)
     }
 
-    // MARK: - Geometry (libcodec2 table, bitrate × spf / 8000)
+    // MARK: - Geometry (derived from the live codec)
 
-    func testGeometryTable() {
-        let expectations: [Codec2Mode: (Int, Int)] = [
-            .codec2_700C: (160, 14), .codec2_1200: (240, 36), .codec2_1300: (240, 39),
-            .codec2_1400: (240, 42), .codec2_1600: (240, 48), .codec2_2400: (320, 96),
-            .codec2_3200: (320, 128),
-        ]
-        for (mode, (spf, bpf)) in expectations {
-            let g = Codec2RawFile.geometry(for: mode)
-            XCTAssertEqual(g.samplesPerFrame, spf, "\(mode)")
-            XCTAssertEqual(g.bytesPerFrame, bpf, "\(mode)")
-            // Self-consistency: bytes = bitrate * spf / 8000.
-            XCTAssertEqual(g.bytesPerFrame, Int(Double(mode.bitrate) * Double(g.samplesPerFrame) / 8000.0))
+    /// The derived geometry must be self-consistent with the codec itself, for
+    /// every mode: N frames of `samplesPerFrame` samples encode to exactly
+    /// N × bytesPerFrame raw bytes, and `samplesPerFrame - 1` samples is not
+    /// enough for one frame (encode throws). The live codec is the oracle -
+    /// the old static table hardcoded (spf, bpf) pairs whose bpf was 8x too
+    /// large (computed in bits, not bytes), which broke every encode/decode
+    /// size assertion.
+    func testGeometryMatchesLiveCodec() throws {
+        for mode in Codec2Mode.allCases {
+            let codec = try makeCodec(mode)
+            let g = Codec2RawFile.geometry(of: codec)
+            XCTAssertGreaterThan(g.samplesPerFrame, 0, "\(mode): samplesPerFrame")
+            XCTAssertGreaterThan(g.bytesPerFrame, 0, "\(mode): bytesPerFrame")
+            // 3 full frames -> exactly 3 × bytesPerFrame raw bytes.
+            let raw = try Codec2RawFile.encodeAll(
+                pcm: VoiceTestSupport.pcm(count: g.samplesPerFrame * 3), codec: codec)
+            XCTAssertEqual(raw.count, g.bytesPerFrame * 3, "\(mode): 3-frame raw size")
+            // samplesPerFrame - 1 samples cannot make one frame.
+            XCTAssertThrowsError(
+                try codec.encode(VoiceTestSupport.pcm(count: g.samplesPerFrame - 1)),
+                "\(mode): one frame below spf must throw")
         }
     }
 

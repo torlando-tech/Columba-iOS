@@ -86,6 +86,42 @@ enum VoiceTestSupport {
         }
         return FileManager.default.fileExists(atPath: url.path) == exists
     }
+
+    /// Poll (bounded) until the fake capture's buffer is fully drained by the
+    /// capture thread. Call this BEFORE `recorder.stop()` in tests: the fake
+    /// capture serves its whole finite buffer within a few milliseconds, so
+    /// stopping the instant the output file appears can race the encode loop
+    /// (0-1 frames written -> "no audio" / wrong frame count). Production is
+    /// unaffected: a real microphone never "drains" - the loop spins on
+    /// read()==0 until the latch flips.
+    static func awaitDrained(_ capture: FakeVoiceCapture, timeout: TimeInterval = 5) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while capture.remaining > 0 {
+            if Date() > deadline { return false }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return true
+    }
+
+    /// Poll (bounded) until the file's on-disk size stops changing (two reads
+    /// `settle` apart are equal and non-zero). Call AFTER the capture buffer is
+    /// drained: the drain guarantees all samples are read, but the final
+    /// read-batch's frames are encoded+written *after* the read that drained,
+    /// so a drain-only stop can drop that last batch (count lands ~6 frames low).
+    /// Waiting for the size to settle waits for the loop to actually stop
+    /// writing. Deterministic and independent of the exact final frame count.
+    static func awaitFileSettled(at url: URL, timeout: TimeInterval = 5,
+                                 settle: TimeInterval = 0.05) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        var last = -1
+        while Date() < deadline {
+            let s = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            if s > 0 && s == last { return true }
+            last = s
+            try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
+        }
+        return false
+    }
 }
 
 /// Bounded, thread-safe fake capture. `read` returns up to `capacity` mono
@@ -98,6 +134,12 @@ final class FakeVoiceCapture: VoicePcmCapture, @unchecked Sendable {
     var stopCount = 0
     let support: Bool
     let rate: Int
+
+    /// Samples still queued for `read`. Tests use this to wait for the capture
+    /// thread to fully drain a finite fake buffer before stopping the recorder
+    /// (a file-exists wait alone is not enough: the fake returns its whole
+    /// buffer in milliseconds, so the loop could still be mid-encode).
+    var remaining: Int { lock.lock(); defer { lock.unlock() }; return queue.count }
 
     init(samples: [Int16] = [], rate: Int = 8_000, startError: Error? = nil,
          supported: Bool = true) {

@@ -62,6 +62,16 @@ final class VoiceMessageRecorderTests: XCTestCase {
         let fileCreated = await VoiceTestSupport.awaitFile(at: out, exists: true)
         XCTAssertTrue(fileCreated, "capture thread should create the .c2 file")
 
+        // Deterministic finalization gate: wait for the finite fake buffer to
+        // be fully read AND for the encode loop to stop growing the file
+        // (the final read-batch's frames are written after the read that
+        // drained, so a file-exists or drain-only stop can drop them). Then
+        // stop: every frame is already on disk.
+        guard let cap = factory.madeCaptures.first else { XCTFail("no capture"); return }
+        _ = await VoiceTestSupport.awaitDrained(cap)
+        let settled = await VoiceTestSupport.awaitFileSettled(at: out)
+        XCTAssertTrue(settled, "capture loop should settle before stop")
+
         recorder.stop()
         let state = await waitForRecorderState(recorder) { s in
             if case .completed = s { return true }; if case .failed = s { return true }; return false
@@ -76,8 +86,11 @@ final class VoiceMessageRecorderTests: XCTestCase {
         // .c2 extension, size is a whole number of 2400 frames (96 bytes),
         // payload decodes cleanly (no header byte, complete frames only).
         XCTAssertEqual(out.pathExtension, "c2")
-        let frames = rec.sizeBytes / 96
-        XCTAssertEqual(rec.sizeBytes, frames * 96)
+        // Frame size comes from the LIVE codec (bytes/frame), not a magic
+        // number: the old test hardcoded 96 (the buggy table's bit-value).
+        let bytesPerFrame = Codec2RawFile.geometry(for: .codec2_2400).bytesPerFrame
+        let frames = rec.sizeBytes / bytesPerFrame
+        XCTAssertEqual(rec.sizeBytes, frames * bytesPerFrame)
         // ~300 frames of 320 samples (8 kHz -> 8 kHz resample is ~identity).
         XCTAssertTrue((295...305).contains(frames), "expected ~300 frames, got \(frames)")
         _ = try Codec2RawFile.decodePayload(rec.audio.bytes, mode: .codec2_2400)
@@ -102,6 +115,13 @@ final class VoiceMessageRecorderTests: XCTestCase {
         defer { recorder.teardownEnginePreservingSelection() }
 
         let out = try recorder.start(format: .opusMedium)
+        // The Ogg file only appears at the END (atomic publish after all
+        // packets are encoded), so it cannot be awaited pre-stop. Instead wait
+        // for the finite fake buffer to be fully read: the loop then encodes
+        // every packet and finishes on its own next iteration. (Production:
+        // the mic never drains, so this gate is a no-op there.)
+        guard let cap = factory.madeCaptures.first else { XCTFail("no capture"); return }
+        _ = await VoiceTestSupport.awaitDrained(cap)
         recorder.stop()
         let state = await waitForRecorderState(recorder) { s in
             if case .completed = s { return true }; if case .failed = s { return true }; return false
@@ -233,6 +253,12 @@ final class VoiceMessageRecorderTests: XCTestCase {
         let factory = FakeVoiceCaptureFactory(samples: VoiceTestSupport.pcm(count: Self.c2Samples))
         let recorder = VoiceMessageRecorder(captureFactory: factory)
         let out = try recorder.start(format: .codec2_2400)
+        // Let the finite fake buffer drain and the loop settle so the stop
+        // finalizes a complete (non-empty) recording - see the codec2 test.
+        if let cap = factory.madeCaptures.first {
+            _ = await VoiceTestSupport.awaitDrained(cap)
+            _ = await VoiceTestSupport.awaitFileSettled(at: out)
+        }
         recorder.stop()
         _ = await waitForRecorderState(recorder) { s in
             if case .completed = s { return true }; if case .failed = s { return true }; return false
@@ -253,6 +279,10 @@ final class VoiceMessageRecorderTests: XCTestCase {
         let recorder = VoiceMessageRecorder(captureFactory: factory)
         defer { recorder.teardownEnginePreservingSelection() }
         let out = try recorder.start(format: .codec2_2400)
+        if let cap = factory.madeCaptures.first {
+            _ = await VoiceTestSupport.awaitDrained(cap)
+            _ = await VoiceTestSupport.awaitFileSettled(at: out)
+        }
         recorder.stop()
         _ = await waitForRecorderState(recorder) { s in
             if case .completed = s { return true }; if case .failed = s { return true }; return false
