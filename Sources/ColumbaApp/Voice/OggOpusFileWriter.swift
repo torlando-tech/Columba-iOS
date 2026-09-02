@@ -162,7 +162,14 @@ public final class OggOpusFileWriter {
         guard lacing.count >= 1, lacing.count <= 255 else { throw OggOpusFileError("lacing-range") }
         var header = [UInt8](repeating: 0, count: OggOpusGranule.oggHeaderSize)
         header.replaceSubrange(0..<4, with: OggOpusGranule.capturePattern)
-        header[4] = 0x02                       // version
+        // OggS page-header version is ALWAYS 0 (the spec's only defined value).
+        // The begin-of-stream flag belongs in byte 5, not here. Writing 2 (an
+        // earlier bug) made every page reject in strict Ogg parsers - notably
+        // Sideband's libopusfile ("Invalid header page") and ffmpeg ("Invalid
+        // Ogg vers!"). iOS's own AVAudioPlayer is lenient about this byte, so
+        // the bug was invisible to our own player but broke every other
+        // receiver of our outbound Ogg. See OggOpusFileWriterTests.
+        header[4] = 0x00                       // version (OggS spec: 0)
         header[5] = bos ? 0x02 : 0x00          // flags: 0x02 = begin of stream
         for i in 0..<8 { header[6 + i] = UInt8((granule >> (i * 8)) & 0xFF) }
         for i in 0..<4 { header[14 + i] = UInt8((serial >> (i * 8)) & 0xFF) }

@@ -222,9 +222,15 @@ public final class VoiceMessagePlayer {
             try Codec2RawFile.writeWave(decoded, to: wav)
             return wav
         }
-        // Ogg/Opus: AVFoundation plays .ogg directly.
+        // Ogg/Opus: AVFoundation plays .ogg directly - EXCEPT it rejects the
+        // multi-packet-per-page layout that Sideband's PyOgg emits (see
+        // OggOpusInboundNormalizer). Normalize first; if the bytes are not a
+        // decodable Ogg stream at all, fall back to the raw bytes so the
+        // existing unplayable path still applies (never worse than before).
+        let raw = [UInt8](attachment.bytes)
+        let normalized = (try? OggOpusInboundNormalizer.normalize(raw))?.bytes
         let ogg = dir.appendingPathComponent("voice_\(UUID().uuidString).ogg")
-        try attachment.bytes.write(to: ogg)
+        try Data(normalized ?? raw).write(to: ogg)
         return ogg
     }
 

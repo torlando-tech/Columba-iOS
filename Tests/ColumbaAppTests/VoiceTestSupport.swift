@@ -56,7 +56,7 @@ enum VoiceTestSupport {
             let end = off + 27 + seg + payloadSize
             guard end <= data.count else { return nil }
             var g: Int64 = 0
-            for i in 0..<8 { g |= Int64(Int8(bitPattern: data[off + 6 + i])) << (i * 8) }
+            for i in 0..<8 { g |= Int64(UInt64(data[off + 6 + i])) << (i * 8) }
             let payload = Array(data[(off + 27 + seg)..<end])
             pages.append(OggPage(granule: g, payload: payload, pageStart: off))
             off = end

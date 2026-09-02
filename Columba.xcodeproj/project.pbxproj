@@ -252,6 +252,7 @@
 		VMPLT02 /* VoiceMessagePlayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = VMPLT01 /* VoiceMessagePlayerTests.swift */; };
 		C2RFT02 /* Codec2RawFileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2RFT01 /* Codec2RawFileTests.swift */; };
 		OGFWR02 /* OggOpusFileWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OGFWR01 /* OggOpusFileWriterTests.swift */; };
+		OGINB02 /* OggOpusInboundNormalizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OGINB01 /* OggOpusInboundNormalizerTests.swift */; };
 		OGGR002 /* OggOpusGranuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OGGR001 /* OggOpusGranuleTests.swift */; };
 		VMFT002 /* VoiceMessageFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = VMFT001 /* VoiceMessageFormatTests.swift */; };
 		AMOD002 /* AudioModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AMOD001 /* AudioModeTests.swift */; };
@@ -386,6 +387,8 @@
 		VBMD0 /* OggOpusGranule.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CD0 /* OggOpusGranule.swift */; };
 		VBSE0 /* OggOpusMetadataReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CE0 /* OggOpusMetadataReader.swift */; };
 		VBME0 /* OggOpusMetadataReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CE0 /* OggOpusMetadataReader.swift */; };
+		VBSN0 /* OggOpusInboundNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CN0 /* OggOpusInboundNormalizer.swift */; };
+		VBMN0 /* OggOpusInboundNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CN0 /* OggOpusInboundNormalizer.swift */; };
 		VBSF0 /* VoiceDraftRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CF0 /* VoiceDraftRow.swift */; };
 		VBMF0 /* VoiceDraftRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CF0 /* VoiceDraftRow.swift */; };
 		VBSJ0 /* VoiceMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CJ0 /* VoiceMessageBubble.swift */; };
@@ -506,6 +509,7 @@
 		VMPLT01 /* VoiceMessagePlayerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceMessagePlayerTests.swift; sourceTree = "<group>"; };
 		C2RFT01 /* Codec2RawFileTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Codec2RawFileTests.swift; sourceTree = "<group>"; };
 		OGFWR01 /* OggOpusFileWriterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OggOpusFileWriterTests.swift; sourceTree = "<group>"; };
+		OGINB01 /* OggOpusInboundNormalizerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OggOpusInboundNormalizerTests.swift; sourceTree = "<group>"; };
 		OGGR001 /* OggOpusGranuleTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OggOpusGranuleTests.swift; sourceTree = "<group>"; };
 		VMFT001 /* VoiceMessageFormatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceMessageFormatTests.swift; sourceTree = "<group>"; };
 		AMOD001 /* AudioModeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioModeTests.swift; sourceTree = "<group>"; };
@@ -666,6 +670,7 @@
 		V0CC0 /* OggOpusFileWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OggOpusFileWriter.swift; sourceTree = "<group>"; };
 		V0CD0 /* OggOpusGranule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OggOpusGranule.swift; sourceTree = "<group>"; };
 		V0CE0 /* OggOpusMetadataReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OggOpusMetadataReader.swift; sourceTree = "<group>"; };
+		V0CN0 /* OggOpusInboundNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OggOpusInboundNormalizer.swift; sourceTree = "<group>"; };
 		V0CF0 /* VoiceDraftRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceDraftRow.swift; sourceTree = "<group>"; };
 		V0CJ0 /* VoiceMessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessageBubble.swift; sourceTree = "<group>"; };
 		V0CK0 /* VoiceMessageFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessageFormat.swift; sourceTree = "<group>"; };
@@ -1126,6 +1131,7 @@
 				VMPLT01 /* VoiceMessagePlayerTests.swift */,
 				C2RFT01 /* Codec2RawFileTests.swift */,
 				OGFWR01 /* OggOpusFileWriterTests.swift */,
+				OGINB01 /* OggOpusInboundNormalizerTests.swift */,
 				OGGR001 /* OggOpusGranuleTests.swift */,
 				VMFT001 /* VoiceMessageFormatTests.swift */,
 				AMOD001 /* AudioModeTests.swift */,
@@ -1235,6 +1241,7 @@
 				V0CC0 /* OggOpusFileWriter.swift */,
 				V0CD0 /* OggOpusGranule.swift */,
 				V0CE0 /* OggOpusMetadataReader.swift */,
+			V0CN0 /* OggOpusInboundNormalizer.swift */,
 				V0CF0 /* VoiceDraftRow.swift */,
 				V0CJ0 /* VoiceMessageBubble.swift */,
 				V0CK0 /* VoiceMessageFormat.swift */,
@@ -1531,6 +1538,7 @@
 				VBMC0 /* OggOpusFileWriter.swift in Sources */,
 				VBMD0 /* OggOpusGranule.swift in Sources */,
 				VBME0 /* OggOpusMetadataReader.swift in Sources */,
+				VBMN0 /* OggOpusInboundNormalizer.swift in Sources */,
 				VBMF0 /* VoiceDraftRow.swift in Sources */,
 				VBMJ0 /* VoiceMessageBubble.swift in Sources */,
 				VBMK0 /* VoiceMessageFormat.swift in Sources */,
@@ -1730,6 +1738,7 @@
 				VBSC0 /* OggOpusFileWriter.swift in Sources */,
 				VBSD0 /* OggOpusGranule.swift in Sources */,
 				VBSE0 /* OggOpusMetadataReader.swift in Sources */,
+				VBSN0 /* OggOpusInboundNormalizer.swift in Sources */,
 				VBSF0 /* VoiceDraftRow.swift in Sources */,
 				VBSJ0 /* VoiceMessageBubble.swift in Sources */,
 				VBSK0 /* VoiceMessageFormat.swift in Sources */,
@@ -1874,6 +1883,7 @@
 				VMPLT02 /* VoiceMessagePlayerTests.swift in Sources */,
 				C2RFT02 /* Codec2RawFileTests.swift in Sources */,
 				OGFWR02 /* OggOpusFileWriterTests.swift in Sources */,
+				OGINB02 /* OggOpusInboundNormalizerTests.swift in Sources */,
 				OGGR002 /* OggOpusGranuleTests.swift in Sources */,
 				VMFT002 /* VoiceMessageFormatTests.swift in Sources */,
 				AMOD002 /* AudioModeTests.swift in Sources */,

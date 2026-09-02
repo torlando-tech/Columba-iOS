@@ -133,6 +133,26 @@ final class OggOpusFileWriterTests: XCTestCase {
         XCTAssertEqual(OggOpusFileWriter.maxFileBytes, 8 * 1024 * 1024)
     }
 
+    func testEveryPageUsesOggVersionZero() {
+        // Regression: the original writer emitted version byte 2 on every page,
+        // which strict Ogg parsers (Sideband's libopusfile, ffmpeg) reject
+        // ("Invalid Ogg vers!" / "Failed to open"). The OggS spec mandates
+        // version 0. iOS's own AVAudioPlayer is lenient about this byte, so the
+        // bug was invisible to our own player but broke every OTHER receiver of
+        // our outbound voice. Assert version 0 on every emitted page.
+        let w = makeWriter(channels: 2, preSkip: 480)
+        _ = try? w.appendPacket(VoiceTestSupport.opusPacket(toc: 0x98, size: 40))
+        _ = try? w.appendPacket(VoiceTestSupport.opusPacket(toc: 0x98, size: 33))
+        _ = try? w.appendPacket(VoiceTestSupport.opusPacket(toc: 0x90, size: 27))
+        let data = try! w.finish()
+        let pages = walk(data)
+        for p in pages {
+            XCTAssertEqual(data[p.pageStart + 4], 0,
+                "page @\(p.pageStart) Ogg version byte must be 0 (OggS spec); " +
+                "a regression to 2 breaks Sideband/ffmpeg playback of our outbound voice")
+        }
+    }
+
     func testPublishToDiskIsAtomicAndBounded() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("columba-voice-tests-\(UUID().uuidString)", isDirectory: true)
