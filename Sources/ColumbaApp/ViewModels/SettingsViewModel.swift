@@ -623,22 +623,30 @@ public final class SettingsViewModel {
     /// Save the current display name.
     @MainActor
     public func saveDisplayName() async {
-        savedDisplayName = identity.displayName
-        await settingsRepository.setDisplayName(identity.displayName)
+        // Normalize the live value to exactly what is persisted (trimmed) so
+        // the TextField and "Active:" label match the saved and announced name
+        // immediately, not after a reload.
+        let name = identity.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        identity.displayName = name
+        savedDisplayName = name
+        await settingsRepository.setDisplayName(name)
         // Keep LocalIdentity.displayName in sync so the "Active:" label stays current.
         if let mgr = identityManager, let active = await mgr.getActiveIdentity() {
-            await mgr.renameIdentity(active.identityHash, newName: identity.displayName)
+            await mgr.renameIdentity(active.identityHash, newName: name)
         }
-        activeIdentityName = identity.displayName
+        activeIdentityName = name
         saveSettings()
     }
 
     /// Send announce to the network (from Identity page).
     @MainActor
     public func sendAnnounce() async {
-        // Save display name first
-        await settingsRepository.setDisplayName(identity.displayName)
-        savedDisplayName = identity.displayName
+        // Save display name first. Normalize the live value to match what is
+        // persisted so the displayed name matches the announced name.
+        let name = identity.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        identity.displayName = name
+        await settingsRepository.setDisplayName(name)
+        savedDisplayName = name
 
         isAnnouncing = true
         announceError = nil
