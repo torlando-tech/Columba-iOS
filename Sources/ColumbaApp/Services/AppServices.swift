@@ -1514,7 +1514,9 @@ public final class AppServices {
         // each start, so it is intentionally not cached.)
         self.pythonStartIdentity = identity
         // Single source of the startup display name (see the method docs above).
-        let displayName = await SettingsRepository().getDisplayName()
+        // resolveDisplayName() applies the "Anonymous Peer" fallback so a
+        // missing/empty preference can never produce a nameless startup announce.
+        let displayName = await SettingsRepository().resolveDisplayName()
 
         // Model B (Track C3): when `BackendPreference.modelB` is on,
         // `BackendFactory.make` returns the thin-client `ProxyRnsBackend`, which
@@ -5041,7 +5043,7 @@ public final class AppServices {
             return
         }
         DiagLog.log("[AUTO_ANNOUNCE] triggered")
-        let displayName = await SettingsRepository().getDisplayName()
+        let displayName = await SettingsRepository().resolveDisplayName()
         do {
             try await sendAllAnnounces(displayName: displayName)
             lastAutoAnnounce = Date()

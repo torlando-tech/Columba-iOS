@@ -134,7 +134,7 @@ public final class AutoAnnounceManager {
             // Perform the announce
             guard let services = appServices else { return }
 
-            let displayName = await SettingsRepository().getDisplayName()
+            let displayName = await SettingsRepository().resolveDisplayName()
             do {
                 try await services.sendAllAnnounces(displayName: displayName)
                 logger.info("Auto-announce sent successfully")

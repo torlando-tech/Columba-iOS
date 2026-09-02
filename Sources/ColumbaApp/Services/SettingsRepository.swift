@@ -97,6 +97,12 @@ public actor SettingsRepository {
 
     // MARK: - Display Name
 
+    /// The display name shown to peers when the user has not set one.
+    /// Single source of truth for the "Anonymous Peer" default; previously this
+    /// literal was duplicated across IdentityManager, OnboardingViewModel, and
+    /// the startup path with slightly different empty-guards.
+    public static let defaultDisplayName = "Anonymous Peer"
+
     /// Get the display name for announces.
     ///
     /// This name is broadcast to the network when announcing,
@@ -105,6 +111,20 @@ public actor SettingsRepository {
     /// - Returns: Display name, or empty string if not set
     public func getDisplayName() -> String {
         defaults.string(forKey: Keys.displayName) ?? ""
+    }
+
+    /// The display name to broadcast on announce, applying the default fallback.
+    ///
+    /// Returns the configured name trimmed of surrounding whitespace, or
+    /// `defaultDisplayName` when none is set (or only whitespace). This is the
+    /// single point that guarantees the startup / auto / manual announce paths
+    /// never emit a nameless LXMF announce - an empty `getDisplayName()` value
+    /// forwarded to `register_delivery_identity` is exactly the
+    /// "announced without a display name" bug.
+    public func resolveDisplayName() -> String {
+        let name = (defaults.string(forKey: Keys.displayName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? Self.defaultDisplayName : name
     }
 
     /// Set the display name for announces.
