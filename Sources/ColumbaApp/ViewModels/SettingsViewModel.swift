@@ -38,9 +38,6 @@ public struct IdentityInfo: Equatable {
     /// Custom icon image data if set.
     public var customIconData: Data?
 
-    /// Default display name when none set.
-    public static let defaultDisplayName = "Unknown Peer"
-
     /// QR code string in Android Columba-compatible format.
     /// Format: `lxma://<destination_hash_hex>:<public_key_hex>`
     public var qrCodeString: String {
@@ -48,6 +45,16 @@ public struct IdentityInfo: Equatable {
             return destinationHash
         }
         return "lxma://\(destinationHash):\(publicKeyHex)"
+    }
+
+    /// The name that is actually broadcast to peers (trimmed, non-empty).
+    ///
+    /// Uses the shared trim-or-default contract
+    /// (`SettingsRepository.resolvedDisplayName`), so the identity page always
+    /// shows what announce and the LXMF announce wire actually carry - no
+    /// "Not set" / "Anonymous Peer" local-vs-network mismatch.
+    public var resolvedDisplayName: String {
+        SettingsRepository.resolvedDisplayName(displayName)
     }
 
     public init(
