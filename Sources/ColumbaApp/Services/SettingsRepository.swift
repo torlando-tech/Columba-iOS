@@ -132,9 +132,12 @@ public actor SettingsRepository {
 
     /// Set the display name for announces.
     ///
-    /// - Parameter name: Display name to broadcast when announcing
+    /// - Parameter name: Display name to broadcast when announcing. Stored
+    ///   trimmed of surrounding whitespace so the write boundary matches the
+    ///   read boundary (`getDisplayName`) and no caller can persist a
+    ///   name whose stored and normalized forms differ.
     public func setDisplayName(_ name: String) {
-        defaults.set(name, forKey: Keys.displayName)
+        defaults.set(name.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Keys.displayName)
     }
 
     // MARK: - Delivery & Propagation

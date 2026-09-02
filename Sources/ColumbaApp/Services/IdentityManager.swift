@@ -191,9 +191,11 @@ actor IdentityManager {
     /// Rename an identity.
     func renameIdentity(_ hash: String, newName: String) {
         guard let idx = identities.firstIndex(where: { $0.identityHash == hash }) else { return }
-        identities[idx].displayName = newName
+        // Normalize at the write boundary so LocalIdentity.displayName matches
+        // what the settings repo persists/announces (trimmed, non-divergent).
+        identities[idx].displayName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         saveIdentities()
-        logger.info("Renamed identity \(hash) to '\(newName)'")
+        logger.info("Renamed identity \(hash) to '\(identities[idx].displayName)'")
     }
 
     // MARK: - Delete

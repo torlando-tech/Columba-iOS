@@ -645,7 +645,11 @@ public final class SettingsViewModel {
         announceSuccess = false
 
         do {
-            try await appServices.sendAllAnnounces(displayName: identity.displayName)
+            // Announce through the shared resolver so the name matches the
+            // startup/Contacts/auto paths (normalized, non-empty) and reflects
+            // the saved value rather than a live unsent TextField edit.
+            let displayName = await settingsRepository.resolveDisplayName()
+            try await appServices.sendAllAnnounces(displayName: displayName)
             announceSuccess = true
             recordAnnounceTime()
             // Clear success after a delay
@@ -670,7 +674,11 @@ public final class SettingsViewModel {
         manualAnnounceError = nil
 
         do {
-            try await appServices.sendAllAnnounces(displayName: identity.displayName)
+            // Shared resolver: same normalized, non-empty name as every other
+            // announce trigger. Reading the saved value (not the live
+            // TextField) means an unsent edit can't be broadcast to peers.
+            let displayName = await settingsRepository.resolveDisplayName()
+            try await appServices.sendAllAnnounces(displayName: displayName)
             manualAnnounceSuccess = true
             recordAnnounceTime()
             Task {
