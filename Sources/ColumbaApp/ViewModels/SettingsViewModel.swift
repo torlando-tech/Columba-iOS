@@ -372,7 +372,8 @@ public final class SettingsViewModel {
         // is a secondary copy that can get out of sync (e.g. app group migration).
         let repoName = identity.displayName
         if let mgr = identityManager, let active = await mgr.getActiveIdentity() {
-            let idName = active.displayName
+            let rawIdName = active.displayName
+            let idName = rawIdName.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolvedName: String
             if !idName.isEmpty && idName != SettingsRepository.defaultDisplayName {
                 resolvedName = idName
@@ -382,10 +383,11 @@ public final class SettingsViewModel {
                 await mgr.renameIdentity(active.identityHash, newName: repoName)
             } else {
                 // Both the active LocalIdentity and the settings repo hold no
-                // usable name (e.g. legacy data predating the never-empty
-                // invariant). Resolve to the shared default so the "Active:"
-                // label, identity page, and announced name all agree instead
-                // of the local state rendering blank.
+                // usable name: either genuinely empty or legacy whitespace-only
+                // data predating the never-empty invariant. Resolve to the
+                // shared default so the "Active:" label, identity page, and
+                // announced name all agree instead of the local state rendering
+                // blank.
                 resolvedName = SettingsRepository.defaultDisplayName
             }
             activeIdentityName = resolvedName
@@ -395,7 +397,7 @@ public final class SettingsViewModel {
                 savedDisplayName = resolvedName
                 await settingsRepository.setDisplayName(resolvedName)
             }
-            if idName != resolvedName {
+            if rawIdName != resolvedName {
                 await mgr.renameIdentity(active.identityHash, newName: resolvedName)
             }
         }
