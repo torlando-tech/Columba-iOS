@@ -142,11 +142,16 @@ public actor SettingsRepository {
     /// Set the display name for announces.
     ///
     /// - Parameter name: Display name to broadcast when announcing. Stored
-    ///   trimmed of surrounding whitespace so the write boundary matches the
-    ///   read boundary (`getDisplayName`) and no caller can persist a
-    ///   name whose stored and normalized forms differ.
+    ///   through the shared trim-or-`defaultDisplayName` contract
+    ///   (`resolvedDisplayName`) so the stored value is never empty: clearing
+    ///   the field (or saving only whitespace) persists "Anonymous Peer"
+    ///   rather than an empty string. This makes the persisted display name
+    ///   match what `resolveDisplayName()` announces, so every local surface
+    ///   that reads the name (identity page, settings "Active:" label,
+    ///   identity-management list) agrees with the network instead of
+    ///   diverging on a blank entry.
     public func setDisplayName(_ name: String) {
-        defaults.set(name.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Keys.displayName)
+        defaults.set(Self.resolvedDisplayName(name), forKey: Keys.displayName)
     }
 
     // MARK: - Delivery & Propagation

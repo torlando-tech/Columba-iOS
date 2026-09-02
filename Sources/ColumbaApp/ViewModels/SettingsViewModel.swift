@@ -381,7 +381,12 @@ public final class SettingsViewModel {
                 // Repair LocalIdentity so it stays in sync.
                 await mgr.renameIdentity(active.identityHash, newName: repoName)
             } else {
-                resolvedName = idName
+                // Both the active LocalIdentity and the settings repo hold no
+                // usable name (e.g. legacy data predating the never-empty
+                // invariant). Resolve to the shared default so the "Active:"
+                // label, identity page, and announced name all agree instead
+                // of the local state rendering blank.
+                resolvedName = SettingsRepository.defaultDisplayName
             }
             activeIdentityName = resolvedName
             // Keep both sources in sync
@@ -389,6 +394,9 @@ public final class SettingsViewModel {
                 identity.displayName = resolvedName
                 savedDisplayName = resolvedName
                 await settingsRepository.setDisplayName(resolvedName)
+            }
+            if idName != resolvedName {
+                await mgr.renameIdentity(active.identityHash, newName: resolvedName)
             }
         }
 
@@ -630,10 +638,13 @@ public final class SettingsViewModel {
     /// Save the current display name.
     @MainActor
     public func saveDisplayName() async {
-        // Normalize the live value to exactly what is persisted (trimmed) so
-        // the TextField and "Active:" label match the saved and announced name
-        // immediately, not after a reload.
-        let name = identity.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Resolve through the shared trim-or-`defaultDisplayName` contract so
+        // the value persisted and the live state both use the identical,
+        // never-empty name. Clearing the field (or saving only whitespace)
+        // resolves to "Anonymous Peer", so settings, the active LocalIdentity,
+        // the "Active:" label, and the announced name all agree instead of the
+        // local state holding a blank entry.
+        let name = SettingsRepository.resolvedDisplayName(identity.displayName)
         identity.displayName = name
         savedDisplayName = name
         await settingsRepository.setDisplayName(name)
@@ -648,12 +659,16 @@ public final class SettingsViewModel {
     /// Send announce to the network (from Identity page).
     @MainActor
     public func sendAnnounce() async {
-        // Save display name first. Normalize the live value to match what is
-        // persisted so the displayed name matches the announced name.
-        let name = identity.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Save display name first. Resolve through the shared trim-or-`defaultDisplayName`
+        // contract so the value persisted and the live state both use the identical,
+        // never-empty name: clearing the field resolves to "Anonymous Peer" rather
+        // than persisting a blank entry that the "Active:" label and identity list
+        // would render inconsistently with the announced name.
+        let name = SettingsRepository.resolvedDisplayName(identity.displayName)
         identity.displayName = name
         await settingsRepository.setDisplayName(name)
         savedDisplayName = name
+        activeIdentityName = name
 
         isAnnouncing = true
         announceError = nil

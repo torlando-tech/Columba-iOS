@@ -67,7 +67,7 @@ actor IdentityManager {
         let now = Date().timeIntervalSince1970
         let local = LocalIdentity(
             identityHash: identityHash,
-            displayName: displayName,
+            displayName: SettingsRepository.resolvedDisplayName(displayName),
             destinationHash: destHashHex,
             createdAt: now,
             lastUsedAt: now,
@@ -200,10 +200,14 @@ actor IdentityManager {
         guard let idx = identities.firstIndex(where: { $0.identityHash == hash }) else { return }
         // Normalize at the write boundary so LocalIdentity.displayName matches
         // what the settings repo persists/announces (trimmed, non-divergent).
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        identities[idx].displayName = trimmed
+        // Uses the shared trim-or-`defaultDisplayName` contract so a blank or
+        // whitespace-only rename resolves to "Anonymous Peer" instead of
+        // persisting an empty name that the identity list and "Active:" label
+        // would render inconsistently with the announced name.
+        let resolved = SettingsRepository.resolvedDisplayName(newName)
+        identities[idx].displayName = resolved
         saveIdentities()
-        logger.info("Renamed identity \(hash) to '\(trimmed)'")
+        logger.info("Renamed identity \(hash) to '\(resolved)'")
     }
 
     // MARK: - Delete
@@ -279,8 +283,10 @@ actor IdentityManager {
         let destHashHex = destHash.map { String(format: "%02x", $0) }.joined()
 
         // Load display name from settings (getDisplayName trims, so a
-        // whitespace-only value is treated as unset).
-        let displayName = await settingsRepository.getDisplayName()
+        // whitespace-only value is treated as unset). Resolve through the
+        // shared trim-or-`defaultDisplayName` contract so the migrated
+        // identity's stored name matches what announce would broadcast.
+        let displayName = await settingsRepository.resolveDisplayName()
 
         // Rename lxmf.db to lxmf_{hash}.db
         let columbaDir = Self.columbaDirectory
