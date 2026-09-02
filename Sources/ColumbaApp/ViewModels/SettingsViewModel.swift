@@ -367,7 +367,7 @@ public final class SettingsViewModel {
         if let mgr = identityManager, let active = await mgr.getActiveIdentity() {
             let idName = active.displayName
             let resolvedName: String
-            if !idName.isEmpty && idName != "Anonymous Peer" {
+            if !idName.isEmpty && idName != SettingsRepository.defaultDisplayName {
                 resolvedName = idName
             } else if !repoName.isEmpty {
                 resolvedName = repoName

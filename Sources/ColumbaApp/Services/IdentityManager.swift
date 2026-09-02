@@ -268,7 +268,8 @@ actor IdentityManager {
         let destHash = Destination.hash(identity: oldIdentity, appName: "lxmf", aspects: ["delivery"])
         let destHashHex = destHash.map { String(format: "%02x", $0) }.joined()
 
-        // Load display name from settings
+        // Load display name from settings (getDisplayName trims, so a
+        // whitespace-only value is treated as unset).
         let displayName = await settingsRepository.getDisplayName()
 
         // Rename lxmf.db to lxmf_{hash}.db
@@ -288,7 +289,7 @@ actor IdentityManager {
         let now = Date().timeIntervalSince1970
         let local = LocalIdentity(
             identityHash: hash,
-            displayName: displayName.isEmpty ? "Anonymous Peer" : displayName,
+            displayName: displayName.isEmpty ? SettingsRepository.defaultDisplayName : displayName,
             destinationHash: destHashHex,
             createdAt: now,
             lastUsedAt: now,

@@ -108,22 +108,25 @@ public actor SettingsRepository {
     /// This name is broadcast to the network when announcing,
     /// allowing other users to identify this device.
     ///
-    /// - Returns: Display name, or empty string if not set
+    /// Single normalization point for the stored display name: trims surrounding
+    /// whitespace so every read path (local presentation, identity-page announce,
+    /// migration export, and the announce triggers) sees the same value rather
+    /// than diverging between a trimmed announce name and a raw stored one.
+    ///
+    /// - Returns: Display name trimmed of surrounding whitespace, or empty string if not set
     public func getDisplayName() -> String {
-        defaults.string(forKey: Keys.displayName) ?? ""
+        (defaults.string(forKey: Keys.displayName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The display name to broadcast on announce, applying the default fallback.
+    /// The display name to broadcast on announce, guaranteed non-empty.
     ///
-    /// Returns the configured name trimmed of surrounding whitespace, or
-    /// `defaultDisplayName` when none is set (or only whitespace). This is the
-    /// single point that guarantees the startup / auto / manual announce paths
-    /// never emit a nameless LXMF announce - an empty `getDisplayName()` value
-    /// forwarded to `register_delivery_identity` is exactly the
-    /// "announced without a display name" bug.
+    /// Applies the `defaultDisplayName` fallback to the already-normalized
+    /// `getDisplayName()` so no announce path (startup / auto / manual /
+    /// Contacts) can emit a nameless LXMF announce. This is the single point
+    /// that closes the "announced without a display name" bug.
     public func resolveDisplayName() -> String {
-        let name = (defaults.string(forKey: Keys.displayName) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = getDisplayName()
         return name.isEmpty ? Self.defaultDisplayName : name
     }
 
