@@ -75,7 +75,7 @@ struct MyIdentityView: View {
         .fullScreenCover(isPresented: $showQRFullScreen) {
             QRCodeFullScreenView(
                 qrCodeString: viewModel.identity.qrCodeString,
-                displayName: viewModel.identity.displayName
+                displayName: viewModel.identity.resolvedDisplayName
             )
         }
         .sheet(isPresented: $showShareSheet) {
@@ -114,17 +114,19 @@ struct MyIdentityView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
 
-            // Current identity info
+            // Current identity info. Show the *resolved* name - what announce
+            // actually broadcasts - so this label can never diverge from what
+            // peers receive (an empty custom name announces as the default).
             HStack {
                 Text("Current:")
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
-                Text(viewModel.identity.displayName.isEmpty ? "Not set" : viewModel.identity.displayName)
+                Text(viewModel.identity.resolvedDisplayName)
                     .font(.subheadline)
                     .foregroundStyle(Theme.accentColor)
             }
 
-            Text("Default: \(IdentityInfo.defaultDisplayName)")
+            Text("Default: \(SettingsRepository.defaultDisplayName)")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
 

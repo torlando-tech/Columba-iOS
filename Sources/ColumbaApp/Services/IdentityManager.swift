@@ -67,7 +67,7 @@ actor IdentityManager {
         let now = Date().timeIntervalSince1970
         let local = LocalIdentity(
             identityHash: identityHash,
-            displayName: displayName,
+            displayName: SettingsRepository.resolvedDisplayName(displayName),
             destinationHash: destHashHex,
             createdAt: now,
             lastUsedAt: now,
@@ -107,6 +107,13 @@ actor IdentityManager {
     /// Merge storage first to preserve records written by an older importer or another
     /// actor instance, then persist the union without replacing restored identities.
     func importIdentityRecord(_ local: LocalIdentity) throws {
+        // Validate the imported display name through the same
+        // trim-or-default rule the announce resolver uses. A backup may carry
+        // a whitespace-padded or whitespace-only name; normalizing it here
+        // keeps the local record, the persisted settings copy, and the peer
+        // announce identical after the identity is activated.
+        var local = local
+        local.displayName = SettingsRepository.resolvedDisplayName(local.displayName)
         let previous = identities
         var merged = Self.loadIdentities()
         for existing in identities where !merged.contains(where: { $0.identityHash == existing.identityHash }) {
@@ -191,9 +198,16 @@ actor IdentityManager {
     /// Rename an identity.
     func renameIdentity(_ hash: String, newName: String) {
         guard let idx = identities.firstIndex(where: { $0.identityHash == hash }) else { return }
-        identities[idx].displayName = newName
+        // Normalize at the write boundary so LocalIdentity.displayName matches
+        // what the settings repo persists/announces (trimmed, non-divergent).
+        // Uses the shared trim-or-`defaultDisplayName` contract so a blank or
+        // whitespace-only rename resolves to "Anonymous Peer" instead of
+        // persisting an empty name that the identity list and "Active:" label
+        // would render inconsistently with the announced name.
+        let resolved = SettingsRepository.resolvedDisplayName(newName)
+        identities[idx].displayName = resolved
         saveIdentities()
-        logger.info("Renamed identity \(hash) to '\(newName)'")
+        logger.info("Renamed identity \(hash) to '\(resolved)'")
     }
 
     // MARK: - Delete
@@ -268,8 +282,11 @@ actor IdentityManager {
         let destHash = Destination.hash(identity: oldIdentity, appName: "lxmf", aspects: ["delivery"])
         let destHashHex = destHash.map { String(format: "%02x", $0) }.joined()
 
-        // Load display name from settings
-        let displayName = await settingsRepository.getDisplayName()
+        // Load display name from settings (getDisplayName trims, so a
+        // whitespace-only value is treated as unset). Resolve through the
+        // shared trim-or-`defaultDisplayName` contract so the migrated
+        // identity's stored name matches what announce would broadcast.
+        let displayName = await settingsRepository.resolveDisplayName()
 
         // Rename lxmf.db to lxmf_{hash}.db
         let columbaDir = Self.columbaDirectory
@@ -288,7 +305,7 @@ actor IdentityManager {
         let now = Date().timeIntervalSince1970
         let local = LocalIdentity(
             identityHash: hash,
-            displayName: displayName.isEmpty ? "Anonymous Peer" : displayName,
+            displayName: displayName.isEmpty ? SettingsRepository.defaultDisplayName : displayName,
             destinationHash: destHashHex,
             createdAt: now,
             lastUsedAt: now,

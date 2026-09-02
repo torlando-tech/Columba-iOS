@@ -954,7 +954,7 @@ public final class ContactsViewModel {
         isAnnouncing = true
 
         do {
-            let displayName = await SettingsRepository().getDisplayName()
+            let displayName = await SettingsRepository().resolveDisplayName()
             try await appServices.sendAllAnnounces(displayName: displayName)
             announceFeedback.show()
         } catch {

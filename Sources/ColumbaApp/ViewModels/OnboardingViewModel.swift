@@ -102,9 +102,8 @@ final class OnboardingViewModel {
     // MARK: - Computed
 
     var effectiveDisplayName: String {
-        displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Anonymous Peer"
-            : displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? SettingsRepository.defaultDisplayName : trimmed
     }
 
     var selectedInterfaceNames: String {
@@ -250,7 +249,7 @@ final class OnboardingViewModel {
         try beginSaving()
         defer { isSaving = false }
 
-        let requestedName = createdIdentity?.displayName ?? "Anonymous Peer"
+        let requestedName = createdIdentity?.displayName ?? SettingsRepository.defaultDisplayName
         let local = try await createOrResumeIdentity(
             displayName: requestedName,
             identityManager: identityManager

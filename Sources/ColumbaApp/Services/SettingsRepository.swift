@@ -97,21 +97,61 @@ public actor SettingsRepository {
 
     // MARK: - Display Name
 
+    /// The display name shown to peers when the user has not set one.
+    /// Single source of truth for the "Anonymous Peer" default; previously this
+    /// literal was duplicated across IdentityManager, OnboardingViewModel, and
+    /// the startup path with slightly different empty-guards.
+    public static let defaultDisplayName = "Anonymous Peer"
+
     /// Get the display name for announces.
     ///
     /// This name is broadcast to the network when announcing,
     /// allowing other users to identify this device.
     ///
-    /// - Returns: Display name, or empty string if not set
+    /// Single normalization point for the stored display name: trims surrounding
+    /// whitespace so every read path (local presentation, identity-page announce,
+    /// migration export, and the announce triggers) sees the same value rather
+    /// than diverging between a trimmed announce name and a raw stored one.
+    ///
+    /// - Returns: Display name trimmed of surrounding whitespace, or empty string if not set
     public func getDisplayName() -> String {
-        defaults.string(forKey: Keys.displayName) ?? ""
+        (defaults.string(forKey: Keys.displayName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Normalize a display name: trim surrounding whitespace and substitute the
+    /// default for an empty result. Single source of the normalization contract
+    /// shared by the announce resolver (`resolveDisplayName`) and the
+    /// identity-import boundary, so both paths apply the identical
+    /// trim-or-`defaultDisplayName` rule.
+    static func resolvedDisplayName(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultDisplayName : trimmed
+    }
+
+    /// The display name to broadcast on announce, guaranteed non-empty.
+    ///
+    /// Applies the `defaultDisplayName` fallback to the already-normalized
+    /// `getDisplayName()` so no announce path (startup / auto / manual /
+    /// Contacts) can emit a nameless LXMF announce. This is the single point
+    /// that closes the "announced without a display name" bug.
+    public func resolveDisplayName() -> String {
+        Self.resolvedDisplayName(getDisplayName())
     }
 
     /// Set the display name for announces.
     ///
-    /// - Parameter name: Display name to broadcast when announcing
+    /// - Parameter name: Display name to broadcast when announcing. Stored
+    ///   through the shared trim-or-`defaultDisplayName` contract
+    ///   (`resolvedDisplayName`) so the stored value is never empty: clearing
+    ///   the field (or saving only whitespace) persists "Anonymous Peer"
+    ///   rather than an empty string. This makes the persisted display name
+    ///   match what `resolveDisplayName()` announces, so every local surface
+    ///   that reads the name (identity page, settings "Active:" label,
+    ///   identity-management list) agrees with the network instead of
+    ///   diverging on a blank entry.
     public func setDisplayName(_ name: String) {
-        defaults.set(name, forKey: Keys.displayName)
+        defaults.set(Self.resolvedDisplayName(name), forKey: Keys.displayName)
     }
 
     // MARK: - Delivery & Propagation

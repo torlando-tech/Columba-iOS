@@ -38,9 +38,6 @@ public struct IdentityInfo: Equatable {
     /// Custom icon image data if set.
     public var customIconData: Data?
 
-    /// Default display name when none set.
-    public static let defaultDisplayName = "Unknown Peer"
-
     /// QR code string in Android Columba-compatible format.
     /// Format: `lxma://<destination_hash_hex>:<public_key_hex>`
     public var qrCodeString: String {
@@ -48,6 +45,16 @@ public struct IdentityInfo: Equatable {
             return destinationHash
         }
         return "lxma://\(destinationHash):\(publicKeyHex)"
+    }
+
+    /// The name that is actually broadcast to peers (trimmed, non-empty).
+    ///
+    /// Uses the shared trim-or-default contract
+    /// (`SettingsRepository.resolvedDisplayName`), so the identity page always
+    /// shows what announce and the LXMF announce wire actually carry - no
+    /// "Not set" / "Anonymous Peer" local-vs-network mismatch.
+    public var resolvedDisplayName: String {
+        SettingsRepository.resolvedDisplayName(displayName)
     }
 
     public init(
@@ -365,16 +372,23 @@ public final class SettingsViewModel {
         // is a secondary copy that can get out of sync (e.g. app group migration).
         let repoName = identity.displayName
         if let mgr = identityManager, let active = await mgr.getActiveIdentity() {
-            let idName = active.displayName
+            let rawIdName = active.displayName
+            let idName = rawIdName.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolvedName: String
-            if !idName.isEmpty && idName != "Anonymous Peer" {
+            if !idName.isEmpty && idName != SettingsRepository.defaultDisplayName {
                 resolvedName = idName
             } else if !repoName.isEmpty {
                 resolvedName = repoName
                 // Repair LocalIdentity so it stays in sync.
                 await mgr.renameIdentity(active.identityHash, newName: repoName)
             } else {
-                resolvedName = idName
+                // Both the active LocalIdentity and the settings repo hold no
+                // usable name: either genuinely empty or legacy whitespace-only
+                // data predating the never-empty invariant. Resolve to the
+                // shared default so the "Active:" label, identity page, and
+                // announced name all agree instead of the local state rendering
+                // blank.
+                resolvedName = SettingsRepository.defaultDisplayName
             }
             activeIdentityName = resolvedName
             // Keep both sources in sync
@@ -382,6 +396,9 @@ public final class SettingsViewModel {
                 identity.displayName = resolvedName
                 savedDisplayName = resolvedName
                 await settingsRepository.setDisplayName(resolvedName)
+            }
+            if rawIdName != resolvedName {
+                await mgr.renameIdentity(active.identityHash, newName: resolvedName)
             }
         }
 
@@ -623,29 +640,48 @@ public final class SettingsViewModel {
     /// Save the current display name.
     @MainActor
     public func saveDisplayName() async {
-        savedDisplayName = identity.displayName
-        await settingsRepository.setDisplayName(identity.displayName)
+        // Resolve through the shared trim-or-`defaultDisplayName` contract so
+        // the value persisted and the live state both use the identical,
+        // never-empty name. Clearing the field (or saving only whitespace)
+        // resolves to "Anonymous Peer", so settings, the active LocalIdentity,
+        // the "Active:" label, and the announced name all agree instead of the
+        // local state holding a blank entry.
+        let name = SettingsRepository.resolvedDisplayName(identity.displayName)
+        identity.displayName = name
+        savedDisplayName = name
+        await settingsRepository.setDisplayName(name)
         // Keep LocalIdentity.displayName in sync so the "Active:" label stays current.
         if let mgr = identityManager, let active = await mgr.getActiveIdentity() {
-            await mgr.renameIdentity(active.identityHash, newName: identity.displayName)
+            await mgr.renameIdentity(active.identityHash, newName: name)
         }
-        activeIdentityName = identity.displayName
+        activeIdentityName = name
         saveSettings()
     }
 
     /// Send announce to the network (from Identity page).
     @MainActor
     public func sendAnnounce() async {
-        // Save display name first
-        await settingsRepository.setDisplayName(identity.displayName)
-        savedDisplayName = identity.displayName
+        // Save display name first. Resolve through the shared trim-or-`defaultDisplayName`
+        // contract so the value persisted and the live state both use the identical,
+        // never-empty name: clearing the field resolves to "Anonymous Peer" rather
+        // than persisting a blank entry that the "Active:" label and identity list
+        // would render inconsistently with the announced name.
+        let name = SettingsRepository.resolvedDisplayName(identity.displayName)
+        identity.displayName = name
+        await settingsRepository.setDisplayName(name)
+        savedDisplayName = name
+        activeIdentityName = name
 
         isAnnouncing = true
         announceError = nil
         announceSuccess = false
 
         do {
-            try await appServices.sendAllAnnounces(displayName: identity.displayName)
+            // Announce through the shared resolver so the name matches the
+            // startup/Contacts/auto paths (normalized, non-empty) and reflects
+            // the saved value rather than a live unsent TextField edit.
+            let displayName = await settingsRepository.resolveDisplayName()
+            try await appServices.sendAllAnnounces(displayName: displayName)
             announceSuccess = true
             recordAnnounceTime()
             // Clear success after a delay
@@ -670,7 +706,11 @@ public final class SettingsViewModel {
         manualAnnounceError = nil
 
         do {
-            try await appServices.sendAllAnnounces(displayName: identity.displayName)
+            // Shared resolver: same normalized, non-empty name as every other
+            // announce trigger. Reading the saved value (not the live
+            // TextField) means an unsent edit can't be broadcast to peers.
+            let displayName = await settingsRepository.resolveDisplayName()
+            try await appServices.sendAllAnnounces(displayName: displayName)
             manualAnnounceSuccess = true
             recordAnnounceTime()
             Task {
