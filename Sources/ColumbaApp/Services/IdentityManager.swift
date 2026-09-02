@@ -107,15 +107,13 @@ actor IdentityManager {
     /// Merge storage first to preserve records written by an older importer or another
     /// actor instance, then persist the union without replacing restored identities.
     func importIdentityRecord(_ local: LocalIdentity) throws {
-        // Normalize the imported display name at the write boundary so the
-        // stored record matches the settings-repo read boundary (trimmed).
-        // Otherwise a whitespace-padded name in a backup would display locally
-        // as "  Bob  " while peers are announced "Bob".
+        // Validate the imported display name through the same
+        // trim-or-default rule the announce resolver uses. A backup may carry
+        // a whitespace-padded or whitespace-only name; normalizing it here
+        // keeps the local record, the persisted settings copy, and the peer
+        // announce identical after the identity is activated.
         var local = local
-        let trimmed = local.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed != local.displayName {
-            local.displayName = trimmed
-        }
+        local.displayName = SettingsRepository.resolvedDisplayName(local.displayName)
         let previous = identities
         var merged = Self.loadIdentities()
         for existing in identities where !merged.contains(where: { $0.identityHash == existing.identityHash }) {

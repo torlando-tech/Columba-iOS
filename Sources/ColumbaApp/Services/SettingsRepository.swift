@@ -119,6 +119,16 @@ public actor SettingsRepository {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Normalize a display name: trim surrounding whitespace and substitute the
+    /// default for an empty result. Single source of the normalization contract
+    /// shared by the announce resolver (`resolveDisplayName`) and the
+    /// identity-import boundary, so both paths apply the identical
+    /// trim-or-`defaultDisplayName` rule.
+    static func resolvedDisplayName(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultDisplayName : trimmed
+    }
+
     /// The display name to broadcast on announce, guaranteed non-empty.
     ///
     /// Applies the `defaultDisplayName` fallback to the already-normalized
@@ -126,8 +136,7 @@ public actor SettingsRepository {
     /// Contacts) can emit a nameless LXMF announce. This is the single point
     /// that closes the "announced without a display name" bug.
     public func resolveDisplayName() -> String {
-        let name = getDisplayName()
-        return name.isEmpty ? Self.defaultDisplayName : name
+        Self.resolvedDisplayName(getDisplayName())
     }
 
     /// Set the display name for announces.
