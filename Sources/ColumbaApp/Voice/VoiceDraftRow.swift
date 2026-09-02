@@ -352,6 +352,9 @@ public struct VoiceDraftRow: View {
             }
         }
         .panelSurface()
+        // Compute the draft waveform when the preview panel appears (same
+        // single-flighted path as the bubbles).
+        .onAppear { player.prepare(key: key, attachment: attachment) }
         .onDisappear {
             // Leaving the panel must not keep a preview playing.
             player.stopCurrent()

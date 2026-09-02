@@ -48,7 +48,9 @@ public final class VoiceMessagePlayer {
     @ObservationIgnored private var currentKey: String?
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
+    @ObservationIgnored private var waveformInFlight: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var tempFiles: [URL] = []
+    @ObservationIgnored private var isTornDown = false
     @ObservationIgnored private let maxCacheEntries = 128
 
     public init() {}
@@ -69,6 +71,8 @@ public final class VoiceMessagePlayer {
     // MARK: - Control
 
     /// Load metadata/waveform for a message's attachment without playing.
+    /// Safe to call repeatedly (onAppear + play tap): waveform computation is
+    /// single-flighted per key and cached, so repeated calls are no-ops.
     public func prepare(key: String, attachment: AudioAttachment) {
         var st = states[key] ?? PlaybackState()
         if st.status == .idle || st.status == .error {
@@ -77,9 +81,7 @@ public final class VoiceMessagePlayer {
             st.positionMs = 0
             states[key] = st
         }
-        if waveform(for: key) == nil, let peaks = resolveWaveform(attachment) {
-            cacheWaveform(key, peaks)
-        }
+        prepareWaveform(key: key, attachment: attachment)
     }
 
     /// Play a message. Replaces any in-flight playback.
@@ -92,9 +94,7 @@ public final class VoiceMessagePlayer {
         st.positionMs = 0
         st.durationMs = resolveDurationMs(attachment)
         states[key] = st
-        if waveform(for: key) == nil, let peaks = resolveWaveform(attachment) {
-            cacheWaveform(key, peaks)
-        }
+        prepareWaveform(key: key, attachment: attachment)
         Task { [weak self] in
             do {
                 try await self?.startPlayback(key: key, attachment: attachment)
@@ -247,20 +247,60 @@ public final class VoiceMessagePlayer {
         return attachment.durationMs ?? 0
     }
 
-    private func resolveWaveform(_ attachment: AudioAttachment) -> [Float]? {
-        let bars = 40
-        guard attachment.mode.isCodec2 else {
-            // Ogg: decoding the full file for peaks is heavy; use a neutral
-            // filled waveform (never block playback on it).
-            return Array(repeating: 0.5, count: bars)
+    /// Compute (or reuse the cached) waveform for a message.
+    ///
+    /// - Codec2: the payload is a small raw-frame concatenation; decode
+    ///   synchronously so the peaks are cached before the first play (the
+    ///   Codec2 decode is a few ms at most).
+    /// - Ogg/Opus: decoding the full file for peaks is heavier and uses
+    ///   AVFoundation's file decoder (reliable on device; on the simulator it
+    ///   may legitimately fail - that's fine). Compute on a background task,
+    ///   single-flighted per key (Android's `prepareMetadata` does the same);
+    ///   until it lands - or if it fails - the views render the neutral
+    ///   placeholder via `waveform(for:) ?? VoiceWaveform.placeholder()`.
+    ///   Playback never waits on it.
+    private func prepareWaveform(key: String, attachment: AudioAttachment) {
+        if waveform(for: key) != nil { return }
+        if attachment.mode.isCodec2 {
+            guard let peaks = codec2Peaks(attachment) else { return }
+            cacheWaveform(key, peaks)
+            return
         }
+        guard waveformInFlight[key] == nil else { return }
+        let bytes = attachment.bytes
+        let task = Task { [weak self] in
+            // Decode + bucket off the main actor; publish the peaks (if any)
+            // back on the main actor.
+            let peaks = await Task.detached(priority: .utility) {
+                OggOpusWaveform.realWaveform(from: bytes)
+            }.value
+            self?.cacheWaveformIfCurrent(key: key, peaks: peaks)
+        }
+        waveformInFlight[key] = task
+    }
+
+    /// Cache decoded Ogg peaks and clear the in-flight slot (called from the
+    /// prepareWaveform task, on the main actor). A nil decode result is a
+    /// non-fatal fail-open: the slot is still cleared and the views keep the
+    /// neutral placeholder.
+    private func cacheWaveformIfCurrent(key: String, peaks: [Float]?) {
+        waveformInFlight[key] = nil
+        if let peaks {
+            cacheWaveform(key, peaks)
+        }
+    }
+
+    /// Synchronous Codec2 peaks (pure decode + peak-max, as before).
+    private func codec2Peaks(_ attachment: AudioAttachment) -> [Float]? {
+        let bars = OggOpusWaveform.bars
         guard let decoded = try? Codec2RawFile.decodePayload(attachment.bytes, mode: attachment.mode) else {
-            return Array(repeating: 0.5, count: bars)
+            return nil
         }
         return peaks(from: decoded.samples, bars: bars)
     }
 
     private func cacheWaveform(_ key: String, _ peaks: [Float]) {
+        guard !isTornDown else { return }
         if waveforms.count >= maxCacheEntries {
             // Drop the oldest inserted key (FIFO approximation).
             if let oldest = waveforms.keys.first { waveforms[oldest] = nil }
@@ -289,10 +329,15 @@ public final class VoiceMessagePlayer {
 
     public func tearDown() {
         stopCurrent()
+        // Cancel any in-flight waveform decodes so a late result cannot
+        // repopulate the (about-to-be-cleared) cache.
+        for (_, task) in waveformInFlight { task.cancel() }
+        waveformInFlight.removeAll()
         for url in tempFiles { try? FileManager.default.removeItem(at: url) }
         tempFiles.removeAll()
         states.removeAll()
         waveforms.removeAll()
+        isTornDown = true
     }
 
     private enum PlayerError: Error { case unplayable }

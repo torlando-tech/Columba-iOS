@@ -65,16 +65,38 @@ final class VoiceMessagePlayerTests: XCTestCase {
         XCTAssertTrue(peaks.max() ?? 0 > 0.0)
     }
 
-    func testOggWaveformIsNeutralFilled() async {
+    /// Ogg waveforms are now decoded ASYNC on a background task (Android
+    /// parity; the views render the neutral placeholder until the peaks land
+    /// or the decode fails open). `prepare` must stay non-blocking: the
+    /// duration is resolved synchronously and the waveform is either absent
+    /// (decode still running / failed on this environment) or a band-limited
+    /// 40-bar array - it must never be the old hard-coded flat 0.5 fill.
+    func testOggWaveformIsAsyncNeverBlocking() async {
         let player = VoiceMessagePlayer()
         defer { player.tearDown() }
         let writer = OggOpusFileWriter(channels: 1, preSkip: 240)
         _ = try? writer.appendPacket(VoiceTestSupport.opusPacket())
         let attachment = AudioAttachment(mode: .opusOgg, bytes: Data(try! writer.finish()), durationMs: nil)
+        let start = Date()
         player.prepare(key: "m4", attachment: attachment)
-        let waveform = player.waveform(for: "m4")
-        XCTAssertEqual(waveform?.count, 40)
-        XCTAssertEqual(Set(waveform ?? []).first, 0.5)
+        // Synchronous work only: no decode may run on the calling thread.
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5)
+        // Duration is resolved synchronously from the granules.
+        XCTAssertEqual(player.state(for: "m4").durationMs, ((960 - 240) * 1_000) / 48_000)
+        // Give the background decode a bounded chance to land.
+        for _ in 0..<20 {
+            if player.waveform(for: "m4") != nil { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        // Whatever the (sim) decode returns, the contract is: nil (fail-open)
+        // or a band-limited 40-bar array - never the flat 0.5 placeholder.
+        if let waveform = player.waveform(for: "m4") {
+            XCTAssertEqual(waveform.count, 40)
+            for p in waveform {
+                XCTAssertGreaterThanOrEqual(p, 0.12)
+                XCTAssertLessThanOrEqual(p, 1.0)
+            }
+        }
     }
 
     func testTearDownClearsCachedStateAndWaveforms() async throws {

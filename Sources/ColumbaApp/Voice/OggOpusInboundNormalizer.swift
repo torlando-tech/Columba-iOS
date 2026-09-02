@@ -197,6 +197,48 @@ public enum OggOpusInboundNormalizer {
         }
     }
 
+    // MARK: - Waveform (real amplitude for the bubble)
+
+    /// Pure bucketing + Android's exact display curve, over the per-frame
+    /// mono-folded energy of a decoded stream. Ported from Android
+    /// `PcmWaveformAccumulator.levels()`: each bar is the bucket RMS, then
+    /// `MIN_LEVEL(0.12) + (1 - 0.12) * (rms / peak)^0.7`, clamped to
+    /// `[0.12, 1.0]`. `preSkip` (encoder delay, 48 kHz samples) is trimmed so
+    /// the bars align with audible content. Pure (no codec / no I/O) so it is
+    /// unit-testable with synthetic energy; the AVAudioFile decode that feeds
+    /// it lives in `OggOpusWaveform`.
+    public static func peaksFromEnergy(
+        _ energyPerFrame: [Double], preSkip: Int, bars: Int
+    ) -> [Float] {
+        let minLevel = 0.12
+        let total = energyPerFrame.count
+        guard total > 0, bars >= 1 else { return [] }
+        // Index the usable (post-delay) portion of the timeline.
+        let skip = min(max(0, preSkip), total)
+        let usable = total - skip
+        guard usable > 0 else { return Array(repeating: Float(minLevel), count: bars) }
+
+        var bucketEnergy = [Double](repeating: 0, count: bars)
+        var bucketCount = [Int](repeating: 0, count: bars)
+        for i in skip..<total {
+            let usableIndex = i - skip
+            let bucket = min(bars - 1, (usableIndex * bars) / usable)
+            bucketEnergy[bucket] += energyPerFrame[i]
+            bucketCount[bucket] += 1
+        }
+        var rms = [Double](repeating: 0, count: bars)
+        for b in 0..<bars where bucketCount[b] > 0 {
+            rms[b] = sqrt(bucketEnergy[b] / Double(bucketCount[b]))
+        }
+        let peak = rms.max() ?? 0
+        guard peak > 0 else { return Array(repeating: Float(minLevel), count: bars) }
+        return rms.map { value in
+            guard value > 0 else { return Float(minLevel) }
+            let normalized = pow(value / peak, 0.7)
+            return Float(minLevel + (1 - minLevel) * normalized)
+        }
+    }
+
     // MARK: - Re-mux
 
     /// Emit OpusHead + OpusTags (fresh, canonical), then one Opus packet per

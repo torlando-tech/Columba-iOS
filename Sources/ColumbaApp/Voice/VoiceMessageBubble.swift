@@ -126,6 +126,11 @@ public struct VoiceMessageBubble: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isFromMe ? Color.clear : Theme.backgroundTertiary)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // Android computes the waveform (and duration) when the bubble
+        // appears, not only on play tap. The decode is single-flighted +
+        // cached in the player, so repeated onAppear calls (scroll
+        // recycles) are no-ops after the first.
+        .onAppear { player.prepare(key: key, attachment: attachment) }
     }
 
     // MARK: - Unsupported / unavailable (Android: the error branches)

@@ -37,10 +37,13 @@ public struct VoiceWaveformBars: View {
 }
 
 /// A default flat waveform used until the real peaks are computed (the player
-/// fills the waveform cache on first play; see `VoiceMessagePlayer.waveform`).
+/// fills the waveform cache asynchronously; see `VoiceMessagePlayer.waveform`).
 public enum VoiceWaveform {
     /// `n` bars at a flat midpoint, used as a placeholder before peaks load.
-    public static func placeholder(bars: Int = 32) -> [Float] {
+    /// The default matches the real waveform's 40-bar count
+    /// (`OggOpusWaveform.bars`) so the row width does not shift when the real
+    /// peaks arrive.
+    public static func placeholder(bars: Int = 40) -> [Float] {
         Array(repeating: 0.5, count: bars)
     }
 }
