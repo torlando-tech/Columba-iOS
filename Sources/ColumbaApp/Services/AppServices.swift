@@ -1316,6 +1316,14 @@ public final class AppServices {
         self.propagationManager = propManager
         await propManager.loadPreferences()
 
+        // Resolve the configured display name BEFORE booting the backend. The
+        // Python bridge registers the LXMF delivery identity with this name, and
+        // the startup announce (plus the delayed 2/5/15/30s re-announces) emit it
+        // verbatim. Previously this was "", which registered an empty display_name
+        // and made the initial announces announce with NO name — peers saw a bare
+        // destination hash until a later manual/auto announce overwrote it. That is
+        // the "LXMF destination announced without a display name" bug.
+        let announceDisplayName = await SettingsRepository().getDisplayName()
         try await InitializationLifecycleActivation.run(
             readiness: {
                 // The Compat-layer LXMRouter / Transport are stubs; real network
@@ -1325,7 +1333,7 @@ public final class AppServices {
                     identityHashHex: newIdentity.hexHash,
                     router: newRouter,
                     interfaces: InterfaceRepository().getEnabledInterfaces(),
-                    displayName: ""
+                    displayName: announceDisplayName
                 )
             },
             activate: {
@@ -3278,6 +3286,11 @@ public final class AppServices {
         #endif
 
         // Start the backend, then activate initialization-owned manager tasks.
+        // Resolve the configured display name first so the startup announce
+        // carries it (see the equivalent comment in the other initializeUnlocked
+        // path — an empty name here is what made the destination announce
+        // without a display name).
+        let announceDisplayName = await SettingsRepository().getDisplayName()
         try await InitializationLifecycleActivation.run(
             readiness: {
                 try await self.startPythonBackend(
@@ -3285,7 +3298,7 @@ public final class AppServices {
                     identityHashHex: identityHash,
                     router: newRouter,
                     interfaces: InterfaceRepository().getEnabledInterfaces(),
-                    displayName: ""
+                    displayName: announceDisplayName
                 )
             },
             activate: {
