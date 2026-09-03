@@ -103,6 +103,59 @@ public final class CallManager {
     private var ringbackActive = false
     private let logger = Logger(subsystem: "network.columba.Columba", category: "CallManager")
 
+    // MARK: - Call history (issue #167)
+
+    /// History writer. Nil in Model B runtime / before AppServices wires it → all
+    /// history writes no-op (feature is additive, never blocks a call).
+    ///
+    /// Both CallManager and CallHistoryRepository live in the SAME ColumbaApp
+    /// target, so CallManager holds the CONCRETE actor directly (no protocol
+    /// needed). Its write methods are `async throws`; CallManager calls them
+    /// fire-and-forget from its @MainActor callbacks via
+    /// `Task { try? await ... }` (a history write must never block or fail a call).
+    var callHistoryRepository: CallHistoryRepository?
+    /// Hex of the active local identity, set at init for identity-scoped writes.
+    private var localIdentityHashHex: String?
+    /// The attempt id for the in-flight call (nil when idle).
+    private(set) var currentCallAttemptId: String?
+    private var callAttemptStartedAt: Date?
+    private var peerDisplayNameSnapshot: String?
+    /// Whether the in-flight call reached the connection milestone
+    /// (establishedCallback fired). Drives the `wasConnected` outcome rule.
+    /// Reset in beginCallAttempt / resetState.
+    private var didConnect: Bool = false
+    /// Observable: the attempt id of the live call, so the Voice list can mark the
+    /// matching record "In progress". Nil when idle.
+    public private(set) var activeCallAttemptId: String?
+
+    /// Start tracking one call attempt in the history store.
+    ///
+    /// `peerHash` is set before this is called on BOTH paths (outgoing:
+    /// `initiateCall`, incoming: `handleCallerIdentified`), so it is non-nil
+    /// here; a blank/absent hash is never valid for a stored record, so it is
+    /// stored as an empty string rather than force-unwrapped (no crash).
+    /// The write is fire-and-forget: a history write must never block or fail
+    /// a call, and a nil repository (Model B / pre-wiring) is a silent no-op.
+    private func beginCallAttempt(direction: CallHistoryDirection, peerDisplayName: String?) {
+        guard let hex = localIdentityHashHex else { return }
+        let id = UUID().uuidString
+        currentCallAttemptId = id
+        activeCallAttemptId = id
+        callAttemptStartedAt = Date()
+        didConnect = false
+        peerDisplayNameSnapshot = peerDisplayName
+        let remoteHash = peerHash ?? ""
+        let profileCode = Int(activeProfile.rawValue)
+        Task { [weak self, repo = self.callHistoryRepository] in
+            guard let repo else { return }
+            try? await repo.insertAttempt(
+                callAttemptId: id, localIdentityHash: hex,
+                remoteIdentityHash: remoteHash,
+                direction: direction, peerDisplayNameSnapshot: peerDisplayName,
+                codecProfileCode: profileCode, attemptedAt: Date())
+        }
+    }
+
     // MARK: - Initialization
 
     /// Initialize the Telephone actor with identity, transport, and path table.
@@ -113,6 +166,7 @@ public final class CallManager {
     /// 3. Wires up ringing/established/ended callbacks for UI state updates
     func initialize(identity: Identity, transport: ReticulumTransport, pathTable: PathTable?, database: LXMFDatabase?) async {
         #if COLUMBA_RUNTIME_PYTHON
+        self.localIdentityHashHex = identity.hexHash
         self.pathTable = pathTable
         self.transport = transport
         self.database = database
@@ -175,6 +229,13 @@ public final class CallManager {
         await phone.setRingingCallback { [weak self] remoteHash in
             await MainActor.run {
                 self?.handleCallerIdentified(remoteHash)
+                // Outgoing-only: our own call started ringing on the far end.
+                // (For incoming, handleCallerIdentified above begins the attempt;
+                // the isIncoming==false guard keeps this from double-recording.)
+                if let id = self?.currentCallAttemptId, self?.isIncoming == false {
+                    let repo = self?.callHistoryRepository
+                    Task { try? await repo?.recordRinging(id, at: Date()) }
+                }
             }
         }
 
@@ -183,6 +244,14 @@ public final class CallManager {
                 guard let self else { return }
                 DiagLog.log("[CALL] establishedCallback fired, isIncoming=\(self.isIncoming), profile=\(self.activeProfile.displayName)")
                 self.callState = .established
+                // Connection milestone reached — the wasConnected outcome rule
+                // (CallHistoryFormatting.outcome) reads didConnect to decide
+                // .connectedEnded vs the not-connected outcomes.
+                self.didConnect = true
+                if let id = self.currentCallAttemptId {
+                    let repo = self.callHistoryRepository
+                    Task { try? await repo?.recordConnected(id, at: Date()) }
+                }
                 self.startDurationTimer()
                 #if os(iOS)
                 self.stopRingback()  // hand off the tone engine to the call audio
@@ -210,6 +279,19 @@ public final class CallManager {
                 #if os(iOS)
                 self.stopRingback()  // stop ring-back if the call ended while ringing
                 #endif
+                // Finalize the call-history record. didConnect is the load-bearing
+                // argument: it is what makes a connected call finalize as
+                // .connectedEnded even when the local user hangs up.
+                if let id = self.currentCallAttemptId {
+                    let direction: CallHistoryDirection = self.isIncoming ? .incoming : .outgoing
+                    let outcome = CallHistoryFormatting.outcome(direction: direction,
+                                                                wasConnected: self.didConnect,
+                                                                reason: reason)
+                    let repo = self.callHistoryRepository
+                    Task { try? await repo?.recordEnd(id, at: Date(), outcome: outcome) }
+                    self.currentCallAttemptId = nil
+                    self.activeCallAttemptId = nil
+                }
                 let reasonText: String
                 switch reason {
                 case .localHangup: reasonText = "Call Ended"
@@ -303,6 +385,10 @@ public final class CallManager {
             self.peerHash = target.destinationHash.toHex()
             self.callState = .calling
             self.activeProfile = profile
+            // Begin the history attempt AFTER activeProfile is set so the
+            // captured codecProfileCode is the outgoing default, not a stale
+            // value from a previous call. peerHash is already set above.
+            self.beginCallAttempt(direction: .outgoing, peerDisplayName: peerDisplayName)
 
             let callUUID = UUID()
             self.currentCallUUID = callUUID
@@ -366,6 +452,14 @@ public final class CallManager {
     }
 
     private func failOutgoingCall(_ reason: String) {
+        // Pre-connect setup failure (identity unavailable / telephone.call threw),
+        // so wasConnected is false and .failed is the reduced outcome.
+        if let id = currentCallAttemptId {
+            let repo = callHistoryRepository
+            Task { try? await repo?.recordEnd(id, at: Date(), outcome: .failed) }
+            currentCallAttemptId = nil
+            activeCallAttemptId = nil
+        }
         callState = .ended(reason)
         endedDismissTask?.cancel()
         endedDismissTask = Task { @MainActor [weak self] in
@@ -591,6 +685,16 @@ public final class CallManager {
         self.peerHash = remoteDeliveryHash.toHex()
         self.callState = .ringing
         self.logger.error("[CALL] Ringing from: \(remoteDeliveryHash.toHex(), privacy: .public)")
+        // Begin the incoming history attempt now that the remote hash is known
+        // (identify arrives after prepareForIncomingCall). Guard on nil so a
+        // second identify callback can't start a second attempt for one call.
+        // peerDisplayName is nil here: resolveContactName runs AFTER this point
+        // (and asynchronously), so the snapshot can't hold the resolved name —
+        // the Voice list (Task 4) enriches display names from the conversations
+        // table. This nil is the best-effort fallback column, not the UI name.
+        if currentCallAttemptId == nil {
+            beginCallAttempt(direction: .incoming, peerDisplayName: nil)
+        }
 
         if self.isIncoming {
             self.resolveContactName(deliveryHash: remoteDeliveryHash)
@@ -974,6 +1078,11 @@ public final class CallManager {
     private func resetState() {
         stopRingback()  // clear ringbackActive so a later call's ringback isn't suppressed
         callState = .idle
+        // Clear in-flight call-history attempt state so a stale id never lingers.
+        currentCallAttemptId = nil
+        activeCallAttemptId = nil
+        callAttemptStartedAt = nil
+        didConnect = false
         isMuted = false
         isSpeakerOn = false
         isPttMode = false
