@@ -81,7 +81,8 @@ jobs:
             Tests.static.test_image_quality_sheet_dynamic_size \
             Tests.static.test_nomadnet_text_selection \
             Tests.static.test_ui_screenshotter_readiness \
-            Tests.static.test_collect_maestro_screenshots
+            Tests.static.test_collect_maestro_screenshots \
+            Tests.static.test_voice_messages
 
       # Verify a standalone production-layout app before xcodebuild test embeds
       # ColumbaAppTests.xctest under PlugIns in its hosted test copy.

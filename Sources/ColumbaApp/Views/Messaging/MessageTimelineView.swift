@@ -86,6 +86,9 @@ struct MessageTimelineView: UIViewControllerRepresentable {
     let onOpenLink: (MessageLinkTarget) -> Void
     let onOpenImage: (Message) -> Void
     let onOpenFileAttachment: (Message, Int) -> Void
+    /// Shared voice player for field-7 audio messages in the timeline.
+    /// nil = voice-unavailable fallback (rendered non-playable).
+    let voicePlayer: VoiceMessagePlayer?
 
     func makeUIViewController(context: Context) -> MessageTimelineViewController {
         let controller = MessageTimelineViewController()
@@ -96,6 +99,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onLongPress = onLongPress
         controller.onShowDeliveryFailure = onShowDeliveryFailure
         controller.onOpenLink = onOpenLink
+        controller.voicePlayer = voicePlayer
         controller.setReactionMode(messageID: reactionModeMessageID)
         applyAttachmentCallbacks(to: controller)
         return controller
@@ -108,6 +112,7 @@ struct MessageTimelineView: UIViewControllerRepresentable {
         controller.onLongPress = onLongPress
         controller.onShowDeliveryFailure = onShowDeliveryFailure
         controller.onOpenLink = onOpenLink
+        controller.voicePlayer = voicePlayer
         controller.setReactionMode(messageID: reactionModeMessageID)
         applyAttachmentCallbacks(to: controller)
         controller.update(
@@ -135,6 +140,7 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
     var onOpenLink: ((MessageLinkTarget) -> Void)?
     var onOpenImage: ((Message) -> Void)?
     var onOpenFileAttachment: ((Message, Int) -> Void)?
+    var voicePlayer: VoiceMessagePlayer?
 
     private var messages: [Message] = []
     private var conversationID: String?
@@ -344,7 +350,8 @@ final class MessageTimelineViewController: UIViewController, UICollectionViewDat
                     },
                     onShowDeliveryFailure: { [weak self] in
                         self?.routeDeliveryFailure(messageID: message.id)
-                    }
+                    },
+                    voicePlayer: voicePlayer
                 )
             }
         }

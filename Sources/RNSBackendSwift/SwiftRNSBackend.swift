@@ -287,6 +287,7 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         imageData: Data?,
         imageFormat: String?,
         fileAttachments: [RnsFileAttachment]?,
+        audioAttachment: RnsAudio?,
         iconAppearance: RNSAPI.IconAppearance?,
         replyToMessageHashHex: String?,
         replyQuotedContent: String?,
@@ -299,7 +300,7 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         // so both backends encode identically). LXMessage.fields is [UInt8: Any].
         let fields = LxmfFieldCodec.buildFieldMap(
             imageData: imageData, imageFormat: imageFormat,
-            fileAttachments: fileAttachments, iconAppearance: iconAppearance,
+            fileAttachments: fileAttachments, audioAttachment: audioAttachment, iconAppearance: iconAppearance,
             replyToMessageHashHex: replyToMessageHashHex, replyQuotedContent: replyQuotedContent,
             extraFields: extraFields)
 
@@ -358,7 +359,8 @@ public final class SwiftRNSBackend: RnsBackend, @unchecked Sendable {
         if let customMeta { extra[LxmfFields.FIELD_CUSTOM_META] = customMeta }
         return try await sendLxmfMessage(
             destHashHex: destHashHex, content: "", method: .opportunistic,
-            imageData: nil, imageFormat: nil, fileAttachments: nil, iconAppearance: nil,
+            imageData: nil, imageFormat: nil, fileAttachments: nil,
+            audioAttachment: nil, iconAppearance: nil,
             replyToMessageHashHex: nil, replyQuotedContent: nil, extraFields: extra
         )
     }

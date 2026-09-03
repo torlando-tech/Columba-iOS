@@ -224,6 +224,24 @@ struct MessagingView: View {
     @State private var showQualityPicker = false
     @State private var pendingRawImage: UIImage?
     @State private var selectedImagePreset: SettingsViewModel.ImageQualityPreset = .high
+    // MARK: - Voice message state (issue #168)
+    /// Shared player for the timeline's field-7 audio bubbles (one per
+    /// conversation screen, so a single voice message plays at a time).
+    @State private var voicePlayer = VoiceMessagePlayer()
+    /// The composer's recorder (in-memory; a recording is a temp file until
+    /// sent, then the payload is in the message's field-7 attachment).
+    @State private var voiceRecorder = VoiceMessageRecorder()
+    /// The finalized, unsent voice recording (kept alongside the recorder so
+    /// `sendMessage` can capture it before the recorder is reset).
+    @State private var pendingVoice: AudioAttachment?
+    /// True while the voice quality picker is presented.
+    @State private var showVoiceQualityPicker = false
+    /// The profile selected in the voice quality picker (default = Medium).
+    @State private var selectedVoiceFormat: VoiceMessageFormat = .defaultFormat
+    /// True while the composer voice panel (VoiceDraftRow) is open: from the
+    /// quality picker's confirm until the recording is sent, removed, or the
+    /// panel is closed (mirrors Android's `showVoiceControls`).
+    @State private var voicePanelOpen = false
     @State private var isNearBottom = true
     /// One-shot flag so the post-load scroll-to-bottom only fires the
     /// first time messages populate. Subsequent message arrivals use
@@ -294,7 +312,8 @@ struct MessagingView: View {
                     },
                     onOpenLink: openMessageLink,
                     onOpenImage: openImageAttachment,
-                    onOpenFileAttachment: openFileAttachment
+                    onOpenFileAttachment: openFileAttachment,
+                    voicePlayer: voicePlayer
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     MessageInputBar(
@@ -305,7 +324,13 @@ struct MessagingView: View {
                         onDismissReply: { withAnimation(.easeInOut(duration: 0.25)) { vm.replyToMessage = nil } },
                         onSend: sendMessage,
                         onImagePicker: { showPhotoPicker = true },
-                        onAttachment: { showFilePicker = true }
+                        onAttachment: { showFilePicker = true },
+                        onVoiceRecord: { showVoiceQualityPicker = true },
+                        voiceRecorder: voicePanelOpen ? voiceRecorder : nil,
+                        voicePlayer: voicePlayer,
+                        onVoiceStartRecording: { format in startVoiceRecording(format: format) },
+                        onVoiceRemoveDraft: { voiceRecorder.removeSelected(); voicePanelOpen = false },
+                        onVoiceClosePanel: { voiceRecorder.cancel(); voicePanelOpen = false }
                     )
                     .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
                     .onChange(of: selectedPhotoItem) { _, newItem in
@@ -404,7 +429,8 @@ struct MessagingView: View {
                                         onOpenImage: { openImageAttachment(message) },
                                         onOpenFileAttachment: { index in
                                             openFileAttachment(message, index: index)
-                                        }
+                                        },
+                                        voicePlayer: voicePlayer
                                     )
                                 }
                                 .id(message.id)
@@ -454,7 +480,13 @@ struct MessagingView: View {
                             onDismissReply: { withAnimation(.easeInOut(duration: 0.25)) { vm.replyToMessage = nil } },
                             onSend: sendMessage,
                             onImagePicker: { showPhotoPicker = true },
-                            onAttachment: { showFilePicker = true }
+                            onAttachment: { showFilePicker = true },
+                            onVoiceRecord: { showVoiceQualityPicker = true },
+                            voiceRecorder: voicePanelOpen ? voiceRecorder : nil,
+                            voicePlayer: voicePlayer,
+                            onVoiceStartRecording: { format in startVoiceRecording(format: format) },
+                            onVoiceRemoveDraft: { voiceRecorder.removeSelected(); voicePanelOpen = false },
+                            onVoiceClosePanel: { voiceRecorder.cancel(); voicePanelOpen = false }
                         )
                         .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
                         .onChange(of: selectedPhotoItem) { _, newItem in
@@ -633,6 +665,25 @@ struct MessagingView: View {
             // reasonable time". Kept out of the body for that reason.
             imageQualityPickerSheet
         }
+        // Voice message quality picker (issue #168). Confirm starts recording
+        // with the chosen profile; the recorder's draft row then shows above
+        // the composer.
+        .sheet(isPresented: $showVoiceQualityPicker) {
+            voiceQualityPickerSheet
+        }
+        // Keep `pendingVoice` in sync with the recorder's finalized draft so
+        // `sendMessage` can capture it (and clear it) without re-reading the
+        // recorder's observable state mid-send. Returning to `.idle` (cancel,
+        // remove, teardown) also closes the panel, mirroring Android's
+        // `showVoiceControls = false` on every cancel/close path.
+        .onChange(of: voiceRecorder.state) { _, newState in
+            if case .completed(let recording) = newState {
+                pendingVoice = recording.audio
+            } else if case .idle = newState {
+                pendingVoice = nil
+                voicePanelOpen = false
+            }
+        }
         // Codec picker → place the voice call. The active/outgoing call UI
         // (VoiceCallScreen) is presented app-root in MainTabView off
         // callManager.callState, so it survives navigating away from the chat.
@@ -743,6 +794,12 @@ struct MessagingView: View {
             flushDraft(for: .navigation)
             NotificationService.activeConversationThreadId = nil
             exitAttachmentInteractionState()
+            // Stop playback and release the audio session we may have taken
+            // for it: the view's player is per-conversation, so leaving while
+            // a voice message plays would otherwise strand the shared
+            // AVAudioSession active (other apps' interrupted audio couldn't
+            // resume). stopCurrent is a no-op when nothing is playing.
+            voicePlayer.stopCurrent()
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             guard oldPhase == .active, newPhase != .active else { return }
@@ -870,6 +927,57 @@ struct MessagingView: View {
         )
         .presentationDetents([.height(imageQualitySheetHeight)])
         .presentationDragIndicator(.visible)
+    }
+
+    // Voice-quality bottom sheet height, scaled by Dynamic Type (same pattern
+    // as the image-quality sheet, issue #181).
+    @ScaledMetric(relativeTo: .body) private var voiceQualitySheetHeight: CGFloat = 360
+
+    // Voice-quality bottom sheet (issue #168). Confirm closes the picker and
+    // starts the recorder with the chosen profile; the recorder's draft row
+    // then appears above the composer. Start failures surface in the recorder
+    // state (the draft row shows the error).
+    private var voiceQualityPickerSheet: some View {
+        VoiceQualityPickerSheet(
+            sheetHeight: voiceQualitySheetHeight,
+            selectedFormat: $selectedVoiceFormat,
+            onConfirm: { format in
+                showVoiceQualityPicker = false
+                openVoicePanel(format: format)
+            },
+            onCancel: {
+                showVoiceQualityPicker = false
+            }
+        )
+        .presentationDetents([.height(voiceQualitySheetHeight)])
+        .presentationDragIndicator(.visible)
+    }
+
+    /// The quality picker's confirm (Android `QualitySelectionDialog.onConfirm`):
+    /// remember the format, open the voice panel, and start recording when the
+    /// microphone is already permitted. Otherwise the panel shows its
+    /// permission row and Start is a no-op until the user grants access (the
+    /// recorder's `.failed` + "not supported" surfaces any device limitation).
+    private func openVoicePanel(format: VoiceMessageFormat) {
+        selectedVoiceFormat = format
+        voicePanelOpen = true
+        if AVAudioSession.sharedInstance().recordPermission == .granted {
+            startVoiceRecording(format: format)
+        }
+    }
+
+    /// Start recording a voice message with the chosen profile. A capture or
+    /// permission failure is reflected in `voiceRecorder` state (the panel's
+    /// ready row shows the error; `lastFailureWasUnsupported` shows the
+    /// dedicated unsupported row).
+    private func startVoiceRecording(format: VoiceMessageFormat) {
+        do {
+            _ = try voiceRecorder.start(format: format)
+        } catch {
+            // `start` already set the recorder's `.failed` state +
+            // `errorMessage`; nothing else to do (the panel surfaces it).
+            logger.info("Voice recording start failed: \(error.localizedDescription)")
+        }
     }
 
     @State private var isSyncing = false
@@ -1105,6 +1213,9 @@ struct MessagingView: View {
         let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let image = attachedImage
         let files = attachedFiles
+        // Voice draft (if a recording is finalized and selected in the
+        // composer). Captured now so the recorder reset below doesn't race it.
+        let voice = pendingVoice
         let replyTarget = viewModel?.replyToMessage
         let replyToId: String? = {
             guard let target = replyTarget,
@@ -1113,7 +1224,7 @@ struct MessagingView: View {
             return hash.map { String(format: "%02x", $0) }.joined()
         }()
 
-        guard !text.isEmpty || image != nil || !files.isEmpty else { return }
+        guard !text.isEmpty || image != nil || !files.isEmpty || voice != nil else { return }
 
         if let composerLifecycle {
             composerLifecycle.clearForSend {
@@ -1125,6 +1236,10 @@ struct MessagingView: View {
         }
         attachedImage = nil
         attachedFiles = []
+        // Clear the draft (also clears the recorder's selected recording and
+        // its temp file via removeSelected()).
+        pendingVoice = nil
+        voiceRecorder.removeSelected()
         withAnimation(.easeInOut(duration: 0.25)) {
             viewModel?.replyToMessage = nil
         }
@@ -1150,6 +1265,7 @@ struct MessagingView: View {
                 imageData: imageData,
                 imageFormat: imageFormat,
                 attachments: fileAttachments,
+                audioAttachment: voice,
                 replyToId: replyToId
             )
         }

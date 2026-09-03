@@ -181,6 +181,21 @@ struct MessageInputBar: View {
     var onSend: () -> Void
     var onImagePicker: () -> Void
     var onAttachment: () -> Void
+    /// Mic tap: opens the voice quality picker and, on confirm, starts
+    /// recording. nil hides the button (callers that don't support voice).
+    var onVoiceRecord: (() -> Void)? = nil
+    /// The composer's voice recorder. Non-nil while the voice panel is open
+    /// (after the quality picker confirms, until closed/removed/sent); nil
+    /// hides the draft row and the mic button is the entry point.
+    var voiceRecorder: VoiceMessageRecorder? = nil
+    /// The shared voice player for the draft-row preview playback.
+    var voicePlayer: VoiceMessagePlayer? = nil
+    /// Start recording with the chosen profile (from the panel's Start row).
+    var onVoiceStartRecording: ((VoiceMessageFormat) -> Void)? = nil
+    /// Remove the selected draft recording.
+    var onVoiceRemoveDraft: (() -> Void)? = nil
+    /// Close the voice panel (return to the normal composer).
+    var onVoiceClosePanel: (() -> Void)? = nil
 
     @AppStorage(ComposerKeyboardPreference.key)
     private var sendsOnReturn = ComposerKeyboardPreference.defaultValue
@@ -193,6 +208,17 @@ struct MessageInputBar: View {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         || attachedImage != nil
         || !attachedFiles.isEmpty
+        || voiceDraftAudio != nil
+    }
+
+    /// The finalized, unsent voice recording (if any). nil while idle /
+    /// recording / finalizing, so Send stays disabled until a draft exists.
+    private var voiceDraftAudio: AudioAttachment? {
+        guard let voiceRecorder else { return nil }
+        if case .completed(let recording) = voiceRecorder.state {
+            return recording.audio
+        }
+        return nil
     }
 
     // MARK: - Body
@@ -269,6 +295,23 @@ struct MessageInputBar: View {
                 }
             }
 
+            // Voice draft row (ready / recording / finalizing / selected).
+            // Only present while the voice panel is open (the recorder is
+            // passed through); when the panel is closed, nil hides it and
+            // the mic button (in the action row) is the entry point.
+            if let voiceRecorder, let voicePlayer {
+                VoiceDraftRow(
+                    recorder: voiceRecorder,
+                    player: voicePlayer,
+                    onStart: { format in onVoiceStartRecording?(format) },
+                    onRemove: { onVoiceRemoveDraft?() },
+                    onClose: { onVoiceClosePanel?() }
+                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
             HStack(alignment: .bottom, spacing: 12) {
                 // Text field container
                 HStack(alignment: .bottom, spacing: 8) {
@@ -284,6 +327,20 @@ struct MessageInputBar: View {
 
                 // Action buttons
                 HStack(spacing: 12) {
+                    // Voice message (mic) button — opens the quality picker and
+                    // records a voice message. Hidden for callers that don't
+                    // support voice (onVoiceRecord == nil).
+                    if onVoiceRecord != nil {
+                        Button(action: { onVoiceRecord?() }) {
+                            Image(systemName: "mic")
+                                .font(.system(size: 20))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        .buttonStyle(ScaleButtonStyle())
+                        .accessibilityIdentifier("voice_message_button")
+                        .accessibilityLabel(String(localized: "Record a voice message"))
+                    }
+
                     // Image picker button
                     Button(action: onImagePicker) {
                         Image(systemName: "photo")

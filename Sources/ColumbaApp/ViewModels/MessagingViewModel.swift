@@ -27,6 +27,7 @@ public final class MessagingViewModel {
         let imageData: Data?
         let imageFormat: String?
         let fileAttachments: [RnsFileAttachment]?
+        let audioAttachment: RnsAudio?
         let iconAppearance: IconAppearance?
         let replyToMessageHashHex: String?
         let replyQuotedContent: String?
@@ -788,6 +789,7 @@ public final class MessagingViewModel {
             imageData: request.imageData,
             imageFormat: request.imageFormat,
             fileAttachments: request.fileAttachments,
+            audioAttachment: request.audioAttachment,
             iconAppearance: request.iconAppearance,
             replyToMessageHashHex: request.replyToMessageHashHex,
             replyQuotedContent: request.replyQuotedContent,
@@ -838,12 +840,15 @@ public final class MessagingViewModel {
         imageData: Data?,
         imageFormat: String?,
         attachments: [(name: String, data: Data)]?,
+        audioAttachment: AudioAttachment? = nil,
         replyToId: String? = nil,
         localRetryHash: Data? = nil,
         replacedStorageHash: Data? = nil
     ) async -> Bool {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty || imageData != nil || (attachments != nil && !attachments!.isEmpty) else {
+        guard !trimmedText.isEmpty || imageData != nil
+              || (attachments != nil && !attachments!.isEmpty)
+              || audioAttachment != nil else {
             return false
         }
 
@@ -886,6 +891,14 @@ public final class MessagingViewModel {
         // Add file attachments field (FIELD_FILE_ATTACHMENTS = 0x05): [[name, data], ...]
         if let attachments, !attachments.isEmpty {
             fields[LXMessage.FIELD_FILE_ATTACHMENTS] = attachments.map { [$0.name, $0.data] as [Any] } as [Any]
+        }
+
+        // Add audio field (FIELD_AUDIO = 0x07): [mode_int, bytes]. Written to
+        // the LOCAL field map so it persists in packedLxmf and survives a
+        // reload / retry rehydration; the SAME attachment is also passed as a
+        // typed param to the wire send below (see OutboundSendRequest).
+        if let audioAttachment {
+            fields[LXMessage.FIELD_AUDIO] = audioAttachment.fieldValue
         }
 
         // Add reply reference (FIELD_APP_DATA = 0x10)
@@ -944,6 +957,7 @@ public final class MessagingViewModel {
             imageData: imageData,
             imageFormat: imageFormat,
             attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) },
+            audioAttachment: audioAttachment,
             replyToId: replyToId,
             replyToPreview: replyPreview,
             storageHash: localRetryHash,
@@ -980,6 +994,7 @@ public final class MessagingViewModel {
                     fileAttachments: attachments?.map {
                         RnsFileAttachment(name: $0.name, data: $0.data)
                     },
+                    audioAttachment: audioAttachment.map { RnsAudio(mode: Int($0.mode.rawValue), bytes: $0.bytes) },
                     iconAppearance: icon,
                     replyToMessageHashHex: replyToId,
                     replyQuotedContent: replyPreview,
@@ -1069,6 +1084,7 @@ public final class MessagingViewModel {
                             fileAttachments: attachments?.map {
                                 RnsFileAttachment(name: $0.name, data: $0.data)
                             },
+                            audioAttachment: audioAttachment.map { RnsAudio(mode: Int($0.mode.rawValue), bytes: $0.bytes) },
                             iconAppearance: icon,
                             replyToMessageHashHex: replyToId,
                             replyQuotedContent: replyPreview,
@@ -1172,6 +1188,7 @@ public final class MessagingViewModel {
                             imageData: imageData,
                             imageFormat: imageFormat,
                             attachments: attachments?.map { FileAttachment(name: $0.name, data: $0.data) },
+                            audioAttachment: audioAttachment,
                             replyToId: replyToId,
                             replyToPreview: replyPreview
                         )
@@ -1237,6 +1254,7 @@ public final class MessagingViewModel {
                 imageData: failedMessage.imageData,
                 imageFormat: failedMessage.imageFormat,
                 attachments: failedMessage.attachments?.map { (name: $0.name, data: $0.data) },
+                audioAttachment: failedMessage.audioAttachment,
                 replyToId: failedMessage.replyToId
             )
             return
@@ -1261,6 +1279,7 @@ public final class MessagingViewModel {
             imageData: failedMessage.imageData,
             imageFormat: failedMessage.imageFormat,
             attachments: failedMessage.attachments?.map { (name: $0.name, data: $0.data) },
+            audioAttachment: failedMessage.audioAttachment,
             replyToId: failedMessage.replyToId,
             localRetryHash: retryHash,
             replacedStorageHash: storedHash

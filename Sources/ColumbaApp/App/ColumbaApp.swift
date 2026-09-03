@@ -421,10 +421,12 @@ struct ColumbaApp: App {
                     let imageFormat = q("image_format") ?? ""
                     let fileHex = q("file_hex") ?? ""
                     let fileName = q("file_name") ?? ""
+                    let audioMode = q("audio_mode") ?? ""
+                    let audioHex = q("audio_hex") ?? ""
                     // NO-PII: never log message content — diag.log and the
                     // unified log are readable by anyone with the device.
                     logger.info("test-send to=\(to, privacy: .public) len=\(content.utf8.count, privacy: .public)")
-                    DiagLog.log("[TEST-SEND] to=\(to.prefix(8)) method=\(method.isEmpty ? "opportunistic" : method) len=\(content.utf8.count) image=\(imageHex.isEmpty ? 0 : imageHex.count/2)B(\(imageFormat)) file=\(fileHex.isEmpty ? 0 : fileHex.count/2)B(\(fileName))")
+                    DiagLog.log("[TEST-SEND] to=\(to.prefix(8)) method=\(method.isEmpty ? "opportunistic" : method) len=\(content.utf8.count) image=\(imageHex.isEmpty ? 0 : imageHex.count/2)B(\(imageFormat)) file=\(fileHex.isEmpty ? 0 : fileHex.count/2)B(\(fileName)) audio=\(audioHex.isEmpty ? 0 : audioHex.count/2)B(mode=\(audioMode))")
                     NotificationCenter.default.post(
                         name: Notification.Name("ColumbaTestSend"),
                         object: nil,
@@ -436,6 +438,8 @@ struct ColumbaApp: App {
                             "image_format": imageFormat,
                             "file_hex": fileHex,
                             "file_name": fileName,
+                            "audio_mode": audioMode,
+                            "audio_hex": audioHex,
                         ]
                     )
                     return
