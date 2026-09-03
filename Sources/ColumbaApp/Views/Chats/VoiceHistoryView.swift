@@ -108,21 +108,14 @@ struct CallHistoryCard: View {
         display.record.direction == .incoming ? "Incoming" : "Outgoing"
     }
 
+    /// Outcome text: the single source of truth is `CallOutcome.localizedLabel`
+    /// (CallDetailsView uses the same). Only the two non-enum states are handled
+    /// here — a live in-progress call, and a record whose outcome hasn't been
+    /// written yet (crash before the end callback landed).
     private var outcomeLabel: String {
-        if isActive { return "In progress" }
-        switch display.record.outcome {
-        case nil: return "Recovering call status"
-        case .connectedEnded: return "Connected"
-        case .missedIncoming: return "Missed"
-        case .declinedLocal: return "Declined"
-        case .rejectedRemote: return "Rejected"
-        case .busyRemote: return "Busy"
-        case .cancelledLocal: return "Cancelled"
-        case .notConnected: return "Not connected"
-        case .failed: return "Failed"
-        case .interrupted: return "Interrupted"
-        case .inProgress: return "In progress"
-        }
+        if isActive { return CallOutcome.inProgress.localizedLabel }
+        return display.record.outcome?.localizedLabel
+            ?? String(localized: "Recovering call status")
     }
 
     private var severityColor: Color {
