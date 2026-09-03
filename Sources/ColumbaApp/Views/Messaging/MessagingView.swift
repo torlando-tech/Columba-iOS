@@ -794,6 +794,12 @@ struct MessagingView: View {
             flushDraft(for: .navigation)
             NotificationService.activeConversationThreadId = nil
             exitAttachmentInteractionState()
+            // Stop playback and release the audio session we may have taken
+            // for it: the view's player is per-conversation, so leaving while
+            // a voice message plays would otherwise strand the shared
+            // AVAudioSession active (other apps' interrupted audio couldn't
+            // resume). stopCurrent is a no-op when nothing is playing.
+            voicePlayer.stopCurrent()
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             guard oldPhase == .active, newPhase != .active else { return }
