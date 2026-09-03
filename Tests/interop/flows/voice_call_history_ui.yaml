@@ -1,0 +1,37 @@
+appId: network.columba.Columba
+launchAppState: running
+---
+# Voice call-history UI steps (issue #167). Run against a sim that ALREADY has
+# a persisted call-history row (see test_voice_call_history.py, which drives the
+# live call first). CI can re-run these steps alone once a row exists:
+#
+#     maestro --device <SIM_UDID> test flows/voice_call_history_ui.yaml
+#
+# `launchAppState: running` attaches without relaunching (a relaunch clears
+# diag.log and resets in-flight call state).
+- tapOn: "Chats"
+- waitForAnimationToEnd:
+    timeout: 2000
+# Segmented control: the id may not surface on the segment element in some
+# a11y dumps, so try the id (optional) then the visible "Voice" label.
+# Re-tapping an already-selected segment is a harmless no-op.
+- tapOn:
+    id: "chats_segment_voice"
+    optional: true
+- tapOn:
+    text: "Voice"
+- waitForAnimationToEnd:
+    timeout: 3000
+# A real call produced a card.
+- assertVisible:
+    id: "call_history_card"
+# Tapping the newest card opens Call Details…
+- tapOn:
+    id: "call_history_card"
+- waitForAnimationToEnd:
+    timeout: 3000
+# …which shows the detail rows and a working Call-again button.
+- assertVisible:
+    id: "call_history_details"
+- assertVisible:
+    id: "call_history_call_again"
