@@ -90,7 +90,11 @@ struct ChatsView: View {
             .accessibilityIdentifier("screen_chats")
             .navigationTitle("Chats")
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.large)
+            // Compact inline title (matches ContactsView) so the Text|Voice
+            // selector sits directly under a single nav-bar row. A `.large`
+            // title reserves an extra title row, leaving an empty gap between
+            // the search/refresh icons and the selector.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(backgroundColor, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
@@ -443,7 +447,7 @@ struct ChatsView: View {
                     set: { vm.selectedSegment = $0 }
                 ))
                 .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding(.top, 4)
             }
             // Search bar (when active)
             if isSearchPresented, let vm = viewModel {
