@@ -146,7 +146,11 @@ public final class CallManager {
         peerDisplayNameSnapshot = peerDisplayName
         let remoteHash = peerHash ?? ""
         let profileCode = Int(activeProfile.rawValue)
-        Task { [weak self, repo = self.callHistoryRepository] in
+        // All values are captured by value (like the other fire-and-forget
+        // write sites), so the Task needs no `self` capture at all — it only
+        // holds the repo for the duration of the write.
+        let repo = callHistoryRepository
+        Task {
             guard let repo else { return }
             try? await repo.insertAttempt(
                 callAttemptId: id, localIdentityHash: hex,
