@@ -112,4 +112,38 @@ final class VoiceMessagePlayerTests: XCTestCase {
         XCTAssertEqual(player.state(for: "m6").status, .idle)
         XCTAssertFalse(player.isPlaying)
     }
+
+    /// Greptile finding (PR #194, iteration 3): the async startup can resume
+    /// AFTER a stop/teardown that ran during one of its suspension points.
+    /// Without a generation guard it would re-acquire the shared audio
+    /// session and publish `.playing` (or a spurious `.error`) after the user
+    /// already stopped.
+    ///
+    /// What this test pins: `play()` + immediate `stopCurrent()` (both
+    /// synchronous on the main actor) must converge to `.idle`, never
+    /// `.playing` and never `.error`. That is the deterministic
+    /// interleaving - the stop lands before the startup task begins, so the
+    /// startup's entry guard must observe the generation bump and bail as a
+    /// silent `.superseded` no-op. The identical guard at the in-flight
+    /// suspension points (stop landing mid-startup) is the same check and
+    /// cannot be forced deterministically without a decode-delay seam.
+    func testSupersededStartupConvergesToIdle() async throws {
+        let player = VoiceMessagePlayer()
+        let attachment = try codec2Attachment(frames: 40, durationMs: 800)
+        player.play(key: "m7", attachment: attachment)
+        // Immediately stop, as if the user dismissed the conversation while
+        // the async startup was still in flight.
+        player.stopCurrent()
+        // Give the (possibly still in-flight) startup task a bounded window
+        // to resume at a suspension point and observe the generation bump.
+        for _ in 0..<50 {
+            if player.state(for: "m7").status == .idle { break }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let st = player.state(for: "m7")
+        XCTAssertEqual(st.status, .idle, "a superseded startup must leave the message idle")
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertNil(st.errorMessage, "a superseded startup must not surface a spurious error")
+        player.tearDown()
+    }
 }

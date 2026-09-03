@@ -55,6 +55,14 @@ public final class VoiceMessagePlayer {
     /// playback until we deactivate it. We release only a session we own:
     /// deactivating the recorder's or a call's session would clobber it.
     @ObservationIgnored private var ownsPlaybackSession = false
+    /// Monotonic playback generation. `stopCurrent` bumps it (covering
+    /// explicit stop, natural completion, error, teardown, and the view
+    /// disappearing), and `play` snapshots it before dispatching the
+    /// async startup. The startup re-checks it at its suspension points so
+    /// a start that was superseded by a stop cannot re-acquire the shared
+    /// audio session or publish playback state after the user already
+    /// stopped (Greptile finding, PR #194 iteration 3).
+    @ObservationIgnored private var playGeneration = 0
     @ObservationIgnored private let maxCacheEntries = 128
 
     public init() {}
@@ -99,12 +107,20 @@ public final class VoiceMessagePlayer {
         st.durationMs = resolveDurationMs(attachment)
         states[key] = st
         prepareWaveform(key: key, attachment: attachment)
+        // Snapshot the (just-bumped) generation: the async startup must
+        // prove it is still current at each suspension point.
+        let generation = playGeneration
         Task { [weak self] in
             do {
-                try await self?.startPlayback(key: key, attachment: attachment)
+                try await self?.startPlayback(key: key, attachment: attachment, generation: generation)
+            } catch let error as PlayerError where error == .superseded {
+                // A stop already ran for this generation; the UI is already
+                // idle (or playing a newer message). Do NOT mark an error -
+                // that would surface a false failure and stopCurrent() would
+                // stop whatever is current (possibly a newer playback).
             } catch {
                 DiagLog.log("[VOICE-PLAY] ERROR key=\(key.prefix(8)) \(error.localizedDescription)")
-                self?.markError(key, error.localizedDescription)
+                self?.markError(key, error.localizedDescription, generation: generation)
             }
         }
     }
@@ -146,6 +162,9 @@ public final class VoiceMessagePlayer {
             states[key] = st
         }
         currentKey = nil
+        // Invalidate any in-flight async startup so it cannot re-acquire the
+        // session or publish state after this stop (see playGeneration).
+        playGeneration += 1
         releasePlaybackSession()
     }
 
@@ -167,7 +186,11 @@ public final class VoiceMessagePlayer {
 
     // MARK: - Playback start (off the main-actor hot path)
 
-    private func startPlayback(key: String, attachment: AudioAttachment) async throws {
+    private func startPlayback(key: String, attachment: AudioAttachment, generation: Int) async throws {
+        // A stop that landed between play() and this point (view dismissed,
+        // explicit stop, teardown) already invalidated us: bail before
+        // touching the session or the player.
+        guard generation == playGeneration else { throw PlayerError.superseded }
         DiagLog.log("[VOICE-PLAY] start key=\(key.prefix(8)) mode=0x\(String(format: "%02x", attachment.mode.rawValue)) bytes=\(attachment.bytes.count)")
         let url = try renderToTempFile(attachment)
         tempFiles.append(url)
@@ -213,8 +236,22 @@ public final class VoiceMessagePlayer {
             // format; give it a short, bounded window before declaring defeat.
             for _ in 0..<10 {
                 try? await Task.sleep(nanoseconds: 100_000_000)
+                // The sleep is a suspension point: a stop/teardown that ran
+                // during it invalidated this startup. Bail before doing
+                // anything further with the shared session or state.
+                guard generation == playGeneration else {
+                    filePlayer.stop()
+                    throw PlayerError.superseded
+                }
                 if filePlayer.isPlaying { playing = true; break }
             }
+        }
+        // Final gate after every suspension point above: if we were stopped
+        // in the meantime, do not publish state, start progress polling, or
+        // leave the session we just activated in play.
+        guard generation == playGeneration else {
+            filePlayer.stop()
+            throw PlayerError.superseded
         }
         DiagLog.log("[VOICE-PLAY] isPlaying=\(playing) duration=\(filePlayer.duration)")
         guard playing else {
@@ -258,7 +295,11 @@ public final class VoiceMessagePlayer {
         }
     }
 
-    private func markError(_ key: String, _ message: String) {
+    private func markError(_ key: String, _ message: String, generation: Int) {
+        // A superseded startup (a stop already ran) must not surface a
+        // spurious error or stop whatever is current (possibly a newer
+        // playback). Only the still-current generation may mark an error.
+        guard generation == playGeneration else { return }
         stopCurrent()
         var st = states[key] ?? PlaybackState()
         st.status = .error
@@ -397,5 +438,10 @@ public final class VoiceMessagePlayer {
         isTornDown = true
     }
 
-    private enum PlayerError: Error { case unplayable }
+    private enum PlayerError: Error, Equatable {
+        case unplayable
+        /// The async startup was superseded by a stop/teardown; the caller
+        /// must treat this as a silent no-op, not a user-facing failure.
+        case superseded
+    }
 }
