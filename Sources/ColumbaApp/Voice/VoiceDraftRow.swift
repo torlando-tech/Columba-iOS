@@ -330,6 +330,11 @@ public struct VoiceDraftRow: View {
 
                 VoiceWaveformBars(peaks: waveform, progress: progress)
                     .accessibilityHidden(true)
+                    // The draft panel also has a Spacer() pinning the remove
+                    // button to the trailing edge; cap the (now-flexible)
+                    // waveform so it and the Spacer share the row instead of
+                    // the waveform grabbing it all.
+                    .frame(maxWidth: 200)
 
                 Text(progressText(state.positionMs, duration))
                     .font(.caption.monospacedDigit())

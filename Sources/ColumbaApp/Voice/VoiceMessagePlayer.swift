@@ -150,6 +150,28 @@ public final class VoiceMessagePlayer {
         DiagLog.log("[VOICE-PLAY] start key=\(key.prefix(8)) mode=0x\(String(format: "%02x", attachment.mode.rawValue)) bytes=\(attachment.bytes.count)")
         let url = try renderToTempFile(attachment)
         tempFiles.append(url)
+
+        // The audio session must be in a PLAYBACK state before play(): the
+        // voice recorder sets it to .playAndRecord and deactivates it, and a
+        // .playAndRecord session (a) is silenced by the mute switch and
+        // (b) can default toward the earpiece - so AVAudioPlayer reports
+        // isPlaying=true but is inaudible. .playback routes to the speaker
+        // (or connected headphones) and ignores the mute switch. Guard
+        // against an active call (mode .voiceChat, set by CallKitManager):
+        // reconfiguring the category there would drop the mic and break the
+        // call, so leave the session alone in that case (playing a voice
+        // message mid-call is a rare edge case).
+        let session = AVAudioSession.sharedInstance()
+        if session.mode != .voiceChat {
+            do {
+                try session.setCategory(.playback, mode: .default, options: [])
+                try session.setActive(true, options: [])
+            } catch {
+                DiagLog.log("[VOICE-PLAY] session setup failed: \(error.localizedDescription)")
+            }
+        }
+        logSessionState(context: "pre-play")
+
         let filePlayer = try AVAudioPlayer(contentsOf: url)
         filePlayer.numberOfLoops = 0
         filePlayer.volume = 1.0
@@ -174,6 +196,7 @@ public final class VoiceMessagePlayer {
             DiagLog.log("[VOICE-PLAY] UNPLAYABLE url=\(url.lastPathComponent)")
             throw PlayerError.unplayable
         }
+        logSessionState(context: "playing")
         player = filePlayer
         var st = states[key] ?? PlaybackState()
         st.status = .playing
@@ -181,6 +204,15 @@ public final class VoiceMessagePlayer {
         states[key] = st
         DiagLog.log("[VOICE-PLAY] PLAYING durationMs=\(st.durationMs)")
         startProgressPolling()
+    }
+
+    /// Privacy-safe audio-session snapshot (category/route/volume only, no PII)
+    /// for diagnosing audible-playback issues on the WiFi-only device.
+    private func logSessionState(context: String) {
+        let s = AVAudioSession.sharedInstance()
+        let route = s.currentRoute
+        let outputs = route.outputs.map { "type=\($0.portType.rawValue)" }.joined(separator: ",")
+        DiagLog.log("[VOICE-SESSION] \(context) category=\(s.category.rawValue) mode=\(s.mode.rawValue) vol=\(String(format: "%.2f", s.outputVolume)) route=[\(outputs)]")
     }
 
     private func startProgressPolling() {
