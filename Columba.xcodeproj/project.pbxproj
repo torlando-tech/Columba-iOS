@@ -43,6 +43,7 @@
 		0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */; };
 		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
 		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
+		CHF004 /* CallHistoryFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHF003 /* CallHistoryFormatting.swift */; };
 		026 /* SettingsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsRepository.swift */; };
 		027 /* NotificationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027 /* NotificationObserver.swift */; };
 		028 /* IncomingMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F028 /* IncomingMessageHandler.swift */; };
@@ -73,6 +74,7 @@
 		7BC38A40688391B27CAF196D /* PeerContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E000A64C153F97167050B87D /* PeerContactSheet.swift */; platformFilter = ios;};
 		3007EA9DFE6E9C7445D1977B /* PeerContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E000A64C153F97167050B87D /* PeerContactSheet.swift */; platformFilter = ios;};
 		CC067EE77A33341C829CBDE8 /* PeerLocationFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */;};
+		CHF002 /* CallHistoryFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHF001 /* CallHistoryFormattingTests.swift */;};
 		E4FCBD54560B74AC8CCB1C91 /* DirectionsLauncherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */;};
 		47B4E413633097429123BC2F /* PeerLocationRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */;};
 		049 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = P002 /* MapLibre */; };
@@ -311,6 +313,7 @@
 		C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
 		C4F369EC98C2B903701CE74A /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
 		C60C9313A6AFB95FCFB8969A /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
+		CHF005 /* CallHistoryFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHF003 /* CallHistoryFormatting.swift */; };
 		C6816EEC9864A2903840C8AC /* NetworkAnnouncesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012 /* NetworkAnnouncesTab.swift */; };
 		C91321B8E0BA9F487D5E1AC8 /* PyMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBD293157E715F490613984 /* PyMessage.swift */; };
 		CC036F8B85839F5FC3C138E2 /* RNodeSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43A7FF6A056815712B1D13D9 /* RNodeSeam.swift */; };
@@ -564,6 +567,7 @@
 		F023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F024 /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
 		F025 /* MessageRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRepository.swift; sourceTree = "<group>"; };
+		CHF003 /* CallHistoryFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHistoryFormatting.swift; sourceTree = "<group>"; };
 		F026 /* SettingsRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRepository.swift; sourceTree = "<group>"; };
 		F027 /* NotificationObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationObserver.swift; sourceTree = "<group>"; };
 		F028 /* IncomingMessageHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingMessageHandler.swift; sourceTree = "<group>"; };
@@ -589,6 +593,7 @@
 		A2BA54B809AFB1AB900074CD /* DirectionsLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectionsLauncher.swift; sourceTree = "<group>"; };
 		E000A64C153F97167050B87D /* PeerContactSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerContactSheet.swift; sourceTree = "<group>"; };
 		498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationFormattingTests.swift; sourceTree = "<group>"; };
+		CHF001 /* CallHistoryFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHistoryFormattingTests.swift; sourceTree = "<group>"; };
 		B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectionsLauncherTests.swift; sourceTree = "<group>"; };
 		AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerLocationRemovalTests.swift; sourceTree = "<group>"; };
 		F049 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
@@ -1073,6 +1078,7 @@
 				F024 /* AppServices.swift */,
 				BKF002 /* BackendFactory.swift */,
 				F025 /* MessageRepository.swift */,
+				CHF003 /* CallHistoryFormatting.swift */,
 				F026 /* SettingsRepository.swift */,
 				F027 /* NotificationObserver.swift */,
 				F028 /* IncomingMessageHandler.swift */,
@@ -1118,6 +1124,7 @@
 				30A79B9ECDB4166F8A36A670 /* CallManagerCallKitTests.swift */,
 				BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */,
 				498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */,
+			CHF001 /* CallHistoryFormattingTests.swift */,
 				B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */,
 				AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */,
 				A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */,
@@ -1564,6 +1571,7 @@
 				369F5A4E725880AF2972AFD2 /* AppServices.swift in Sources */,
 				D591F21C232FBE2AF23D50F5 /* BackendFactory.swift in Sources */,
 				C60C9313A6AFB95FCFB8969A /* MessageRepository.swift in Sources */,
+				CHF005 /* CallHistoryFormatting.swift in Sources */,
 				90BD158667A5C627CFB1DEBF /* SettingsRepository.swift in Sources */,
 				489A5C72A9C4C3FAB742F3E2 /* NotificationObserver.swift in Sources */,
 				87358446F5D54F616D07CCEE /* IncomingMessageHandler.swift in Sources */,
@@ -1765,6 +1773,7 @@
 				024 /* AppServices.swift in Sources */,
 				BKF001 /* BackendFactory.swift in Sources */,
 				025 /* MessageRepository.swift in Sources */,
+				CHF004 /* CallHistoryFormatting.swift in Sources */,
 				026 /* SettingsRepository.swift in Sources */,
 				027 /* NotificationObserver.swift in Sources */,
 				028 /* IncomingMessageHandler.swift in Sources */,
@@ -1871,6 +1880,7 @@
 				47B4E413633097429123BC2F /* PeerLocationRemovalTests.swift in Sources */,
 				E4FCBD54560B74AC8CCB1C91 /* DirectionsLauncherTests.swift in Sources */,
 				CC067EE77A33341C829CBDE8 /* PeerLocationFormattingTests.swift in Sources */,
+			CHF002 /* CallHistoryFormattingTests.swift in Sources */,
 				BGPSYNCTESTBUILD001 /* BackgroundPropagationSyncTests.swift in Sources */,
 				T003 /* MicronParserTests.swift in Sources */,
 				2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */,
