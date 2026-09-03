@@ -68,6 +68,10 @@ struct ChatsView: View {
     /// syncs (tapping the refresh button); background / periodic syncs run silently.
     @State private var isSyncSheetPresented: Bool = false
 
+    /// The call whose codec sheet (call-again) is being presented. Drives the
+    /// `.sheet(item:)` that presents `CodecSelectionSheet` from the Voice tab.
+    @State private var showCodecSheetFor: VoiceCallDisplay?
+
     // MARK: - Theme Colors
 
     private var backgroundColor: Color { Theme.backgroundPrimary }
@@ -81,20 +85,7 @@ struct ChatsView: View {
                 backgroundColor.ignoresSafeArea()
 
                 // Content
-                if let vm = viewModel {
-                    if vm.filteredConversations.isEmpty && !vm.isLoading {
-                        emptyStateView
-                    } else {
-                        conversationListView(vm)
-                    }
-
-                    // Loading overlay
-                    if vm.isLoading {
-                        loadingOverlay
-                    }
-                } else {
-                    ProgressView()
-                }
+                segmentContent
             }
             .accessibilityIdentifier("screen_chats")
             .navigationTitle("Chats")
@@ -103,43 +94,7 @@ struct ChatsView: View {
             .toolbarBackground(backgroundColor, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    // Search button
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isSearchPresented.toggle()
-                        }
-                    } label: {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundColor(Theme.textPrimary)
-                    }
-
-                    // Refresh button — syncs from propagation node then reloads DB
-                    Button {
-                        guard viewModel?.isRefreshing != true else { return }
-                        // User explicitly asked to sync → surface the status sheet.
-                        isSyncSheetPresented = true
-                        Task {
-                            viewModel?.isRefreshing = true
-                            await appServices.propagationManager?.syncNow(userInitiated: true)
-                            await viewModel?.refreshConversations()
-                            viewModel?.isRefreshing = false
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundColor(viewModel?.isRefreshing == true ? Theme.accentColor : Theme.textPrimary)
-                            .rotationEffect(.degrees(viewModel?.isRefreshing == true ? 360 : 0))
-                            .animation(
-                                viewModel?.isRefreshing == true
-                                    ? .linear(duration: 1).repeatForever(autoreverses: false)
-                                    : .default,
-                                value: viewModel?.isRefreshing
-                            )
-                    }
-                    .disabled(viewModel?.isRefreshing == true)
-                }
+                chatsToolbarContent
             }
             #endif
             .safeAreaInset(edge: .top) {
@@ -178,13 +133,23 @@ struct ChatsView: View {
                 viewModel = ChatsViewModel(
                     repository: messageRepository,
                     notificationObserver: notificationObserver,
-                    pathTable: appServices.pathTable
+                    pathTable: appServices.pathTable,
+                    callHistory: appServices.callHistoryRepository,
+                    localIdentityHashHex: appServices.identity?.hexHash
                 )
             }
             await viewModel?.loadConversations()
+            // Voice segment history (issue #167)
+            await viewModel?.loadVoiceHistory()
             // A route may exist before this view mounts (MainTabView holds it
             // until ChatsView consumes it), so `.onChange` alone is not enough.
             await consumePeerChatRoute()
+        }
+        // Track the live call so the Voice list can mark the matching card
+        // "In progress", and reload when a call ends (a new history row lands).
+        .onChange(of: appServices.callManager?.activeCallAttemptId) { _, newValue in
+            viewModel?.activeCallAttemptId = newValue
+            if newValue == nil { Task { await viewModel?.loadVoiceHistory() } }
         }
         .onChange(of: pendingPeerChat) { _, _ in
             Task { await consumePeerChatRoute() }
@@ -215,6 +180,25 @@ struct ChatsView: View {
             // closure) so SwiftUI Observation reliably re-renders the sheet on every
             // transfer-state change — live progress and the terminal result.
             SyncStatusSheetContainer(manager: appServices.propagationManager)
+        }
+        // Call-again: present the codec/quality picker, then dial the chosen peer
+        // (issue #167). Guard-lets the remote hash Data so an invalid stored hash
+        // (nil) simply does nothing rather than dialing a bogus number.
+        .sheet(item: $showCodecSheetFor) { display in
+            CodecSelectionSheet { profile in
+                showCodecSheetFor = nil
+                #if os(iOS)
+                if let destination = display.record.remoteIdentityHashData {
+                    appServices.callManager?.initiateCall(
+                        destinationHash: destination,
+                        profile: profile,
+                        peerDisplayName: display.peerName
+                    )
+                }
+                #endif
+            }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
@@ -358,9 +342,109 @@ struct ChatsView: View {
 
     // MARK: - Subviews
 
+    /// The Text | Voice content for the Chats screen (issue #167). Extracted
+    /// from `body` so the type-checker doesn't have to hold the segment switch
+    /// plus the whole list/empty/overlay expressions in one pass (it times out).
+    @ViewBuilder
+    private var segmentContent: some View {
+        if let vm = viewModel {
+            switch vm.selectedSegment {
+            case .voice:
+                VoiceHistoryView(
+                    viewModel: vm,
+                    appServices: appServices,
+                    onCallAgain: { showCodecSheetFor = $0 },
+                    onClear: { Task { await vm.clearVoiceHistory() } }
+                )
+            case .text:
+                if vm.filteredConversations.isEmpty && !vm.isLoading {
+                    emptyStateView
+                } else {
+                    conversationListView(vm)
+                }
+                // Loading overlay
+                if vm.isLoading {
+                    loadingOverlay
+                }
+            }
+        } else {
+            ProgressView()
+        }
+    }
+
+    /// Trailing toolbar content, segment-aware (issue #167). Extracted from
+    /// `.toolbar { }` in `body` so the type-checker isn't given the whole
+    /// toolbar + search/sync expression in one go (it times out on that).
+    /// Voice shows the clear-history menu; Text keeps the existing search/sync.
+    @ToolbarContentBuilder
+    private var chatsToolbarContent: some ToolbarContent {
+        if viewModel?.selectedSegment == .voice {
+            // Voice segment: clear-history only (search/sync are text-only).
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("Clear history", role: .destructive) {
+                        Task { await viewModel?.clearVoiceHistory() }
+                    }
+                    .accessibilityIdentifier("call_history_clear")
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(Theme.textPrimary)
+                }
+            }
+        } else {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                // Search button
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isSearchPresented.toggle()
+                    }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(Theme.textPrimary)
+                }
+
+                // Refresh button — syncs from propagation node then reloads DB
+                Button {
+                    guard viewModel?.isRefreshing != true else { return }
+                    // User explicitly asked to sync → surface the status sheet.
+                    isSyncSheetPresented = true
+                    Task {
+                        viewModel?.isRefreshing = true
+                        await appServices.propagationManager?.syncNow(userInitiated: true)
+                        await viewModel?.refreshConversations()
+                        viewModel?.isRefreshing = false
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(viewModel?.isRefreshing == true ? Theme.accentColor : Theme.textPrimary)
+                        .rotationEffect(.degrees(viewModel?.isRefreshing == true ? 360 : 0))
+                        .animation(
+                            viewModel?.isRefreshing == true
+                                ? .linear(duration: 1).repeatForever(autoreverses: false)
+                                : .default,
+                            value: viewModel?.isRefreshing
+                        )
+                }
+                .disabled(viewModel?.isRefreshing == true)
+            }
+        }
+    }
+
     /// Custom header with subtitle showing conversation count.
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Text | Voice subtab split (issue #167)
+            if let vm = viewModel {
+                ChatsSegmentSelector(selection: Binding(
+                    get: { vm.selectedSegment },
+                    set: { vm.selectedSegment = $0 }
+                ))
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
             // Search bar (when active)
             if isSearchPresented, let vm = viewModel {
                 searchBar(vm)

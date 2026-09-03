@@ -17,6 +17,9 @@
 		006 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006 /* SettingsViewModel.swift */; };
 		007 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007 /* MainTabView.swift */; };
 		008 /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* ChatsView.swift */; };
+		CHSV02 /* ChatsSegmentSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHSV01 /* ChatsSegmentSelector.swift */; };
+		CHVV02 /* VoiceHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHVV01 /* VoiceHistoryView.swift */; };
+		CHDV02 /* CallDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHDV01 /* CallDetailsView.swift */; };
 		009 /* ConversationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F009 /* ConversationRow.swift */; };
 		00C7D4D86301E2E6D027DE0A /* PropagationSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */; };
 		010 /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F010 /* ContactsView.swift */; };
@@ -285,6 +288,9 @@
 		DA143A000000000000000003 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
 		ADABD423CE22B9E00BC5D7F3 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
 		AF0B30F4F05BB35FCC50D99F /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* ChatsView.swift */; };
+		CHSV03 /* ChatsSegmentSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHSV01 /* ChatsSegmentSelector.swift */; };
+		CHVV03 /* VoiceHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHVV01 /* VoiceHistoryView.swift */; };
+		CHDV03 /* CallDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHDV01 /* CallDetailsView.swift */; };
 		AF6FBB2A1A52C48C0FF27494 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */; };
 		AGB2B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
 		AGP1B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
@@ -550,6 +556,9 @@
 		F006 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		F007 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		F008 /* ChatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsView.swift; sourceTree = "<group>"; };
+		CHSV01 /* ChatsSegmentSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsSegmentSelector.swift; sourceTree = "<group>"; };
+		CHVV01 /* VoiceHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceHistoryView.swift; sourceTree = "<group>"; };
+		CHDV01 /* CallDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDetailsView.swift; sourceTree = "<group>"; };
 		F009 /* ConversationRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationRow.swift; sourceTree = "<group>"; };
 		F010 /* ContactsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsView.swift; sourceTree = "<group>"; };
 		F011 /* ContactCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactCard.swift; sourceTree = "<group>"; };
@@ -891,6 +900,9 @@
 			isa = PBXGroup;
 			children = (
 				F008 /* ChatsView.swift */,
+				CHSV01 /* ChatsSegmentSelector.swift */,
+				CHVV01 /* VoiceHistoryView.swift */,
+				CHDV01 /* CallDetailsView.swift */,
 				F009 /* ConversationRow.swift */,
 			);
 			path = Chats;
@@ -1585,6 +1597,9 @@
 				CHF005 /* CallHistoryFormatting.swift in Sources */,
 				CHM003 /* CallHistoryModels.swift in Sources */,
 				CHR003 /* CallHistoryRepository.swift in Sources */,
+				CHSV03 /* ChatsSegmentSelector.swift in Sources */,
+				CHVV03 /* VoiceHistoryView.swift in Sources */,
+				CHDV03 /* CallDetailsView.swift in Sources */,
 				90BD158667A5C627CFB1DEBF /* SettingsRepository.swift in Sources */,
 				489A5C72A9C4C3FAB742F3E2 /* NotificationObserver.swift in Sources */,
 				87358446F5D54F616D07CCEE /* IncomingMessageHandler.swift in Sources */,
@@ -1750,6 +1765,9 @@
 				006 /* SettingsViewModel.swift in Sources */,
 				007 /* MainTabView.swift in Sources */,
 				008 /* ChatsView.swift in Sources */,
+				CHSV02 /* ChatsSegmentSelector.swift in Sources */,
+				CHVV02 /* VoiceHistoryView.swift in Sources */,
+				CHDV02 /* CallDetailsView.swift in Sources */,
 				009 /* ConversationRow.swift in Sources */,
 				010 /* ContactsView.swift in Sources */,
 				011 /* ContactCard.swift in Sources */,
