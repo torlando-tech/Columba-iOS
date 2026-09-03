@@ -205,6 +205,27 @@ final class OggOpusInboundNormalizerTests: XCTestCase {
         XCTAssertThrowsError(try OggOpusInboundNormalizer.normalize(truncated))
     }
 
+    func testLacingTableShorterThanDeclaredSegmentCountThrows() {
+        // Hostile page: the header declares 100 lacing segments but only a
+        // handful exist before EOF. Without the pre-read bounds guard this
+        // indexed `data[off + 27 + i]` past the buffer and trapped (fatal
+        // error) instead of throwing - Greptile finding on PR #194.
+        var page = [UInt8](repeating: 0, count: 27)
+        page.replaceSubrange(0..<4, with: [0x4F, 0x67, 0x67, 0x53])
+        page[4] = 0
+        for i in 0..<8 { page[6 + i] = UInt8((UInt64.max >> (i * 8)) & 0xFF) }
+        for i in 0..<4 { page[14 + i] = UInt8((1 >> (i * 8)) & 0xFF) }
+        for i in 0..<4 { page[18 + i] = UInt8((0 >> (i * 8)) & 0xFF) }
+        page[26] = 100 // declared segment count
+        page.append(contentsOf: [0x13]) // only 1 lacing byte exists
+        page.append(contentsOf: opusHead())
+        let crc = OggOpusGranule.oggChecksum(page, 0, page.count, zeroStoredChecksum: true)
+        for i in 0..<4 { page[OggOpusGranule.checksumOffset + i] = UInt8((crc >> (i * 8)) & 0xFF) }
+        XCTAssertThrowsError(try OggOpusInboundNormalizer.normalize(page)) { error in
+            XCTAssertEqual(error as? OggOpusInboundNormalizer.NormalizeError, .malformedPage)
+        }
+    }
+
     // MARK: - helpers
 
     private func walk(_ data: [UInt8]) -> [VoiceTestSupport.OggPage] {

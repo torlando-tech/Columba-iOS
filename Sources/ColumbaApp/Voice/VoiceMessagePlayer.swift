@@ -51,6 +51,10 @@ public final class VoiceMessagePlayer {
     @ObservationIgnored private var waveformInFlight: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var tempFiles: [URL] = []
     @ObservationIgnored private var isTornDown = false
+    /// True from the moment we activated the shared `AVAudioSession` for
+    /// playback until we deactivate it. We release only a session we own:
+    /// deactivating the recorder's or a call's session would clobber it.
+    @ObservationIgnored private var ownsPlaybackSession = false
     @ObservationIgnored private let maxCacheEntries = 128
 
     public init() {}
@@ -142,6 +146,23 @@ public final class VoiceMessagePlayer {
             states[key] = st
         }
         currentKey = nil
+        releasePlaybackSession()
+    }
+
+    /// Release the shared audio session we activated for playback, if we own
+    /// it. `notifyOthersOnDeactivation` lets audio interrupted from other
+    /// apps resume. Deactivating the recorder's or a live call's session
+    /// would clobber it, so we release only what we took - and `stopCurrent`
+    /// runs before `startPlayback` re-activates, so consecutive plays are
+    /// unaffected.
+    private func releasePlaybackSession() {
+        guard ownsPlaybackSession else { return }
+        ownsPlaybackSession = false
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        } catch {
+            DiagLog.log("[VOICE-PLAY] session release failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Playback start (off the main-actor hot path)
@@ -166,6 +187,10 @@ public final class VoiceMessagePlayer {
             do {
                 try session.setCategory(.playback, mode: .default, options: [])
                 try session.setActive(true, options: [])
+                // We made the shared session ours: release it when playback
+                // ends (stopCurrent / tearDown) so interrupted audio from
+                // other apps can resume and we hold no idle ownership.
+                ownsPlaybackSession = true
             } catch {
                 DiagLog.log("[VOICE-PLAY] session setup failed: \(error.localizedDescription)")
             }

@@ -138,6 +138,11 @@ public enum OggOpusInboundNormalizer {
 
             if data[off + 4] != 0 { anyNonZeroVersionPage = true }
             let seg = Int(data[off + 26])
+            // The lacing table is attacker-controlled in size: validate that
+            // all `seg` entries exist before reading any of them (a page that
+            // declares more segments than remaining header bytes is
+            // malformed, not a reason to trap).
+            guard off + 27 + seg <= data.count else { throw NormalizeError.malformedPage }
             var payloadSize = 0
             for i in 0..<seg { payloadSize += Int(data[off + 27 + i]) }
             let payloadStart = off + 27 + seg
