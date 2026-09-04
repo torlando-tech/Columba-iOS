@@ -627,6 +627,11 @@ public final class AppServices {
     /// interfaces, without making AppServices re-derive it.
     private var pythonStartIdentity: Identity?
 
+    /// The tcpServerAddress used at the last successful start, so a
+    /// same-identity restart (restartPythonBackend) can re-init without the
+    /// caller re-deriving it. Empty until the first start.
+    private var lastTcpServerAddress: String = ""
+
     /// The interface entities currently live in the Python RNS stack, keyed by
     /// entity id. Seeded when the backend starts and updated incrementally by
     /// `applyInterfaceChanges()` as interfaces are hot-added / hot-removed.
@@ -1184,6 +1189,7 @@ public final class AppServices {
     }
 
     private func initializeUnlocked(tcpServerAddress: String) async throws {
+        self.lastTcpServerAddress = tcpServerAddress
         DiagLog.log("[STARTUP] AppServices initialization beginning")
         let monitorLease = RuntimeActivityMonitor.shared.acquire()
         var initializationSucceeded = false
@@ -2435,41 +2441,44 @@ public final class AppServices {
         }
     }
 
-    /// Stop the running Python RNS stack, regenerate the RNS config file
-    /// from `InterfaceRepository.getEnabledInterfaces()`, and start a fresh
-    /// instance. Called from the InterfaceManagementScreen's "Apply &
-    /// Restart" button after the user adds, edits, toggles, or removes an
-    /// interface. RNS has no hot-reload — the only way to pick up a new
-    /// `[interfaces]` section is a full Reticulum re-init.
+    /// Restart the running Python RNS stack IN-PROCESS: full teardown
+    /// (`shutdownUnlocked()`) then re-init (`initializeUnlocked`) with the SAME
+    /// identity — the exact primitives identity-switch already uses. Used to
+    /// apply restart-gated config (discovery, autoconnect count, bootstrap,
+    /// transport mode). Causes a ~1-2s connectivity outage.
     ///
-    /// Causes a ~1-2s connectivity outage. Caller should reflect the
-    /// transition in the UI (the Apply button already shows a
-    /// ProgressView while `isApplyingChanges` is set).
+    /// This replaces the previous "write config + post ColumbaRelaunchRequired"
+    /// stub, which had no UI consumer and required a manual app relaunch. The
+    /// `ColumbaBackendRestarted` notification below tells the UI the stack is
+    /// back up so it can re-poll (discovery screen, transport toggle).
     public func restartPythonBackend() async {
         guard let identity = pythonStartIdentity else {
-            DiagLog.log("[RNS] restart skipped — backend was never started")
+            DiagLog.log("[RNS] restartPythonBackend skipped — backend was never started")
             return
         }
-        // Rewrite the RNS config on disk so the new interface set is
-        // captured. The actual Python-side restart is DELIBERATELY skipped
-        // — in-place restart of the embedded interpreter is flaky on iOS
-        // (Reticulum is a class-level singleton, AutoInterface holds
-        // multicast socket threads that don't tear down deterministically,
-        // and the embedded Python aborts ~130ms into the second
-        // `Reticulum.__init__` when the previous instance's threads still
-        // hold the multicast bind). RNS has no hot-reload of [interfaces]
-        // anyway, so the right model is: write the config, tell the user
-        // to relaunch Columba. The full app launch on the next start gets
-        // a clean Python + clean RNS singleton.
-        _ = identity // pythonStartIdentity presence is the only precondition
+        let addr = lastTcpServerAddress
+        // Durability: rewrite the RNS config with the current interface set AND
+        // the current discovery settings (writePythonConfig reads discovery
+        // settings — T-C) before tearing down, so the re-init reads fresh values.
         let fresh = InterfaceRepository().getEnabledInterfaces()
         writePythonConfig(interfaces: fresh)
-        DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); awaiting next app launch to apply")
-        // Notify the UI so it can show a "relaunch Columba" prompt.
+        DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
+        try? await withLifecycleOperation {
+            await shutdownUnlocked()
+            // Small delay to ensure clean shutdown (matches switchIdentityUnlocked).
+            try? await Task.sleep(for: .milliseconds(200))
+            try await initializeUnlocked(
+                identity: identity,
+                identityHash: identity.hexHash,
+                tcpServerAddress: addr
+            )
+        }
+        // Signal the UI that the stack is back up so it can re-poll discovery
+        // state. (Replaces the dead ColumbaRelaunchRequired notification.)
         NotificationCenter.default.post(
-            name: Notification.Name("ColumbaRelaunchRequired"),
-            object: nil
+            name: Notification.Name("ColumbaBackendRestarted"), object: nil
         )
+        DiagLog.log("[RNS] restartPythonBackend: in-process restart complete")
     }
 
     /// Force the Python RNS stack to flush its path table + known destinations
