@@ -79,6 +79,9 @@ final class TCPClientWizardViewModel {
     var mode: InterfaceMode = .full
     var enabled: Bool = true
     var showAdvanced: Bool = false
+    /// Bootstrap-only: RNS auto-detaches this interface once discovered
+    /// interfaces connect (RNS 1.1.x bootstrap semantics).
+    var bootstrapOnly: Bool = false
 
     // MARK: - Edit Context
 
@@ -126,6 +129,7 @@ final class TCPClientWizardViewModel {
         passphrase = config.passphrase ?? ""
         mode = entity.mode
         enabled = entity.enabled
+        bootstrapOnly = config.bootstrapOnly
 
         let match = TcpCommunityServer.servers.first { server in
             server.host == config.targetHost && server.port == config.targetPort
@@ -183,7 +187,8 @@ final class TCPClientWizardViewModel {
             targetHost: trimmedHost,
             targetPort: port,
             networkName: trimmedNetwork.isEmpty ? nil : trimmedNetwork,
-            passphrase: trimmedPassphrase.isEmpty ? nil : trimmedPassphrase
+            passphrase: trimmedPassphrase.isEmpty ? nil : trimmedPassphrase,
+            bootstrapOnly: bootstrapOnly
         )
 
         sink.saveTCPInterface(

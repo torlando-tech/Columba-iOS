@@ -200,16 +200,34 @@ public struct TCPClientConfig: Codable, Equatable, Sendable {
     /// Optional passphrase (IFAC)
     public var passphrase: String?
 
+    /// Bootstrap-only: RNS auto-detaches this interface once discovered
+    /// interfaces connect (RNS 1.1.x bootstrap semantics).
+    public var bootstrapOnly: Bool
+
     public init(
         targetHost: String,
         targetPort: UInt16 = 4242,
         networkName: String? = nil,
-        passphrase: String? = nil
+        passphrase: String? = nil,
+        bootstrapOnly: Bool = false
     ) {
         self.targetHost = targetHost
         self.targetPort = targetPort
         self.networkName = networkName
         self.passphrase = passphrase
+        self.bootstrapOnly = bootstrapOnly
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        targetHost = try container.decode(String.self, forKey: .targetHost)
+        targetPort = try container.decode(UInt16.self, forKey: .targetPort)
+        networkName = try container.decodeIfPresent(String.self, forKey: .networkName)
+        passphrase = try container.decodeIfPresent(String.self, forKey: .passphrase)
+        // Added after initial release: old stored interface JSON lacks the key.
+        // `decodeIfPresent` falls back to `false` so pre-existing configs
+        // keep decoding (synthesized Codable would throw keyNotFound).
+        bootstrapOnly = try container.decodeIfPresent(Bool.self, forKey: .bootstrapOnly) ?? false
     }
 }
 

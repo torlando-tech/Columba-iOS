@@ -39,11 +39,20 @@ enum PythonConfigWriter {
     ///     Mode" toggle (stored in App Group UserDefaults under
     ///     `transport_enabled`). Changing this requires an Apply &
     ///     Restart since RNS reads it at `Reticulum.__init__` time.
+    ///   - discoverInterfaces: whether RNS should enable interface discovery
+    ///     (RNS 1.1.x `discover_interfaces`). Restart-gated: RNS reads it at
+    ///     `Reticulum.__init__` time, so a change only takes effect on the
+    ///     next Apply & Restart.
+    ///   - autoconnectDiscoveredCount: max number of discovered interfaces
+    ///     RNS should auto-connect to (0-10; 0 = discovery without
+    ///     autoconnect). Also restart-gated.
     /// - Returns: ConfigObj-format text suitable for writing to
     ///   `<configDir>/config`.
     static func write(
         interfaces: [InterfaceEntity],
-        enableTransport: Bool = false
+        enableTransport: Bool = false,
+        discoverInterfaces: Bool = false,
+        autoconnectDiscoveredCount: Int = 0
     ) -> String {
         var lines: [String] = []
 
@@ -51,6 +60,12 @@ enum PythonConfigWriter {
         lines.append("  enable_transport = \(enableTransport ? "yes" : "no")")
         lines.append("  share_instance = no")
         lines.append("  panic_on_interface_error = no")
+        // RNS 1.1.x interface discovery. Restart-gated: RNS reads these at
+        // Reticulum.__init__. discover_interfaces lists announced interfaces;
+        // autoconnect_discovered_interfaces auto-connects up to N discovered
+        // interfaces (0 = discovery without autoconnect).
+        lines.append("  discover_interfaces = \(discoverInterfaces ? "yes" : "no")")
+        lines.append("  autoconnect_discovered_interfaces = \(autoconnectDiscoveredCount)")
         lines.append("")
         lines.append("[logging]")
         lines.append("  loglevel = 4")
@@ -109,6 +124,9 @@ enum PythonConfigWriter {
             appendValue("target_host", cfg.targetHost, to: &lines)
             lines.append("    target_port = \(cfg.targetPort)")
             appendIFAC(networkName: cfg.networkName, passphrase: cfg.passphrase, to: &lines)
+            if cfg.bootstrapOnly {
+                lines.append("    bootstrap_only = yes")
+            }
         case .tcpServer(let cfg):
             lines.append("    type = TCPServerInterface")
             lines.append("    listen_ip = \(cfg.listenIp)")

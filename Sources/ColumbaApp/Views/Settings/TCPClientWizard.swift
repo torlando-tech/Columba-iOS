@@ -261,6 +261,7 @@ struct TCPReviewConfigureStep: View {
                 serverSummaryCard
                 interfaceFields
                 enabledToggle
+                bootstrapOnlyToggle
                 advancedSection
             }
             .padding(16)
@@ -330,6 +331,29 @@ struct TCPReviewConfigureStep: View {
             Toggle("", isOn: $wizard.enabled)
                 .labelsHidden()
                 .tint(Theme.accentColor)
+        }
+        .padding(16)
+        .background(Theme.backgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+    }
+
+    private var bootstrapOnlyToggle: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Bootstrap only")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Theme.textPrimary)
+
+                Spacer()
+
+                Toggle("", isOn: $wizard.bootstrapOnly)
+                    .labelsHidden()
+                    .tint(Theme.accentColor)
+            }
+
+            Text("RNS will drop this interface once discovered interfaces connect")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
         }
         .padding(16)
         .background(Theme.backgroundSecondary)

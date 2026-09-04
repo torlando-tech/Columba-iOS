@@ -58,6 +58,8 @@ public actor SettingsRepository {
         static let iconName = "profileIconName"
         static let iconFgColor = "profileIconFgColor"
         static let iconBgColor = "profileIconBgColor"
+        static let discoverInterfacesEnabled = "discover_interfaces_enabled"
+        static let autoconnectDiscoveredCount = "autoconnect_discovered_count"
     }
 
     // MARK: - Properties
@@ -330,6 +332,31 @@ public actor SettingsRepository {
     /// Persist the global conversation message-body scale in 10% increments.
     public func setMessageTextScale(_ value: Double) {
         defaults.set(MessageTextScale.normalize(value), forKey: Keys.messageTextScale)
+    }
+
+    // MARK: - Interface Discovery
+
+    /// RNS 1.1.x interface-discovery master switch (config-restart-gated).
+    public func getDiscoverInterfacesEnabled() -> Bool {
+        defaults.bool(forKey: Keys.discoverInterfacesEnabled)
+    }
+
+    /// Set the interface-discovery master switch.
+    public func setDiscoverInterfacesEnabled(_ v: Bool) {
+        defaults.set(v, forKey: Keys.discoverInterfacesEnabled)
+    }
+
+    /// Max discovered interfaces to auto-connect (0-10). 0 doubles as the
+    /// "never configured" sentinel (UserDefaults.integer returns 0 for a
+    /// missing key) — the UI defaults to 3 on first enable.
+    public func getAutoconnectDiscoveredCount() -> Int {
+        let raw = defaults.integer(forKey: Keys.autoconnectDiscoveredCount)
+        return min(max(raw, 0), 10)
+    }
+
+    /// Persist the max discovered interfaces to auto-connect, clamped to 0-10.
+    public func setAutoconnectDiscoveredCount(_ v: Int) {
+        defaults.set(min(max(v, 0), 10), forKey: Keys.autoconnectDiscoveredCount)
     }
 
     /// Get last sync timestamp.
