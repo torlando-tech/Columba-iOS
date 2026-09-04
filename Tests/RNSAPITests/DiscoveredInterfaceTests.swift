@@ -61,9 +61,9 @@ final class DiscoveredInterfaceTests: XCTestCase {
             name: name,
             type: type,
             reachableOn: reachableOn,
-            ifacNetname: ifacNetname,
             latitude: latitude,
-            longitude: longitude
+            longitude: longitude,
+            ifacNetname: ifacNetname
         )
     }
 
