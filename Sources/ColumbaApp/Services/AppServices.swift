@@ -498,6 +498,11 @@ public final class AppServices {
     /// throwaway repo or touching a separate store.
     public private(set) var messageRepository: MessageRepository?
 
+    /// Owns the `columba_call_history` table in the shared `lxmf-swift.db`.
+    /// Set during `initialize`; nil until the app finishes startup (or if the
+    /// store failed to open — history is an additive feature, never core).
+    public private(set) var callHistoryRepository: CallHistoryRepository?
+
     /// Propagation node manager for relay discovery and sync.
     public private(set) var propagationManager: PropagationNodeManager?
 
@@ -1224,6 +1229,25 @@ public final class AppServices {
         self.grdbDatabasePath = grdbPath
         let messageRepository = try MessageRepository(grdbPath: grdbPath)
         self.messageRepository = messageRepository
+        // Open the identity-scoped call-history store. A repository left over
+        // from a previous init is closed FIRST: if opening this identity's
+        // store then fails, the catch leaves `callHistoryRepository` nil
+        // rather than the previous identity's still-open store, so the new
+        // CallManager can never write this identity's call metadata into the
+        // previous identity's database.
+        if let stale = self.callHistoryRepository {
+            await stale.close()
+            self.callHistoryRepository = nil
+        }
+        do {
+            let callHistory = try CallHistoryRepository(grdbPath: grdbPath)
+            self.callHistoryRepository = callHistory
+            DiagLog.log("[INIT] call-history repository ready at \(grdbPath)")
+        } catch {
+            // Non-fatal: history is a feature, not core messaging. Log and continue
+            // with a nil repository; CallManager no-ops all history writes when nil.
+            logger.warning("[INIT] call-history repository failed to open: \(error.localizedDescription, privacy: .public)")
+        }
         let recoveredRetryCount = try await messageRepository.recoverInterruptedRetries()
         if recoveredRetryCount > 0 {
             logger.warning("Recovered \(recoveredRetryCount, privacy: .public) interrupted message retries")
@@ -1260,6 +1284,7 @@ public final class AppServices {
         DiagLog.log("[INIT] Step 7b: creating CallManager")
         let cm = CallManager()
         await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        cm.callHistoryRepository = self.callHistoryRepository
         self.callManager = cm
         DiagLog.log("[INIT] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
         #endif
@@ -3184,6 +3209,25 @@ public final class AppServices {
         self.grdbDatabasePath = grdbPath
         let messageRepository = try MessageRepository(grdbPath: grdbPath)
         self.messageRepository = messageRepository
+        // Open the identity-scoped call-history store. A repository left over
+        // from a previous init is closed FIRST: if opening this identity's
+        // store then fails, the catch leaves `callHistoryRepository` nil
+        // rather than the previous identity's still-open store, so the new
+        // CallManager can never write this identity's call metadata into the
+        // previous identity's database.
+        if let stale = self.callHistoryRepository {
+            await stale.close()
+            self.callHistoryRepository = nil
+        }
+        do {
+            let callHistory = try CallHistoryRepository(grdbPath: grdbPath)
+            self.callHistoryRepository = callHistory
+            DiagLog.log("[INIT] call-history repository ready at \(grdbPath)")
+        } catch {
+            // Non-fatal: history is a feature, not core messaging. Log and continue
+            // with a nil repository; CallManager no-ops all history writes when nil.
+            logger.warning("[INIT] call-history repository failed to open: \(error.localizedDescription, privacy: .public)")
+        }
         let recoveredRetryCount = try await messageRepository.recoverInterruptedRetries()
         if recoveredRetryCount > 0 {
             logger.warning("Recovered \(recoveredRetryCount, privacy: .public) interrupted message retries")
@@ -3216,6 +3260,7 @@ public final class AppServices {
         DiagLog.log("[INIT2] Step 7b: creating CallManager")
         let cm = CallManager()
         await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        cm.callHistoryRepository = self.callHistoryRepository
         self.callManager = cm
         DiagLog.log("[INIT2] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
         #endif

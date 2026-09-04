@@ -103,6 +103,124 @@ public final class CallManager {
     private var ringbackActive = false
     private let logger = Logger(subsystem: "network.columba.Columba", category: "CallManager")
 
+    // MARK: - Call history (issue #167)
+
+    /// History writer. Nil in Model B runtime / before AppServices wires it → all
+    /// history writes no-op (feature is additive, never blocks a call).
+    ///
+    /// Both CallManager and CallHistoryRepository live in the SAME ColumbaApp
+    /// target, so CallManager holds the CONCRETE actor directly (no protocol
+    /// needed). Its write methods are `async throws`; CallManager enqueues them
+    /// onto an ordered per-attempt chain (`historyWriteChain`) from its
+    /// @MainActor callbacks — a history write must never block or fail a call,
+    /// yet a call's writes must land in lifecycle order (insert → milestones →
+    /// end), so an end can't outrun its insert.
+    var callHistoryRepository: CallHistoryRepository?
+    /// Hex of the active local identity, set at init for identity-scoped writes.
+    /// (Internal, not private, so lifecycle tests can seed it without the full
+    /// `initialize()` transport stack.)
+    var localIdentityHashHex: String?
+    /// The attempt id for the in-flight call (nil when idle).
+    private(set) var currentCallAttemptId: String?
+    /// Serialized history-write chain: every write for the current call attempt
+    /// is appended here and executes in FIFO order. A new attempt starts a new
+    /// chain (only one call is in flight at a time). This is what makes
+    /// `recordEnd` observe the row `insertAttempt` created — the lifecycle
+    /// callbacks fire independently and can be arbitrarily close together.
+    private var historyWriteChain: Task<Void, Never>?
+    /// The in-flight `initiateCall` task (Python-runtime only). Shutdown
+    /// CANCELS it (deliberately does not await it — a task stuck in a
+    /// non-cancellable network await would hang teardown; the `isShutDown`
+    /// latch carries the guarantee instead): it can be suspended at an
+    /// `await` (destination resolution / prepareOutboundCall / an in-flight
+    /// telephone.call) and would otherwise resume after the drain and start a
+    /// fresh history attempt on a torn-down manager. (private(set) so
+    /// lifecycle tests can assert it is cleared on shutdown.)
+    private(set) var outgoingCallTask: Task<Void, Never>?
+    /// Set (synchronously, on the main actor) at the very start of
+    /// `shutdown()`. Suspended `initiateCall` tasks re-check it after each
+    /// suspension point and abort before touching call state or the history
+    /// store, so nothing can create a write chain after the drain. THIS latch
+    /// — not the (bounded) task await — is what carries the "no fresh attempt
+    /// after shutdown" guarantee: it is set before any suspension, and every
+    /// write path observes it. (private(set) so lifecycle tests can assert
+    /// the latch engaged on shutdown.)
+    private(set) var isShutDown = false
+    private var callAttemptStartedAt: Date?
+    private var peerDisplayNameSnapshot: String?
+    /// Whether the in-flight call reached the connection milestone
+    /// (establishedCallback fired). Drives the `wasConnected` outcome rule.
+    /// Reset in beginCallAttempt / resetState.
+    private var didConnect: Bool = false
+    /// Observable: the attempt id of the live call, so the Voice list can mark the
+    /// matching record "In progress". Nil when idle.
+    public private(set) var activeCallAttemptId: String?
+
+    /// Start tracking one call attempt in the history store.
+    ///
+    /// `peerHash` is set before this is called on BOTH paths (outgoing:
+    /// `initiateCall`, incoming: `handleCallerIdentified`), so it is non-nil
+    /// here; a blank/absent hash is never valid for a stored record, so it is
+    /// stored as an empty string rather than force-unwrapped (no crash).
+    /// The write seeds the per-attempt ordered chain: a history write must
+    /// never block or fail a call, and a nil repository (Model B / pre-wiring)
+    /// is a silent no-op.
+    ///
+    /// Refuses to start once the instance is shut down (`isShutDown`): a task
+    /// that was suspended at a network await and resumes AFTER `shutdown()`
+    /// must not be able to create a fresh attempt against the repository
+    /// AppServices has closed. This is the single point every attempt is born
+    /// from (outgoing + incoming), so it is the authoritative "no fresh
+    /// attempt after shutdown" gate. (Internal, not private, so lifecycle
+    /// tests can exercise the gate directly.)
+    func beginCallAttempt(direction: CallHistoryDirection, peerDisplayName: String?) {
+        guard let hex = localIdentityHashHex else { return }
+        guard !isShutDown else {
+            logger.info("[CALL] beginCallAttempt refused: manager already shut down")
+            return
+        }
+        let id = UUID().uuidString
+        currentCallAttemptId = id
+        activeCallAttemptId = id
+        callAttemptStartedAt = Date()
+        didConnect = false
+        peerDisplayNameSnapshot = peerDisplayName
+        let remoteHash = peerHash ?? ""
+        let profileCode = Int(activeProfile.rawValue)
+        // All values are captured by value (like the other write sites), so
+        // the Task only holds the repo for the duration of the write. A NEW
+        // attempt always gets a FRESH chain: only one call is in flight at a
+        // time, and any leftover (completed) chain from the previous attempt
+        // is discarded — nothing from it is still pending, because every
+        // terminal path (ended / failed / reset) finalizes before clearing.
+        let repo = callHistoryRepository
+        historyWriteChain = Task {
+            guard let repo else { return }
+            try? await repo.insertAttempt(
+                callAttemptId: id, localIdentityHash: hex,
+                remoteIdentityHash: remoteHash,
+                direction: direction, peerDisplayNameSnapshot: peerDisplayName,
+                codecProfileCode: profileCode, attemptedAt: Date())
+        }
+    }
+
+    /// Enqueue one history write on the current attempt's ordered chain
+    /// (FIFO: insert → milestones → end), creating the chain if
+    /// `beginCallAttempt` hasn't seeded one yet.
+    ///
+    /// Each step awaits the previous, so a call's writes always land in
+    /// lifecycle order — in particular the terminal `recordEnd` always runs
+    /// AFTER the `insertAttempt` row exists. The writes run detached from the
+    /// caller (a history write must never block a call); a nil repository
+    /// (Model B / pre-wiring) is a silent no-op.
+    private func enqueueHistoryWrite(_ body: @escaping @Sendable () async -> Void) {
+        if let existing = historyWriteChain {
+            historyWriteChain = Task { await existing.value; await body() }
+        } else {
+            historyWriteChain = Task { await body() }
+        }
+    }
+
     // MARK: - Initialization
 
     /// Initialize the Telephone actor with identity, transport, and path table.
@@ -113,6 +231,7 @@ public final class CallManager {
     /// 3. Wires up ringing/established/ended callbacks for UI state updates
     func initialize(identity: Identity, transport: ReticulumTransport, pathTable: PathTable?, database: LXMFDatabase?) async {
         #if COLUMBA_RUNTIME_PYTHON
+        self.localIdentityHashHex = identity.hexHash
         self.pathTable = pathTable
         self.transport = transport
         self.database = database
@@ -175,6 +294,15 @@ public final class CallManager {
         await phone.setRingingCallback { [weak self] remoteHash in
             await MainActor.run {
                 self?.handleCallerIdentified(remoteHash)
+                // Outgoing-only: our own call started ringing on the far end.
+                // (For incoming, handleCallerIdentified above begins the attempt;
+                // the isIncoming==false guard keeps this from double-recording.)
+                if let id = self?.currentCallAttemptId, self?.isIncoming == false,
+                   let repo = self?.callHistoryRepository {
+                    self?.enqueueHistoryWrite {
+                        try? await repo.recordRinging(id, at: Date())
+                    }
+                }
             }
         }
 
@@ -183,6 +311,17 @@ public final class CallManager {
                 guard let self else { return }
                 DiagLog.log("[CALL] establishedCallback fired, isIncoming=\(self.isIncoming), profile=\(self.activeProfile.displayName)")
                 self.callState = .established
+                // Connection milestone reached — the wasConnected outcome rule
+                // (CallHistoryFormatting.outcome) reads didConnect to decide
+                // .connectedEnded vs the not-connected outcomes.
+                self.didConnect = true
+                if let id = self.currentCallAttemptId {
+                    let repo = self.callHistoryRepository
+                    self.enqueueHistoryWrite {
+                        guard let repo else { return }
+                        try? await repo.recordConnected(id, at: Date())
+                    }
+                }
                 self.startDurationTimer()
                 #if os(iOS)
                 self.stopRingback()  // hand off the tone engine to the call audio
@@ -210,6 +349,22 @@ public final class CallManager {
                 #if os(iOS)
                 self.stopRingback()  // stop ring-back if the call ended while ringing
                 #endif
+                // Finalize the call-history record. didConnect is the load-bearing
+                // argument: it is what makes a connected call finalize as
+                // .connectedEnded even when the local user hangs up.
+                if let id = self.currentCallAttemptId {
+                    let direction: CallHistoryDirection = self.isIncoming ? .incoming : .outgoing
+                    let outcome = CallHistoryFormatting.outcome(direction: direction,
+                                                                wasConnected: self.didConnect,
+                                                                reason: reason)
+                    let repo = self.callHistoryRepository
+                    self.enqueueHistoryWrite {
+                        guard let repo else { return }
+                        try? await repo.recordEnd(id, at: Date(), outcome: outcome)
+                    }
+                    self.currentCallAttemptId = nil
+                    self.activeCallAttemptId = nil
+                }
                 let reasonText: String
                 switch reason {
                 case .localHangup: reasonText = "Call Ended"
@@ -291,18 +446,39 @@ public final class CallManager {
             return
         }
 
-        Task {
+        let task = Task {
             guard let target = await resolveTelephonyTarget(from: destinationHash) else {
                 self.failOutgoingCall("Telephony identity unavailable")
                 return
             }
+            // An identity switch / app shutdown may have happened while the
+            // resolution above was suspended: abort before touching call
+            // state or the history store.
+            if self.isShutDown || Task.isCancelled {
+                self.logger.info("[CALL] initiateCall aborted after resolve (shutdown/cancelled)")
+                return
+            }
             await networkTransport.prepareOutboundCall(target)
+            // Same gate after prepare: a shutdown that raced it must not
+            // start a call attempt on a torn-down manager (whose repository
+            // AppServices is about to close).
+            if self.isShutDown || Task.isCancelled {
+                self.logger.info("[CALL] initiateCall aborted after prepare (shutdown/cancelled)")
+                return
+            }
 
             self.isIncoming = false
             self.peerName = peerDisplayName
             self.peerHash = target.destinationHash.toHex()
             self.callState = .calling
             self.activeProfile = profile
+            // Begin the history attempt AFTER activeProfile is set so the
+            // captured codecProfileCode is the outgoing default, not a stale
+            // value from a previous call. peerHash is already set above.
+            // (No suspension point between the gate after prepareOutboundCall
+            // and here, so nothing can interleave: if a shutdown landed,
+            // gate 2 above already returned.)
+            self.beginCallAttempt(direction: .outgoing, peerDisplayName: peerDisplayName)
 
             let callUUID = UUID()
             self.currentCallUUID = callUUID
@@ -322,6 +498,9 @@ public final class CallManager {
                 self.failOutgoingCall("Call Failed")
             }
         }
+        // Track the task so shutdown() can cancel + await it (it may be
+        // suspended at a network await when the app tears down).
+        self.outgoingCallTask = task
         #else
         logger.warning("Cannot call: telephony is unavailable in Model B app runtime")
         #endif
@@ -365,7 +544,20 @@ public final class CallManager {
         return TelephonyCallTarget(destinationHash: derivedHash, publicKeys: source.publicKeys)
     }
 
-    private func failOutgoingCall(_ reason: String) {
+    /// Pre-connect setup failure terminalizer. (Internal, not private, so
+    /// lifecycle tests can exercise its write-gating directly.)
+    func failOutgoingCall(_ reason: String) {
+        // Pre-connect setup failure (identity unavailable / telephone.call threw),
+        // so wasConnected is false and .failed is the reduced outcome.
+        if let id = currentCallAttemptId {
+            let repo = callHistoryRepository
+            enqueueHistoryWrite {
+                guard let repo else { return }
+                try? await repo.recordEnd(id, at: Date(), outcome: .failed)
+            }
+            currentCallAttemptId = nil
+            activeCallAttemptId = nil
+        }
         callState = .ended(reason)
         endedDismissTask?.cancel()
         endedDismissTask = Task { @MainActor [weak self] in
@@ -591,6 +783,16 @@ public final class CallManager {
         self.peerHash = remoteDeliveryHash.toHex()
         self.callState = .ringing
         self.logger.error("[CALL] Ringing from: \(remoteDeliveryHash.toHex(), privacy: .public)")
+        // Begin the incoming history attempt now that the remote hash is known
+        // (identify arrives after prepareForIncomingCall). Guard on nil so a
+        // second identify callback can't start a second attempt for one call.
+        // peerDisplayName is nil here: resolveContactName runs AFTER this point
+        // (and asynchronously), so the snapshot can't hold the resolved name —
+        // the Voice list (Task 4) enriches display names from the conversations
+        // table. This nil is the best-effort fallback column, not the UI name.
+        if currentCallAttemptId == nil {
+            beginCallAttempt(direction: .incoming, peerDisplayName: nil)
+        }
 
         if self.isIncoming {
             self.resolveContactName(deliveryHash: remoteDeliveryHash)
@@ -676,7 +878,41 @@ public final class CallManager {
     // MARK: - Shutdown
 
     func shutdown() async {
+        // FIRST and synchronously (no await before this): mark the manager
+        // torn-down. Suspended `initiateCall` tasks re-check this flag after
+        // each suspension point and abort before touching call state or the
+        // history store, so none of them can resume and create a fresh
+        // attempt + write chain after the drain below. (The instance is not
+        // reused after shutdown — AppServices nils it and recreates one per
+        // identity — so the flag is one-way.)
+        isShutDown = true
         stopAudio()
+
+        // Finalize the active call-history attempt DETERMINISTICALLY, before
+        // the hangup, and clear the attempt id so the (asynchronous) end
+        // callback for that hangup can never enqueue a terminal write after
+        // us. AppServices closes this manager's repository immediately after
+        // shutdown() returns (identity switch), so the write must be in
+        // flight before that — it cannot rely on the callback landing first.
+        // CallManager is @MainActor and the end callback's enqueue runs on
+        // the main actor too, so this clear is race-free with the callback:
+        // whichever runs first wins, the other observes a nil id, and at most
+        // ONE terminal write per attempt is ever enqueued. The outcome matches
+        // what the end callback would record for a local hangup
+        // (connectedEnded / declinedLocal / cancelledLocal).
+        if let id = currentCallAttemptId {
+            let direction: CallHistoryDirection = isIncoming ? .incoming : .outgoing
+            let outcome = CallHistoryFormatting.outcome(direction: direction,
+                                                        wasConnected: didConnect,
+                                                        reason: .localHangup)
+            let repo = callHistoryRepository
+            enqueueHistoryWrite {
+                guard let repo else { return }
+                try? await repo.recordEnd(id, at: Date(), outcome: outcome)
+            }
+            currentCallAttemptId = nil
+            activeCallAttemptId = nil
+        }
 
         // End any active CallKit call before shutting down Telephone
         #if os(iOS)
@@ -693,6 +929,34 @@ public final class CallManager {
         endedDismissTask?.cancel()
         currentCallUUID = nil
         telephone = nil
+
+        // Cancel + release any in-flight initiateCall task. It may be
+        // suspended at a network await (destination resolution /
+        // prepareOutboundCall / an in-flight telephone.call). Cancellation
+        // stops its work; the `isShutDown` latch above is what CARRIES the
+        // "no fresh attempt" guarantee (the task's gates abort before
+        // beginCallAttempt on resumption). We deliberately do NOT await it:
+        // a task stuck in a non-cancellable await would hang the app's
+        // teardown, and the latch already makes a post-drain attempt
+        // impossible, so observing the task finish buys nothing.
+        #if COLUMBA_RUNTIME_PYTHON
+        if let task = outgoingCallTask {
+            task.cancel()
+            outgoingCallTask = nil
+        }
+        #endif
+
+        // Drain the call-history write chain BEFORE returning. The queue is
+        // CLOSED at this point: the pre-hangup finalization above cleared the
+        // attempt id (the end-callback, milestone, and fail paths all gate
+        // their writes on it), and telephone is nil, so nothing new can be
+        // enqueued. Awaiting each queued chain to completion is therefore
+        // deterministic — no sleep-based idle heuristic — and the pending
+        // finalization always lands before AppServices closes the repository.
+        while let chain = historyWriteChain {
+            historyWriteChain = nil
+            await chain.value
+        }
     }
 
     // MARK: - Audio Pipeline
@@ -974,6 +1238,25 @@ public final class CallManager {
     private func resetState() {
         stopRingback()  // clear ringbackActive so a later call's ringback isn't suppressed
         callState = .idle
+        // Clear in-flight call-history attempt state so a stale id never lingers.
+        // Finalize the record FIRST if a call is still active: a reset that
+        // reaches here without a terminal callback (e.g. a CallKit provider
+        // reset) must not strand the row — it is recorded as `interrupted`
+        // (connected) or `notConnected` (not) with an end time, so the Voice
+        // list can never show a dead call as "in progress" forever.
+        if let id = currentCallAttemptId {
+            let wasConnected = didConnect
+            let outcome: CallOutcome = wasConnected ? .interrupted : .notConnected
+            let repo = callHistoryRepository
+            enqueueHistoryWrite {
+                guard let repo else { return }
+                try? await repo.recordEnd(id, at: Date(), outcome: outcome)
+            }
+        }
+        currentCallAttemptId = nil
+        activeCallAttemptId = nil
+        callAttemptStartedAt = nil
+        didConnect = false
         isMuted = false
         isSpeakerOn = false
         isPttMode = false

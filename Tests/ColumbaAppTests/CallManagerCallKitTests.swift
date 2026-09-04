@@ -167,6 +167,195 @@ final class CallManagerCallKitTests: XCTestCase {
         )
         XCTAssertNil(manager.peerHash, "peerHash must not be populated on a reset-race")
     }
+
+    // MARK: - Call-history lifecycle finalization (issue #167)
+
+    /// A CallKit provider reset while a call is active must FINALIZE the
+    /// history attempt (end time + outcome) — otherwise the row is stranded
+    /// with no end and the Voice list shows a dead call "in progress" forever.
+    /// Regression: pre-fix, `handleCallKitReset` → `resetState` cleared
+    /// `currentCallAttemptId` without writing `recordEnd`.
+    func test_handleCallKitReset_finalizesActiveHistoryAttempt() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-reset-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer {
+            // (No explicit close: the actor pool tears down on suspension /
+            // deinit — same convention as CallHistoryRepositoryTests.)
+            manager.callHistoryRepository = nil
+        }
+
+        // An in-flight incoming call (prepared + identified = attempt started).
+        manager.prepareForIncomingCall()
+        manager.handleCallerIdentified(Data(repeating: 7, count: 20))
+        let attemptId = try XCTUnwrap(manager.currentCallAttemptId)
+
+        // Provider reset with the call still live.
+        manager.handleCallKitReset()
+
+        // The reset path finalizes the attempt: poll for the end time.
+        var record: CallHistoryRecord?
+        let idHex = String(repeating: "b", count: 32)
+        for _ in 0..<100 {
+            record = try await repo.fetchRecord(attemptId, localIdentityHash: idHex)
+            if record?.endedAt != nil { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let final = try XCTUnwrap(record, "history row missing after reset")
+        XCTAssertNotNil(final.endedAt, "reset must finalize the attempt with an end time")
+        XCTAssertEqual(final.outcome, .notConnected,
+                       "a reset before the connection milestone records notConnected")
+    }
+
+    /// A reset with NO active call must not write anything (and a second
+    /// reset after the first is a no-op — exactly-once finalization).
+    func test_handleCallKitReset_withNoActiveCall_writesNoHistory() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-reset2-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer {
+            // (No explicit close: the actor pool tears down on suspension /
+            // deinit — same convention as CallHistoryRepositoryTests.)
+            manager.callHistoryRepository = nil
+        }
+
+        let idHex = String(repeating: "b", count: 32)
+        manager.handleCallKitReset()
+        try await Task.sleep(for: .milliseconds(300))
+        manager.handleCallKitReset()  // double reset must stay a no-op
+        try await Task.sleep(for: .milliseconds(300))
+
+        let records = try await repo.fetchHistory(localIdentityHash: idHex, query: "")
+        XCTAssertEqual(records.count, 0, "no call in flight → no history rows")
+    }
+
+    /// `shutdown()` must DRAIN the history-write chain before returning:
+    /// AppServices closes this manager's repository immediately after
+    /// shutdown() (identity switch), so a write still queued when shutdown
+    /// returns is silently lost. Regression: the stale-repository fix closed
+    /// the old repo without draining, so a shutdown mid-call discarded the
+    /// pending attempt write.
+    func test_shutdown_drainsPendingHistoryWritesBeforeReturning() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-shutdown-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer { manager.callHistoryRepository = nil }
+
+        // In-flight incoming call → attempt insert enqueued onto the chain.
+        manager.prepareForIncomingCall()
+        manager.handleCallerIdentified(Data(repeating: 7, count: 20))
+        let attemptId = try XCTUnwrap(manager.currentCallAttemptId)
+
+        // Shutdown right after the insert is enqueued (insert may not have
+        // executed yet). Pre-fix, the pending write was lost when the repo
+        // closed; post-fix shutdown finalizes the attempt deterministically
+        // and drains the closed chain.
+        await manager.shutdown()
+
+        // The pre-hangup finalization clears the attempt id, so a LATE async
+        // end callback for the shutdown hangup can never enqueue a terminal
+        // write after shutdown returned (the queue is closed).
+        XCTAssertNil(manager.currentCallAttemptId,
+                     "shutdown must clear the attempt id so late end callbacks enqueue nothing")
+        XCTAssertNil(manager.activeCallAttemptId)
+
+        // The attempt must be FINALIZED (end time + a terminal outcome). For a
+        // never-connected incoming call ended by a local hangup, the outcome
+        // is declinedLocal — the same mapping the end callback would produce.
+        var record: CallHistoryRecord?
+        let idHex = String(repeating: "b", count: 32)
+        for _ in 0..<50 {
+            record = try await repo.fetchRecord(attemptId, localIdentityHash: idHex)
+            if record?.endedAt != nil { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let final = try XCTUnwrap(record,
+                                  "shutdown must drain the pending attempt write before the repository closes")
+        XCTAssertNotNil(final.endedAt, "shutdown must finalize the attempt with an end time")
+        XCTAssertEqual(final.outcome, .declinedLocal,
+                       "a never-connected incoming call ended at shutdown finalizes as declinedLocal")
+    }
+
+    /// The write queue must be CLOSED once shutdown returns: a late end-event
+    /// (the async telephone callback for the shutdown hangup) must enqueue
+    /// nothing, so the repository AppServices is about to close can never
+    /// receive a write it will discard. Regression: iterations 2–3 of the
+    /// shutdown/repo-close race (a late enqueue after the drain).
+    func test_shutdown_closesQueueLateEndCallbackEnqueuesNothing() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-shutdown2-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer { manager.callHistoryRepository = nil }
+
+        // In-flight incoming call (attempt inserted).
+        manager.prepareForIncomingCall()
+        manager.handleCallerIdentified(Data(repeating: 7, count: 20))
+        let idHex = String(repeating: "b", count: 32)
+
+        await manager.shutdown()
+
+        // Simulate the LATE async end-event landing after shutdown: the
+        // write-gate (attempt id) was already cleared, so it must enqueue
+        // nothing.
+        manager.failOutgoingCall("Call Failed")  // end-path write gate
+        try await Task.sleep(for: .milliseconds(300))
+
+        let records = try await repo.fetchHistory(localIdentityHash: idHex, query: "")
+        XCTAssertEqual(records.count, 1,
+                       "a late end event after shutdown must not add a second row")
+        XCTAssertEqual(records.first?.outcome, .declinedLocal)
+    }
+
+    /// Iteration-4 race, tested at the authoritative gate that closes it:
+    /// `beginCallAttempt` — the single point every attempt is born from
+    /// (outgoing + incoming) — refuses to start once `shutdown()` has run.
+    /// So a task that was suspended (destination resolution /
+    /// prepareOutboundCall / an in-flight call) and resumes AFTER shutdown
+    /// cannot create a fresh attempt against the repository AppServices
+    /// closes. Pre-fix there was no such gate: a resumed task would
+    /// beginCallAttempt a new row.
+    func test_beginCallAttempt_refusedAfterShutdownNoFreshAttempt() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-gate-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer { manager.callHistoryRepository = nil }
+
+        XCTAssertFalse(manager.isShutDown, "isShutDown must start false")
+        // Tear the manager down (no call in flight → nothing to finalize).
+        await manager.shutdown()
+        XCTAssertTrue(manager.isShutDown, "shutdown must latch isShutDown")
+
+        // The resumed task's end-path and attempt-start are both refused.
+        manager.beginCallAttempt(direction: .outgoing, peerDisplayName: "Peer")
+        manager.failOutgoingCall("Call Failed")
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertEqual(manager.currentCallAttemptId, nil,
+                       "beginCallAttempt after shutdown must not start an attempt")
+        let records = try await repo.fetchHistory(localIdentityHash: String(repeating: "b", count: 32), query: "")
+        XCTAssertEqual(records.count, 0,
+                       "a resuming task after shutdown must not create a history row")
+    }
 }
 
 // MARK: - Mock

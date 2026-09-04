@@ -143,6 +143,27 @@ public final class ChatsViewModel {
     /// Error message if load failed, nil otherwise.
     public var errorMessage: String? = nil
 
+    // MARK: - Voice segment state
+
+    /// The active Text|Voice subtab. `.text` is the default on launch.
+    public var selectedSegment: ChatsSegment = .text
+
+    /// Search query for the Voice segment (matched against the peer name).
+    public var voiceSearchQuery: String = ""
+
+    /// Enriched call-history records for the Voice segment.
+    public var voiceRecords: [VoiceCallDisplay] = []
+
+    /// True while loading the Voice history.
+    public var voiceIsLoading: Bool = false
+
+    /// Error message if the Voice load failed, nil otherwise.
+    public var voiceErrorMessage: String?
+
+    /// The attempt id of the live call (mirrored from `CallManager`), so the
+    /// list can mark the matching card "In progress".
+    public var activeCallAttemptId: String?
+
     // MARK: - Computed Properties
 
     /// Number of conversations for subtitle display.
@@ -174,12 +195,24 @@ public final class ChatsViewModel {
     private var activeConversationLoadCount: Int = 0
     private var activeConversationRefreshCount: Int = 0
 
+    /// Call-history reader for the Voice segment (nil until AppServices wires
+    /// it — the Voice tab simply shows nothing when unavailable).
+    private let callHistory: CallHistoryRepository?
+    /// Hex of the active local identity hash, for identity-scoped reads.
+    private let localIdentityHashHex: String?
+
     // MARK: - Initialization
 
-    public init(repository: MessageRepository, notificationObserver: NotificationObserver, pathTable: PathTable? = nil) {
+    public init(repository: MessageRepository,
+                notificationObserver: NotificationObserver,
+                pathTable: PathTable? = nil,
+                callHistory: CallHistoryRepository? = nil,
+                localIdentityHashHex: String? = nil) {
         self.repository = repository
         self.notificationObserver = notificationObserver
         self.pathTable = pathTable
+        self.callHistory = callHistory
+        self.localIdentityHashHex = localIdentityHashHex
 
         // Register for Darwin notifications (cross-process, fires before DB save)
         notificationObserver.onNewMessage { [weak self] in
@@ -264,6 +297,95 @@ public final class ChatsViewModel {
         if let observer = draftChangedObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+    }
+
+    // MARK: - Public Methods
+
+    // MARK: Voice history (issue #167)
+
+    /// Load the identity-scoped call history for the Voice segment and enrich
+    /// each record with the LIVE conversation display name + profile icon.
+    ///
+    /// Enrichment is done here (the "view layer") rather than in the repository:
+    /// `CallHistoryRepository` is GRDB-only and must not join `conversations`
+    /// (see `CallHistoryRecord`'s doc). The VM already holds `repository`, so it
+    /// resolves each remote identity via `fetchConversations(for:)` — the same
+    /// source the Text tab reads — and falls back to the stored
+    /// `peerDisplayNameSnapshot` when a peer has no conversation row.
+    @MainActor
+    public func loadVoiceHistory() async {
+        guard let hex = localIdentityHashHex, let callHistory else {
+            voiceRecords = []
+            voiceIsLoading = false
+            return
+        }
+        voiceIsLoading = true
+        do {
+            // Fetch the full identity-scoped history with an EMPTY query:
+            // search filtering happens CLIENT-side against the ENRICHED peer
+            // name (`filteredVoiceRecords`), which covers both the live
+            // conversation name and the snapshot — a DB LIKE against only the
+            // snapshot column would miss a renamed peer.
+            let records = try await callHistory.fetchHistory(localIdentityHash: hex, query: "")
+            voiceRecords = await enrichVoiceRecords(records)
+            voiceErrorMessage = nil
+        } catch {
+            voiceErrorMessage = error.localizedDescription
+        }
+        voiceIsLoading = false
+    }
+
+    /// Voice history with the live search query applied against the ENRICHED
+    /// peer name (the source the Text tab's `filteredConversations` mirrors).
+    /// The list renders THIS, so typing in the Voice search bar filters
+    /// without a reload.
+    public var filteredVoiceRecords: [VoiceCallDisplay] {
+        let query = voiceSearchQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return voiceRecords }
+        return voiceRecords.filter { $0.peerName.localizedCaseInsensitiveContains(query) }
+    }
+
+    /// Resolve each record's remote identity to a live `ConversationRecord`
+    /// (name + icon) in one batched fetch, preserving order.
+    @MainActor
+    private func enrichVoiceRecords(_ records: [CallHistoryRecord]) async -> [VoiceCallDisplay] {
+        // Collect distinct, valid remote hashes.
+        var dataByHex: [String: Data] = [:]
+        var validData = [Data]()
+        for record in records {
+            guard let data = record.remoteIdentityHashData else { continue }
+            if dataByHex[record.remoteIdentityHash] == nil {
+                dataByHex[record.remoteIdentityHash] = data
+                validData.append(data)
+            }
+        }
+        // One batched lookup.
+        var convosByHash: [Data: RNSAPI.ConversationRecord] = [:]
+        if !validData.isEmpty {
+            let convos = (try? await repository.fetchConversations(for: validData)) ?? []
+            for convo in convos {
+                convosByHash[convo.destinationHash] = convo
+            }
+        }
+        return records.map { record in
+            let hashData = record.remoteIdentityHashData
+            let convo = hashData.flatMap { convosByHash[$0] }
+            return VoiceCallDisplay(
+                record: record,
+                displayName: convo?.displayName,
+                iconName: convo?.iconName,
+                iconFgColor: convo?.iconFgColor,
+                iconBgColor: convo?.iconBgColor
+            )
+        }
+    }
+
+    /// Permanently delete the identity's call history, then reload the list.
+    @MainActor
+    public func clearVoiceHistory() async {
+        guard let hex = localIdentityHashHex, let callHistory else { return }
+        try? await callHistory.clearHistory(localIdentityHash: hex)
+        await loadVoiceHistory()
     }
 
     // MARK: - Public Methods
