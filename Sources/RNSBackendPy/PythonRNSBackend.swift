@@ -404,6 +404,13 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
         bridge.invokeBLECallbackBoolSync(slot: "_test_roundtrip", args: [.int(value)])
     }
 
+    /// RNS 1.1.x interface-discovery state (Python backend only).
+    /// The shipping build is the Python backend; Model B has no app-side
+    /// discovery and this method is unavailable there.
+    public func discovery() async -> RNSAPI.DiscoverySnapshot? {
+        await bridge.discovery()
+    }
+
     // MARK: - Event drain + raw→neutral mapping
 
     private func startDrainLoop() {

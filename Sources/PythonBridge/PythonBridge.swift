@@ -1,4 +1,5 @@
 import Foundation
+import RNSAPI
 
 // PythonBridge can't import ColumbaApp's DiagLog (lives in the app target);
 // duplicate the writer here for status-side diagnostics. Same file path
@@ -708,6 +709,45 @@ public final class PythonBridge: @unchecked Sendable {
             return try JSONDecoder().decode(StatusSnapshot.self, from: data)
         } catch {
             DiagLog_status("decode failed: \(error) statusBytes=\(raw.utf8.count)")
+            return nil
+        }
+    }
+
+    /// RNS 1.1.x interface-discovery state (discovered list, autoconnect-enabled
+    /// flag, auto-connected endpoints). Mirrors status(); nil on any failure.
+    public func discovery() async -> DiscoverySnapshot? {
+        let raw: String? = await withCheckedContinuation { cont in
+            queue.async {
+                let out = PythonRuntime.shared.withGIL { () -> String? in
+                    guard let module = self.module else { return nil }
+                    guard let fn = PyObject_GetAttrString(module, "discovery_json") else {
+                        let exc = self.currentPythonException()
+                        DiagLog_status("discovery_json attr lookup failed: \(exc)")
+                        return nil
+                    }
+                    defer { Py_DecRef(fn) }
+                    guard let args = PyTuple_New(0) else { return nil }
+                    defer { Py_DecRef(args) }
+                    guard let result = PyObject_CallObject(fn, args) else {
+                        let exc = self.currentPythonException()
+                        DiagLog_status("discovery_json call raised: \(exc)")
+                        return nil
+                    }
+                    defer { Py_DecRef(result) }
+                    guard let c = PyUnicode_AsUTF8(result) else {
+                        DiagLog_status("discovery_json returned non-str")
+                        return nil
+                    }
+                    return String(cString: c)
+                }
+                cont.resume(returning: out)
+            }
+        }
+        guard let raw, let data = raw.data(using: .utf8) else { return nil }
+        do {
+            return try JSONDecoder().decode(DiscoverySnapshot.self, from: data)
+        } catch {
+            DiagLog_status("discovery_json decode failed: \(error)")
             return nil
         }
     }

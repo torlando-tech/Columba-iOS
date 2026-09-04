@@ -2145,6 +2145,48 @@ def status_json() -> str:
     return _json.dumps(status())
 
 
+def discovery_json() -> str:
+    """JSON-serialized interface-discovery state for the Swift bridge.
+
+    Mirrors `status_json()` contract: always returns a JSON object string,
+    never raises, so PythonBridge.discovery() can decode unconditionally.
+    Read path uses the on-disk announce store (RNS.Reticulum.discovered_interfaces())
+    so it lists previously-heard announces even before discovery is enabled.
+    """
+    import json as _json
+    out: dict[str, Any] = {"discovered": [], "enabled": False, "autoconnected": []}
+    if not _state.get("started"):
+        return _json.dumps(out)
+    try:
+        infos = RNS.Reticulum.discovered_interfaces() or []
+        for info in infos:
+            d: dict[str, Any] = {}
+            for k, v in dict(info).items():
+                if isinstance(v, (bytes, bytearray)):
+                    # transport_id / network_id arrive as msgpack bytes —
+                    # the Swift model wants hex strings (matches RNS.hexrep).
+                    v = bytes(v).hex()
+                d[k] = v
+            out["discovered"].append(d)
+    except Exception as e:
+        RNS.log(f"discovery_json: list_discovered_interfaces failed: {e}", RNS.LOG_DEBUG)
+    try:
+        out["enabled"] = bool(RNS.Reticulum.should_autoconnect_discovered_interfaces())
+    except Exception:
+        pass
+    try:
+        endpoints = set()
+        for iface in list(RNS.Transport.interfaces):
+            if hasattr(iface, "autoconnect_hash"):
+                s = str(iface)
+                if s:
+                    endpoints.add(s)
+        out["autoconnected"] = sorted(endpoints)
+    except Exception:
+        pass
+    return _json.dumps(out)
+
+
 def drain_events() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     while True:
