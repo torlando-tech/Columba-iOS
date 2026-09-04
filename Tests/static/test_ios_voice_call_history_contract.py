@@ -57,23 +57,39 @@ class IOSVoiceCallHistoryContract(unittest.TestCase):
         self.assertTrue(REPO.exists())
 
     def test_shutdown_drains_history_write_chain(self):
-        # P1 (iterations 2–3): AppServices closes the repository right after
+        # P1 (iterations 2–5): AppServices closes the repository right after
         # shutdown() returns, so shutdown must finalize the active attempt
         # DETERMINISTICALLY before the hangup (clearing the attempt id so the
-        # async end callback can't enqueue a terminal write after us) and then
+        # async end callback can't enqueue a terminal write after us),
+        # cancel+await a suspended initiateCall task (iteration 4: it could
+        # resume after the drain and beginCallAttempt a fresh attempt), and
         # drain the closed write chain — no sleep-based idle heuristic.
         cm = (ROOT / "Sources/ColumbaApp/Services/CallManager.swift").read_text()
         start = cm.index("func shutdown()")
         end = cm.index("// MARK: - Audio Pipeline")
         shutdown_body = cm[start:end]
+        self.assertIn("isShutDown = true", shutdown_body,
+                      "shutdown must mark the manager torn-down before any await")
+        self.assertIn("outgoingCallTask", shutdown_body,
+                      "shutdown must cancel+await the in-flight initiateCall task")
         self.assertIn("historyWriteChain", shutdown_body,
                       "shutdown() must drain the history-write chain before returning")
         self.assertIn("await chain.value", shutdown_body)
-        # Deterministic, not a sleep heuristic.
-        self.assertNotIn("Task.sleep", shutdown_body)
+        # The DRAIN itself must not be a sleep-based idle heuristic: the queue
+        # is closed before it, so it is a plain while-let over the chains.
+        # (A bounded 2 s liveness timeout on the initiateCall task await is
+        # separate and allowed — see the shutdown doc comment.)
+        drain_body = shutdown_body[shutdown_body.index("Drain the call-history write chain"):]
+        self.assertNotIn("Task.sleep", drain_body,
+                         "the drain must not use a sleep-based idle heuristic")
         # The pre-hangup finalization clears the attempt id so the end
         # callback can't enqueue a terminal write after shutdown.
         self.assertIn("currentCallAttemptId = nil", shutdown_body)
+        # The suspended initiateCall task re-checks the flag after its
+        # suspension points.
+        initiate_body = cm[cm.index("func initiateCall"):cm.index("func resolveTelephonyTarget")]
+        self.assertIn("isShutDown", initiate_body,
+                      "initiateCall must gate on isShutDown after its suspension points")
 
     def test_identity_switch_nils_stale_repository(self):
         # P1 (iteration 1): a failed re-open must leave the repository nil,

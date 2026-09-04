@@ -321,6 +321,41 @@ final class CallManagerCallKitTests: XCTestCase {
                        "a late end event after shutdown must not add a second row")
         XCTAssertEqual(records.first?.outcome, .declinedLocal)
     }
+
+    /// Iteration-4 race, tested at the authoritative gate that closes it:
+    /// `beginCallAttempt` — the single point every attempt is born from
+    /// (outgoing + incoming) — refuses to start once `shutdown()` has run.
+    /// So a task that was suspended (destination resolution /
+    /// prepareOutboundCall / an in-flight call) and resumes AFTER shutdown
+    /// cannot create a fresh attempt against the repository AppServices
+    /// closes. Pre-fix there was no such gate: a resumed task would
+    /// beginCallAttempt a new row.
+    func test_beginCallAttempt_refusedAfterShutdownNoFreshAttempt() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-gate-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer { manager.callHistoryRepository = nil }
+
+        XCTAssertFalse(manager.isShutDown, "isShutDown must start false")
+        // Tear the manager down (no call in flight → nothing to finalize).
+        await manager.shutdown()
+        XCTAssertTrue(manager.isShutDown, "shutdown must latch isShutDown")
+
+        // The resumed task's end-path and attempt-start are both refused.
+        manager.beginCallAttempt(direction: .outgoing, peerDisplayName: "Peer")
+        manager.failOutgoingCall("Call Failed")
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertEqual(manager.currentCallAttemptId, nil,
+                       "beginCallAttempt after shutdown must not start an attempt")
+        let records = try await repo.fetchHistory(localIdentityHash: String(repeating: "b", count: 32), query: "")
+        XCTAssertEqual(records.count, 0,
+                       "a resuming task after shutdown must not create a history row")
+    }
 }
 
 // MARK: - Mock

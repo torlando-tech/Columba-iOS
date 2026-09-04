@@ -128,6 +128,24 @@ public final class CallManager {
     /// `recordEnd` observe the row `insertAttempt` created — the lifecycle
     /// callbacks fire independently and can be arbitrarily close together.
     private var historyWriteChain: Task<Void, Never>?
+    /// The in-flight `initiateCall` task (Python-runtime only). Shutdown
+    /// CANCELS it (deliberately does not await it — a task stuck in a
+    /// non-cancellable network await would hang teardown; the `isShutDown`
+    /// latch carries the guarantee instead): it can be suspended at an
+    /// `await` (destination resolution / prepareOutboundCall / an in-flight
+    /// telephone.call) and would otherwise resume after the drain and start a
+    /// fresh history attempt on a torn-down manager. (private(set) so
+    /// lifecycle tests can assert it is cleared on shutdown.)
+    private(set) var outgoingCallTask: Task<Void, Never>?
+    /// Set (synchronously, on the main actor) at the very start of
+    /// `shutdown()`. Suspended `initiateCall` tasks re-check it after each
+    /// suspension point and abort before touching call state or the history
+    /// store, so nothing can create a write chain after the drain. THIS latch
+    /// — not the (bounded) task await — is what carries the "no fresh attempt
+    /// after shutdown" guarantee: it is set before any suspension, and every
+    /// write path observes it. (private(set) so lifecycle tests can assert
+    /// the latch engaged on shutdown.)
+    private(set) var isShutDown = false
     private var callAttemptStartedAt: Date?
     private var peerDisplayNameSnapshot: String?
     /// Whether the in-flight call reached the connection milestone
@@ -147,8 +165,20 @@ public final class CallManager {
     /// The write seeds the per-attempt ordered chain: a history write must
     /// never block or fail a call, and a nil repository (Model B / pre-wiring)
     /// is a silent no-op.
-    private func beginCallAttempt(direction: CallHistoryDirection, peerDisplayName: String?) {
+    ///
+    /// Refuses to start once the instance is shut down (`isShutDown`): a task
+    /// that was suspended at a network await and resumes AFTER `shutdown()`
+    /// must not be able to create a fresh attempt against the repository
+    /// AppServices has closed. This is the single point every attempt is born
+    /// from (outgoing + incoming), so it is the authoritative "no fresh
+    /// attempt after shutdown" gate. (Internal, not private, so lifecycle
+    /// tests can exercise the gate directly.)
+    func beginCallAttempt(direction: CallHistoryDirection, peerDisplayName: String?) {
         guard let hex = localIdentityHashHex else { return }
+        guard !isShutDown else {
+            logger.info("[CALL] beginCallAttempt refused: manager already shut down")
+            return
+        }
         let id = UUID().uuidString
         currentCallAttemptId = id
         activeCallAttemptId = id
@@ -416,12 +446,26 @@ public final class CallManager {
             return
         }
 
-        Task {
+        let task = Task {
             guard let target = await resolveTelephonyTarget(from: destinationHash) else {
                 self.failOutgoingCall("Telephony identity unavailable")
                 return
             }
+            // An identity switch / app shutdown may have happened while the
+            // resolution above was suspended: abort before touching call
+            // state or the history store.
+            if self.isShutDown || Task.isCancelled {
+                self.logger.info("[CALL] initiateCall aborted after resolve (shutdown/cancelled)")
+                return
+            }
             await networkTransport.prepareOutboundCall(target)
+            // Same gate after prepare: a shutdown that raced it must not
+            // start a call attempt on a torn-down manager (whose repository
+            // AppServices is about to close).
+            if self.isShutDown || Task.isCancelled {
+                self.logger.info("[CALL] initiateCall aborted after prepare (shutdown/cancelled)")
+                return
+            }
 
             self.isIncoming = false
             self.peerName = peerDisplayName
@@ -431,6 +475,9 @@ public final class CallManager {
             // Begin the history attempt AFTER activeProfile is set so the
             // captured codecProfileCode is the outgoing default, not a stale
             // value from a previous call. peerHash is already set above.
+            // (No suspension point between the gate after prepareOutboundCall
+            // and here, so nothing can interleave: if a shutdown landed,
+            // gate 2 above already returned.)
             self.beginCallAttempt(direction: .outgoing, peerDisplayName: peerDisplayName)
 
             let callUUID = UUID()
@@ -451,6 +498,9 @@ public final class CallManager {
                 self.failOutgoingCall("Call Failed")
             }
         }
+        // Track the task so shutdown() can cancel + await it (it may be
+        // suspended at a network await when the app tears down).
+        self.outgoingCallTask = task
         #else
         logger.warning("Cannot call: telephony is unavailable in Model B app runtime")
         #endif
@@ -828,6 +878,14 @@ public final class CallManager {
     // MARK: - Shutdown
 
     func shutdown() async {
+        // FIRST and synchronously (no await before this): mark the manager
+        // torn-down. Suspended `initiateCall` tasks re-check this flag after
+        // each suspension point and abort before touching call state or the
+        // history store, so none of them can resume and create a fresh
+        // attempt + write chain after the drain below. (The instance is not
+        // reused after shutdown — AppServices nils it and recreates one per
+        // identity — so the flag is one-way.)
+        isShutDown = true
         stopAudio()
 
         // Finalize the active call-history attempt DETERMINISTICALLY, before
@@ -871,6 +929,22 @@ public final class CallManager {
         endedDismissTask?.cancel()
         currentCallUUID = nil
         telephone = nil
+
+        // Cancel + release any in-flight initiateCall task. It may be
+        // suspended at a network await (destination resolution /
+        // prepareOutboundCall / an in-flight telephone.call). Cancellation
+        // stops its work; the `isShutDown` latch above is what CARRIES the
+        // "no fresh attempt" guarantee (the task's gates abort before
+        // beginCallAttempt on resumption). We deliberately do NOT await it:
+        // a task stuck in a non-cancellable await would hang the app's
+        // teardown, and the latch already makes a post-drain attempt
+        // impossible, so observing the task finish buys nothing.
+        #if COLUMBA_RUNTIME_PYTHON
+        if let task = outgoingCallTask {
+            task.cancel()
+            outgoingCallTask = nil
+        }
+        #endif
 
         // Drain the call-history write chain BEFORE returning. The queue is
         // CLOSED at this point: the pre-hangup finalization above cleared the
