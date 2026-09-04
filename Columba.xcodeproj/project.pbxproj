@@ -420,6 +420,8 @@
 		VBMP0 /* VoiceQualityPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CP0 /* VoiceQualityPickerSheet.swift */; };
 		VBSR0 /* VoiceWaveformBars.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CR0 /* VoiceWaveformBars.swift */; };
 		VBMR0 /* VoiceWaveformBars.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CR0 /* VoiceWaveformBars.swift */; };
+		A4EA60E22E1A3A65C6AFA5E7 /* OneShotLocationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E284643CB4F95B1B3DBA965B /* OneShotLocationProvider.swift */; };
+		099A0C66CE2C1444E52912D0 /* DiscoveredInterfacesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D8D7406682429BCE36865C3 /* DiscoveredInterfacesViewModel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -705,6 +707,8 @@
 		V0CM0 /* VoiceMessageRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessageRecorder.swift; sourceTree = "<group>"; };
 		V0CP0 /* VoiceQualityPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceQualityPickerSheet.swift; sourceTree = "<group>"; };
 		V0CR0 /* VoiceWaveformBars.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceWaveformBars.swift; sourceTree = "<group>"; };
+		E284643CB4F95B1B3DBA965B /* OneShotLocationProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneShotLocationProvider.swift; sourceTree = "<group>"; };
+		4D8D7406682429BCE36865C3 /* DiscoveredInterfacesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveredInterfacesViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1096,6 +1100,7 @@
 			children = (
 				BGPSYNCREF001 /* BackgroundPropagationSync.swift */,
 				F024 /* AppServices.swift */,
+				E284643CB4F95B1B3DBA965B /* OneShotLocationProvider.swift */,
 				BKF002 /* BackendFactory.swift */,
 				F025 /* MessageRepository.swift */,
 				CHF003 /* CallHistoryFormatting.swift */,
@@ -1213,6 +1218,7 @@
 				DA143A000000000000000001 /* DraftAutosaveController.swift */,
 				F006 /* SettingsViewModel.swift */,
 				F030 /* InterfaceManagementViewModel.swift */,
+				4D8D7406682429BCE36865C3 /* DiscoveredInterfacesViewModel.swift */,
 				F034 /* NetworkStatusViewModel.swift */,
 				F052 /* OnboardingViewModel.swift */,
 				F05A /* RNodeWizardViewModel.swift */,
@@ -1605,6 +1611,8 @@
 				87358446F5D54F616D07CCEE /* IncomingMessageHandler.swift in Sources */,
 				B5A7B590DEFA2B213D8D5754 /* InterfaceRepository.swift in Sources */,
 				147A84617097826BCE5DBD49 /* InterfaceManagementViewModel.swift in Sources */,
+				A4EA60E22E1A3A65C6AFA5E7 /* OneShotLocationProvider.swift in Sources */,
+				099A0C66CE2C1444E52912D0 /* DiscoveredInterfacesViewModel.swift in Sources */,
 				8EF58D2BD45FCDF79EDB49AB /* InterfaceManagementScreen.swift in Sources */,
 				B2EF01CCB8B50326073D8171 /* NodeDetailsView.swift in Sources */,
 				98FE1EAB00C655BFF7D46594 /* PropagationNodeManager.swift in Sources */,
@@ -1802,6 +1810,8 @@
 				021 /* MapView.swift in Sources */,
 				048 /* MapLibreMapView.swift in Sources */,
 				024 /* AppServices.swift in Sources */,
+				A4EA60E22E1A3A65C6AFA5E7 /* OneShotLocationProvider.swift in Sources */,
+				099A0C66CE2C1444E52912D0 /* DiscoveredInterfacesViewModel.swift in Sources */,
 				BKF001 /* BackendFactory.swift in Sources */,
 				025 /* MessageRepository.swift in Sources */,
 				CHF004 /* CallHistoryFormatting.swift in Sources */,
