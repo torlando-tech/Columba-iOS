@@ -260,18 +260,66 @@ final class CallManagerCallKitTests: XCTestCase {
 
         // Shutdown right after the insert is enqueued (insert may not have
         // executed yet). Pre-fix, the pending write was lost when the repo
-        // closed; post-fix the drain awaits it.
+        // closed; post-fix shutdown finalizes the attempt deterministically
+        // and drains the closed chain.
         await manager.shutdown()
 
+        // The pre-hangup finalization clears the attempt id, so a LATE async
+        // end callback for the shutdown hangup can never enqueue a terminal
+        // write after shutdown returned (the queue is closed).
+        XCTAssertNil(manager.currentCallAttemptId,
+                     "shutdown must clear the attempt id so late end callbacks enqueue nothing")
+        XCTAssertNil(manager.activeCallAttemptId)
+
+        // The attempt must be FINALIZED (end time + a terminal outcome). For a
+        // never-connected incoming call ended by a local hangup, the outcome
+        // is declinedLocal — the same mapping the end callback would produce.
         var record: CallHistoryRecord?
         let idHex = String(repeating: "b", count: 32)
         for _ in 0..<50 {
             record = try await repo.fetchRecord(attemptId, localIdentityHash: idHex)
-            if record != nil { break }
+            if record?.endedAt != nil { break }
             try await Task.sleep(for: .milliseconds(100))
         }
-        _ = try XCTUnwrap(record,
-                           "shutdown must drain the pending attempt write before the repository closes")
+        let final = try XCTUnwrap(record,
+                                  "shutdown must drain the pending attempt write before the repository closes")
+        XCTAssertNotNil(final.endedAt, "shutdown must finalize the attempt with an end time")
+        XCTAssertEqual(final.outcome, .declinedLocal,
+                       "a never-connected incoming call ended at shutdown finalizes as declinedLocal")
+    }
+
+    /// The write queue must be CLOSED once shutdown returns: a late end-event
+    /// (the async telephone callback for the shutdown hangup) must enqueue
+    /// nothing, so the repository AppServices is about to close can never
+    /// receive a write it will discard. Regression: iterations 2–3 of the
+    /// shutdown/repo-close race (a late enqueue after the drain).
+    func test_shutdown_closesQueueLateEndCallbackEnqueuesNothing() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-shutdown2-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer { manager.callHistoryRepository = nil }
+
+        // In-flight incoming call (attempt inserted).
+        manager.prepareForIncomingCall()
+        manager.handleCallerIdentified(Data(repeating: 7, count: 20))
+        let idHex = String(repeating: "b", count: 32)
+
+        await manager.shutdown()
+
+        // Simulate the LATE async end-event landing after shutdown: the
+        // write-gate (attempt id) was already cleared, so it must enqueue
+        // nothing.
+        manager.failOutgoingCall("Call Failed")  // end-path write gate
+        try await Task.sleep(for: .milliseconds(300))
+
+        let records = try await repo.fetchHistory(localIdentityHash: idHex, query: "")
+        XCTAssertEqual(records.count, 1,
+                       "a late end event after shutdown must not add a second row")
+        XCTAssertEqual(records.first?.outcome, .declinedLocal)
     }
 }
 

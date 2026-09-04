@@ -57,14 +57,23 @@ class IOSVoiceCallHistoryContract(unittest.TestCase):
         self.assertTrue(REPO.exists())
 
     def test_shutdown_drains_history_write_chain(self):
-        # P1 (iteration 2): AppServices closes the repository right after
-        # shutdown() returns, so shutdown must await the ordered write chain
-        # first — otherwise a still-pending terminal write is lost.
+        # P1 (iterations 2–3): AppServices closes the repository right after
+        # shutdown() returns, so shutdown must finalize the active attempt
+        # DETERMINISTICALLY before the hangup (clearing the attempt id so the
+        # async end callback can't enqueue a terminal write after us) and then
+        # drain the closed write chain — no sleep-based idle heuristic.
         cm = (ROOT / "Sources/ColumbaApp/Services/CallManager.swift").read_text()
-        shutdown_body = cm[cm.index("func shutdown()"):]
+        start = cm.index("func shutdown()")
+        end = cm.index("// MARK: - Audio Pipeline")
+        shutdown_body = cm[start:end]
         self.assertIn("historyWriteChain", shutdown_body,
                       "shutdown() must drain the history-write chain before returning")
         self.assertIn("await chain.value", shutdown_body)
+        # Deterministic, not a sleep heuristic.
+        self.assertNotIn("Task.sleep", shutdown_body)
+        # The pre-hangup finalization clears the attempt id so the end
+        # callback can't enqueue a terminal write after shutdown.
+        self.assertIn("currentCallAttemptId = nil", shutdown_body)
 
     def test_identity_switch_nils_stale_repository(self):
         # P1 (iteration 1): a failed re-open must leave the repository nil,

@@ -494,7 +494,9 @@ public final class CallManager {
         return TelephonyCallTarget(destinationHash: derivedHash, publicKeys: source.publicKeys)
     }
 
-    private func failOutgoingCall(_ reason: String) {
+    /// Pre-connect setup failure terminalizer. (Internal, not private, so
+    /// lifecycle tests can exercise its write-gating directly.)
+    func failOutgoingCall(_ reason: String) {
         // Pre-connect setup failure (identity unavailable / telephone.call threw),
         // so wasConnected is false and .failed is the reduced outcome.
         if let id = currentCallAttemptId {
@@ -828,6 +830,32 @@ public final class CallManager {
     func shutdown() async {
         stopAudio()
 
+        // Finalize the active call-history attempt DETERMINISTICALLY, before
+        // the hangup, and clear the attempt id so the (asynchronous) end
+        // callback for that hangup can never enqueue a terminal write after
+        // us. AppServices closes this manager's repository immediately after
+        // shutdown() returns (identity switch), so the write must be in
+        // flight before that — it cannot rely on the callback landing first.
+        // CallManager is @MainActor and the end callback's enqueue runs on
+        // the main actor too, so this clear is race-free with the callback:
+        // whichever runs first wins, the other observes a nil id, and at most
+        // ONE terminal write per attempt is ever enqueued. The outcome matches
+        // what the end callback would record for a local hangup
+        // (connectedEnded / declinedLocal / cancelledLocal).
+        if let id = currentCallAttemptId {
+            let direction: CallHistoryDirection = isIncoming ? .incoming : .outgoing
+            let outcome = CallHistoryFormatting.outcome(direction: direction,
+                                                        wasConnected: didConnect,
+                                                        reason: .localHangup)
+            let repo = callHistoryRepository
+            enqueueHistoryWrite {
+                guard let repo else { return }
+                try? await repo.recordEnd(id, at: Date(), outcome: outcome)
+            }
+            currentCallAttemptId = nil
+            activeCallAttemptId = nil
+        }
+
         // End any active CallKit call before shutting down Telephone
         #if os(iOS)
         if let uuid = currentCallUUID {
@@ -844,20 +872,16 @@ public final class CallManager {
         currentCallUUID = nil
         telephone = nil
 
-        // Drain the call-history write chain BEFORE returning. The hangup
-        // above can enqueue the terminal write from the end callback, and
-        // that callback may land slightly after hangup() returns — AppServices
-        // closes this manager's repository right after shutdown() finishes
-        // (identity switch), so any still-pending write would be silently
-        // lost. Loop until the queue is idle (bounded: the queue is a short
-        // FIFO of one attempt's writes; 25 × 20 ms is generous).
-        for _ in 0..<25 {
-            guard let chain = historyWriteChain else { break }
+        // Drain the call-history write chain BEFORE returning. The queue is
+        // CLOSED at this point: the pre-hangup finalization above cleared the
+        // attempt id (the end-callback, milestone, and fail paths all gate
+        // their writes on it), and telephone is nil, so nothing new can be
+        // enqueued. Awaiting each queued chain to completion is therefore
+        // deterministic — no sleep-based idle heuristic — and the pending
+        // finalization always lands before AppServices closes the repository.
+        while let chain = historyWriteChain {
             historyWriteChain = nil
             await chain.value
-            // Settle window: let a late end-callback enqueue the terminal
-            // write before we declare the queue empty.
-            try? await Task.sleep(for: .milliseconds(20))
         }
     }
 
