@@ -2463,15 +2463,26 @@ public final class AppServices {
         let fresh = InterfaceRepository().getEnabledInterfaces()
         writePythonConfig(interfaces: fresh)
         DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
-        try? await withLifecycleOperation {
-            await shutdownUnlocked()
-            // Small delay to ensure clean shutdown (matches switchIdentityUnlocked).
-            try? await Task.sleep(for: .milliseconds(200))
-            try await initializeUnlocked(
-                identity: identity,
-                identityHash: identity.hexHash,
-                tcpServerAddress: addr
-            )
+        do {
+            try await withLifecycleOperation {
+                await shutdownUnlocked()
+                // Small delay to ensure clean shutdown (matches switchIdentityUnlocked).
+                try? await Task.sleep(for: .milliseconds(200))
+                try await initializeUnlocked(
+                    identity: identity,
+                    identityHash: identity.hexHash,
+                    tcpServerAddress: addr
+                )
+            }
+        } catch {
+            // shutdownUnlocked() has already run (backend = nil, isConnected =
+            // false) and the re-init threw — the stack is now DOWN. Do NOT post
+            // the "back up" notification and do NOT log success; log the real
+            // error so a swallowed backend death (e.g. the documented
+            // AutoInterface multicast-socket re-init flake) is diagnosable.
+            logger.error("[RNS] restartPythonBackend FAILED: \(error) — backend is down")
+            DiagLog.log("[RNS] restartPythonBackend FAILED: \(error)")
+            return
         }
         // Signal the UI that the stack is back up so it can re-poll discovery
         // state. (Replaces the dead ColumbaRelaunchRequired notification.)
@@ -3183,6 +3194,10 @@ public final class AppServices {
         DiagLog.log("[INIT2] Starting with identity: \(identityHash), tcp: \(tcpServerAddress)")
 
         self.identity = identity
+        // Cache the tcp-server address used at this (re)start so a same-identity
+        // restart (restartPythonBackend) re-inits with the real address. The
+        // launch path uses THIS 3-arg overload, not the 1-arg one.
+        self.lastTcpServerAddress = tcpServerAddress
         self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
         // Model B: make this identity reachable by the in-NE node. This overload
         // receives the identity pre-loaded (multi-identity path) and never calls
