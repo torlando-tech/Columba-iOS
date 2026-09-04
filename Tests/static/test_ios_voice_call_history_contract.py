@@ -56,6 +56,23 @@ class IOSVoiceCallHistoryContract(unittest.TestCase):
         self.assertIn("callHistoryRepository", app)
         self.assertTrue(REPO.exists())
 
+    def test_shutdown_drains_history_write_chain(self):
+        # P1 (iteration 2): AppServices closes the repository right after
+        # shutdown() returns, so shutdown must await the ordered write chain
+        # first — otherwise a still-pending terminal write is lost.
+        cm = (ROOT / "Sources/ColumbaApp/Services/CallManager.swift").read_text()
+        shutdown_body = cm[cm.index("func shutdown()"):]
+        self.assertIn("historyWriteChain", shutdown_body,
+                      "shutdown() must drain the history-write chain before returning")
+        self.assertIn("await chain.value", shutdown_body)
+
+    def test_identity_switch_nils_stale_repository(self):
+        # P1 (iteration 1): a failed re-open must leave the repository nil,
+        # never the previous identity's still-open store.
+        app = (ROOT / "Sources/ColumbaApp/Services/AppServices.swift").read_text()
+        self.assertIn("if let stale = self.callHistoryRepository", app)
+        self.assertIn("self.callHistoryRepository = nil", app)
+
     def test_new_files_registered_in_pbxproj(self):
         for name in ("ChatsSegmentSelector.swift", "VoiceHistoryView.swift",
                      "CallDetailsView.swift", "CallHistoryRepository.swift",

@@ -843,6 +843,22 @@ public final class CallManager {
         endedDismissTask?.cancel()
         currentCallUUID = nil
         telephone = nil
+
+        // Drain the call-history write chain BEFORE returning. The hangup
+        // above can enqueue the terminal write from the end callback, and
+        // that callback may land slightly after hangup() returns — AppServices
+        // closes this manager's repository right after shutdown() finishes
+        // (identity switch), so any still-pending write would be silently
+        // lost. Loop until the queue is idle (bounded: the queue is a short
+        // FIFO of one attempt's writes; 25 × 20 ms is generous).
+        for _ in 0..<25 {
+            guard let chain = historyWriteChain else { break }
+            historyWriteChain = nil
+            await chain.value
+            // Settle window: let a late end-callback enqueue the terminal
+            // write before we declare the queue empty.
+            try? await Task.sleep(for: .milliseconds(20))
+        }
     }
 
     // MARK: - Audio Pipeline

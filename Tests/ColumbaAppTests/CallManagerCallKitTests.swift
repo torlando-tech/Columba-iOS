@@ -236,6 +236,43 @@ final class CallManagerCallKitTests: XCTestCase {
         let records = try await repo.fetchHistory(localIdentityHash: idHex, query: "")
         XCTAssertEqual(records.count, 0, "no call in flight → no history rows")
     }
+
+    /// `shutdown()` must DRAIN the history-write chain before returning:
+    /// AppServices closes this manager's repository immediately after
+    /// shutdown() (identity switch), so a write still queued when shutdown
+    /// returns is silently lost. Regression: the stale-repository fix closed
+    /// the old repo without draining, so a shutdown mid-call discarded the
+    /// pending attempt write.
+    func test_shutdown_drainsPendingHistoryWritesBeforeReturning() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-shutdown-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer { manager.callHistoryRepository = nil }
+
+        // In-flight incoming call → attempt insert enqueued onto the chain.
+        manager.prepareForIncomingCall()
+        manager.handleCallerIdentified(Data(repeating: 7, count: 20))
+        let attemptId = try XCTUnwrap(manager.currentCallAttemptId)
+
+        // Shutdown right after the insert is enqueued (insert may not have
+        // executed yet). Pre-fix, the pending write was lost when the repo
+        // closed; post-fix the drain awaits it.
+        await manager.shutdown()
+
+        var record: CallHistoryRecord?
+        let idHex = String(repeating: "b", count: 32)
+        for _ in 0..<50 {
+            record = try await repo.fetchRecord(attemptId, localIdentityHash: idHex)
+            if record != nil { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        _ = try XCTUnwrap(record,
+                           "shutdown must drain the pending attempt write before the repository closes")
+    }
 }
 
 // MARK: - Mock

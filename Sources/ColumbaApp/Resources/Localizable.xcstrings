@@ -2181,6 +2181,17 @@
           }
         }
       }
+    },
+    "No Calls Found": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Calls Found"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

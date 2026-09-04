@@ -35,7 +35,14 @@ struct VoiceHistoryView: View {
             } else if let error = viewModel.voiceErrorMessage, viewModel.voiceRecords.isEmpty {
                 errorState(error)
             } else if viewModel.filteredVoiceRecords.isEmpty {
-                emptyState
+                // Distinguish "no calls at all" from "the search matched
+                // nothing" — the former is an onboarding state, the latter
+                // is a filter state with the query shown.
+                if !viewModel.voiceSearchQuery.isEmpty {
+                    searchEmptyState
+                } else {
+                    emptyState
+                }
             } else {
                 list
             }
@@ -84,6 +91,26 @@ struct VoiceHistoryView: View {
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(Theme.textPrimary)
             Text("Incoming and outgoing voice calls will appear here.")
+                .font(.system(size: 15))
+                .foregroundColor(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 48)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// "No calls matched this search" — a filter state, not the onboarding
+    /// "No Calls Yet" state. Shows the query so the user can adjust it.
+    private var searchEmptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 44, weight: .light))
+                .foregroundColor(Theme.textSecondary)
+            Text("No Calls Found")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(Theme.textPrimary)
+            Text("\"\(viewModel.voiceSearchQuery)\"")
                 .font(.system(size: 15))
                 .foregroundColor(Theme.textSecondary)
                 .multilineTextAlignment(.center)
