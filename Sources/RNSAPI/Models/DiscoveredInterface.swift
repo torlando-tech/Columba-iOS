@@ -202,7 +202,11 @@ public struct DiscoveredInterface: Codable, Equatable, Sendable, Identifiable {
     /// RNS may emit integral values as JSON floats (`"port": 4242.0`).
     /// Decode as `Double?` and round; absent or null keys stay `nil`.
     private static func decodeInt(_ c: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) throws -> Int? {
-        try c.decodeIfPresent(Double.self, forKey: key).map { Int($0.rounded()) }
+        // Int(exactly:) (not Int()) so an out-of-range or NaN announce value
+        // decodes to nil instead of trapping — this path consumes untrusted
+        // network JSON. Spec roundings preserved: 4242.0 → 4242, 7.5 → 8.
+        try c.decodeIfPresent(Double.self, forKey: key)
+            .flatMap { Int(exactly: $0.rounded()) }
     }
 
     /// Empty string -> `nil` (Kotlin `optString(...).ifEmpty { null }`).

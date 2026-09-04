@@ -67,7 +67,9 @@ public func formatInterfaceType(_ type: String) -> String {
 ///   overload uses `Date().timeIntervalSince1970`.
 public func formatLastHeard(_ timestamp: Double, nowSeconds: Double) -> String {
     if timestamp == 0 { return "Never" }
-    let diff = Int((nowSeconds - timestamp).rounded(.down))
+    // Int(exactly:) so a corrupted/clock-jumped diff (e.g. a NaN or >Int.max
+    // delta) falls back to the absolute-date branch instead of trapping.
+    let diff = Int(exactly: (nowSeconds - timestamp).rounded(.down)) ?? Int.max
     switch diff {
     case ..<60:
         return "just now"
