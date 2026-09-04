@@ -2151,6 +2151,36 @@
           }
         }
       }
+    },
+    "Search calls": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search calls"
+          }
+        }
+      }
+    },
+    "Couldn't Load Call History": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't Load Call History"
+          }
+        }
+      }
+    },
+    "Retry": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retry"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

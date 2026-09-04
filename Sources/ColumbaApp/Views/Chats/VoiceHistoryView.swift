@@ -18,7 +18,7 @@ struct VoiceHistoryView: View {
 
     private var groupedDisplays: [(key: String, label: String, items: [VoiceCallDisplay])] {
         let now = Date()
-        let byDay = Dictionary(grouping: viewModel.voiceRecords) {
+        let byDay = Dictionary(grouping: viewModel.filteredVoiceRecords) {
             CallHistoryFormatting.dayKey($0.record.attemptedAt, now: now)
         }
         return byDay
@@ -32,7 +32,9 @@ struct VoiceHistoryView: View {
         Group {
             if viewModel.voiceIsLoading && viewModel.voiceRecords.isEmpty {
                 loadingState
-            } else if viewModel.voiceRecords.isEmpty {
+            } else if let error = viewModel.voiceErrorMessage, viewModel.voiceRecords.isEmpty {
+                errorState(error)
+            } else if viewModel.filteredVoiceRecords.isEmpty {
                 emptyState
             } else {
                 list
@@ -44,6 +46,33 @@ struct VoiceHistoryView: View {
     private var loadingState: some View {
         VStack(spacing: 12) { ProgressView() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Load failure surfaced explicitly — a storage problem must be
+    /// distinguishable from genuinely empty history (the pre-fix behavior
+    /// showed "No Calls Yet" in both cases). Pull-to-refresh also retries.
+    private func errorState(_ message: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 44, weight: .light))
+                .foregroundColor(.orange)
+            Text(String(localized: "Couldn't Load Call History"))
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(Theme.textPrimary)
+            Text(message)
+                .font(.system(size: 15))
+                .foregroundColor(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 48)
+            Button(String(localized: "Retry")) {
+                Task { await viewModel.loadVoiceHistory() }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.accentColor)
+            .accessibilityIdentifier("voice_history_retry")
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyState: some View {

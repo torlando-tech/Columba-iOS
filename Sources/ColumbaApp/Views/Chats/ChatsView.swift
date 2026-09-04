@@ -383,8 +383,20 @@ struct ChatsView: View {
     @ToolbarContentBuilder
     private var chatsToolbarContent: some ToolbarContent {
         if viewModel?.selectedSegment == .voice {
-            // Voice segment: clear-history only (search/sync are text-only).
-            ToolbarItem(placement: .topBarTrailing) {
+            // Voice segment: search + clear-history (search/sync-once are
+            // text-only; Voice search filters the call history live).
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isSearchPresented.toggle()
+                    }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(Theme.textPrimary)
+                }
+                .accessibilityIdentifier("voice_search_toggle")
+
                 Menu {
                     Button("Clear history", role: .destructive) {
                         Task { await viewModel?.clearVoiceHistory() }
@@ -451,8 +463,13 @@ struct ChatsView: View {
             }
             // Search bar (when active)
             if isSearchPresented, let vm = viewModel {
-                searchBar(vm)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                if vm.selectedSegment == .voice {
+                    voiceSearchBar(vm)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                } else {
+                    searchBar(vm)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
         }
     }
@@ -490,6 +507,56 @@ struct ChatsView: View {
             Button("Cancel") {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     vm.searchQuery = ""
+                    isSearchPresented = false
+                    isSearchFocused = false
+                }
+            }
+            .foregroundColor(Theme.accentColor)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+        .onAppear {
+            isSearchFocused = true
+        }
+    }
+
+    /// Search bar for filtering the Voice history (issue #167). Mirrors the
+    /// Text search bar but binds `voiceSearchQuery`; the query filters live
+    /// (the Voice list re-derives from `voiceRecords` — see the `.task(id:)`
+    /// in the view body), so no reload is needed on each keystroke.
+    @ViewBuilder
+    private func voiceSearchBar(_ vm: ChatsViewModel) -> some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(Theme.textDisabled)
+
+                TextField(String(localized: "Search calls"), text: Binding(
+                    get: { vm.voiceSearchQuery },
+                    set: { vm.voiceSearchQuery = $0 }
+                ))
+                .foregroundColor(Theme.textPrimary)
+                .focused($isSearchFocused)
+                .submitLabel(.search)
+                .accessibilityIdentifier("voice_search_field")
+
+                if !vm.voiceSearchQuery.isEmpty {
+                    Button {
+                        vm.voiceSearchQuery = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(Theme.textDisabled)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Theme.backgroundTertiary)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+
+            Button(String(localized: "Cancel")) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    vm.voiceSearchQuery = ""
                     isSearchPresented = false
                     isSearchFocused = false
                 }

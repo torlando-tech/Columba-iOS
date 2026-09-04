@@ -321,21 +321,28 @@ public final class ChatsViewModel {
         }
         voiceIsLoading = true
         do {
+            // Fetch the full identity-scoped history with an EMPTY query:
+            // search filtering happens CLIENT-side against the ENRICHED peer
+            // name (`filteredVoiceRecords`), which covers both the live
+            // conversation name and the snapshot — a DB LIKE against only the
+            // snapshot column would miss a renamed peer.
             let records = try await callHistory.fetchHistory(localIdentityHash: hex, query: "")
-            let enriched = await enrichVoiceRecords(records)
-            // Apply client-side search (the repo query is left empty; matching
-            // against the enriched peer name covers both the live name and the
-            // snapshot, which a DB query against only the snapshot column would
-            // miss for a renamed peer).
-            let query = voiceSearchQuery.trimmingCharacters(in: .whitespaces)
-            voiceRecords = query.isEmpty
-                ? enriched
-                : enriched.filter { $0.peerName.localizedCaseInsensitiveContains(query) }
+            voiceRecords = await enrichVoiceRecords(records)
             voiceErrorMessage = nil
         } catch {
             voiceErrorMessage = error.localizedDescription
         }
         voiceIsLoading = false
+    }
+
+    /// Voice history with the live search query applied against the ENRICHED
+    /// peer name (the source the Text tab's `filteredConversations` mirrors).
+    /// The list renders THIS, so typing in the Voice search bar filters
+    /// without a reload.
+    public var filteredVoiceRecords: [VoiceCallDisplay] {
+        let query = voiceSearchQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return voiceRecords }
+        return voiceRecords.filter { $0.peerName.localizedCaseInsensitiveContains(query) }
     }
 
     /// Resolve each record's remote identity to a live `ConversationRecord`

@@ -110,14 +110,24 @@ public final class CallManager {
     ///
     /// Both CallManager and CallHistoryRepository live in the SAME ColumbaApp
     /// target, so CallManager holds the CONCRETE actor directly (no protocol
-    /// needed). Its write methods are `async throws`; CallManager calls them
-    /// fire-and-forget from its @MainActor callbacks via
-    /// `Task { try? await ... }` (a history write must never block or fail a call).
+    /// needed). Its write methods are `async throws`; CallManager enqueues them
+    /// onto an ordered per-attempt chain (`historyWriteChain`) from its
+    /// @MainActor callbacks — a history write must never block or fail a call,
+    /// yet a call's writes must land in lifecycle order (insert → milestones →
+    /// end), so an end can't outrun its insert.
     var callHistoryRepository: CallHistoryRepository?
     /// Hex of the active local identity, set at init for identity-scoped writes.
-    private var localIdentityHashHex: String?
+    /// (Internal, not private, so lifecycle tests can seed it without the full
+    /// `initialize()` transport stack.)
+    var localIdentityHashHex: String?
     /// The attempt id for the in-flight call (nil when idle).
     private(set) var currentCallAttemptId: String?
+    /// Serialized history-write chain: every write for the current call attempt
+    /// is appended here and executes in FIFO order. A new attempt starts a new
+    /// chain (only one call is in flight at a time). This is what makes
+    /// `recordEnd` observe the row `insertAttempt` created — the lifecycle
+    /// callbacks fire independently and can be arbitrarily close together.
+    private var historyWriteChain: Task<Void, Never>?
     private var callAttemptStartedAt: Date?
     private var peerDisplayNameSnapshot: String?
     /// Whether the in-flight call reached the connection milestone
@@ -134,8 +144,9 @@ public final class CallManager {
     /// `initiateCall`, incoming: `handleCallerIdentified`), so it is non-nil
     /// here; a blank/absent hash is never valid for a stored record, so it is
     /// stored as an empty string rather than force-unwrapped (no crash).
-    /// The write is fire-and-forget: a history write must never block or fail
-    /// a call, and a nil repository (Model B / pre-wiring) is a silent no-op.
+    /// The write seeds the per-attempt ordered chain: a history write must
+    /// never block or fail a call, and a nil repository (Model B / pre-wiring)
+    /// is a silent no-op.
     private func beginCallAttempt(direction: CallHistoryDirection, peerDisplayName: String?) {
         guard let hex = localIdentityHashHex else { return }
         let id = UUID().uuidString
@@ -146,17 +157,37 @@ public final class CallManager {
         peerDisplayNameSnapshot = peerDisplayName
         let remoteHash = peerHash ?? ""
         let profileCode = Int(activeProfile.rawValue)
-        // All values are captured by value (like the other fire-and-forget
-        // write sites), so the Task needs no `self` capture at all — it only
-        // holds the repo for the duration of the write.
+        // All values are captured by value (like the other write sites), so
+        // the Task only holds the repo for the duration of the write. A NEW
+        // attempt always gets a FRESH chain: only one call is in flight at a
+        // time, and any leftover (completed) chain from the previous attempt
+        // is discarded — nothing from it is still pending, because every
+        // terminal path (ended / failed / reset) finalizes before clearing.
         let repo = callHistoryRepository
-        Task {
+        historyWriteChain = Task {
             guard let repo else { return }
             try? await repo.insertAttempt(
                 callAttemptId: id, localIdentityHash: hex,
                 remoteIdentityHash: remoteHash,
                 direction: direction, peerDisplayNameSnapshot: peerDisplayName,
                 codecProfileCode: profileCode, attemptedAt: Date())
+        }
+    }
+
+    /// Enqueue one history write on the current attempt's ordered chain
+    /// (FIFO: insert → milestones → end), creating the chain if
+    /// `beginCallAttempt` hasn't seeded one yet.
+    ///
+    /// Each step awaits the previous, so a call's writes always land in
+    /// lifecycle order — in particular the terminal `recordEnd` always runs
+    /// AFTER the `insertAttempt` row exists. The writes run detached from the
+    /// caller (a history write must never block a call); a nil repository
+    /// (Model B / pre-wiring) is a silent no-op.
+    private func enqueueHistoryWrite(_ body: @escaping @Sendable () async -> Void) {
+        if let existing = historyWriteChain {
+            historyWriteChain = Task { await existing.value; await body() }
+        } else {
+            historyWriteChain = Task { await body() }
         }
     }
 
@@ -236,9 +267,11 @@ public final class CallManager {
                 // Outgoing-only: our own call started ringing on the far end.
                 // (For incoming, handleCallerIdentified above begins the attempt;
                 // the isIncoming==false guard keeps this from double-recording.)
-                if let id = self?.currentCallAttemptId, self?.isIncoming == false {
-                    let repo = self?.callHistoryRepository
-                    Task { try? await repo?.recordRinging(id, at: Date()) }
+                if let id = self?.currentCallAttemptId, self?.isIncoming == false,
+                   let repo = self?.callHistoryRepository {
+                    self?.enqueueHistoryWrite {
+                        try? await repo.recordRinging(id, at: Date())
+                    }
                 }
             }
         }
@@ -254,7 +287,10 @@ public final class CallManager {
                 self.didConnect = true
                 if let id = self.currentCallAttemptId {
                     let repo = self.callHistoryRepository
-                    Task { try? await repo?.recordConnected(id, at: Date()) }
+                    self.enqueueHistoryWrite {
+                        guard let repo else { return }
+                        try? await repo.recordConnected(id, at: Date())
+                    }
                 }
                 self.startDurationTimer()
                 #if os(iOS)
@@ -292,7 +328,10 @@ public final class CallManager {
                                                                 wasConnected: self.didConnect,
                                                                 reason: reason)
                     let repo = self.callHistoryRepository
-                    Task { try? await repo?.recordEnd(id, at: Date(), outcome: outcome) }
+                    self.enqueueHistoryWrite {
+                        guard let repo else { return }
+                        try? await repo.recordEnd(id, at: Date(), outcome: outcome)
+                    }
                     self.currentCallAttemptId = nil
                     self.activeCallAttemptId = nil
                 }
@@ -460,7 +499,10 @@ public final class CallManager {
         // so wasConnected is false and .failed is the reduced outcome.
         if let id = currentCallAttemptId {
             let repo = callHistoryRepository
-            Task { try? await repo?.recordEnd(id, at: Date(), outcome: .failed) }
+            enqueueHistoryWrite {
+                guard let repo else { return }
+                try? await repo.recordEnd(id, at: Date(), outcome: .failed)
+            }
             currentCallAttemptId = nil
             activeCallAttemptId = nil
         }
@@ -1083,6 +1125,20 @@ public final class CallManager {
         stopRingback()  // clear ringbackActive so a later call's ringback isn't suppressed
         callState = .idle
         // Clear in-flight call-history attempt state so a stale id never lingers.
+        // Finalize the record FIRST if a call is still active: a reset that
+        // reaches here without a terminal callback (e.g. a CallKit provider
+        // reset) must not strand the row — it is recorded as `interrupted`
+        // (connected) or `notConnected` (not) with an end time, so the Voice
+        // list can never show a dead call as "in progress" forever.
+        if let id = currentCallAttemptId {
+            let wasConnected = didConnect
+            let outcome: CallOutcome = wasConnected ? .interrupted : .notConnected
+            let repo = callHistoryRepository
+            enqueueHistoryWrite {
+                guard let repo else { return }
+                try? await repo.recordEnd(id, at: Date(), outcome: outcome)
+            }
+        }
         currentCallAttemptId = nil
         activeCallAttemptId = nil
         callAttemptStartedAt = nil

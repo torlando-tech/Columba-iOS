@@ -33,6 +33,24 @@ class IOSVoiceCallHistoryContract(unittest.TestCase):
         self.assertIn("call_history_card", HISTORY.read_text())
         self.assertIn("call_history_call_again", DETAILS.read_text())
 
+    def test_voice_search_reachable(self):
+        # The Voice segment must expose a search control bound to
+        # voiceSearchQuery (previously the query had no UI input).
+        self.assertIn("voiceSearchQuery", self.chats)
+        self.assertIn("voice_search_toggle", self.chats)
+        self.assertIn("voice_search_field", self.chats)
+        # The VM must filter the live list by the query (client-side).
+        vm = (ROOT / "Sources/ColumbaApp/ViewModels/ChatsViewModel.swift").read_text()
+        self.assertIn("filteredVoiceRecords", vm)
+        # The list renders the filtered records.
+        self.assertIn("filteredVoiceRecords", HISTORY.read_text())
+
+    def test_voice_error_state_surface(self):
+        # A failed load must be distinguishable from empty history (P2).
+        history = HISTORY.read_text()
+        self.assertIn("voiceErrorMessage", history)
+        self.assertIn("voice_history_retry", history)
+
     def test_repository_wired_into_app_services(self):
         app = (ROOT / "Sources/ColumbaApp/Services/AppServices.swift").read_text()
         self.assertIn("callHistoryRepository", app)

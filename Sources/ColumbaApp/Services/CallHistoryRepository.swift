@@ -113,6 +113,11 @@ public actor CallHistoryRepository {
     }
 
     /// Finalize the attempt with its terminal outcome + end time (final, exactly-once).
+    ///
+    /// Ordering contract: `CallManager` enqueues every attempt's writes onto a
+    /// single ordered chain (insert → milestones → end), so by the time this
+    /// runs the row exists and the update matches. The `AND ended_at IS NULL`
+    /// guard keeps a duplicated end callback from clobbering the stored outcome.
     public func recordEnd(_ callAttemptId: String, at: Date,
                           outcome: CallOutcome, failureReason: String? = nil) throws {
         try pool.write { db in

@@ -1229,6 +1229,16 @@ public final class AppServices {
         self.grdbDatabasePath = grdbPath
         let messageRepository = try MessageRepository(grdbPath: grdbPath)
         self.messageRepository = messageRepository
+        // Open the identity-scoped call-history store. A repository left over
+        // from a previous init is closed FIRST: if opening this identity's
+        // store then fails, the catch leaves `callHistoryRepository` nil
+        // rather than the previous identity's still-open store, so the new
+        // CallManager can never write this identity's call metadata into the
+        // previous identity's database.
+        if let stale = self.callHistoryRepository {
+            await stale.close()
+            self.callHistoryRepository = nil
+        }
         do {
             let callHistory = try CallHistoryRepository(grdbPath: grdbPath)
             self.callHistoryRepository = callHistory
@@ -3199,6 +3209,16 @@ public final class AppServices {
         self.grdbDatabasePath = grdbPath
         let messageRepository = try MessageRepository(grdbPath: grdbPath)
         self.messageRepository = messageRepository
+        // Open the identity-scoped call-history store. A repository left over
+        // from a previous init is closed FIRST: if opening this identity's
+        // store then fails, the catch leaves `callHistoryRepository` nil
+        // rather than the previous identity's still-open store, so the new
+        // CallManager can never write this identity's call metadata into the
+        // previous identity's database.
+        if let stale = self.callHistoryRepository {
+            await stale.close()
+            self.callHistoryRepository = nil
+        }
         do {
             let callHistory = try CallHistoryRepository(grdbPath: grdbPath)
             self.callHistoryRepository = callHistory

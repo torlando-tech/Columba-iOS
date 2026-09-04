@@ -167,6 +167,75 @@ final class CallManagerCallKitTests: XCTestCase {
         )
         XCTAssertNil(manager.peerHash, "peerHash must not be populated on a reset-race")
     }
+
+    // MARK: - Call-history lifecycle finalization (issue #167)
+
+    /// A CallKit provider reset while a call is active must FINALIZE the
+    /// history attempt (end time + outcome) — otherwise the row is stranded
+    /// with no end and the Voice list shows a dead call "in progress" forever.
+    /// Regression: pre-fix, `handleCallKitReset` → `resetState` cleared
+    /// `currentCallAttemptId` without writing `recordEnd`.
+    func test_handleCallKitReset_finalizesActiveHistoryAttempt() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-reset-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer {
+            // (No explicit close: the actor pool tears down on suspension /
+            // deinit — same convention as CallHistoryRepositoryTests.)
+            manager.callHistoryRepository = nil
+        }
+
+        // An in-flight incoming call (prepared + identified = attempt started).
+        manager.prepareForIncomingCall()
+        manager.handleCallerIdentified(Data(repeating: 7, count: 20))
+        let attemptId = try XCTUnwrap(manager.currentCallAttemptId)
+
+        // Provider reset with the call still live.
+        manager.handleCallKitReset()
+
+        // The reset path finalizes the attempt: poll for the end time.
+        var record: CallHistoryRecord?
+        let idHex = String(repeating: "b", count: 32)
+        for _ in 0..<100 {
+            record = try await repo.fetchRecord(attemptId, localIdentityHash: idHex)
+            if record?.endedAt != nil { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let final = try XCTUnwrap(record, "history row missing after reset")
+        XCTAssertNotNil(final.endedAt, "reset must finalize the attempt with an end time")
+        XCTAssertEqual(final.outcome, .notConnected,
+                       "a reset before the connection milestone records notConnected")
+    }
+
+    /// A reset with NO active call must not write anything (and a second
+    /// reset after the first is a no-op — exactly-once finalization).
+    func test_handleCallKitReset_withNoActiveCall_writesNoHistory() async throws {
+        let dbURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("callhist-reset2-\(UUID().uuidString).db")
+        let repo = try CallHistoryRepository(grdbPath: dbURL.path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        manager.localIdentityHashHex = String(repeating: "b", count: 32)
+        defer {
+            // (No explicit close: the actor pool tears down on suspension /
+            // deinit — same convention as CallHistoryRepositoryTests.)
+            manager.callHistoryRepository = nil
+        }
+
+        let idHex = String(repeating: "b", count: 32)
+        manager.handleCallKitReset()
+        try await Task.sleep(for: .milliseconds(300))
+        manager.handleCallKitReset()  // double reset must stay a no-op
+        try await Task.sleep(for: .milliseconds(300))
+
+        let records = try await repo.fetchHistory(localIdentityHash: idHex, query: "")
+        XCTAssertEqual(records.count, 0, "no call in flight → no history rows")
+    }
 }
 
 // MARK: - Mock

@@ -77,6 +77,28 @@ final class CallHistoryRepositoryTests: XCTestCase {
         XCTAssertEqual(records.count, 1)   // idempotent insert (INSERT OR IGNORE)
     }
 
+    /// Exactly-once terminal: a second `recordEnd` for the same attempt must
+    /// NOT clobber the stored outcome/end time (a duplicated end callback or a
+    /// late stale reset must leave the first terminal write intact).
+    func testDuplicateRecordEndIsIgnored() async throws {
+        let id = "attempt-endx"
+        try await repo.insertAttempt(callAttemptId: id, localIdentityHash: idHex,
+                                     remoteIdentityHash: String(repeating: "a", count: 32),
+                                     direction: .incoming, peerDisplayNameSnapshot: nil,
+                                     codecProfileCode: nil,
+                                     attemptedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        try await repo.recordEnd(id, at: Date(timeIntervalSince1970: 1_700_000_100),
+                                 outcome: .declinedLocal)
+        try await repo.recordEnd(id, at: Date(timeIntervalSince1970: 1_700_000_999),
+                                 outcome: .notConnected)  // stale duplicate
+
+        let records = try await repo.fetchHistory(localIdentityHash: idHex, query: "")
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].outcome, .declinedLocal,
+                       "the FIRST terminal write wins; a later recordEnd is a no-op")
+        XCTAssertEqual(records[0].endedAt, Date(timeIntervalSince1970: 1_700_000_100))
+    }
+
     func testNewestFirstOrdering() async throws {
         let old = Date(timeIntervalSince1970: 1_700_000_000)
         let new = old.addingTimeInterval(3600)
