@@ -369,4 +369,17 @@ final class RNodeWizardViewModel {
         // No region match — use custom mode
         isCustomMode = true
     }
+
+    /// Prefill custom LoRa fields from a discovered interface (discovery card 'Use for RNode').
+    init(prefilledFrom iface: DiscoveredInterface) {
+        self.init()
+        isCustomMode = true
+        interfaceName = iface.name
+        customFrequency = iface.frequency.map { String(Int($0)) }
+        customBandwidth = iface.bandwidth.map(String.init)
+        customSpreadingFactor = iface.spreadingFactor.map(String.init)
+        customCodingRate = iface.codingRate.map(String.init)
+        // Region/preset selection stays at its default; the wizard's existing
+        // validation decides legality.
+    }
 }

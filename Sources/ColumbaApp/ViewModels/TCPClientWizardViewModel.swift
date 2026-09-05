@@ -144,6 +144,22 @@ final class TCPClientWizardViewModel {
         currentStep = .serverSelection
     }
 
+    /// Prefill from a discovered interface (discovery card 'Add to Config').
+    init(prefilledFrom iface: DiscoveredInterface) {
+        self.init()
+        currentStep = .reviewConfigure
+        isCustomMode = true
+        interfaceName = iface.name
+        targetHost = iface.reachableOn ?? ""
+        targetPort = iface.port.map(String.init) ?? "4242"
+        networkName = iface.ifacNetname ?? ""
+        passphrase = iface.ifacNetkey ?? ""
+        mode = .full
+        enabled = true
+        bootstrapOnly = false
+        // editingInterface stays nil — create flow.
+    }
+
     // MARK: - Validation
 
     /// Whether the wizard can advance / save from the given step.
