@@ -91,6 +91,16 @@
         }
       }
     },
+    "Tap to configure RNS 1.1.x interface discovery": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap to configure RNS 1.1.x interface discovery"
+          }
+        }
+      }
+    },
     "Manage": {
       "localizations": {
         "en": {
@@ -2233,6 +2243,16 @@
         }
       }
     },
+    "Discovery enabled - no interfaces found yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovery enabled - no interfaces found yet"
+          }
+        }
+      }
+    },
     "Off": {
       "localizations": {
         "en": {
@@ -2699,6 +2719,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld m"
+          }
+        }
+      }
+    },
+    "%lld interfaces found via RNS Discovery": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld interfaces found via RNS Discovery"
           }
         }
       }

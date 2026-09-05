@@ -23,10 +23,28 @@ struct InterfaceManagementScreen: View {
     // MARK: - Dependencies
 
     @Bindable var viewModel: InterfaceManagementViewModel
+    let appServices: AppServices
+    /// Pushes the discovered-interfaces detail screen onto the
+    /// SettingsView NavigationStack — owned there, so this screen only
+    /// reports the intent via this callback.
+    var onOpenDiscoveredInterfaces: () -> Void
 
     // MARK: - Environment
 
     @Environment(\.dismiss) private var dismiss
+
+    // MARK: - State
+
+    /// Lightweight one-shot snapshot of RNS discovery for the entry card.
+    struct DiscoverySummary {
+        let total: Int
+        let available: Int
+        let unknown: Int
+        let stale: Int
+        let enabled: Bool
+    }
+
+    @State private var discoverySummary: DiscoverySummary?
 
     // MARK: - Body
 
@@ -42,6 +60,10 @@ struct InterfaceManagementScreen: View {
                     // Summary Card
                     summaryCard
 
+                    // Interface Discovery entry card — always visible,
+                    // tappable into the discovered-interfaces screen.
+                    discoveryEntryCard
+
                     // Interfaces List
                     if viewModel.interfaces.isEmpty {
                         emptyStateView
@@ -51,6 +73,7 @@ struct InterfaceManagementScreen: View {
                 }
                 .padding(16)
             }
+            .task { await refreshDiscoverySummary() }
             // FAB bottom inset — scroll content stays clear of the FAB
             .safeAreaInset(edge: .bottom) {
                 HStack {
@@ -183,6 +206,119 @@ struct InterfaceManagementScreen: View {
         .padding(.vertical, 20)
         .background(Theme.backgroundSecondary)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusLarge))
+    }
+
+    // MARK: - Discovery Entry Card
+
+    /// Tappable card above the interfaces list mirroring Android's
+    /// `DiscoveredInterfacesSummaryCard`: tinted by discovery enabled state,
+    /// with a found-count subtitle (+ available/unknown/stale badges) or a
+    /// "tap to configure" hint. Data is a lightweight one-shot read — the
+    /// full list lives in DiscoveredInterfacesScreen, not here.
+    private var discoveryEntryCard: some View {
+        Button {
+            #if COLUMBA_RUNTIME_PYTHON
+            onOpenDiscoveredInterfaces()
+            #endif
+            // Model B has no app-side discovery — the tap is a no-op.
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.title3)
+                    .foregroundStyle(discoveryEntryTint)
+                    .frame(width: 32)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(String(localized: "Interface Discovery"))
+                        .font(.headline)
+                        .foregroundStyle(discoveryEntryTint)
+
+                    discoveryEntrySubtitle
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(discoveryEntryTint.opacity(0.15))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("discovery_entry_card")
+    }
+
+    private var discoveryEntryTint: Color {
+        (discoverySummary?.enabled ?? false) ? Theme.success : Theme.textSecondary
+    }
+
+    @ViewBuilder
+    private var discoveryEntrySubtitle: some View {
+        if let summary = discoverySummary, summary.total > 0 {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(String(localized: "%lld interfaces found via RNS Discovery", summary.total))
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+
+                HStack(spacing: 8) {
+                    discoveryEntryBadge(String(localized: "Available"), count: summary.available, color: Theme.success)
+                    discoveryEntryBadge(String(localized: "Unknown"), count: summary.unknown, color: Theme.textSecondary)
+                    discoveryEntryBadge(String(localized: "Stale"), count: summary.stale, color: .orange)
+                }
+            }
+        } else {
+            Text(String(localized: "Tap to configure RNS 1.1.x interface discovery"))
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+        }
+    }
+
+    /// Small capsule status label — same visual language as the screen's
+    /// existing `statusBadge`.
+    private func discoveryEntryBadge(_ label: String, count: Int, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+
+            Text("\(count) \(label)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.15))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// One-shot lightweight read of the discovery snapshot for the entry
+    /// card. `pythonBackend` is compiled only into the shipping (Python)
+    /// build — Model B has no app-side discovery, so the card renders the
+    /// "tap to configure" state (tap is a no-op there, see the destination).
+    private func refreshDiscoverySummary() async {
+        let snapshot: RNSAPI.DiscoverySnapshot?
+        #if COLUMBA_RUNTIME_PYTHON
+        snapshot = await appServices.pythonBackend?.discovery()
+        #else
+        snapshot = nil
+        #endif
+
+        guard let snapshot else {
+            discoverySummary = nil
+            return
+        }
+
+        let discovered = snapshot.discovered
+        discoverySummary = DiscoverySummary(
+            total: discovered.count,
+            available: discovered.filter { $0.status == "available" }.count,
+            unknown: discovered.filter { $0.status == "unknown" }.count,
+            stale: discovered.filter { $0.status == "stale" }.count,
+            enabled: snapshot.enabled
+        )
     }
 
     // MARK: - Interfaces List

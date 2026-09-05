@@ -47,6 +47,7 @@ struct SettingsView: View {
     @State private var showMyIdentity = false
     @State private var showManageIdentities = false
     @State private var showInterfaceManagement = false
+    @State private var showDiscoveredInterfaces = false
     @State private var showNetworkStatus = false
     @State private var showBLEConnections = false
     @State private var showDataMigration = false
@@ -152,8 +153,20 @@ struct SettingsView: View {
                 }
                 .navigationDestination(isPresented: $showInterfaceManagement) {
                     if let vm = interfaceViewModel {
-                        InterfaceManagementScreen(viewModel: vm)
+                        InterfaceManagementScreen(
+                            viewModel: vm,
+                            appServices: appServices,
+                            onOpenDiscoveredInterfaces: { showDiscoveredInterfaces = true }
+                        )
                     }
+                }
+                .navigationDestination(isPresented: $showDiscoveredInterfaces) {
+                    DiscoveredInterfacesScreen(
+                        viewModel: DiscoveredInterfacesViewModel(
+                            appServices: appServices,
+                            settings: settingsRepository
+                        )
+                    )
                 }
                 .navigationDestination(isPresented: $showNetworkStatus) {
                     NetworkStatusView(appServices: appServices)
