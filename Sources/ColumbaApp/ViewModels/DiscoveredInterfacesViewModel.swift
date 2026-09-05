@@ -114,6 +114,13 @@ public final class DiscoveredInterfacesViewModel {
     /// would deallocate at method exit and the fix/timeout could never
     /// deliver. Released from the provider's completion once delivered.
     private var locationProvider: OneShotLocationProvider?
+    /// Monotonic request generation — the completion releases the provider
+    /// slot only if its own request is still the newest (a late timeout from
+    /// an earlier request must not clobber a newer in-flight provider). A
+    /// generation counter is used instead of capturing the provider itself
+    /// because the completion closure cannot reference the `let` it
+    /// initializes.
+    private var locationRequestGeneration = 0
 #endif
 
     // MARK: - Initialization
@@ -279,13 +286,16 @@ public final class DiscoveredInterfacesViewModel {
     @MainActor
     public func requestUserLocation() {
         #if os(iOS)
+        locationRequestGeneration += 1
+        let generation = locationRequestGeneration
         let provider = OneShotLocationProvider { [weak self] coordinate in
             // Release the one-shot provider now that the fix (or timeout)
             // has delivered, so the manager deallocates and GPS acquisition
-            // is fully dropped. Only if still the active provider — a newer
-            // request may already have replaced us.
-            if self?.locationProvider === provider {
-                self?.locationProvider = nil
+            // is fully dropped — but only if this request is still the
+            // newest (a late timeout from a superseded request must not
+            // clobber a newer in-flight provider).
+            if let self, self.locationRequestGeneration == generation {
+                self.locationProvider = nil
             }
             guard let coordinate else { return }
             self?.setUserLocation(lat: coordinate.latitude, lon: coordinate.longitude)
