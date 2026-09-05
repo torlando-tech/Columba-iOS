@@ -156,6 +156,7 @@
 		238336F8024494A8B57F9419 /* CeaseTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF48C97880B30682DC35613C /* CeaseTelemetry.swift */; };
 		266929D6972E8D373E7A926D /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 021FA3D73B6F8B711A97D40F /* ReticulumSwift */; };
 		26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */; };
+		2BD6F16BEA0EC587E6433034 /* DiscoveredInterfaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB8ACAE7518CFD5E0C149B9F /* DiscoveredInterfaceTests.swift */; };
 		26D6E3545012268714C637D9 /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065 /* ThemeManager.swift */; };
 		2AFE85F0CA5EFEDF75A7C1E5 /* IncomingCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4C54CECCAF0B117FB6C197 /* IncomingCallScreen.swift */; };
 		2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */; };
@@ -542,6 +543,7 @@
 		D001472BC7DFD3CD7BF27F0C /* app */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = app; sourceTree = "<group>"; };
 		D33D0252383165C6829D2767 /* ColumbaModelBAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaModelBAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallScreen.swift; sourceTree = "<group>"; };
+		DB8ACAE7518CFD5E0C149B9F /* DiscoveredInterfaceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DiscoveredInterfaceTests.swift; sourceTree = "<group>"; };
 		DA586EB5F8EB62D2579CEAAB /* Lucide.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Lucide.swift; sourceTree = "<group>"; };
 		DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioRingBufferTests.swift; sourceTree = "<group>"; };
 		E4AB432DD1264CAE1F35B22A /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
@@ -1157,6 +1159,7 @@
 			CHF001 /* CallHistoryFormattingTests.swift */,
 			CHRT01 /* CallHistoryRepositoryTests.swift */,
 				B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */,
+				DB8ACAE7518CFD5E0C149B9F /* DiscoveredInterfaceTests.swift */,
 				AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */,
 				A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */,
 				APVT001 /* MessageAttachmentPreviewTests.swift */,
@@ -1927,6 +1930,7 @@
 			files = (
 				47B4E413633097429123BC2F /* PeerLocationRemovalTests.swift in Sources */,
 				E4FCBD54560B74AC8CCB1C91 /* DirectionsLauncherTests.swift in Sources */,
+				2BD6F16BEA0EC587E6433034 /* DiscoveredInterfaceTests.swift in Sources */,
 				CC067EE77A33341C829CBDE8 /* PeerLocationFormattingTests.swift in Sources */,
 			CHF002 /* CallHistoryFormattingTests.swift in Sources */,
 			CHRT02 /* CallHistoryRepositoryTests.swift in Sources */,
