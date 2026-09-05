@@ -33,6 +33,12 @@ struct DiscoveredInterfacesScreen: View {
 
     @Bindable var viewModel: DiscoveredInterfacesViewModel
     let appServices: AppServices
+    /// Shared InterfaceRepository (issue #193). The sheet wizard VMs are
+    /// built on this instance — NOT a fresh one — so a save appends to the
+    /// same @Observable `interfaces` array the Interfaces list (and IMS)
+    /// reads, keeping the list fresh after "Add to Config" without a
+    /// relaunch. Fallback to a fresh repo when the caller has none.
+    var interfaceRepository: InterfaceRepository?
 
     // MARK: - Card action state (issue #193)
 
@@ -114,7 +120,12 @@ struct DiscoveredInterfacesScreen: View {
         .sheet(
             isPresented: Binding(
                 get: { tcpInterfaceViewModel?.showTCPWizard ?? false },
-                set: { _ in }
+                // Forward (house RNode-cover pattern, SettingsView:211) so
+                // swipe-to-dismiss actually flips the flag and triggers
+                // onDismiss cleanup instead of snapping back.
+                set: { _ in
+                    tcpInterfaceViewModel?.showTCPWizard = false
+                }
             ),
             onDismiss: {
                 // Match the house wizard sheets (IMS:162, SettingsView RNode)
@@ -139,13 +150,31 @@ struct DiscoveredInterfacesScreen: View {
         .sheet(
             isPresented: Binding(
                 get: { rnodeInterfaceViewModel?.showRNodeWizard ?? false },
-                set: { _ in }
+                // Forward (house RNode-cover pattern, SettingsView:211) so
+                // swipe-to-dismiss actually flips the flag and triggers
+                // onDismiss cleanup instead of snapping back.
+                set: { _ in
+                    rnodeInterfaceViewModel?.showRNodeWizard = false
+                }
             ),
             onDismiss: {
-                // Match the house wizard sheets exactly — see the TCP
-                // onDismiss above for why there is no applyChanges() here
-                // (double-apply race / forced Python-RNode apply).
+                // RNode differs from TCP here: saveInterface() on Python
+                // STAGES the change (hasPendingChanges) but deliberately
+                // does not auto-apply (IMVM:407-411 — "the user taps Apply
+                // explicitly"), and applyRNodeLiveChange is a Model-B-only
+                // no-op on Python (IMVM:470). The house Apply button lives in
+                // the IMS toolbar, which is NOT reachable from this sheet —
+                // so without an apply here the staged Python change is
+                // persisted but never pushed to the live stack. TCP does NOT
+                // get this: saveTCPInterface already spawns its own
+                // applyChanges Task (IMVM:452), so a second would race it.
+                // Model B is safe: applyInterfaceChanges is a no-op there
+                // and the radio is already live via applyRNodeLiveChange.
+                let vm = rnodeInterfaceViewModel
                 rnodeInterfaceViewModel?.dismissConfigSheet()
+                if let vm, vm.hasPendingChanges {
+                    Task { @MainActor in await vm.applyChanges() }
+                }
                 rnodeInterfaceViewModel = nil
                 rnodePrefill = nil
             }
@@ -165,7 +194,7 @@ struct DiscoveredInterfacesScreen: View {
     /// the wizard view seeds itself from `prefill` in `onAppear`.
     private func addToConfig(_ iface: DiscoveredInterface) {
         let imvm = tcpInterfaceViewModel ?? InterfaceManagementViewModel(
-            repository: InterfaceRepository(),
+            repository: interfaceRepository ?? InterfaceRepository(),
             appServices: appServices
         )
         tcpInterfaceViewModel = imvm
@@ -201,7 +230,7 @@ struct DiscoveredInterfacesScreen: View {
     #if os(iOS) && COLUMBA_RNODE_ENABLED
     private func useForRNode(_ iface: DiscoveredInterface) {
         let imvm = rnodeInterfaceViewModel ?? InterfaceManagementViewModel(
-            repository: InterfaceRepository(),
+            repository: interfaceRepository ?? InterfaceRepository(),
             appServices: appServices
         )
         rnodeInterfaceViewModel = imvm
@@ -647,6 +676,10 @@ private struct DiscoveredInterfaceCard: View {
                     .controlSize(.small)
                     .accessibilityIdentifier("discovery_card_copy_params")
 
+                    // Rendered only on RNode builds — on other configs the
+                    // action is a no-op stub, so this hides the button
+                    // instead of leaving a dead tap.
+                    #if os(iOS) && COLUMBA_RNODE_ENABLED
                     Button {
                         onUseForRNode(iface)
                     } label: {
@@ -656,6 +689,7 @@ private struct DiscoveredInterfaceCard: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .accessibilityIdentifier("discovery_card_use_rnode")
+                    #endif
                 }
             }
         }

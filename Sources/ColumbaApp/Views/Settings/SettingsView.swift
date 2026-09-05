@@ -166,7 +166,11 @@ struct SettingsView: View {
                             appServices: appServices,
                             settings: settingsRepository
                         ),
-                        appServices: appServices
+                        appServices: appServices,
+                        // Shared repo (issue #193): sheet saves append to the
+                        // same observable array the IMS list reads, so the
+                        // Interfaces list stays fresh after "Add to Config".
+                        interfaceRepository: interfaceRepository
                     )
                 }
                 .navigationDestination(isPresented: $showNetworkStatus) {
