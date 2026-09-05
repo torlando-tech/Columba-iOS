@@ -371,15 +371,16 @@ final class RNodeWizardViewModel {
     }
 
     /// No-arg designated init (memberwise defaults). Kept explicit so the
-    /// `convenience init(prefilledFrom:)` below can delegate to it — a class
-    /// loses its implicit no-arg `init()` once it declares ANY designated
-    /// init, which would otherwise break every `RNodeWizardViewModel()`
+    /// class retains a public parameterless init for every existing
     /// construction site.
+
     init() {}
 
-    /// Prefill custom LoRa fields from a discovered interface (discovery card 'Use for RNode').
-    convenience init(prefilledFrom iface: DiscoveredInterface) {
-        self.init()
+    /// Prefill custom LoRa fields from a discovered interface (discovery
+    /// card 'Use for RNode'). Mutates the existing instance — the wizard
+    /// view calls this from `onAppear` (one-shot, same pattern as
+    /// `populateFromConfig`).
+    func applyPrefill(_ iface: DiscoveredInterface) {
         isCustomMode = true
         interfaceName = iface.name
         customFrequency = iface.frequency.map { String(Int($0)) }

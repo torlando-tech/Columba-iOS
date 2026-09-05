@@ -20,6 +20,9 @@
 import SwiftUI
 import MapKit
 import RNSAPI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Screen showing interfaces announced by other RNS nodes, with the
 /// discovery + auto-connect settings and display filters.
@@ -29,6 +32,22 @@ struct DiscoveredInterfacesScreen: View {
     // MARK: - Dependencies
 
     @Bindable var viewModel: DiscoveredInterfacesViewModel
+    let appServices: AppServices
+
+    // MARK: - Card action state (issue #193)
+
+    /// Wizard VM for the "Add to Config" sheet — the sheet owns its own
+    /// InterfaceManagementViewModel (the house save sink) so the wizard's
+    /// unchanged save/cancel paths persist + close it.
+    @State private var tcpInterfaceViewModel: InterfaceManagementViewModel?
+    @State private var tcpPrefill: DiscoveredInterface?
+
+    /// Wizard VM for the "Use for RNode" sheet (same pattern as TCP).
+    @State private var rnodeInterfaceViewModel: InterfaceManagementViewModel?
+    @State private var rnodePrefill: DiscoveredInterface?
+
+    /// ID of the card whose "Copy LoRa Params" just fired (brief checkmark).
+    @State private var copiedCardID: String?
 
     // MARK: - Body
 
@@ -48,7 +67,11 @@ struct DiscoveredInterfacesScreen: View {
                             DiscoveredInterfaceCard(
                                 iface: iface,
                                 distanceKm: viewModel.calculateDistance(iface),
-                                isConnected: viewModel.isAutoconnected(iface)
+                                isConnected: viewModel.isAutoconnected(iface),
+                                onAddToConfig: { addToConfig(iface) },
+                                onCopyLoRaParams: { copyLoRaParams(iface) },
+                                onUseForRNode: { useForRNode(iface) },
+                                justCopied: copiedCardID == iface.id
                             )
                         }
                     }
@@ -84,7 +107,113 @@ struct DiscoveredInterfacesScreen: View {
             viewModel.load()
             viewModel.requestUserLocation()   // no-op unless already authorized
         }
+        // Card action sheets (issue #193): each sheet is driven by a
+        // sheet-owned InterfaceManagementViewModel (the house save sink),
+        // presented through the VM's own wizard flags with the same
+        // Binding(get:set:) pattern SettingsView uses for the RNode wizard.
+        .sheet(
+            isPresented: Binding(
+                get: { tcpInterfaceViewModel?.showTCPWizard ?? false },
+                set: { _ in }
+            ),
+            onDismiss: {
+                tcpInterfaceViewModel?.showTCPWizard = false
+                tcpInterfaceViewModel?.dismissConfigSheet()
+                if let vm = tcpInterfaceViewModel, vm.hasPendingChanges {
+                    Task { @MainActor in await vm.applyChanges() }
+                }
+                tcpInterfaceViewModel = nil
+                tcpPrefill = nil
+            }
+        ) {
+            if let imvm = tcpInterfaceViewModel {
+                TCPClientWizard(viewModel: imvm, prefill: tcpPrefill)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
+        #if os(iOS) && COLUMBA_RNODE_ENABLED
+        .sheet(
+            isPresented: Binding(
+                get: { rnodeInterfaceViewModel?.showRNodeWizard ?? false },
+                set: { _ in }
+            ),
+            onDismiss: {
+                rnodeInterfaceViewModel?.showRNodeWizard = false
+                rnodeInterfaceViewModel?.dismissConfigSheet()
+                if let vm = rnodeInterfaceViewModel, vm.hasPendingChanges {
+                    Task { @MainActor in await vm.applyChanges() }
+                }
+                rnodeInterfaceViewModel = nil
+                rnodePrefill = nil
+            }
+        ) {
+            if let imvm = rnodeInterfaceViewModel {
+                RNodeWizardView(viewModel: imvm, prefill: rnodePrefill)
+            }
+        }
+        #endif
     }
+
+    // MARK: - Card actions (issue #193)
+
+    /// "Add to Config": prefill the TCP client wizard with the announced
+    /// host/port/IFAC fields, landing directly on the review step. The sheet
+    /// is driven by the IMVM's own `showTCPWizard` flag (house pattern), and
+    /// the wizard view seeds itself from `prefill` in `onAppear`.
+    private func addToConfig(_ iface: DiscoveredInterface) {
+        let imvm = tcpInterfaceViewModel ?? InterfaceManagementViewModel(
+            repository: InterfaceRepository(),
+            appServices: appServices
+        )
+        tcpInterfaceViewModel = imvm
+        tcpPrefill = iface
+        // Fresh create-flow state (mirror dismissConfigSheet's resets without
+        // touching the wizard flag).
+        imvm.editingInterface = nil
+        imvm.configName = ""
+        imvm.configType = .tcpClient
+        imvm.configEnabled = true
+        imvm.configMode = .full
+        imvm.showTCPWizard = true
+    }
+
+    /// "Copy LoRa Params": publish the announced radio parameters to the
+    /// pasteboard and flash a checkmark on the card that fired.
+    private func copyLoRaParams(_ iface: DiscoveredInterface) {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = formatLoraParamsForClipboard(iface)
+        #elseif canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(formatLoraParamsForClipboard(iface), forType: .string)
+        #endif
+        copiedCardID = iface.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if copiedCardID == iface.id { copiedCardID = nil }
+        }
+    }
+
+    /// "Use for RNode": prefill the RNode wizard's custom LoRa fields from
+    /// the announced parameters (the device is still selected in-wizard, as
+    /// with the normal RNode flow).
+    #if os(iOS) && COLUMBA_RNODE_ENABLED
+    private func useForRNode(_ iface: DiscoveredInterface) {
+        let imvm = rnodeInterfaceViewModel ?? InterfaceManagementViewModel(
+            repository: InterfaceRepository(),
+            appServices: appServices
+        )
+        rnodeInterfaceViewModel = imvm
+        rnodePrefill = iface
+        imvm.editingInterface = nil
+        imvm.configName = ""
+        imvm.configType = .rnode
+        imvm.configEnabled = true
+        imvm.configMode = .full
+        imvm.showRNodeWizard = true
+    }
+    #else
+    private func useForRNode(_ iface: DiscoveredInterface) {}
+    #endif
 }
 
 // MARK: - Discovery Settings Card
@@ -394,6 +523,14 @@ private struct DiscoveredInterfaceCard: View {
     let distanceKm: Double?
     let isConnected: Bool
 
+    /// Card action handlers (issue #193) — the screen owns the sheets.
+    var onAddToConfig: (DiscoveredInterface) -> Void
+    var onCopyLoRaParams: (DiscoveredInterface) -> Void
+    var onUseForRNode: (DiscoveredInterface) -> Void
+
+    /// Set briefly after "Copy LoRa Params" so the button can show a checkmark.
+    var justCopied: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             // Header: icon + name/type + badges
@@ -480,7 +617,45 @@ private struct DiscoveredInterfaceCard: View {
             // Expandable all-announced-fields section
             DiscoveredInterfaceAllFieldsSection(iface: iface)
 
-            // T-H: card action buttons go here
+            // Card action buttons (issue #193) — full Android parity:
+            // Add to Config / Copy LoRa Params / Use for RNode.
+            HStack(spacing: 8) {
+                if iface.isTcpInterface && iface.reachableOn != nil {
+                    Button {
+                        onAddToConfig(iface)
+                    } label: {
+                        Label(String(localized: "Add to Config"), systemImage: "plus.circle")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("discovery_card_add_config")
+                }
+                if iface.isRadioInterface && iface.frequency != nil {
+                    Button {
+                        onCopyLoRaParams(iface)
+                    } label: {
+                        Label(
+                            justCopied ? String(localized: "Copied") : String(localized: "Copy LoRa Params"),
+                            systemImage: justCopied ? "checkmark" : "doc.on.doc"
+                        )
+                        .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("discovery_card_copy_params")
+
+                    Button {
+                        onUseForRNode(iface)
+                    } label: {
+                        Label(String(localized: "Use for RNode"), systemImage: "radio")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("discovery_card_use_rnode")
+                }
+            }
         }
         .padding(16)
         .background(Theme.backgroundSecondary)

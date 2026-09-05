@@ -2792,6 +2792,46 @@
           }
         }
       }
+    },
+    "Add to Config": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add to Config"
+          }
+        }
+      }
+    },
+    "Copy LoRa Params": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy LoRa Params"
+          }
+        }
+      }
+    },
+    "Use for RNode": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use for RNode"
+          }
+        }
+      }
+    },
+    "Copied": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copied"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

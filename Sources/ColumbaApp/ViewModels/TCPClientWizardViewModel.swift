@@ -145,15 +145,16 @@ final class TCPClientWizardViewModel {
     }
 
     /// No-arg designated init (memberwise defaults). Kept explicit so the
-    /// `convenience init(prefilledFrom:)` below can delegate to it — a class
-    /// loses its implicit no-arg `init()` once it declares ANY designated
-    /// init, which would otherwise break every `TCPClientWizardViewModel()`
+    /// class retains a public parameterless init for every existing
     /// construction site.
+
     init() {}
 
     /// Prefill from a discovered interface (discovery card 'Add to Config').
-    convenience init(prefilledFrom iface: DiscoveredInterface) {
-        self.init()
+    /// Mutates the existing instance — the wizard view calls this from
+    /// `onAppear` (one-shot, same pattern as `loadExisting`) so the
+    /// view's `@State` stays a plain memberwise-default value.
+    func applyPrefill(_ iface: DiscoveredInterface) {
         currentStep = .reviewConfigure
         isCustomMode = true
         interfaceName = iface.name

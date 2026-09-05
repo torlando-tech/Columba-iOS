@@ -165,7 +165,8 @@ struct SettingsView: View {
                         viewModel: DiscoveredInterfacesViewModel(
                             appServices: appServices,
                             settings: settingsRepository
-                        )
+                        ),
+                        appServices: appServices
                     )
                 }
                 .navigationDestination(isPresented: $showNetworkStatus) {
