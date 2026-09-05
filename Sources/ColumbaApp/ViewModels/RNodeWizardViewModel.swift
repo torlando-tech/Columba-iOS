@@ -370,8 +370,15 @@ final class RNodeWizardViewModel {
         isCustomMode = true
     }
 
+    /// No-arg designated init (memberwise defaults). Kept explicit so the
+    /// `convenience init(prefilledFrom:)` below can delegate to it — a class
+    /// loses its implicit no-arg `init()` once it declares ANY designated
+    /// init, which would otherwise break every `RNodeWizardViewModel()`
+    /// construction site.
+    init() {}
+
     /// Prefill custom LoRa fields from a discovered interface (discovery card 'Use for RNode').
-    init(prefilledFrom iface: DiscoveredInterface) {
+    convenience init(prefilledFrom iface: DiscoveredInterface) {
         self.init()
         isCustomMode = true
         interfaceName = iface.name

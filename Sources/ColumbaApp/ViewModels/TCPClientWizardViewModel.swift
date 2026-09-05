@@ -144,8 +144,15 @@ final class TCPClientWizardViewModel {
         currentStep = .serverSelection
     }
 
+    /// No-arg designated init (memberwise defaults). Kept explicit so the
+    /// `convenience init(prefilledFrom:)` below can delegate to it — a class
+    /// loses its implicit no-arg `init()` once it declares ANY designated
+    /// init, which would otherwise break every `TCPClientWizardViewModel()`
+    /// construction site.
+    init() {}
+
     /// Prefill from a discovered interface (discovery card 'Add to Config').
-    init(prefilledFrom iface: DiscoveredInterface) {
+    convenience init(prefilledFrom iface: DiscoveredInterface) {
         self.init()
         currentStep = .reviewConfigure
         isCustomMode = true
