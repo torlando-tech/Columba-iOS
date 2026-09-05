@@ -422,6 +422,7 @@
 		VBMR0 /* VoiceWaveformBars.swift in Sources */ = {isa = PBXBuildFile; fileRef = V0CR0 /* VoiceWaveformBars.swift */; };
 		A4EA60E22E1A3A65C6AFA5E7 /* OneShotLocationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E284643CB4F95B1B3DBA965B /* OneShotLocationProvider.swift */; };
 		099A0C66CE2C1444E52912D0 /* DiscoveredInterfacesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D8D7406682429BCE36865C3 /* DiscoveredInterfacesViewModel.swift */; };
+		8ECF8834E8FE33D8455E3B42 /* DiscoveredInterfacesScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6CAE98185D8B2D41D2ACA7E /* DiscoveredInterfacesScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -709,6 +710,7 @@
 		V0CR0 /* VoiceWaveformBars.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceWaveformBars.swift; sourceTree = "<group>"; };
 		E284643CB4F95B1B3DBA965B /* OneShotLocationProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneShotLocationProvider.swift; sourceTree = "<group>"; };
 		4D8D7406682429BCE36865C3 /* DiscoveredInterfacesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveredInterfacesViewModel.swift; sourceTree = "<group>"; };
+		F6CAE98185D8B2D41D2ACA7E /* DiscoveredInterfacesScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveredInterfacesScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1058,6 +1060,7 @@
 				F017 /* MyIdentityView.swift */,
 				F018 /* ExpandableSettingsCard.swift */,
 				F031 /* InterfaceManagementScreen.swift */,
+				F6CAE98185D8B2D41D2ACA7E /* DiscoveredInterfacesScreen.swift */,
 				F035 /* NetworkStatusView.swift */,
 				BGTF /* BackgroundTransportView.swift */,
 				F038 /* IconPickerView.swift */,
@@ -1718,6 +1721,7 @@
 				33E0E91CAEFB07F13C04637D /* SwiftRNSBackend.swift in Sources */,
 				6965E7A95909A97BDBA20535 /* NomadNetFetch.swift in Sources */,
 				4A784BAFF47E7074DAD6F9D2 /* ModelBInboundReplay.swift in Sources */,
+				8ECF8834E8FE33D8455E3B42 /* DiscoveredInterfacesScreen.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1913,6 +1917,7 @@
 				55F3BF7D600C32E07B7B8C26 /* TCPClientWizard.swift in Sources */,
 				F4E9991226B4D464017DA247 /* Lucide.swift in Sources */,
 				1FC4483D48CABE8BF49850EF /* SyncStatusBottomSheet.swift in Sources */,
+				8ECF8834E8FE33D8455E3B42 /* DiscoveredInterfacesScreen.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

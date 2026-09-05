@@ -2192,6 +2192,576 @@
           }
         }
       }
+    },
+    "Discovered Interfaces": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovered Interfaces"
+          }
+        }
+      }
+    },
+    "Interface Discovery": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interface Discovery"
+          }
+        }
+      }
+    },
+    "Enable discovery": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable discovery"
+          }
+        }
+      }
+    },
+    "Discovers interfaces announced by other RNS nodes. Changes apply after a brief restart of Reticulum.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovers interfaces announced by other RNS nodes. Changes apply after a brief restart of Reticulum."
+          }
+        }
+      }
+    },
+    "Off": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off"
+          }
+        }
+      }
+    },
+    "Bootstrap interfaces": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bootstrap interfaces"
+          }
+        }
+      }
+    },
+    "These auto-detach once discovered interfaces connect.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These auto-detach once discovered interfaces connect."
+          }
+        }
+      }
+    },
+    "Restarting…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restarting…"
+          }
+        }
+      }
+    },
+    "Active – discovering interfaces": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Active – discovering interfaces"
+          }
+        }
+      }
+    },
+    "Auto-connect up to %lld discovered interfaces": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto-connect up to %lld discovered interfaces"
+          }
+        }
+      }
+    },
+    "Discovered": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovered"
+          }
+        }
+      }
+    },
+    "Available": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Available"
+          }
+        }
+      }
+    },
+    "Unknown": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unknown"
+          }
+        }
+      }
+    },
+    "Sort": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sort"
+          }
+        }
+      }
+    },
+    "Quality": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quality"
+          }
+        }
+      }
+    },
+    "Nearest": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nearest"
+          }
+        }
+      }
+    },
+    "Search interfaces…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search interfaces…"
+          }
+        }
+      }
+    },
+    "IFAC only": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "IFAC only"
+          }
+        }
+      }
+    },
+    "%lld of %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld of %lld"
+          }
+        }
+      }
+    },
+    "Clear": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear"
+          }
+        }
+      }
+    },
+    "Transport:": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transport:"
+          }
+        }
+      }
+    },
+    "IFAC:": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "IFAC:"
+          }
+        }
+      }
+    },
+    "Last heard: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last heard: %@"
+          }
+        }
+      }
+    },
+    "%lld hops": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld hops"
+          }
+        }
+      }
+    },
+    "Yggdrasil": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yggdrasil"
+          }
+        }
+      }
+    },
+    "All announced fields": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All announced fields"
+          }
+        }
+      }
+    },
+    "Transport ID": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transport ID"
+          }
+        }
+      }
+    },
+    "Network ID": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Network ID"
+          }
+        }
+      }
+    },
+    "Status code": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Status code"
+          }
+        }
+      }
+    },
+    "Last heard (unix)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last heard (unix)"
+          }
+        }
+      }
+    },
+    "Heard count": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Heard count"
+          }
+        }
+      }
+    },
+    "Stamp value": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stamp value"
+          }
+        }
+      }
+    },
+    "Reachable on": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reachable on"
+          }
+        }
+      }
+    },
+    "Port": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port"
+          }
+        }
+      }
+    },
+    "Frequency": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frequency"
+          }
+        }
+      }
+    },
+    "Bandwidth": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bandwidth"
+          }
+        }
+      }
+    },
+    "Spreading factor": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spreading factor"
+          }
+        }
+      }
+    },
+    "Coding rate": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coding rate"
+          }
+        }
+      }
+    },
+    "Modulation": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modulation"
+          }
+        }
+      }
+    },
+    "Channel": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Channel"
+          }
+        }
+      }
+    },
+    "Latitude": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latitude"
+          }
+        }
+      }
+    },
+    "Longitude": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Longitude"
+          }
+        }
+      }
+    },
+    "Height": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Height"
+          }
+        }
+      }
+    },
+    "IFAC passphrase": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "IFAC passphrase"
+          }
+        }
+      }
+    },
+    "Transport": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transport"
+          }
+        }
+      }
+    },
+    "Discovery hash": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovery hash"
+          }
+        }
+      }
+    },
+    "Received at": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Received at"
+          }
+        }
+      }
+    },
+    "Discovered at": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovered at"
+          }
+        }
+      }
+    },
+    "Port %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port %lld"
+          }
+        }
+      }
+    },
+    "Open in Maps": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open in Maps"
+          }
+        }
+      }
+    },
+    "%lld m": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld m"
+          }
+        }
+      }
+    },
+    "%.0fm away": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%.0fm away"
+          }
+        }
+      }
+    },
+    "%.1f km away": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%.1f km away"
+          }
+        }
+      }
+    },
+    "Restarting Reticulum…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restarting Reticulum…"
+          }
+        }
+      }
+    },
+    "No interfaces discovered yet. Enable discovery above to start finding interfaces announced by other RNS nodes.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No interfaces discovered yet. Enable discovery above to start finding interfaces announced by other RNS nodes."
+          }
+        }
+      }
+    },
+    "No interfaces match your filters.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No interfaces match your filters."
+          }
+        }
+      }
+    },
+    "Clear filters": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear filters"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
