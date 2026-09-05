@@ -1609,7 +1609,11 @@ public final class AppServices {
         // Settings → Advanced → Transport Mode); changing it requires
         // tapping Apply & Restart on the same screen.
         let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
-        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled)
+        // Interface-discovery settings (T-C): read from the same App Group
+        // suite the toggle persists to, so the config matches the UI.
+        let discoverOn = await settingsRepository.getDiscoverInterfacesEnabled()
+        let autoCount = await settingsRepository.getAutoconnectDiscoveredCount()
+        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled, discoverInterfaces: discoverOn, autoconnectDiscoveredCount: autoCount)
         let configFile = pyDir.appendingPathComponent("config")
         do {
             try configText.write(to: configFile, atomically: true, encoding: .utf8)
@@ -2461,7 +2465,7 @@ public final class AppServices {
         // the current discovery settings (writePythonConfig reads discovery
         // settings — T-C) before tearing down, so the re-init reads fresh values.
         let fresh = InterfaceRepository().getEnabledInterfaces()
-        writePythonConfig(interfaces: fresh)
+        _ = await writePythonConfig(interfaces: fresh)
         DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
         do {
             try await withLifecycleOperation {
@@ -2537,13 +2541,19 @@ public final class AppServices {
     /// `remove_interface` reads this file but the running stack is reconfigured
     /// by `applyInterfaceChanges()`.
     @discardableResult
-    private func writePythonConfig(interfaces: [InterfaceEntity]) -> Bool {
+    private func writePythonConfig(interfaces: [InterfaceEntity]) async -> Bool {
         guard let pyDir = pythonConfigDirURL() else {
             DiagLog.log("[RNS] writePythonConfig skipped — no start identity")
             return false
         }
         let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
-        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled)
+        // RNS 1.1.x interface discovery is restart-gated: the generated config
+        // must carry the user's discovery settings (T-C) or the toggle would
+        // persist in UserDefaults while the backend keeps seeing the defaults
+        // (discover_interfaces = no).
+        let discoverOn = await settingsRepository.getDiscoverInterfacesEnabled()
+        let autoCount = await settingsRepository.getAutoconnectDiscoveredCount()
+        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled, discoverInterfaces: discoverOn, autoconnectDiscoveredCount: autoCount)
         let configFile = pyDir.appendingPathComponent("config")
         do {
             try configText.write(to: configFile, atomically: true, encoding: .utf8)
@@ -2601,7 +2611,7 @@ public final class AppServices {
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
 
         // 1. Durability — always persist, even if there's no live backend.
-        writePythonConfig(interfaces: fresh)
+        _ = await writePythonConfig(interfaces: fresh)
 
         guard let backend = backend else {
             DiagLog.log("[RNS-HOT] no running backend — config written, applies on next launch")
