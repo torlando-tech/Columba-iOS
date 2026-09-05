@@ -117,11 +117,14 @@ struct DiscoveredInterfacesScreen: View {
                 set: { _ in }
             ),
             onDismiss: {
-                tcpInterfaceViewModel?.showTCPWizard = false
+                // Match the house wizard sheets (IMS:162, SettingsView RNode)
+                // exactly: dismissConfigSheet() resets the flags + form. Do
+                // NOT apply here — the save paths already do it where the
+                // house does (saveTCPInterface spawns its own applyChanges
+                // Task; Python RNode deliberately waits for the explicit
+                // Apply step), and applying in onDismiss would race/double
+                // that apply.
                 tcpInterfaceViewModel?.dismissConfigSheet()
-                if let vm = tcpInterfaceViewModel, vm.hasPendingChanges {
-                    Task { @MainActor in await vm.applyChanges() }
-                }
                 tcpInterfaceViewModel = nil
                 tcpPrefill = nil
             }
@@ -139,11 +142,10 @@ struct DiscoveredInterfacesScreen: View {
                 set: { _ in }
             ),
             onDismiss: {
-                rnodeInterfaceViewModel?.showRNodeWizard = false
+                // Match the house wizard sheets exactly — see the TCP
+                // onDismiss above for why there is no applyChanges() here
+                // (double-apply race / forced Python-RNode apply).
                 rnodeInterfaceViewModel?.dismissConfigSheet()
-                if let vm = rnodeInterfaceViewModel, vm.hasPendingChanges {
-                    Task { @MainActor in await vm.applyChanges() }
-                }
                 rnodeInterfaceViewModel = nil
                 rnodePrefill = nil
             }
