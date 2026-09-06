@@ -383,10 +383,10 @@ final class RNodeWizardViewModel {
     func applyPrefill(_ iface: DiscoveredInterface) {
         isCustomMode = true
         interfaceName = iface.name
-        customFrequency = iface.frequency.map { String(Int($0)) }
-        customBandwidth = iface.bandwidth.map(String.init)
-        customSpreadingFactor = iface.spreadingFactor.map(String.init)
-        customCodingRate = iface.codingRate.map(String.init)
+        customFrequency = iface.frequency.map { String(Int($0)) } ?? ""
+        customBandwidth = iface.bandwidth.map(String.init) ?? ""
+        customSpreadingFactor = iface.spreadingFactor.map(String.init) ?? ""
+        customCodingRate = iface.codingRate.map(String.init) ?? ""
         // Region/preset selection stays at its default; the wizard's existing
         // validation decides legality.
     }

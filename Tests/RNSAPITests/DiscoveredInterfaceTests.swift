@@ -353,7 +353,7 @@ final class DiscoveredInterfaceTests: XCTestCase {
     func testFilterAndCombination() {
         let input = [
             iface(name: "alpha", type: "RNodeInterface", reachableOn: "2001:db8::1", ifacNetname: "columba"),
-            iface(name: "alpha2", type: "TCPServerInterface", ifacNetname: "columba"),
+            iface(name: "alpha2", type: "TCPServerInterface"),
         ]
         // Search AND type: only the RNode "alpha" matches both.
         let both = DiscoveredFilter.apply(input, searchQuery: "alpha", typeFilters: [.radio], ifacOnly: false)
