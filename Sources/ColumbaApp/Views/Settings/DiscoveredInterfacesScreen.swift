@@ -70,15 +70,7 @@ struct DiscoveredInterfacesScreen: View {
                         NoFilterMatchesCard(onClear: { viewModel.clearFilters() })
                     } else {
                         ForEach(viewModel.interfaces) { iface in
-                            DiscoveredInterfaceCard(
-                                iface: iface,
-                                distanceKm: viewModel.calculateDistance(iface),
-                                isConnected: viewModel.isAutoconnected(iface),
-                                onAddToConfig: { addToConfig(iface) },
-                                onCopyLoRaParams: { copyLoRaParams(iface) },
-                                onUseForRNode: { useForRNode(iface) },
-                                justCopied: copiedCardID == iface.id
-                            )
+                            discoveredCard(for: iface)
                         }
                     }
                 } else if !viewModel.isLoading {
@@ -184,6 +176,21 @@ struct DiscoveredInterfacesScreen: View {
             }
         }
         #endif
+    }
+
+    /// One discovered-interface card (extracted from `body` so the
+    /// ForEach expression stays inside the type-checker's complexity
+    /// budget — same fix as ImageQualityPickerSheet, issue #181).
+    private func discoveredCard(for iface: DiscoveredInterface) -> some View {
+        DiscoveredInterfaceCard(
+            iface: iface,
+            distanceKm: viewModel.calculateDistance(iface),
+            isConnected: viewModel.isAutoconnected(iface),
+            onAddToConfig: { addToConfig(iface) },
+            onCopyLoRaParams: { copyLoRaParams(iface) },
+            onUseForRNode: { useForRNode(iface) },
+            justCopied: copiedCardID == iface.id
+        )
     }
 
     // MARK: - Card actions (issue #193)
