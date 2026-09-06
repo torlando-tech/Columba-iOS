@@ -66,13 +66,17 @@ def _install_stubs() -> None:
     ]
 
     class Reticulum:
+        # The `discover_interfaces` config flag (class attribute, re-read from
+        # config on every Reticulum.__init__). This — NOT the autoconnect
+        # count — is what discovery_json() surfaces as `enabled` (issue #193:
+        # the old implementation derived `enabled` from
+        # should_autoconnect_discovered_interfaces(), so sliding the
+        # auto-connect limit to 0 flipped the whole feature to "Disabled").
+        _Reticulum__discover_interfaces = True
+
         @staticmethod
         def discovered_interfaces():
             return infos
-
-        @staticmethod
-        def should_autoconnect_discovered_interfaces():
-            return True
 
     class Transport:
         # One auto-connected endpoint ("1.2.3.4:4242") and one plain
@@ -145,6 +149,48 @@ class DiscoveryJsonTest(unittest.TestCase):
 
         # Only auto-connected interfaces appear, sorted.
         self.assertEqual(data["autoconnected"], ["1.2.3.4:4242"])
+
+    def test_enabled_follows_discover_interfaces_flag_not_autoconnect_count(self):
+        """Regression (issue #193): the auto-connect limit is INDEPENDENT of
+        the discovery flag. `enabled` must track the `discover_interfaces`
+        config flag — sliding auto-connect to 0 must NOT report the feature
+        disabled. The old implementation derived `enabled` from
+        should_autoconnect_discovered_interfaces() (== count > 0), so count=0
+        flipped the whole feature to "Disabled". The stub exposes ONLY the
+        `_Reticulum__discover_interfaces` flag (no autoconnect method at all,
+        mirroring that the bridge must not depend on it), and discovery is on.
+        """
+        self._started = app.rns_bridge._state.get("started")
+        app.rns_bridge._state["started"] = True
+        try:
+            import app.rns_bridge as bridge
+            rns_stub = sys.modules["RNS"]
+
+            # Discover_interfaces on, and NO autoconnect accessor at all —
+            # if the bridge tried to read the autoconnect count, this would
+            # raise AttributeError and `enabled` would silently fall to False
+            # (the original bug).
+            rns_stub.Reticulum._Reticulum__discover_interfaces = True
+            for attr in (
+                "should_autoconnect_discovered_interfaces",
+                "max_autoconnected_interfaces",
+            ):
+                try:
+                    delattr(rns_stub.Reticulum, attr)
+                except AttributeError:
+                    pass
+
+            data = json.loads(bridge.discovery_json())
+            self.assertIs(data["enabled"], True,
+                          "enabled must stay True while discover_interfaces "
+                          "is on, regardless of the auto-connect count")
+        finally:
+            # Restore the flag so other tests in the module are unaffected.
+            sys.modules["RNS"].Reticulum._Reticulum__discover_interfaces = True
+            if self._started is None:
+                app.rns_bridge._state.pop("started", None)
+            else:
+                app.rns_bridge._state["started"] = self._started
 
     def test_discovery_json_not_started_returns_empty_shape(self):
         app.rns_bridge._state["started"] = False

@@ -2171,7 +2171,21 @@ def discovery_json() -> str:
     except Exception as e:
         RNS.log(f"discovery_json: list_discovered_interfaces failed: {e}", RNS.LOG_DEBUG)
     try:
-        out["enabled"] = bool(RNS.Reticulum.should_autoconnect_discovered_interfaces())
+        # `enabled` = "is the running backend RECORDING announced interfaces"
+        # = the [reticulum] `discover_interfaces` flag. This is DISTINCT from
+        # the autoconnect limit: discovery stays on when
+        # autoconnect_discovered_interfaces is 0 (observe-only mode — the user
+        # can still see heard announces), so we must NOT use
+        # should_autoconnect_discovered_interfaces() here: it is
+        # `__autoconnect_discovered_interfaces > 0`, which goes false at 0 and
+        # wrongly flipped the whole feature to "Disabled" the moment the
+        # auto-connect slider hit 0 (issue #193). The flag is a Reticulum
+        # class attribute re-read from config on every Reticulum.__init__
+        # (so it is live-correct across in-process restarts); the pinned RNS
+        # exposes no public getter for it, hence the mangled class-attr name.
+        out["enabled"] = bool(
+            getattr(RNS.Reticulum, "_Reticulum__discover_interfaces", False)
+        )
     except Exception:
         pass
     try:
