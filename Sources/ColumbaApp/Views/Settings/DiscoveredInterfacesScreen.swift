@@ -186,9 +186,9 @@ struct DiscoveredInterfacesScreen: View {
             iface: iface,
             distanceKm: viewModel.calculateDistance(iface),
             isConnected: viewModel.isAutoconnected(iface),
-            onAddToConfig: { addToConfig(iface) },
-            onCopyLoRaParams: { copyLoRaParams(iface) },
-            onUseForRNode: { useForRNode(iface) },
+            onAddToConfig: { card in addToConfig(card) },
+            onCopyLoRaParams: { card in copyLoRaParams(card) },
+            onUseForRNode: { card in useForRNode(card) },
             justCopied: copiedCardID == iface.id
         )
     }
