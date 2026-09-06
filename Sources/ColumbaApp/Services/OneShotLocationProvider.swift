@@ -63,8 +63,8 @@ final class OneShotLocationProvider: NSObject, CLLocationManagerDelegate {
     /// shown: unauthorized statuses deliver `nil` immediately.
     @MainActor
     func request() {
-        switch CLLocationManager.authorizationStatus() {
-        case .whenInUse, .always:
+        switch self.manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
             startTimeout()
             manager.requestLocation()
         case .denied, .restricted, .notDetermined:
@@ -81,7 +81,7 @@ final class OneShotLocationProvider: NSObject, CLLocationManagerDelegate {
     private func deliver(_ coordinate: CLLocationCoordinate2D?) {
         guard !delivered else { return }
         delivered = true
-        manager.stopLocationUpdates()
+        manager.stopUpdatingLocation()
         completion(coordinate)
     }
 

@@ -373,7 +373,7 @@ private struct DiscoverySettingsCard: View {
     }
 
     private var autoConnectTitle: String {
-        String(localized: "Auto-connect up to %lld discovered interfaces", vm.autoconnectCount)
+        String(format: String(localized: "Auto-connect up to %lld discovered interfaces"), Int64(vm.autoconnectCount))
     }
 }
 
@@ -478,7 +478,7 @@ private struct DiscoveredSortFilterBar: View {
 
             if hasActiveFilters {
                 HStack {
-                    Text(String(localized: "%lld of %lld", vm.interfaces.count, vm.originalInterfaces.count))
+                    Text(String(format: String(localized: "%lld of %lld"), Int64(vm.interfaces.count), Int64(vm.originalInterfaces.count)))
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
                     Spacer()
@@ -634,12 +634,12 @@ private struct DiscoveredInterfaceCard: View {
 
             // Last heard + hops
             HStack(spacing: 8) {
-                Text(String(localized: "Last heard: %@", formatLastHeard(iface.lastHeard)))
+                Text(String(format: String(localized: "Last heard: %@"), formatLastHeard(iface.lastHeard)))
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
                 if let hops = iface.hops {
-                    Text(String(localized: "%lld hops", hops))
+                    Text(String(format: String(localized: "%lld hops"), Int64(hops)))
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -850,7 +850,7 @@ private struct TcpInterfaceDetails: View {
         case (false, nil, false):
             return host
         case (true, let p?, _):
-            return String(localized: "Port %lld", p)
+            return String(format: String(localized: "Port %lld"), Int64(p))
         default:
             return ""
         }
@@ -945,12 +945,12 @@ private struct LocationDetails: View {
         guard let lat = iface.latitude, let lon = iface.longitude else { return "" }
         var text = String(format: "%.4f, %.4f", lat, lon)
         if let height = iface.height {
-            text += " (" + String(localized: "%lld m", Int(height.rounded())) + ")"
+            text += " (" + String(format: String(localized: "%lld m"), Int64(Int(height.rounded()))) + ")"
         }
         if let distanceKm {
             let distance = distanceKm < 1.0
-                ? String(localized: "%.0fm away", distanceKm * 1000.0)
-                : String(localized: "%.1f km away", distanceKm)
+                ? String(format: String(localized: "%.0fm away"), distanceKm * 1000.0)
+                    : String(format: String(localized: "%.1f km away"), distanceKm)
             text += " · " + distance
         }
         return text

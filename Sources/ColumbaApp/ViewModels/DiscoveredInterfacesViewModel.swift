@@ -183,7 +183,8 @@ public final class DiscoveredInterfacesViewModel {
         recomputeVisible()
         isLoading = false
 
-        logger.info("Loaded \(snapshot.discovered.count) discovered interfaces, \(autoconnectedEndpoints.count) auto-connected")
+        let endpointCount = autoconnectedEndpoints.count
+        logger.info("Loaded \(snapshot.discovered.count) discovered interfaces, \(endpointCount) auto-connected")
     }
 
     /// Load discovery settings (persisted preferences) and the bootstrap-only

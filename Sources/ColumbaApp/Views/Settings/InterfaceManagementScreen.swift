@@ -259,7 +259,7 @@ struct InterfaceManagementScreen: View {
     private var discoveryEntrySubtitle: some View {
         if let summary = discoverySummary, summary.total > 0 {
             VStack(alignment: .leading, spacing: 8) {
-                Text(String(localized: "%lld interfaces found via RNS Discovery", summary.total))
+                Text(String(format: String(localized: "%lld interfaces found via RNS Discovery"), Int64(summary.total)))
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
 
