@@ -3599,6 +3599,17 @@ public final class AppServices {
         announceManager.start()
     }
 
+    /// Copy of the transport's Python-discovered auxiliary interfaces
+    /// (AutoInterfacePeer / discovery auto-connects / BLEPeer). The Settings
+    /// Network card and the connection-state observer read this — the aux
+    /// snapshots are pushed into the transport by `applyPythonInterfaceStatus`
+    /// but are not user-configured stubs, so `tcpInterfaces` alone never sees
+    /// an interface RNS auto-connected from a discovery announce
+    /// (issue #193 follow-up).
+    public func auxiliaryInterfaceSnapshots() -> [InterfaceSnapshot] {
+        transport?.pythonAuxiliarySnapshotList() ?? []
+    }
+
     // MARK: - State Observation
 
     /// Start observing interface state for UI updates.
@@ -3621,6 +3632,12 @@ public final class AppServices {
                 let autoIface = await MainActor.run { self.autoInterface }
                 let rnodeIface = await MainActor.run { self.rnodeInterface }
                 let bleIface = await MainActor.run { self.bleInterface }
+                // Discovery auto-connects / LAN / BLE peers live only in the
+                // transport's auxiliary snapshot (not in tcpInterfaces), so a
+                // discovery-only connection would otherwise read "Disconnected".
+                let auxOnlineCount = await MainActor.run {
+                    self.auxiliaryInterfaceSnapshots().filter { $0.online }.count
+                }
 
                 // Aggregate TCP state across all interfaces
                 var anyTCPConnected = false
@@ -3654,7 +3671,7 @@ public final class AppServices {
                     bleConnected = false
                 }
 
-                let anyConnected = tcpConnected || autoConnected || rnodeConnected || bleConnected
+                let anyConnected = tcpConnected || autoConnected || rnodeConnected || bleConnected || auxOnlineCount > 0
                 let tcpReconnecting = anyTCPReconnecting && !anyTCPConnected
 
                 // Batch all UI mutations into a single MainActor.run

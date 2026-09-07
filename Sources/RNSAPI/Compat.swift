@@ -1541,6 +1541,17 @@ public final class ReticulumTransport: @unchecked Sendable {
         pythonAuxiliarySnapshots = snapshots
     }
 
+    /// Thread-safe copy of the Python-discovered auxiliary interfaces
+    /// (AutoInterfacePeer / discovery auto-connects / BLEPeer). `getInterfaceSnapshots()`
+    /// appends these for the Network Status screen; the Settings Network card
+    /// and the connection-state observer read them through this getter —
+    /// without it, an interface RNS auto-connected from a discovery announce
+    /// is invisible outside the Network Status screen (issue #193 follow-up).
+    public func pythonAuxiliarySnapshotList() -> [InterfaceSnapshot] {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        return pythonAuxiliarySnapshots
+    }
+
     public func addInterface(_ interface: any NetworkInterface) async throws {
         _interfaceLock.lock(); defer { _interfaceLock.unlock() }
         registeredInterfaces[interface.id] = interface

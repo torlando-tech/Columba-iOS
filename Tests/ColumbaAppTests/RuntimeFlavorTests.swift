@@ -7,6 +7,7 @@
 //
 
 import XCTest
+import RNSAPI
 @testable import ColumbaApp
 
 #if COLUMBA_RUNTIME_PYTHON && COLUMBA_RUNTIME_MODEL_B
@@ -101,6 +102,66 @@ final class RuntimeFlavorTests: XCTestCase {
                 title: "No Interfaces Connected",
                 actionTitle: "Manage"
             )
+        )
+    }
+
+    // MARK: - Network card: auxiliary (discovery-spawned) interfaces
+
+    private func auxSnapshot(
+        id: String,
+        name: String,
+        online: Bool,
+        isAutoconnect: Bool = false,
+        isAutoInterfacePeer: Bool = false,
+        isBLEPeerInterface: Bool = false
+    ) -> InterfaceSnapshot {
+        InterfaceSnapshot(
+            id: id,
+            name: name,
+            online: online,
+            typeLabel: isAutoInterfacePeer ? "AutoInterfacePeer" : "TCPClient",
+            type: .tcp,
+            state: online ? .connected : .disconnected,
+            isAutoInterfacePeer: isAutoInterfacePeer,
+            isBLEPeerInterface: isBLEPeerInterface,
+            isAutoconnect: isAutoconnect
+        )
+    }
+
+    func testNetworkCardListsDiscoveryAutoConnectsFlaggedDiscovered() {
+        let aux = [
+            auxSnapshot(id: "py-aux:1", name: "Hub Node", online: true, isAutoconnect: true),
+            auxSnapshot(id: "py-aux:2", name: "Other Node", online: true, isAutoconnect: true),
+            auxSnapshot(id: "py-aux:3", name: "Offline Node", online: false, isAutoconnect: true),
+        ]
+        XCTAssertEqual(
+            NetworkInterfacePresentation.auxiliaryDescriptions(aux),
+            [
+                "Hub Node (Discovered)",
+                "Other Node (Discovered)",
+            ]
+        )
+    }
+
+    func testNetworkCardRollsUpLanPeersAndIgnoresBle() {
+        let aux = [
+            auxSnapshot(id: "py-aux:a", name: "AutoInterfacePeer[en0/fe80::1]", online: true, isAutoInterfacePeer: true),
+            auxSnapshot(id: "py-aux:b", name: "AutoInterfacePeer[en0/fe80::2]", online: true, isAutoInterfacePeer: true),
+            auxSnapshot(id: "py-aux:c", name: "BLEPeerInterface[AA:BB]", online: true, isBLEPeerInterface: true),
+        ]
+        XCTAssertEqual(
+            NetworkInterfacePresentation.auxiliaryDescriptions(aux),
+            ["AutoInterface (2 peers)"]
+        )
+    }
+
+    func testNetworkCardAuxiliarySingleLanPeerSingular() {
+        let aux = [
+            auxSnapshot(id: "py-aux:a", name: "AutoInterfacePeer[en0/fe80::1]", online: true, isAutoInterfacePeer: true),
+        ]
+        XCTAssertEqual(
+            NetworkInterfacePresentation.auxiliaryDescriptions(aux),
+            ["AutoInterface (1 peer)"]
         )
     }
 
