@@ -2006,7 +2006,12 @@ public protocol InterfaceDelegate: AnyObject, Sendable {
 
 public final class TCPInterface: NetworkInterface, @unchecked Sendable {
     public let id: String
-    public let name: String
+    /// Display name. `var` (not `let`) so the status poll can sync it from the
+    /// configured `InterfaceEntity.name`. The connect path creates the stub
+    /// before it knows the entity name (it hardcodes a type label like
+    /// "TCP Server"), and a rename in Manage Interfaces is reflected on the
+    /// next poll without a restart (issue #193 follow-up).
+    public var name: String
     public var online: Bool = false
     public var state: InterfaceState = .disconnected
     public var lastErrorDescription: String?

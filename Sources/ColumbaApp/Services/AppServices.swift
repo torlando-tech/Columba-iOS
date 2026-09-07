@@ -2463,6 +2463,17 @@ public final class AppServices {
                     iface.state = newState
                     iface.online = status.online
                 }
+                // Sync the configured display name from the entity. The
+                // connect path seeds the stub with a hardcoded type label
+                // ("TCP Server" — even for TCP clients), so without this the
+                // Network Status card can never show the name the user typed
+                // in Manage Interfaces (issue #193 follow-up). Fall back to
+                // the existing name when the entity is gone/empty. Syncing
+                // here also picks up renames without a restart.
+                let configuredName = entityById[entityId]?.name
+                if let configuredName, !configuredName.isEmpty, iface.name != configuredName {
+                    iface.name = configuredName
+                }
                 // Live endpoint (host:port) from Python's friendly str(iface),
                 // so the row shows which host this TCP client is talking to —
                 // previously the subtitle was just the user's label and every
@@ -4548,9 +4559,21 @@ public final class AppServices {
             throw AppServicesError.transportNotConnected
         }
 
+        // Prefer the configured name the user typed in Manage Interfaces.
+        // This path historically hardcoded "TCP Server" — even for TCP
+        // clients — which is what the Network Status card showed instead of
+        // the user's name (issue #193 follow-up). The onboarding "tcp-server"
+        // relay has no InterfaceEntity, so it keeps the legacy type label.
+        // The status poll re-syncs this on rename.
+        let configuredName: String
+        if let entity = pythonInterfaceEntities[entityId], !entity.name.isEmpty {
+            configuredName = entity.name
+        } else {
+            configuredName = "TCP Server"
+        }
         let config = InterfaceConfig(
             id: entityId,
-            name: "TCP Server",
+            name: configuredName,
             type: .tcp,
             enabled: true,
             mode: .full,
