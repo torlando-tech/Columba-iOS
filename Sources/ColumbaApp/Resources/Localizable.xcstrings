@@ -2233,16 +2233,6 @@
         }
       }
     },
-    "Discovers interfaces announced by other RNS nodes. Changes apply after a brief restart of Reticulum.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Discovers interfaces announced by other RNS nodes. Changes apply after a brief restart of Reticulum."
-          }
-        }
-      }
-    },
     "Discovery enabled - no interfaces found yet": {
       "localizations": {
         "en": {
@@ -2829,6 +2819,56 @@
           "stringUnit": {
             "state": "translated",
             "value": "Copied"
+          }
+        }
+      }
+    },
+    "Restart failed — discovery settings were not applied.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restart failed — discovery settings were not applied."
+          }
+        }
+      }
+    },
+    "Discovers interfaces announced by other RNS nodes. Changes take effect after you tap Apply and Restart.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovers interfaces announced by other RNS nodes. Changes take effect after you tap Apply and Restart."
+          }
+        }
+      }
+    },
+    "Changes pending — tap Apply and Restart": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Changes pending — tap Apply and Restart"
+          }
+        }
+      }
+    },
+    "Apply and Restart": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apply and Restart"
+          }
+        }
+      }
+    },
+    "Discard": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard"
           }
         }
       }

@@ -12,9 +12,12 @@
 //  Every sub-view is a separate private struct (not inlined into the
 //  screen body) to keep the SwiftUI type-checker fast. All control
 //  bindings route through the view model's intent methods
-//  (toggleDiscovery / setAutoconnectCount / setSortMode /
-//  setSearchQuery / toggleTypeFilter / toggleIfacOnlyFilter /
+//  (setDiscoverInterfacesEnabled / setAutoconnectCount /
+//  applyDiscoverySettings / discardPendingDiscoveryChanges /
+//  setSortMode / setSearchQuery / toggleTypeFilter / toggleIfacOnlyFilter /
 //  clearFilters) — the view never writes VM state directly.
+//  Discovery settings are PENDING until the user taps "Apply and Restart"
+//  (issue #193 UX): the controls never restart Reticulum on their own.
 //
 
 import SwiftUI
@@ -269,7 +272,7 @@ private struct DiscoverySettingsCard: View {
             // Title row: status dot + title/subtitle
             HStack(spacing: 8) {
                 Circle()
-                    .fill(vm.isDiscoveryEnabled ? Theme.success : Theme.textSecondary)
+                    .fill(dotColor)
                     .frame(width: 8, height: 8)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -296,12 +299,13 @@ private struct DiscoverySettingsCard: View {
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
-                Text(String(localized: "Discovers interfaces announced by other RNS nodes. Changes apply after a brief restart of Reticulum."))
+                Text(String(localized: "Discovers interfaces announced by other RNS nodes. Changes take effect after you tap Apply and Restart."))
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
             }
 
-            // Auto-connect count slider (only when discovery is enabled)
+            // Auto-connect count control (only when discovery is pending-on
+            // or live-on — a pure display toggle, no restart until Apply).
             if vm.discoverInterfacesEnabled {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
@@ -321,6 +325,46 @@ private struct DiscoverySettingsCard: View {
                     Slider(value: autoconnectBinding, in: 0...10, step: 1)
                         .tint(Theme.accentColor)
                 }
+            }
+
+            // Apply-and-restart bar: shown only while there are pending
+            // changes (issue #193 UX — the toggle/slider are pure pending
+            // state; nothing restarts until this is tapped).
+            if vm.hasPendingDiscoveryChanges && !vm.isRestarting {
+                VStack(spacing: 8) {
+                    Divider()
+                    HStack(spacing: 12) {
+                        Button {
+                            vm.discardPendingDiscoveryChanges()
+                        } label: {
+                            Text(String(localized: "Discard"))
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("discovery_discard")
+
+                        Spacer()
+
+                        Button {
+                            Task { await vm.applyDiscoverySettings() }
+                        } label: {
+                            Text(String(localized: "Apply and Restart"))
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.accentColor)
+                        .accessibilityIdentifier("discovery_apply_restart")
+                    }
+                }
+            }
+
+            // Apply-failure notice (restart error — settings persisted but
+            // not live; the Apply bar stays visible for a retry).
+            if let errorMessage = vm.errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("discovery_apply_error")
             }
 
             // Bootstrap interfaces (they enable discovery)
@@ -357,7 +401,7 @@ private struct DiscoverySettingsCard: View {
     private var discoveryBinding: Binding<Bool> {
         Binding(
             get: { vm.discoverInterfacesEnabled },
-            set: { _ in vm.toggleDiscovery() }
+            set: { vm.setDiscoverInterfacesEnabled($0) }
         )
     }
 
@@ -370,9 +414,21 @@ private struct DiscoverySettingsCard: View {
 
     // MARK: - Derived
 
+    /// Status dot: orange while changes are pending (not yet applied),
+    /// otherwise green/gray for the live discovery state.
+    private var dotColor: Color {
+        if vm.hasPendingDiscoveryChanges {
+            return .orange
+        }
+        return vm.isDiscoveryEnabled ? Theme.success : Theme.textSecondary
+    }
+
     private var subtitle: String {
         if vm.isRestarting {
             return String(localized: "Restarting…")
+        }
+        if vm.hasPendingDiscoveryChanges {
+            return String(localized: "Changes pending — tap Apply and Restart")
         }
         return vm.isDiscoveryEnabled
             ? String(localized: "Active – discovering interfaces")

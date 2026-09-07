@@ -27,10 +27,17 @@ private let logger = Logger(subsystem: "network.columba.Columba", category: "Dis
 ///
 /// Manages the visible (filtered + sorted) interface list, the raw backend
 /// list, search / type / IFAC display filters, the user location for
-/// distance display, and the discovery + autoconnect settings. Toggling the
-/// settings persists them, then applies them via
-/// `appServices.restartPythonBackend()` (in-process restart +
-/// `ColumbaBackendRestarted`), then re-polls live discovery state.
+/// distance display, and the discovery + autoconnect settings.
+///
+/// Settings are PENDING-STATE, not immediate (issue #193): the toggle and
+/// the slider (which fires on every drag tick) only mutate the pending
+/// values. The single `applyDiscoverySettings()` intent is the ONLY path
+/// that persists them and calls `appServices.restartPythonBackend()`
+/// (config rewrite + in-process restart + `ColumbaBackendRestarted`).
+/// Applying immediately on every change restarted Reticulum mid-drag, and
+/// each transient not-started poll emptied the list and flipped the
+/// "enabled" indicator — the controls now wait for an explicit
+/// "Apply and Restart".
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
 public final class DiscoveredInterfacesViewModel {
@@ -90,6 +97,29 @@ public final class DiscoveredInterfacesViewModel {
 
     /// User preference: max discovered interfaces to autoconnect (persisted).
     public var autoconnectCount: Int = 0
+
+    // MARK: - Pending discovery settings (apply-and-restart flow, issue #193)
+
+    /// Snapshot of the discovery toggle value that is currently LIVE on the
+    /// running backend (last successfully applied / loaded from settings).
+    /// Pending changes are held in `discoverInterfacesEnabled` and compared
+    /// against this to derive `hasPendingDiscoveryChanges`.
+    private(set) var appliedDiscoverInterfacesEnabled: Bool = false
+
+    /// Snapshot of the auto-connect count currently LIVE on the running
+    /// backend (last successfully applied / loaded from settings).
+    private(set) var appliedAutoconnectCount: Int = 0
+
+    /// True when the pending settings differ from what the running backend
+    /// has applied — the "Apply and Restart" button shows while this is set.
+    public var hasPendingDiscoveryChanges: Bool {
+        discoverInterfacesEnabled != appliedDiscoverInterfacesEnabled
+            || autoconnectCount != appliedAutoconnectCount
+    }
+
+    /// Whether `loadSettings()` has seeded the pending settings once (guards
+    /// re-polls from clobbering in-flight pending changes).
+    private var hasLoadedDiscoverySettings = false
 
     /// Runtime state: whether the running backend has discovery enabled.
     public var isDiscoveryEnabled: Bool = false
@@ -189,14 +219,28 @@ public final class DiscoveredInterfacesViewModel {
 
     /// Load discovery settings (persisted preferences) and the bootstrap-only
     /// interface names.
+    ///
+    /// The persisted values seed the pending settings ONLY on the first load
+    /// (which also establishes the applied baseline — the startup config is
+    /// always written from these same settings, so persisted == live at that
+    /// point). Later re-polls (refresh button, backend-restarted
+    /// notification) must NOT clobber in-flight pending changes the user has
+    /// made but not applied yet.
     @MainActor
     public func loadSettings() async {
-        discoverInterfacesEnabled = await settings.getDiscoverInterfacesEnabled()
+        if !hasLoadedDiscoverySettings {
+            discoverInterfacesEnabled = await settings.getDiscoverInterfacesEnabled()
 
-        let saved = await settings.getAutoconnectDiscoveredCount()
-        // 0 doubles as the "never configured" sentinel — the UI defaults to
-        // 3 in toggleDiscovery() on first enable (mirror of Android).
-        autoconnectCount = saved >= 0 ? saved : 0
+            let saved = await settings.getAutoconnectDiscoveredCount()
+            // 0 doubles as the "never configured" sentinel — enabling from
+            // off defaults the pending count to 3 (setDiscoverInterfacesEnabled,
+            // mirror of Android).
+            autoconnectCount = saved >= 0 ? saved : 0
+
+            appliedDiscoverInterfacesEnabled = discoverInterfacesEnabled
+            appliedAutoconnectCount = autoconnectCount
+            hasLoadedDiscoverySettings = true
+        }
 
         // Synchronous, non-actor-isolated house pattern: InterfaceRepository
         // is a plain final class (see the direct call sites in AppServices).
@@ -330,59 +374,75 @@ public final class DiscoveredInterfacesViewModel {
         return autoconnectedEndpoints.contains("\(host):\(port)")
     }
 
-    // MARK: - Discovery Settings (persist + in-process restart)
+    // MARK: - Discovery Settings (pending state + apply-and-restart)
 
-    /// Toggle interface discovery on/off.
-    ///
-    /// When enabling: restores the user's saved autoconnect preference (or
-    /// defaults to 3 on first enable). When disabling: the UI shows 0 but the
-    /// saved preference is NOT overwritten (preserved for the next enable).
-    /// Persists to settings, applies via the real in-process backend restart
-    /// (T-D), then re-polls live discovery state once back up.
-    public func toggleDiscovery() {
-        let newEnabled = !discoverInterfacesEnabled
-        let newCount: Int
-        if newEnabled {
-            // Restore the user's saved preference, or default 3 on first enable.
-            let saved = autoconnectCount   // already loaded by loadSettings
-            newCount = saved > 0 ? saved : 3
-        } else {
-            newCount = 0   // UI shows 0; we do NOT persist 0 (preserve preference)
-        }
-
-        // Update the UI immediately to show the restarting state.
-        discoverInterfacesEnabled = newEnabled
-        autoconnectCount = newEnabled ? newCount : 0
-        isRestarting = true
-
-        Task { @MainActor in
-            await settings.setDiscoverInterfacesEnabled(newEnabled)
-            // Only persist the count when enabling (preserve the user's
-            // preference when disabling).
-            if newEnabled {
-                await settings.setAutoconnectDiscoveredCount(newCount)
-            }
-            // Rewrites the config (fresh discovery settings, T-C) and does
-            // the real in-process restart (T-D), posting
-            // `ColumbaBackendRestarted` on success.
-            await appServices.restartPythonBackend()
-            await loadAsync()   // re-poll live discovery state once back up
-            isRestarting = false
+    /// Toggle the pending discovery value. Pure pending state — does NOT
+    /// persist and does NOT restart; the user confirms with "Apply and
+    /// Restart" (`applyDiscoverySettings`). Enabling from off with a
+    /// never-configured count (0 sentinel) defaults the count to 3
+    /// (Android mirror) — the user still sees and can change the pending
+    /// value before applying.
+    public func setDiscoverInterfacesEnabled(_ enabled: Bool) {
+        discoverInterfacesEnabled = enabled
+        if enabled && autoconnectCount == 0 {
+            autoconnectCount = 3
         }
     }
 
-    /// Set the number of discovered interfaces to autoconnect (clamped 0-10).
-    /// Persists, applies via the in-process restart, then re-polls.
+    /// Set the pending auto-connect count (clamped 0-10). Pure pending
+    /// state — does NOT persist and does NOT restart (the SwiftUI slider
+    /// fires this on every drag tick; the single apply button is the only
+    /// restart trigger). A count of 0 keeps discovery ENABLED
+    /// (observe-only mode: heard announces are still recorded and listed,
+    /// just nothing is auto-connected).
     public func setAutoconnectCount(_ count: Int) {
-        let clamped = min(max(count, 0), 10)
-        autoconnectCount = clamped
+        autoconnectCount = min(max(count, 0), 10)
+    }
+
+    /// Persist the pending discovery settings and apply them via the real
+    /// in-process backend restart. `restartPythonBackend` rewrites the RNS
+    /// config from the persisted settings (T-C), tears the backend down,
+    /// re-inits it, and posts `ColumbaBackendRestarted` on success — which
+    /// the observer turns into a re-poll of the live discovery state.
+    ///
+    /// The applied snapshots are committed only on a SUCCESSFUL restart. On
+    /// failure the backend is down: the settings were persisted (so a
+    /// future restart picks them up) but are NOT live, so the pending flag
+    /// stays set (button remains tappable to retry) and an error is
+    /// surfaced. The user's in-flight control values are never clobbered.
+    @MainActor
+    public func applyDiscoverySettings() async {
+        guard hasPendingDiscoveryChanges, !isRestarting else { return }
+
+        let toEnable = discoverInterfacesEnabled
+        let toCount = autoconnectCount
+
         isRestarting = true
-        Task { @MainActor in
-            await settings.setAutoconnectDiscoveredCount(clamped)
-            await appServices.restartPythonBackend()
-            await loadAsync()
-            isRestarting = false
+        errorMessage = nil
+        // Persist first so the config rewrite inside restartPythonBackend
+        // reads the fresh values.
+        await settings.setDiscoverInterfacesEnabled(toEnable)
+        await settings.setAutoconnectDiscoveredCount(toCount)
+
+        let succeeded = await appServices.restartPythonBackend()
+
+        if succeeded {
+            // Commit: pending == applied from here on; the
+            // `ColumbaBackendRestarted` re-poll refreshes the list, the
+            // status dot, and the corrected `enabled` flag from the bridge.
+            appliedDiscoverInterfacesEnabled = toEnable
+            appliedAutoconnectCount = toCount
+        } else {
+            errorMessage = String(localized: "Restart failed — discovery settings were not applied.")
+            logger.error("Discovery settings apply failed (restart error); pending flag kept for retry")
         }
+        isRestarting = false
+    }
+
+    /// Revert the pending settings to what the running backend has applied.
+    public func discardPendingDiscoveryChanges() {
+        discoverInterfacesEnabled = appliedDiscoverInterfacesEnabled
+        autoconnectCount = appliedAutoconnectCount
     }
 
     // MARK: - Backend Restart Observation

@@ -143,6 +143,32 @@ class DiscoveredInterfacesContractTests(unittest.TestCase):
             "the autoconnect ifacOnly sub-toggle is deliberately omitted on the Python backend",
         )
 
+    def test_discovery_settings_are_apply_and_restart(self) -> None:
+        """Issue #193 UX: discovery settings are PENDING state, applied only
+        through an explicit "Apply and Restart". The toggle/slider must never
+        restart Reticulum directly — the old flow restarted on every change
+        (the slider fires on every drag tick), and each restart transiently
+        emptied the list and flipped the enabled indicator."""
+        vm = strip_comments(DISCOVERY_VM.read_text(encoding="utf-8"))
+        self.assertIn("applyDiscoverySettings", vm, "the VM must expose applyDiscoverySettings()")
+        self.assertIn("discardPendingDiscoveryChanges", vm, "the VM must expose discardPendingDiscoveryChanges()")
+        self.assertIn("hasPendingDiscoveryChanges", vm, "the VM must derive hasPendingDiscoveryChanges")
+        # The only restart trigger is the apply intent; the control setters
+        # must be pure pending-state mutations.
+        self.assertNotIn(
+            "toggleDiscovery",
+            vm,
+            "toggleDiscovery (immediate-restart intent) must be gone — "
+            "the toggle sets pending state only",
+        )
+        # Setters must not schedule a restart themselves.
+        self.assertIn("setDiscoverInterfacesEnabled", vm, "the toggle must route through setDiscoverInterfacesEnabled()")
+
+        screen = strip_comments(DISCOVERY_SCREEN.read_text(encoding="utf-8"))
+        self.assertIn("discovery_apply_restart", screen, "the screen must render the Apply and Restart button")
+        self.assertIn("discovery_discard", screen, "the screen must render the Discard button")
+        self.assertIn("hasPendingDiscoveryChanges", screen, "the Apply bar must be gated on hasPendingDiscoveryChanges")
+
     def test_discovery_screen_carries_all_a11y_identifiers(self) -> None:
         self.assertTrue(DISCOVERY_SCREEN.is_file(), "DiscoveredInterfacesScreen.swift must exist")
         source = DISCOVERY_SCREEN.read_text(encoding="utf-8")

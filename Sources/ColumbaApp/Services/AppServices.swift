@@ -2455,10 +2455,17 @@ public final class AppServices {
     /// stub, which had no UI consumer and required a manual app relaunch. The
     /// `ColumbaBackendRestarted` notification below tells the UI the stack is
     /// back up so it can re-poll (discovery screen, transport toggle).
-    public func restartPythonBackend() async {
+    ///
+    /// Returns true when the in-process restart completed and the stack is
+    /// back up; false when it was skipped (backend never started) or failed
+    /// (re-init threw — the stack is down). Callers that need to know
+    /// whether their restart-gated change is now LIVE (the discovery
+    /// settings apply flow) must check this rather than assume success.
+    @discardableResult
+    public func restartPythonBackend() async -> Bool {
         guard let identity = pythonStartIdentity else {
             DiagLog.log("[RNS] restartPythonBackend skipped — backend was never started")
-            return
+            return false
         }
         let addr = lastTcpServerAddress
         // Durability: rewrite the RNS config with the current interface set AND
@@ -2486,7 +2493,7 @@ public final class AppServices {
             // AutoInterface multicast-socket re-init flake) is diagnosable.
             logger.error("[RNS] restartPythonBackend FAILED: \(error) — backend is down")
             DiagLog.log("[RNS] restartPythonBackend FAILED: \(error)")
-            return
+            return false
         }
         // Signal the UI that the stack is back up so it can re-poll discovery
         // state. (Replaces the dead ColumbaRelaunchRequired notification.)
@@ -2494,6 +2501,7 @@ public final class AppServices {
             name: Notification.Name("ColumbaBackendRestarted"), object: nil
         )
         DiagLog.log("[RNS] restartPythonBackend: in-process restart complete")
+        return true
     }
 
     /// Force the Python RNS stack to flush its path table + known destinations
