@@ -320,7 +320,8 @@ final class DiscoveredInterfaceTests: XCTestCase {
         }
 
         let persisted = SettingsRepository()
-        XCTAssertEqual(await persisted.getAutoconnectDiscoveredCount(), 7,
+        let persistedCount = await persisted.getAutoconnectDiscoveredCount()
+        XCTAssertEqual(persistedCount, 7,
                        "apply must persist the pending count")
         XCTAssertEqual(vm.appliedAutoconnectCount, 5,
                        "a FAILED restart must not commit the applied snapshot")
