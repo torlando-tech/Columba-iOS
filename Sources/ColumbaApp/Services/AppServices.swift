@@ -2325,6 +2325,32 @@ public final class AppServices {
         #endif
     }
 
+    /// Parse the endpoint + peer name out of a Python friendly `str(iface)`
+    /// of the form `TypeLabel[<peer>/<host:port>]` (e.g.
+    /// `TCPInterface[Home/10.0.4.63:4242]`, `BackboneInterface[Synth
+    /// Hub/127.0.0.1:43221]`). Splits the bracketed content on the LAST `/`
+    /// so IPv6 brackets (`[2001:db8::1]:4242`) and peer names containing
+    /// spaces survive. Returns `(peer, endpoint)`; either may be nil when the
+    /// name has no bracketed endpoint (e.g. a bare section name).
+    static func parseFriendlyEndpoint(_ friendly: String) -> (peer: String?, endpoint: String?) {
+        guard let open = friendly.firstIndex(of: "["),
+              let close = friendly.lastIndex(of: "]"),
+              open < close else { return (nil, nil) }
+        let inner = friendly[friendly.index(after: open)..<close]
+        // Only treat it as a peer/endpoint split when there's a "/" AND the
+        // last segment looks host-ish (contains ":" or a dotted-quad). This
+        // keeps "en0/fe80::1"-style AutoInterfacePeer addresses from being
+        // mislabelled, though that path is handled separately.
+        guard let slash = inner.lastIndex(of: "/"), slash > inner.startIndex else {
+            return (String(inner), nil)
+        }
+        let peer = String(inner[inner.startIndex..<slash])
+        let endpoint = String(inner[inner.index(after: slash)...])
+        let endpointLooksHostlike = endpoint.contains(":") || endpoint.split(separator: ".").count >= 2
+        guard endpointLooksHostlike else { return (peer, nil) }
+        return (peer, endpoint)
+    }
+
     /// Look up the matching Python interface for each user `InterfaceEntity`
     /// and update the Compat TCPInterface stub's `state` to reflect the
     /// `online` flag RNS.Transport reports.
@@ -2362,33 +2388,61 @@ public final class AppServices {
         // peer address from there for the row subtitle.
         var auxiliary: [InterfaceSnapshot] = []
         for status in snapshot.interfaces where !matchedSectionNames.contains(status.sectionName) {
-            // Skip user-defined sections we just couldn't match for some
-            // reason (rename race, etc.) — only emit synthetic rows for
-            // peer-style names.
             let isAutoPeer = status.name.hasPrefix("AutoInterfacePeer")
             let isBlePeer = status.name.hasPrefix("BLEPeerInterface") || status.name.hasPrefix("BLEPeer")
-            guard isAutoPeer || isBlePeer else { continue }
-            let typeLabel = isAutoPeer ? "AutoInterfacePeer" : "BLEPeer"
-            // Peel out the bracketed addr — "AutoInterfacePeer[en0/fe80::1]"
-            // gives "en0/fe80::1".
-            let peerAddress: String? = {
-                guard let open = status.name.firstIndex(of: "["),
-                      let close = status.name.lastIndex(of: "]"),
-                      open < close else { return nil }
-                return String(status.name[status.name.index(after: open)..<close])
-            }()
-            auxiliary.append(InterfaceSnapshot(
-                id: "py-aux:\(status.sectionName.isEmpty ? status.name : status.sectionName)",
-                name: status.name,
-                online: status.online,
-                typeLabel: typeLabel,
-                type: isAutoPeer ? .autoInterface : .ble,
-                state: status.online ? .connected : .disconnected,
-                isAutoInterfacePeer: isAutoPeer,
-                isBLEPeerInterface: isBlePeer,
-                peerAddress: peerAddress,
-                lastErrorDescription: nil
-            ))
+            // `isAutoconnect` is the authoritative discovery marker (the
+            // `autoconnect_hash` attr set by Discovery.autoconnect) — an
+            // auto-connected interface is a BackboneClientInterface whose
+            // friendly name is "BackboneInterface[<peer>/host:port]", which
+            // matches NEITHER peer prefix above and was therefore silently
+            // dropped here (issue #193 follow-up: the user could not tell
+            // which interfaces were auto-connected from discovery).
+            let isAutoconnect = status.isAutoconnect ?? false
+            guard isAutoPeer || isBlePeer || isAutoconnect else { continue }
+
+            if isAutoPeer || isBlePeer {
+                let typeLabel = isAutoPeer ? "AutoInterfacePeer" : "BLEPeer"
+                // Keep the existing peer-row subtitle: the full bracketed
+                // content ("AutoInterfacePeer[en0/fe80::1]" -> "en0/fe80::1").
+                let peerAddress: String? = {
+                    guard let open = status.name.firstIndex(of: "["),
+                          let close = status.name.lastIndex(of: "]"),
+                          open < close else { return nil }
+                    return String(status.name[status.name.index(after: open)..<close])
+                }()
+                auxiliary.append(InterfaceSnapshot(
+                    id: "py-aux:\(status.sectionName.isEmpty ? status.name : status.sectionName)",
+                    name: status.name,
+                    online: status.online,
+                    typeLabel: typeLabel,
+                    type: isAutoPeer ? .autoInterface : .ble,
+                    state: status.online ? .connected : .disconnected,
+                    isAutoInterfacePeer: isAutoPeer,
+                    isBLEPeerInterface: isBlePeer,
+                    peerAddress: peerAddress,
+                    lastErrorDescription: nil
+                ))
+            } else {
+                // Auto-connected from discovery: show the peer's friendly name
+                // + host:port endpoint, badged "via discovery". Peel the
+                // bracketed "<peer>/<host:port>" and split on the LAST "/"
+                // so IPv6 brackets ("[2001:db8::1]:4242") survive.
+                let parts = Self.parseFriendlyEndpoint(status.name)
+                auxiliary.append(InterfaceSnapshot(
+                    id: "py-aux:\(status.sectionName.isEmpty ? status.name : status.sectionName)",
+                    name: parts.peer ?? status.name,
+                    online: status.online,
+                    typeLabel: "TCPClient",
+                    type: .tcp,
+                    state: status.online ? .connected : .disconnected,
+                    isAutoInterfacePeer: false,
+                    isBLEPeerInterface: false,
+                    peerAddress: nil,
+                    lastErrorDescription: nil,
+                    endpoint: parts.endpoint,
+                    isAutoconnect: true
+                ))
+            }
         }
         if let transport = transport {
             transport.setPythonAuxiliarySnapshots(auxiliary)
@@ -2409,6 +2463,17 @@ public final class AppServices {
                     iface.state = newState
                     iface.online = status.online
                 }
+                // Live endpoint (host:port) from Python's friendly str(iface),
+                // so the row shows which host this TCP client is talking to —
+                // previously the subtitle was just the user's label and every
+                // row read "TCPClient" (issue #193 follow-up). Refresh every
+                // poll: the endpoint can change (reconnect to a new host), so
+                // assign unconditionally (cheap string compare avoids log spam).
+                let endpoint = Self.parseFriendlyEndpoint(status.name).endpoint
+                if iface.endpoint != endpoint {
+                    iface.endpoint = endpoint
+                }
+                iface.isAutoconnect = status.isAutoconnect ?? false
                 continue
             }
             // Auto + BLE interfaces are singletons on AppServices, keyed by

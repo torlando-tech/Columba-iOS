@@ -648,6 +648,10 @@ public final class PythonBridge: @unchecked Sendable {
             public let online: Bool
             public let rxBytes: Int
             public let txBytes: Int
+            /// True when RNS spawned this interface from a discovery announce
+            /// (the `autoconnect_hash` marker set by `Discovery.autoconnect`).
+            /// The status poll renders these with a "via discovery" badge.
+            public let isAutoconnect: Bool
 
             enum CodingKeys: String, CodingKey {
                 case sectionName = "section_name"
@@ -655,6 +659,7 @@ public final class PythonBridge: @unchecked Sendable {
                 case online
                 case rxBytes = "rx_bytes"
                 case txBytes = "tx_bytes"
+                case isAutoconnect = "is_autoconnect"
             }
 
             public init(from decoder: Decoder) throws {
@@ -664,6 +669,7 @@ public final class PythonBridge: @unchecked Sendable {
                 self.online = (try? c.decode(Bool.self, forKey: .online)) ?? false
                 self.rxBytes = (try? c.decode(Int.self, forKey: .rxBytes)) ?? 0
                 self.txBytes = (try? c.decode(Int.self, forKey: .txBytes)) ?? 0
+                self.isAutoconnect = (try? c.decode(Bool.self, forKey: .isAutoconnect)) ?? false
             }
         }
 

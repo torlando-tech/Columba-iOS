@@ -500,7 +500,8 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
             interfaces: s.interfaces.map {
                 StatusSnapshot.InterfaceStatus(
                     sectionName: $0.sectionName, name: $0.name, online: $0.online,
-                    rxBytes: $0.rxBytes, txBytes: $0.txBytes
+                    rxBytes: $0.rxBytes, txBytes: $0.txBytes,
+                    isAutoconnect: $0.isAutoconnect
                 )
             },
             destinationTableSize: s.destinationTableSize,

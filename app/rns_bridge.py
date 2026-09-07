@@ -2115,6 +2115,15 @@ def status() -> dict[str, Any]:
                 # so coerce to empty string — JSON null breaks Swift's
                 # String decoder and silently drops the whole snapshot.
                 section_name = getattr(iface, "name", None) or ""
+                # `is_autoconnect` marks interfaces RNS spawned from an
+                # interface-discovery announce (Discovery.autoconnect sets
+                # `autoconnect_hash` on them). The Swift status poll turns
+                # these into Network Status rows badged "via discovery" —
+                # previously they were silently dropped because their
+                # section name didn't match any user-configured entity and
+                # their friendly name didn't start with AutoInterfacePeer /
+                # BLEPeer, so the user couldn't tell which interfaces were
+                # auto-connected from discovery (issue #193 follow-up).
                 iface_info.append({
                     "section_name": section_name,
                     "name": str(iface),
@@ -2122,6 +2131,7 @@ def status() -> dict[str, Any]:
                     "ifac_size": getattr(iface, "ifac_size", None),
                     "rx_bytes": getattr(iface, "rxb", 0),
                     "tx_bytes": getattr(iface, "txb", 0),
+                    "is_autoconnect": bool(getattr(iface, "autoconnect_hash", None)),
                 })
             out["interfaces"] = iface_info
         except Exception as e:

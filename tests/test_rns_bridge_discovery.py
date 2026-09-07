@@ -201,5 +201,57 @@ class DiscoveryJsonTest(unittest.TestCase):
         )
 
 
+class StatusAutoconnectTest(unittest.TestCase):
+    """`status()` must expose `is_autoconnect` per interface (issue #193
+    follow-up) so the Swift status poll can badge auto-connected discovery
+    interfaces in Network Status. The marker is the `autoconnect_hash` attr
+    RNS sets on auto-connected interfaces; user-configured interfaces lack it.
+    """
+
+    def setUp(self):
+        self._started = app.rns_bridge._state.get("started")
+        app.rns_bridge._state["started"] = True
+        self._saved = sys.modules["RNS"].Transport.interfaces
+
+    def tearDown(self):
+        sys.modules["RNS"].Transport.interfaces = self._saved
+        if self._started is None:
+            app.rns_bridge._state.pop("started", None)
+        else:
+            app.rns_bridge._state["started"] = self._started
+
+    @staticmethod
+    def _iface(section: str, friendly: str, autoconnect: bool):
+        class _Iface:
+            name = section
+            online = True
+            rxb = 0
+            txb = 0
+
+            def __str__(self) -> str:
+                return friendly
+
+        if autoconnect:
+            _Iface.autoconnect_hash = "endpoint_hash"
+        return _Iface()
+
+    def test_status_reports_is_autoconnect_per_interface(self):
+        sys.modules["RNS"].Transport.interfaces = [
+            self._iface("Home", "TCPInterface[Home/10.0.4.63:4242]", autoconnect=False),
+            self._iface(
+                "Synth Hub",
+                "BackboneInterface[Synth Hub/127.0.0.1:43221]",
+                autoconnect=True,
+            ),
+        ]
+        data = json.loads(app.rns_bridge.status_json())
+        by_name = {i["section_name"]: i for i in data["interfaces"]}
+        self.assertIs(by_name["Home"]["is_autoconnect"], False)
+        self.assertIs(by_name["Synth Hub"]["is_autoconnect"], True)
+        # The friendly name (with host:port) is what Swift parses the
+        # endpoint out of.
+        self.assertEqual(by_name["Home"]["name"], "TCPInterface[Home/10.0.4.63:4242]")
+
+
 if __name__ == "__main__":
     unittest.main()
