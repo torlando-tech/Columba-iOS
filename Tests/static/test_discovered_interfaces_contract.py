@@ -225,6 +225,25 @@ class DiscoveredInterfacesContractTests(unittest.TestCase):
             "registering it in a source-target phase is the silent-exclusion trap",
         )
 
+    def test_all_fields_section_shows_ifac_network_name(self) -> None:
+        """The expandable all-announced-fields section must list the IFAC
+        network name (issue #193 follow-up): the port listed the IFAC
+        passphrase but dropped the network name, so an IFAC peer's announce
+        looked incomplete next to the Android card."""
+        screen = strip_comments(DISCOVERY_SCREEN.read_text(encoding="utf-8"))
+        self.assertIn(
+            "ifacNetname",
+            screen,
+            "the all-announced-fields section must display iface.ifacNetname "
+            "(the IFAC network name row, alongside the IFAC passphrase row)",
+        )
+        catalog = json.loads(LOCALIZATIONS.read_text(encoding="utf-8"))
+        self.assertIn(
+            "IFAC network name",
+            catalog["strings"],
+            "Localizable.xcstrings must carry the 'IFAC network name' row label",
+        )
+
     def test_localization_catalog_covers_discovery_strings(self) -> None:
         catalog = json.loads(LOCALIZATIONS.read_text(encoding="utf-8"))
         strings = catalog["strings"]

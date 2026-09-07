@@ -865,6 +865,7 @@ private struct DiscoveredInterfaceAllFieldsSection: View {
         add(String(localized: "Latitude"), iface.latitude.map { String(format: "%.6f", $0) })
         add(String(localized: "Longitude"), iface.longitude.map { String(format: "%.6f", $0) })
         add(String(localized: "Height"), iface.height.map { "\($0) m" })
+        add(String(localized: "IFAC network name"), iface.ifacNetname)
         add(String(localized: "IFAC passphrase"), iface.ifacNetkey)
         add(String(localized: "Transport"), iface.transport ? "yes" : "no")
         add(String(localized: "Discovery hash"), iface.discoveryHash)

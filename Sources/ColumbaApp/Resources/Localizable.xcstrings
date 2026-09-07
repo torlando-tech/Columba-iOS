@@ -2872,6 +2872,16 @@
           }
         }
       }
+    },
+    "IFAC network name": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "IFAC network name"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
