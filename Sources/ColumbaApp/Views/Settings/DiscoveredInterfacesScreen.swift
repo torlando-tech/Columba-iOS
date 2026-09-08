@@ -690,6 +690,21 @@ private struct DiscoveredInterfaceCard: View {
                 }
             }
 
+            // Contact row (operator LXMF address, RNS 1.5.0+)
+            if let contact = iface.operatorLxmfAddress, !contact.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "envelope.fill")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.accentColor)
+                    Text(String(localized: "Contact:"))
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(verbatim: contact)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(Theme.accentColor)
+                }
+            }
+
             // Location (tappable → opens Maps)
             if iface.hasLocation {
                 LocationDetails(iface: iface, distanceKm: distanceKm)
@@ -867,6 +882,7 @@ private struct DiscoveredInterfaceAllFieldsSection: View {
         add(String(localized: "Height"), iface.height.map { "\($0) m" })
         add(String(localized: "IFAC network name"), iface.ifacNetname)
         add(String(localized: "IFAC passphrase"), iface.ifacNetkey)
+        add(String(localized: "Contact"), iface.operatorLxmfAddress)
         add(String(localized: "Transport"), iface.transport ? "yes" : "no")
         add(String(localized: "Discovery hash"), iface.discoveryHash)
         add(String(localized: "Received at"), iface.receivedAt.map(formatUnixSeconds))

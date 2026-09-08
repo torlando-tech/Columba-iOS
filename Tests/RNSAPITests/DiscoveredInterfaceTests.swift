@@ -38,6 +38,7 @@ final class DiscoveredInterfaceTests: XCTestCase {
       "height": 42.5,
       "ifac_netname": "columba",
       "ifac_netkey": "secret",
+      "operator_lxmf_address": "0102030405060708091011121314151617181920212223242526272829303132",
       "transport": true,
       "discovery_hash": "abc123",
       "received": 1699999900.0,
@@ -69,6 +70,27 @@ final class DiscoveredInterfaceTests: XCTestCase {
 
     // MARK: - Decode
 
+    func testOperatorLxmfAddressDecode() throws {
+        // Present: 32-hex contact field (RNS 1.5.0+ discovery contact).
+        let withContact = try decode("""
+        {"name":"x","type":"TCPServerInterface","operator_lxmf_address":"0102030405060708091011121314151617181920212223242526272829303132"}
+        """)
+        XCTAssertEqual(withContact.operatorLxmfAddress, "0102030405060708091011121314151617181920212223242526272829303132")
+
+        // Absent (pre-1.5.0 announces / operators who don't set it): nil, no
+        // decode failure — this key did not exist before RNS 1.5.0.
+        let withoutContact = try decode("""
+        {"name":"y","type":"TCPServerInterface"}
+        """)
+        XCTAssertNil(withoutContact.operatorLxmfAddress)
+
+        // Empty string decodes as nil (mirrors the other optional string fields).
+        let emptyContact = try decode("""
+        {"name":"z","type":"TCPServerInterface","operator_lxmf_address":""}
+        """)
+        XCTAssertNil(emptyContact.operatorLxmfAddress)
+    }
+
     func testFullJSONDecode() throws {
         let iface = try decode(fullJSON)
         XCTAssertEqual(iface.name, "alpha")
@@ -94,6 +116,7 @@ final class DiscoveredInterfaceTests: XCTestCase {
         XCTAssertEqual(iface.height, 42.5)
         XCTAssertEqual(iface.ifacNetname, "columba")
         XCTAssertEqual(iface.ifacNetkey, "secret")
+        XCTAssertEqual(iface.operatorLxmfAddress, "0102030405060708091011121314151617181920212223242526272829303132")
         XCTAssertTrue(iface.transport)
         XCTAssertEqual(iface.discoveryHash, "abc123")
         XCTAssertEqual(iface.receivedAt, 1699999900.0)
