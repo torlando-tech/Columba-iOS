@@ -18,6 +18,11 @@ struct TCPClientWizard: View {
 
     @Bindable var viewModel: InterfaceManagementViewModel
     @State private var wizard = TCPClientWizardViewModel()
+    /// Discovery prefill (issue #193): seeded in `onAppear`, same one-shot
+    /// pattern as the edit-mode `loadExisting` below. A non-private `var`
+    /// with a default so the memberwise init both keeps `prefill` (new call
+    /// sites) and stays source-compatible with existing ones.
+    var prefill: DiscoveredInterface? = nil
 
     var body: some View {
         NavigationStack {
@@ -54,10 +59,14 @@ struct TCPClientWizard: View {
             #endif
         }
         .onAppear {
-            // Pre-populate when editing an existing interface.
-            if let editing = viewModel.editingInterface,
-               editing.type == .tcpClient,
-               !wizard.isEditing {
+            if let prefill, !wizard.isEditing {
+                // Discovery card "Add to Config": land on review with the
+                // announced fields filled in.
+                wizard.applyPrefill(prefill)
+            } else if let editing = viewModel.editingInterface,
+                      editing.type == .tcpClient,
+                      !wizard.isEditing {
+                // Pre-populate when editing an existing interface.
                 wizard.loadExisting(editing)
             }
         }
@@ -261,6 +270,7 @@ struct TCPReviewConfigureStep: View {
                 serverSummaryCard
                 interfaceFields
                 enabledToggle
+                bootstrapOnlyToggle
                 advancedSection
             }
             .padding(16)
@@ -330,6 +340,29 @@ struct TCPReviewConfigureStep: View {
             Toggle("", isOn: $wizard.enabled)
                 .labelsHidden()
                 .tint(Theme.accentColor)
+        }
+        .padding(16)
+        .background(Theme.backgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+    }
+
+    private var bootstrapOnlyToggle: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Bootstrap only")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Theme.textPrimary)
+
+                Spacer()
+
+                Toggle("", isOn: $wizard.bootstrapOnly)
+                    .labelsHidden()
+                    .tint(Theme.accentColor)
+            }
+
+            Text("RNS will drop this interface once discovered interfaces connect")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
         }
         .padding(16)
         .background(Theme.backgroundSecondary)

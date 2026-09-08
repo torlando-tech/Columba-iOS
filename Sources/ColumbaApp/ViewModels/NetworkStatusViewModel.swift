@@ -23,6 +23,11 @@ struct InterfaceInfo: Identifiable {
     let isAutoInterfacePeer: Bool
     let peerAddress: String?
     let lastErrorDescription: String?
+    /// Live `host:port` endpoint for TCP rows (parsed from Python's friendly
+    /// name by the status poll), e.g. "10.0.4.63:4242".
+    let endpoint: String?
+    /// True when RNS auto-connected this interface from a discovery announce.
+    let isAutoconnect: Bool
 }
 
 // MARK: - Network Status ViewModel
@@ -157,7 +162,9 @@ final class NetworkStatusViewModel {
                 state: snap.state,
                 isAutoInterfacePeer: snap.isAutoInterfacePeer,
                 peerAddress: snap.peerAddress,
-                lastErrorDescription: snap.lastErrorDescription
+                lastErrorDescription: snap.lastErrorDescription,
+                endpoint: snap.endpoint,
+                isAutoconnect: snap.isAutoconnect
             ))
         }
 
@@ -224,7 +231,9 @@ final class NetworkStatusViewModel {
                 state: mappedState,
                 isAutoInterfacePeer: isAutoPeer,
                 peerAddress: addr,
-                lastErrorDescription: err
+                lastErrorDescription: err,
+                endpoint: nil,
+                isAutoconnect: iface.isAutoconnect ?? false
             )
         }
 

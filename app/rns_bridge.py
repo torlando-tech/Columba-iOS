@@ -2115,6 +2115,15 @@ def status() -> dict[str, Any]:
                 # so coerce to empty string — JSON null breaks Swift's
                 # String decoder and silently drops the whole snapshot.
                 section_name = getattr(iface, "name", None) or ""
+                # `is_autoconnect` marks interfaces RNS spawned from an
+                # interface-discovery announce (Discovery.autoconnect sets
+                # `autoconnect_hash` on them). The Swift status poll turns
+                # these into Network Status rows badged "via discovery" —
+                # previously they were silently dropped because their
+                # section name didn't match any user-configured entity and
+                # their friendly name didn't start with AutoInterfacePeer /
+                # BLEPeer, so the user couldn't tell which interfaces were
+                # auto-connected from discovery (issue #193 follow-up).
                 iface_info.append({
                     "section_name": section_name,
                     "name": str(iface),
@@ -2122,6 +2131,7 @@ def status() -> dict[str, Any]:
                     "ifac_size": getattr(iface, "ifac_size", None),
                     "rx_bytes": getattr(iface, "rxb", 0),
                     "tx_bytes": getattr(iface, "txb", 0),
+                    "is_autoconnect": bool(getattr(iface, "autoconnect_hash", None)),
                 })
             out["interfaces"] = iface_info
         except Exception as e:
@@ -2143,6 +2153,73 @@ def status_json() -> str:
     a time — Swift just calls `json.JSONDecoder.decode(...)`."""
     import json as _json
     return _json.dumps(status())
+
+
+def discovery_json() -> str:
+    """JSON-serialized interface-discovery state for the Swift bridge.
+
+    Mirrors `status_json()` contract: always returns a JSON object string,
+    never raises, so PythonBridge.discovery() can decode unconditionally.
+    Read path uses the on-disk announce store (RNS.Reticulum.discovered_interfaces())
+    so it lists previously-heard announces even before discovery is enabled.
+    """
+    import json as _json
+    out: dict[str, Any] = {"discovered": [], "enabled": False, "autoconnected": []}
+    if not _state.get("started"):
+        return _json.dumps(out)
+    try:
+        infos = RNS.Reticulum.discovered_interfaces() or []
+        for info in infos:
+            d: dict[str, Any] = {}
+            for k, v in dict(info).items():
+                if isinstance(v, (bytes, bytearray)):
+                    # transport_id / network_id arrive as msgpack bytes —
+                    # the Swift model wants hex strings (matches RNS.hexrep).
+                    v = bytes(v).hex()
+                d[k] = v
+            out["discovered"].append(d)
+    except Exception as e:
+        RNS.log(f"discovery_json: list_discovered_interfaces failed: {e}", RNS.LOG_DEBUG)
+    try:
+        # `enabled` = "is the running backend RECORDING announced interfaces"
+        # = the [reticulum] `discover_interfaces` flag. This is DISTINCT from
+        # the autoconnect limit: discovery stays on when
+        # autoconnect_discovered_interfaces is 0 (observe-only mode — the user
+        # can still see heard announces), so we must NOT use
+        # should_autoconnect_discovered_interfaces() here: it is
+        # `__autoconnect_discovered_interfaces > 0`, which goes false at 0 and
+        # wrongly flipped the whole feature to "Disabled" the moment the
+        # auto-connect slider hit 0 (issue #193). The flag is a Reticulum
+        # class attribute re-read from config on every Reticulum.__init__
+        # (so it is live-correct across in-process restarts); the pinned RNS
+        # exposes no public getter for it, hence the mangled class-attr name.
+        out["enabled"] = bool(
+            getattr(RNS.Reticulum, "_Reticulum__discover_interfaces", False)
+        )
+    except Exception:
+        pass
+    try:
+        # The Swift discovery card compares these against each discovered
+        # interface's "reachable_on:port" (e.g. "127.0.0.1:43221") to badge
+        # the auto-connected ones "Connected". `str(iface)` is the *friendly*
+        # form ("BackboneInterface[Synth Hub/127.0.0.1:43221]") which does NOT
+        # match that comparison, so emit the canonical endpoint instead: the
+        # BackboneClientInterface that autoconnect() creates carries
+        # `target_ip`/`target_port` set from the announce's `reachable_on`/
+        # `port`. Render IPv6 with brackets, exactly as `BackboneInterface
+        # .__str__` does, so the string is host:port-parseable either way.
+        endpoints = set()
+        for iface in list(RNS.Transport.interfaces):
+            if hasattr(iface, "autoconnect_hash"):
+                ip = getattr(iface, "target_ip", None)
+                port = getattr(iface, "target_port", None)
+                if ip is not None and port is not None:
+                    canonical_ip = f"[{ip}]" if ":" in str(ip) else str(ip)
+                    endpoints.add(f"{canonical_ip}:{port}")
+        out["autoconnected"] = sorted(endpoints)
+    except Exception:
+        pass
+    return _json.dumps(out)
 
 
 def drain_events() -> list[dict[str, Any]]:

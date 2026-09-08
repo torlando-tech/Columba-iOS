@@ -80,6 +80,70 @@ final class PythonConfigWriterTests: XCTestCase {
         XCTAssertEqual(enabledLines(config), ["enabled = yes"],
                        "A real interface must emit `enabled = yes` exactly once\n\(config)")
     }
+
+    func testDiscoveryConfigKeysEmitEnabledValues() {
+        let iface = InterfaceEntity(
+            name: "kin",
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(targetHost: "rns.kin.earth", targetPort: 4242))
+        )
+        let config = PythonConfigWriter.write(
+            interfaces: [iface],
+            discoverInterfaces: true,
+            autoconnectDiscoveredCount: 3
+        )
+
+        XCTAssertTrue(config.contains("discover_interfaces = yes"),
+                      "discovery must be emitted as `discover_interfaces = yes`\n\(config)")
+        XCTAssertTrue(config.contains("autoconnect_discovered_interfaces = 3"),
+                      "autoconnect count must be emitted verbatim\n\(config)")
+    }
+
+    func testDiscoveryConfigKeysEmitDisabledDefaults() {
+        let iface = InterfaceEntity(
+            name: "kin",
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(targetHost: "rns.kin.earth", targetPort: 4242))
+        )
+        let config = PythonConfigWriter.write(
+            interfaces: [iface],
+            discoverInterfaces: false,
+            autoconnectDiscoveredCount: 0
+        )
+
+        XCTAssertTrue(config.contains("discover_interfaces = no"),
+                      "discovery must default to `discover_interfaces = no`\n\(config)")
+        XCTAssertTrue(config.contains("autoconnect_discovered_interfaces = 0"),
+                      "autoconnect count must default to 0\n\(config)")
+    }
+
+    func testTcpClientBootstrapOnlyEmitsBootstrapOnlyKey() {
+        let iface = InterfaceEntity(
+            name: "kin",
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: "rns.kin.earth",
+                targetPort: 4242,
+                bootstrapOnly: true
+            ))
+        )
+        let config = PythonConfigWriter.write(interfaces: [iface])
+
+        XCTAssertTrue(config.contains("bootstrap_only = yes"),
+                      "bootstrapOnly must emit `bootstrap_only = yes`\n\(config)")
+    }
+
+    func testTcpClientWithoutBootstrapOnlyOmitsBootstrapOnlyKey() {
+        let iface = InterfaceEntity(
+            name: "kin",
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(targetHost: "rns.kin.earth", targetPort: 4242))
+        )
+        let config = PythonConfigWriter.write(interfaces: [iface])
+
+        XCTAssertFalse(config.contains("bootstrap_only"),
+                       "bootstrap_only must be omitted unless the flag is set\n\(config)")
+    }
 }
 
 #if COLUMBA_RUNTIME_PYTHON

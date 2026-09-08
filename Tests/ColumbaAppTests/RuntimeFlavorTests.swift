@@ -7,6 +7,7 @@
 //
 
 import XCTest
+import RNSAPI
 @testable import ColumbaApp
 
 #if COLUMBA_RUNTIME_PYTHON && COLUMBA_RUNTIME_MODEL_B
@@ -101,6 +102,66 @@ final class RuntimeFlavorTests: XCTestCase {
                 title: "No Interfaces Connected",
                 actionTitle: "Manage"
             )
+        )
+    }
+
+    // MARK: - Network card: auxiliary (discovery-spawned) interfaces
+
+    private func auxSnapshot(
+        id: String,
+        name: String,
+        online: Bool,
+        isAutoconnect: Bool = false,
+        isAutoInterfacePeer: Bool = false,
+        isBLEPeerInterface: Bool = false
+    ) -> InterfaceSnapshot {
+        InterfaceSnapshot(
+            id: id,
+            name: name,
+            online: online,
+            typeLabel: isAutoInterfacePeer ? "AutoInterfacePeer" : "TCPClient",
+            type: .tcp,
+            state: online ? .connected : .disconnected,
+            isAutoInterfacePeer: isAutoInterfacePeer,
+            isBLEPeerInterface: isBLEPeerInterface,
+            isAutoconnect: isAutoconnect
+        )
+    }
+
+    func testNetworkCardListsDiscoveryAutoConnectsFlaggedDiscovered() {
+        let aux = [
+            auxSnapshot(id: "py-aux:1", name: "Hub Node", online: true, isAutoconnect: true),
+            auxSnapshot(id: "py-aux:2", name: "Other Node", online: true, isAutoconnect: true),
+            auxSnapshot(id: "py-aux:3", name: "Offline Node", online: false, isAutoconnect: true),
+        ]
+        XCTAssertEqual(
+            NetworkInterfacePresentation.auxiliaryDescriptions(aux),
+            [
+                "Hub Node (Discovered)",
+                "Other Node (Discovered)",
+            ]
+        )
+    }
+
+    func testNetworkCardRollsUpLanPeersAndIgnoresBle() {
+        let aux = [
+            auxSnapshot(id: "py-aux:a", name: "AutoInterfacePeer[en0/fe80::1]", online: true, isAutoInterfacePeer: true),
+            auxSnapshot(id: "py-aux:b", name: "AutoInterfacePeer[en0/fe80::2]", online: true, isAutoInterfacePeer: true),
+            auxSnapshot(id: "py-aux:c", name: "BLEPeerInterface[AA:BB]", online: true, isBLEPeerInterface: true),
+        ]
+        XCTAssertEqual(
+            NetworkInterfacePresentation.auxiliaryDescriptions(aux),
+            ["AutoInterface (2 peers)"]
+        )
+    }
+
+    func testNetworkCardAuxiliarySingleLanPeerSingular() {
+        let aux = [
+            auxSnapshot(id: "py-aux:a", name: "AutoInterfacePeer[en0/fe80::1]", online: true, isAutoInterfacePeer: true),
+        ]
+        XCTAssertEqual(
+            NetworkInterfacePresentation.auxiliaryDescriptions(aux),
+            ["AutoInterface (1 peer)"]
         )
     }
 
@@ -273,6 +334,72 @@ final class RuntimeFlavorTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedInterfaces, [.tcp])
         XCTAssertEqual(viewModel.selectedTcpServer?.host, "relay.example")
         XCTAssertEqual(viewModel.selectedTcpServer?.name, "Private relay")
+    }
+
+    /// Issue #193 / Greptile P1 #1: the discovery card's "Connected" badge
+    /// compares the bridge's `autoconnected` endpoint list against each
+    /// interface's `reachable_on:port`. `discovery_json()` emits the
+    /// canonical endpoint (IPv6 bracketed, exactly as
+    /// `BackboneInterface.__str__` renders it), so the Swift side must build
+    /// the SAME canonical string. Pinning it keeps the two sides in sync and
+    /// stops the badge from silently never matching (the old code compared a
+    /// bare `host:port` against a friendly "BackboneInterface[...]" string).
+    func testCanonicalEndpointMatchingBadge() {
+        // IPv4 — bare host:port, unchanged.
+        XCTAssertEqual(
+            DiscoveredInterfacesViewModel.canonicalEndpoint(host: "1.2.3.4", port: 4242),
+            "1.2.3.4:4242"
+        )
+        // IPv6 — bracketed, matching the bridge's f"[{ip}]:{port}" render.
+        XCTAssertEqual(
+            DiscoveredInterfacesViewModel.canonicalEndpoint(host: "2001:db8::1", port: 8080),
+            "[2001:db8::1]:8080"
+        )
+        // A hostname stays bare (only ":" is the IPv6 trigger).
+        XCTAssertEqual(
+            DiscoveredInterfacesViewModel.canonicalEndpoint(host: "hub.example", port: 4242),
+            "hub.example:4242"
+        )
+    }
+
+    /// Issue #193 / Greptile P1 #2: a SAME-PROCESS Reticulum re-init is unsafe
+    /// when an AutoInterface is configured (its `detach()` only flips
+    /// `online = False` — the multicast sockets are local vars never closed,
+    /// so re-init hits the documented multicast-bind collision and the re-init
+    /// error path takes the backend down). `restartPythonBackend` must refuse
+    /// (`.requiresRelaunch`) exactly in that case and proceed for any other
+    /// interface set. Pure predicate, so it's testable without a backend.
+    func testInProcessRestartBlockedOnlyByAutoInterface() {
+        func autoInterfaceEntity() -> InterfaceEntity {
+            InterfaceEntity(
+                name: "Auto",
+                type: .autoInterface,
+                enabled: true,
+                config: .autoInterface(AutoInterfaceConfig())
+            )
+        }
+        func tcpClientEntity() -> InterfaceEntity {
+            InterfaceEntity(
+                name: "Relay",
+                type: .tcpClient,
+                enabled: true,
+                config: .tcpClient(TCPClientConfig(targetHost: "h", targetPort: 4242))
+            )
+        }
+        func rnodeEntity() -> InterfaceEntity {
+            InterfaceEntity(
+                name: "RNode",
+                type: .rnode,
+                enabled: true,
+                config: .rnode(RNodeConfig())
+            )
+        }
+        // Empty and non-AutoInterface sets: in-process restart is safe.
+        XCTAssertFalse(AppServices.inProcessRestartBlockedByAutoInterface([]))
+        XCTAssertFalse(AppServices.inProcessRestartBlockedByAutoInterface([tcpClientEntity(), rnodeEntity()]))
+        // An AutoInterface (even alongside others) blocks it.
+        XCTAssertTrue(AppServices.inProcessRestartBlockedByAutoInterface([autoInterfaceEntity()]))
+        XCTAssertTrue(AppServices.inProcessRestartBlockedByAutoInterface([tcpClientEntity(), autoInterfaceEntity()]))
     }
     #endif
 }

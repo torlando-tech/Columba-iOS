@@ -201,17 +201,38 @@ struct NetworkStatusView: View {
 
             // Name and type
             VStack(alignment: .leading, spacing: 2) {
-                Text(info.type)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Theme.textPrimary)
-
-                if let addr = info.peerAddress {
+                HStack(spacing: 6) {
+                    Text(info.name.isEmpty ? info.type : info.name)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.textPrimary)
+                    if info.isAutoconnect {
+                        Text(String(localized: "Via discovery"))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Theme.accentColor)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Theme.accentColor.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
+                }
+                // Subtitle: the live endpoint (host:port) is the useful bit —
+                // "TCPClient" rows previously showed only the label or nothing,
+                // so the user couldn't tell which host they were connected to
+                // (issue #193 follow-up). Fall back to the peer address (LAN /
+                // BLE peers) when there's no endpoint.
+                if let endpoint = info.endpoint {
+                    Text(endpoint)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } else if let addr = info.peerAddress {
                     Text(addr)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
-                } else {
+                } else if !info.name.isEmpty {
                     Text(info.name)
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
@@ -272,9 +293,15 @@ struct NetworkStatusView: View {
 
                     // Details
                     VStack(alignment: .leading, spacing: 12) {
-                        detailRow(label: "Name", value: info.name)
+                        detailRow(label: "Name", value: info.name.isEmpty ? info.type : info.name)
                         detailRow(label: "Type", value: info.type)
+                        if info.isAutoconnect {
+                            detailRow(label: "Source", value: String(localized: "Auto-connected from discovery"))
+                        }
                         detailRow(label: "ID", value: info.id)
+                        if let endpoint = info.endpoint {
+                            detailRow(label: "Endpoint", value: endpoint)
+                        }
                         if let addr = info.peerAddress {
                             detailRow(label: "Peer Address", value: addr)
                         }

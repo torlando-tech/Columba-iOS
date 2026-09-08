@@ -369,4 +369,25 @@ final class RNodeWizardViewModel {
         // No region match — use custom mode
         isCustomMode = true
     }
+
+    /// No-arg designated init (memberwise defaults). Kept explicit so the
+    /// class retains a public parameterless init for every existing
+    /// construction site.
+
+    init() {}
+
+    /// Prefill custom LoRa fields from a discovered interface (discovery
+    /// card 'Use for RNode'). Mutates the existing instance — the wizard
+    /// view calls this from `onAppear` (one-shot, same pattern as
+    /// `populateFromConfig`).
+    func applyPrefill(_ iface: DiscoveredInterface) {
+        isCustomMode = true
+        interfaceName = iface.name
+        customFrequency = iface.frequency.map { String(Int($0)) } ?? ""
+        customBandwidth = iface.bandwidth.map(String.init) ?? ""
+        customSpreadingFactor = iface.spreadingFactor.map(String.init) ?? ""
+        customCodingRate = iface.codingRate.map(String.init) ?? ""
+        // Region/preset selection stays at its default; the wizard's existing
+        // validation decides legality.
+    }
 }

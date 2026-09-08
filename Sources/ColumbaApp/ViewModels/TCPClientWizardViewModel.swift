@@ -79,6 +79,9 @@ final class TCPClientWizardViewModel {
     var mode: InterfaceMode = .full
     var enabled: Bool = true
     var showAdvanced: Bool = false
+    /// Bootstrap-only: RNS auto-detaches this interface once discovered
+    /// interfaces connect (RNS 1.1.x bootstrap semantics).
+    var bootstrapOnly: Bool = false
 
     // MARK: - Edit Context
 
@@ -126,6 +129,7 @@ final class TCPClientWizardViewModel {
         passphrase = config.passphrase ?? ""
         mode = entity.mode
         enabled = entity.enabled
+        bootstrapOnly = config.bootstrapOnly
 
         let match = TcpCommunityServer.servers.first { server in
             server.host == config.targetHost && server.port == config.targetPort
@@ -138,6 +142,30 @@ final class TCPClientWizardViewModel {
             isCustomMode = true
         }
         currentStep = .serverSelection
+    }
+
+    /// No-arg designated init (memberwise defaults). Kept explicit so the
+    /// class retains a public parameterless init for every existing
+    /// construction site.
+
+    init() {}
+
+    /// Prefill from a discovered interface (discovery card 'Add to Config').
+    /// Mutates the existing instance — the wizard view calls this from
+    /// `onAppear` (one-shot, same pattern as `loadExisting`) so the
+    /// view's `@State` stays a plain memberwise-default value.
+    func applyPrefill(_ iface: DiscoveredInterface) {
+        currentStep = .reviewConfigure
+        isCustomMode = true
+        interfaceName = iface.name
+        targetHost = iface.reachableOn ?? ""
+        targetPort = iface.port.map(String.init) ?? "4242"
+        networkName = iface.ifacNetname ?? ""
+        passphrase = iface.ifacNetkey ?? ""
+        mode = .full
+        enabled = true
+        bootstrapOnly = false
+        // editingInterface stays nil — create flow.
     }
 
     // MARK: - Validation
@@ -183,7 +211,8 @@ final class TCPClientWizardViewModel {
             targetHost: trimmedHost,
             targetPort: port,
             networkName: trimmedNetwork.isEmpty ? nil : trimmedNetwork,
-            passphrase: trimmedPassphrase.isEmpty ? nil : trimmedPassphrase
+            passphrase: trimmedPassphrase.isEmpty ? nil : trimmedPassphrase,
+            bootstrapOnly: bootstrapOnly
         )
 
         sink.saveTCPInterface(

@@ -167,10 +167,15 @@ public struct StatusSnapshot: Decodable, Sendable {
         public let isAutoPeer: Bool?
         public let peerAddress: String?
         public let lastError: String?
+        /// True when RNS spawned this interface from a discovery announce
+        /// (the `autoconnect_hash` marker). The status poll renders these
+        /// with a "via discovery" badge.
+        public let isAutoconnect: Bool?
 
         public init(sectionName: String, name: String, online: Bool, rxBytes: Int, txBytes: Int,
                     typeRaw: String? = nil, isBLEPeer: Bool? = nil, isAutoPeer: Bool? = nil,
-                    peerAddress: String? = nil, lastError: String? = nil) {
+                    peerAddress: String? = nil, lastError: String? = nil,
+                    isAutoconnect: Bool? = nil) {
             self.sectionName = sectionName
             self.name = name
             self.online = online
@@ -181,6 +186,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.isAutoPeer = isAutoPeer
             self.peerAddress = peerAddress
             self.lastError = lastError
+            self.isAutoconnect = isAutoconnect
         }
 
         enum CodingKeys: String, CodingKey {
@@ -193,6 +199,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             case isAutoPeer = "is_auto_peer"
             case peerAddress = "peer_address"
             case lastError = "last_error"
+            case isAutoconnect = "is_autoconnect"
         }
 
         public init(from decoder: Decoder) throws {
@@ -207,6 +214,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.isAutoPeer = try? c.decode(Bool.self, forKey: .isAutoPeer)
             self.peerAddress = try? c.decode(String.self, forKey: .peerAddress)
             self.lastError = try? c.decode(String.self, forKey: .lastError)
+            self.isAutoconnect = try? c.decode(Bool.self, forKey: .isAutoconnect)
         }
     }
 

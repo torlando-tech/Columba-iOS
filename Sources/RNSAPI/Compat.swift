@@ -1541,6 +1541,17 @@ public final class ReticulumTransport: @unchecked Sendable {
         pythonAuxiliarySnapshots = snapshots
     }
 
+    /// Thread-safe copy of the Python-discovered auxiliary interfaces
+    /// (AutoInterfacePeer / discovery auto-connects / BLEPeer). `getInterfaceSnapshots()`
+    /// appends these for the Network Status screen; the Settings Network card
+    /// and the connection-state observer read them through this getter —
+    /// without it, an interface RNS auto-connected from a discovery announce
+    /// is invisible outside the Network Status screen (issue #193 follow-up).
+    public func pythonAuxiliarySnapshotList() -> [InterfaceSnapshot] {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        return pythonAuxiliarySnapshots
+    }
+
     public func addInterface(_ interface: any NetworkInterface) async throws {
         _interfaceLock.lock(); defer { _interfaceLock.unlock() }
         registeredInterfaces[interface.id] = interface
@@ -1645,7 +1656,9 @@ public final class ReticulumTransport: @unchecked Sendable {
                 isAutoInterfacePeer: false,
                 isBLEPeerInterface: false,
                 peerAddress: nil,
-                lastErrorDescription: nil
+                lastErrorDescription: nil,
+                endpoint: (iface as? TCPInterface)?.endpoint,
+                isAutoconnect: (iface as? TCPInterface)?.isAutoconnect ?? false
             )
         }
         // Append python-discovered auxiliary interfaces (AutoInterfacePeer,
@@ -1725,6 +1738,14 @@ public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
     public let isBLEPeerInterface: Bool
     public let peerAddress: String?
     public let lastErrorDescription: String?
+    /// Live `host:port` endpoint (e.g. "10.0.4.63:4242"), parsed from Python's
+    /// friendly `str(iface)` by the status poll so the Network Status row can
+    /// show which host a TCP client is actually talking to — previously every
+    /// TCP row read just "TCPClient" with no host (issue #193 follow-up).
+    public let endpoint: String?
+    /// True when RNS spawned this interface from a discovery announce
+    /// (`autoconnect_hash` marker); rendered with a "via discovery" badge.
+    public let isAutoconnect: Bool
 
     public init(
         id: String,
@@ -1736,7 +1757,9 @@ public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
         isAutoInterfacePeer: Bool = false,
         isBLEPeerInterface: Bool = false,
         peerAddress: String? = nil,
-        lastErrorDescription: String? = nil
+        lastErrorDescription: String? = nil,
+        endpoint: String? = nil,
+        isAutoconnect: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -1748,6 +1771,8 @@ public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
         self.isBLEPeerInterface = isBLEPeerInterface
         self.peerAddress = peerAddress
         self.lastErrorDescription = lastErrorDescription
+        self.endpoint = endpoint
+        self.isAutoconnect = isAutoconnect
     }
 }
 
@@ -1992,10 +2017,23 @@ public protocol InterfaceDelegate: AnyObject, Sendable {
 
 public final class TCPInterface: NetworkInterface, @unchecked Sendable {
     public let id: String
-    public let name: String
+    /// Display name. `var` (not `let`) so the status poll can sync it from the
+    /// configured `InterfaceEntity.name`. The connect path creates the stub
+    /// before it knows the entity name (it hardcodes a type label like
+    /// "TCP Server"), and a rename in Manage Interfaces is reflected on the
+    /// next poll without a restart (issue #193 follow-up).
+    public var name: String
     public var online: Bool = false
     public var state: InterfaceState = .disconnected
     public var lastErrorDescription: String?
+    /// Live `host:port` endpoint parsed from Python's `str(iface)` on each
+    /// status poll — the Network Status row shows this so a TCP client row
+    /// reads "Home · 10.0.4.63:4242" instead of just "TCPClient"
+    /// (issue #193 follow-up).
+    public var endpoint: String?
+    /// True when RNS auto-connected this interface from a discovery announce
+    /// (the `autoconnect_hash` marker); surfaced as a "via discovery" badge.
+    public var isAutoconnect: Bool = false
     public var hwMtu: Int { 262144 }
     public var delegate: InterfaceDelegate?
 

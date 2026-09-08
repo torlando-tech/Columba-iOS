@@ -113,6 +113,37 @@ enum NetworkInterfacePresentation {
         descriptions.append(contentsOf: repeatElement(String(localized: "TCP"), count: unknownConnectedCount))
         return descriptions
     }
+
+    /// Rows for the interfaces RNS spawns dynamically (discovery auto-connects,
+    /// LAN AutoInterface peers). These never appear in `tcpInterfaces` — the
+    /// transport's auxiliary snapshot is the source of truth (the same one the
+    /// Network Status screen reads).
+    ///
+    /// - Discovery auto-connects get one named row each, flagged "Discovered"
+    ///   (the Settings card has no per-row badge column, so the flag is inline).
+    /// - LAN AutoInterface peers roll up into a single count row (one row per
+    ///   link-local address would be noise in the compact card); the Network
+    ///   Status screen still lists each one.
+    /// - BLE peers are excluded: the card already lists the BLE interface from
+    ///   the app's singleton stub, so aux BLEPeer rows would double-count.
+    static func auxiliaryDescriptions(_ snapshots: [InterfaceSnapshot]) -> [String] {
+        var rows: [String] = []
+        var lanPeerCount = 0
+        for snap in snapshots where snap.online {
+            if snap.isAutoInterfacePeer {
+                lanPeerCount += 1
+            } else if snap.isBLEPeerInterface {
+                continue
+            } else if snap.isAutoconnect {
+                let base = snap.name.isEmpty ? snap.typeLabel : snap.name
+                rows.append("\(base) (\(String(localized: "Discovered")))")
+            }
+        }
+        if lanPeerCount > 0 {
+            rows.append("AutoInterface (\(lanPeerCount) peer\(lanPeerCount == 1 ? "" : "s"))")
+        }
+        return rows
+    }
 }
 
 /// ViewModel for settings screen.
@@ -584,9 +615,14 @@ public final class SettingsViewModel {
                 runtimeStates: runtimeTCPStates
             ))
         }
-        if let auto = appServices.autoInterface, await auto.peerCount > 0 {
-            let count = await auto.peerCount
-            activeInterfaces.append("AutoInterface (\(count) peer\(count == 1 ? "" : "s"))")
+        // Discovery auto-connects + LAN peers live only in the transport's
+        // auxiliary snapshot (the Network Status screen reads the same source).
+        // The old `autoInterface.peerCount` check here was dead code — nothing
+        // ever assigned peerCount — so an interface RNS auto-connected from a
+        // discovery announce never appeared on this card (issue #193).
+        if let transport = appServices.transport {
+            let aux = transport.pythonAuxiliarySnapshotList()
+            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.auxiliaryDescriptions(aux))
         }
         if let rnode = appServices.rnodeInterface, await rnode.state == .connected {
             activeInterfaces.append("RNode")

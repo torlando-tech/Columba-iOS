@@ -22,6 +22,11 @@ struct RNodeWizardView: View {
     @Bindable var viewModel: InterfaceManagementViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var wizard = RNodeWizardViewModel()
+    /// Discovery prefill (issue #193): seeded in `onAppear`, same one-shot
+    /// pattern as the edit-mode `populateFromConfig` below. A non-private
+    /// `var` with a default so the memberwise init both keeps `prefill` (new
+    /// call sites) and stays source-compatible with existing ones.
+    var prefill: DiscoveredInterface? = nil
 
     // MARK: - Body
 
@@ -74,8 +79,14 @@ struct RNodeWizardView: View {
             #endif
         }
         .onAppear {
-            // Pre-populate for edit mode
-            if viewModel.isEditing {
+            // Discovery card "Use for RNode": seed the custom LoRa fields.
+            // Edit mode keeps its existing pre-population path (the sheet
+            // presents with a fresh wizard, so prefill and editing are
+            // mutually exclusive in practice).
+            if let prefill, !wizard.isEditing {
+                wizard.applyPrefill(prefill)
+            } else if viewModel.isEditing {
+                // Pre-populate for edit mode
                 wizard.populateFromConfig(
                     name: viewModel.configName,
                     deviceName: viewModel.configDeviceName,

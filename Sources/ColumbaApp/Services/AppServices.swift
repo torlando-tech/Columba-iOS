@@ -627,6 +627,11 @@ public final class AppServices {
     /// interfaces, without making AppServices re-derive it.
     private var pythonStartIdentity: Identity?
 
+    /// The tcpServerAddress used at the last successful start, so a
+    /// same-identity restart (restartPythonBackend) can re-init without the
+    /// caller re-deriving it. Empty until the first start.
+    private var lastTcpServerAddress: String = ""
+
     /// The interface entities currently live in the Python RNS stack, keyed by
     /// entity id. Seeded when the backend starts and updated incrementally by
     /// `applyInterfaceChanges()` as interfaces are hot-added / hot-removed.
@@ -1184,6 +1189,7 @@ public final class AppServices {
     }
 
     private func initializeUnlocked(tcpServerAddress: String) async throws {
+        self.lastTcpServerAddress = tcpServerAddress
         DiagLog.log("[STARTUP] AppServices initialization beginning")
         let monitorLease = RuntimeActivityMonitor.shared.acquire()
         var initializationSucceeded = false
@@ -1603,7 +1609,11 @@ public final class AppServices {
         // Settings → Advanced → Transport Mode); changing it requires
         // tapping Apply & Restart on the same screen.
         let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
-        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled)
+        // Interface-discovery settings (T-C): read from the same App Group
+        // suite the toggle persists to, so the config matches the UI.
+        let discoverOn = await settingsRepository.getDiscoverInterfacesEnabled()
+        let autoCount = await settingsRepository.getAutoconnectDiscoveredCount()
+        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled, discoverInterfaces: discoverOn, autoconnectDiscoveredCount: autoCount)
         let configFile = pyDir.appendingPathComponent("config")
         do {
             try configText.write(to: configFile, atomically: true, encoding: .utf8)
@@ -2315,6 +2325,32 @@ public final class AppServices {
         #endif
     }
 
+    /// Parse the endpoint + peer name out of a Python friendly `str(iface)`
+    /// of the form `TypeLabel[<peer>/<host:port>]` (e.g.
+    /// `TCPInterface[Home/10.0.4.63:4242]`, `BackboneInterface[Synth
+    /// Hub/127.0.0.1:43221]`). Splits the bracketed content on the LAST `/`
+    /// so IPv6 brackets (`[2001:db8::1]:4242`) and peer names containing
+    /// spaces survive. Returns `(peer, endpoint)`; either may be nil when the
+    /// name has no bracketed endpoint (e.g. a bare section name).
+    static func parseFriendlyEndpoint(_ friendly: String) -> (peer: String?, endpoint: String?) {
+        guard let open = friendly.firstIndex(of: "["),
+              let close = friendly.lastIndex(of: "]"),
+              open < close else { return (nil, nil) }
+        let inner = friendly[friendly.index(after: open)..<close]
+        // Only treat it as a peer/endpoint split when there's a "/" AND the
+        // last segment looks host-ish (contains ":" or a dotted-quad). This
+        // keeps "en0/fe80::1"-style AutoInterfacePeer addresses from being
+        // mislabelled, though that path is handled separately.
+        guard let slash = inner.lastIndex(of: "/"), slash > inner.startIndex else {
+            return (String(inner), nil)
+        }
+        let peer = String(inner[inner.startIndex..<slash])
+        let endpoint = String(inner[inner.index(after: slash)...])
+        let endpointLooksHostlike = endpoint.contains(":") || endpoint.split(separator: ".").count >= 2
+        guard endpointLooksHostlike else { return (peer, nil) }
+        return (peer, endpoint)
+    }
+
     /// Look up the matching Python interface for each user `InterfaceEntity`
     /// and update the Compat TCPInterface stub's `state` to reflect the
     /// `online` flag RNS.Transport reports.
@@ -2352,33 +2388,61 @@ public final class AppServices {
         // peer address from there for the row subtitle.
         var auxiliary: [InterfaceSnapshot] = []
         for status in snapshot.interfaces where !matchedSectionNames.contains(status.sectionName) {
-            // Skip user-defined sections we just couldn't match for some
-            // reason (rename race, etc.) — only emit synthetic rows for
-            // peer-style names.
             let isAutoPeer = status.name.hasPrefix("AutoInterfacePeer")
             let isBlePeer = status.name.hasPrefix("BLEPeerInterface") || status.name.hasPrefix("BLEPeer")
-            guard isAutoPeer || isBlePeer else { continue }
-            let typeLabel = isAutoPeer ? "AutoInterfacePeer" : "BLEPeer"
-            // Peel out the bracketed addr — "AutoInterfacePeer[en0/fe80::1]"
-            // gives "en0/fe80::1".
-            let peerAddress: String? = {
-                guard let open = status.name.firstIndex(of: "["),
-                      let close = status.name.lastIndex(of: "]"),
-                      open < close else { return nil }
-                return String(status.name[status.name.index(after: open)..<close])
-            }()
-            auxiliary.append(InterfaceSnapshot(
-                id: "py-aux:\(status.sectionName.isEmpty ? status.name : status.sectionName)",
-                name: status.name,
-                online: status.online,
-                typeLabel: typeLabel,
-                type: isAutoPeer ? .autoInterface : .ble,
-                state: status.online ? .connected : .disconnected,
-                isAutoInterfacePeer: isAutoPeer,
-                isBLEPeerInterface: isBlePeer,
-                peerAddress: peerAddress,
-                lastErrorDescription: nil
-            ))
+            // `isAutoconnect` is the authoritative discovery marker (the
+            // `autoconnect_hash` attr set by Discovery.autoconnect) — an
+            // auto-connected interface is a BackboneClientInterface whose
+            // friendly name is "BackboneInterface[<peer>/host:port]", which
+            // matches NEITHER peer prefix above and was therefore silently
+            // dropped here (issue #193 follow-up: the user could not tell
+            // which interfaces were auto-connected from discovery).
+            let isAutoconnect = status.isAutoconnect ?? false
+            guard isAutoPeer || isBlePeer || isAutoconnect else { continue }
+
+            if isAutoPeer || isBlePeer {
+                let typeLabel = isAutoPeer ? "AutoInterfacePeer" : "BLEPeer"
+                // Keep the existing peer-row subtitle: the full bracketed
+                // content ("AutoInterfacePeer[en0/fe80::1]" -> "en0/fe80::1").
+                let peerAddress: String? = {
+                    guard let open = status.name.firstIndex(of: "["),
+                          let close = status.name.lastIndex(of: "]"),
+                          open < close else { return nil }
+                    return String(status.name[status.name.index(after: open)..<close])
+                }()
+                auxiliary.append(InterfaceSnapshot(
+                    id: "py-aux:\(status.sectionName.isEmpty ? status.name : status.sectionName)",
+                    name: status.name,
+                    online: status.online,
+                    typeLabel: typeLabel,
+                    type: isAutoPeer ? .autoInterface : .ble,
+                    state: status.online ? .connected : .disconnected,
+                    isAutoInterfacePeer: isAutoPeer,
+                    isBLEPeerInterface: isBlePeer,
+                    peerAddress: peerAddress,
+                    lastErrorDescription: nil
+                ))
+            } else {
+                // Auto-connected from discovery: show the peer's friendly name
+                // + host:port endpoint, badged "via discovery". Peel the
+                // bracketed "<peer>/<host:port>" and split on the LAST "/"
+                // so IPv6 brackets ("[2001:db8::1]:4242") survive.
+                let parts = Self.parseFriendlyEndpoint(status.name)
+                auxiliary.append(InterfaceSnapshot(
+                    id: "py-aux:\(status.sectionName.isEmpty ? status.name : status.sectionName)",
+                    name: parts.peer ?? status.name,
+                    online: status.online,
+                    typeLabel: "TCPClient",
+                    type: .tcp,
+                    state: status.online ? .connected : .disconnected,
+                    isAutoInterfacePeer: false,
+                    isBLEPeerInterface: false,
+                    peerAddress: nil,
+                    lastErrorDescription: nil,
+                    endpoint: parts.endpoint,
+                    isAutoconnect: true
+                ))
+            }
         }
         if let transport = transport {
             transport.setPythonAuxiliarySnapshots(auxiliary)
@@ -2399,6 +2463,28 @@ public final class AppServices {
                     iface.state = newState
                     iface.online = status.online
                 }
+                // Sync the configured display name from the entity. The
+                // connect path seeds the stub with a hardcoded type label
+                // ("TCP Server" — even for TCP clients), so without this the
+                // Network Status card can never show the name the user typed
+                // in Manage Interfaces (issue #193 follow-up). Fall back to
+                // the existing name when the entity is gone/empty. Syncing
+                // here also picks up renames without a restart.
+                let configuredName = entityById[entityId]?.name
+                if let configuredName, !configuredName.isEmpty, iface.name != configuredName {
+                    iface.name = configuredName
+                }
+                // Live endpoint (host:port) from Python's friendly str(iface),
+                // so the row shows which host this TCP client is talking to —
+                // previously the subtitle was just the user's label and every
+                // row read "TCPClient" (issue #193 follow-up). Refresh every
+                // poll: the endpoint can change (reconnect to a new host), so
+                // assign unconditionally (cheap string compare avoids log spam).
+                let endpoint = Self.parseFriendlyEndpoint(status.name).endpoint
+                if iface.endpoint != endpoint {
+                    iface.endpoint = endpoint
+                }
+                iface.isAutoconnect = status.isAutoconnect ?? false
                 continue
             }
             // Auto + BLE interfaces are singletons on AppServices, keyed by
@@ -2435,41 +2521,124 @@ public final class AppServices {
         }
     }
 
-    /// Stop the running Python RNS stack, regenerate the RNS config file
-    /// from `InterfaceRepository.getEnabledInterfaces()`, and start a fresh
-    /// instance. Called from the InterfaceManagementScreen's "Apply &
-    /// Restart" button after the user adds, edits, toggles, or removes an
-    /// interface. RNS has no hot-reload — the only way to pick up a new
-    /// `[interfaces]` section is a full Reticulum re-init.
-    ///
-    /// Causes a ~1-2s connectivity outage. Caller should reflect the
-    /// transition in the UI (the Apply button already shows a
-    /// ProgressView while `isApplyingChanges` is set).
-    public func restartPythonBackend() async {
-        guard let identity = pythonStartIdentity else {
-            DiagLog.log("[RNS] restart skipped — backend was never started")
-            return
+    /// Outcome of an in-process `restartPythonBackend()` attempt. Closed enum
+    /// (house style) so callers can distinguish the four states: the restart
+    /// completed and the change is LIVE, it was skipped (backend never
+    /// started), it failed (the stack is DOWN), or it was refused because an
+    /// AutoInterface is configured and same-process re-init is unsafe
+    /// (settings persisted — they apply on the next clean relaunch).
+    public enum PythonBackendRestartOutcome: Equatable, CustomStringConvertible {
+        case applied
+        case skipped
+        case failed
+        case requiresRelaunch
+        /// True only when the restart actually completed and the change is
+        /// live — the single "did it work?" predicate for callers that don't
+        /// need to branch on the other outcomes.
+        public var didApply: Bool { self == .applied }
+        public var description: String {
+            switch self {
+            case .applied: return "applied"
+            case .skipped: return "skipped"
+            case .failed: return "failed"
+            case .requiresRelaunch: return "requiresRelaunch"
+            }
         }
-        // Rewrite the RNS config on disk so the new interface set is
-        // captured. The actual Python-side restart is DELIBERATELY skipped
-        // — in-place restart of the embedded interpreter is flaky on iOS
-        // (Reticulum is a class-level singleton, AutoInterface holds
-        // multicast socket threads that don't tear down deterministically,
-        // and the embedded Python aborts ~130ms into the second
-        // `Reticulum.__init__` when the previous instance's threads still
-        // hold the multicast bind). RNS has no hot-reload of [interfaces]
-        // anyway, so the right model is: write the config, tell the user
-        // to relaunch Columba. The full app launch on the next start gets
-        // a clean Python + clean RNS singleton.
-        _ = identity // pythonStartIdentity presence is the only precondition
+    }
+
+    /// True when the configured interface set contains an AutoInterface — the
+    /// one case where a SAME-PROCESS Reticulum re-initialization is unsafe
+    /// (issue #193 / Greptile P1 #2). `AutoInterface.detach()` only sets
+    /// `online = False` and never closes its multicast sockets (local vars,
+    /// not stored on the instance) or joins its daemon threads, so re-init in
+    /// the same process hits the documented multicast-bind collision and the
+    /// re-init error path takes the whole backend down. Pure logic, split out
+    /// of `restartPythonBackend` so it can be unit-tested without a running
+    /// backend; `nonisolated` because it touches no actor state (and tests
+    /// call it from a nonisolated context).
+    nonisolated static func inProcessRestartBlockedByAutoInterface(_ interfaces: [InterfaceEntity]) -> Bool {
+        interfaces.contains {
+            if case .autoInterface = $0.config { return true }
+            return false
+        }
+    }
+
+    /// Restart the running Python RNS stack IN-PROCESS: full teardown
+    /// (`shutdownUnlocked()`) then re-init (`initializeUnlocked`) with the SAME
+    /// identity — the exact primitives identity-switch already uses. Used to
+    /// apply restart-gated config (discovery, autoconnect count, bootstrap,
+    /// transport mode). Causes a ~1-2s connectivity outage.
+    ///
+    /// This replaces the previous "write config + post ColumbaRelaunchRequired"
+    /// stub, which had no UI consumer and required a manual app relaunch. The
+    /// `ColumbaBackendRestarted` notification below tells the UI the stack is
+    /// back up so it can re-poll (discovery screen, transport toggle).
+    ///
+    /// **AutoInterface guard (issue #193 / Greptile P1 #2):** when an enabled
+    /// AutoInterface is configured we REFUSE the same-process restart and
+    /// return `.requiresRelaunch`. `AutoInterface.detach()` only sets
+    /// `self.online = False` — its multicast sockets (local vars, not stored on
+    /// the instance) and daemon threads are never released, so re-initializing
+    /// Reticulum in the same process 200ms later deterministically hits the
+    /// documented multicast-bind collision and the re-init error path leaves
+    /// the whole backend down. The settings are still persisted, so they take
+    /// effect on the next clean relaunch.
+    ///
+    /// Returns the outcome: `.applied` when the in-process restart completed
+    /// and the stack is back up; `.skipped` when the backend was never
+    /// started; `.requiresRelaunch` when an AutoInterface makes in-process
+    /// re-init unsafe; `.failed` when the re-init threw (the stack is down).
+    /// Callers that need to know whether their restart-gated change is now
+    /// LIVE must check this rather than assume success.
+    @discardableResult
+    public func restartPythonBackend() async -> PythonBackendRestartOutcome {
+        guard let identity = pythonStartIdentity else {
+            DiagLog.log("[RNS] restartPythonBackend skipped — backend was never started")
+            return .skipped
+        }
+        let addr = lastTcpServerAddress
+        // Durability: rewrite the RNS config with the current interface set AND
+        // the current discovery settings (writePythonConfig reads discovery
+        // settings — T-C) before tearing down, so the re-init reads fresh values.
         let fresh = InterfaceRepository().getEnabledInterfaces()
-        writePythonConfig(interfaces: fresh)
-        DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); awaiting next app launch to apply")
-        // Notify the UI so it can show a "relaunch Columba" prompt.
+        _ = await writePythonConfig(interfaces: fresh)
+        // AutoInterface guard: its teardown does not release the multicast
+        // sockets / daemon threads (see doc comment), so a same-process
+        // re-init would hit the multicast-bind collision and take the backend
+        // down. Refuse; the config write above persisted the change, so it
+        // applies on the next clean relaunch.
+        if Self.inProcessRestartBlockedByAutoInterface(fresh) {
+            DiagLog.log("[RNS] restartPythonBackend: AutoInterface configured — same-process re-init is unsafe (multicast sockets are not released on detach); refusing; change persisted for the next relaunch")
+            return .requiresRelaunch
+        }
+        DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
+        do {
+            try await withLifecycleOperation {
+                await shutdownUnlocked()
+                // Small delay to ensure clean shutdown (matches switchIdentityUnlocked).
+                try? await Task.sleep(for: .milliseconds(200))
+                try await initializeUnlocked(
+                    identity: identity,
+                    identityHash: identity.hexHash,
+                    tcpServerAddress: addr
+                )
+            }
+        } catch {
+            // shutdownUnlocked() has already run (backend = nil, isConnected =
+            // false) and the re-init threw — the stack is now DOWN. Do NOT post
+            // the "back up" notification and do NOT log success; log the real
+            // error so a swallowed backend death is diagnosable.
+            logger.error("[RNS] restartPythonBackend FAILED: \(error) — backend is down")
+            DiagLog.log("[RNS] restartPythonBackend FAILED: \(error)")
+            return .failed
+        }
+        // Signal the UI that the stack is back up so it can re-poll discovery
+        // state. (Replaces the dead ColumbaRelaunchRequired notification.)
         NotificationCenter.default.post(
-            name: Notification.Name("ColumbaRelaunchRequired"),
-            object: nil
+            name: Notification.Name("ColumbaBackendRestarted"), object: nil
         )
+        DiagLog.log("[RNS] restartPythonBackend: in-process restart complete")
+        return .applied
     }
 
     /// Force the Python RNS stack to flush its path table + known destinations
@@ -2517,13 +2686,19 @@ public final class AppServices {
     /// `remove_interface` reads this file but the running stack is reconfigured
     /// by `applyInterfaceChanges()`.
     @discardableResult
-    private func writePythonConfig(interfaces: [InterfaceEntity]) -> Bool {
+    private func writePythonConfig(interfaces: [InterfaceEntity]) async -> Bool {
         guard let pyDir = pythonConfigDirURL() else {
             DiagLog.log("[RNS] writePythonConfig skipped — no start identity")
             return false
         }
         let transportEnabled = SharedDefaults.suite.bool(forKey: "transport_enabled")
-        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled)
+        // RNS 1.1.x interface discovery is restart-gated: the generated config
+        // must carry the user's discovery settings (T-C) or the toggle would
+        // persist in UserDefaults while the backend keeps seeing the defaults
+        // (discover_interfaces = no).
+        let discoverOn = await settingsRepository.getDiscoverInterfacesEnabled()
+        let autoCount = await settingsRepository.getAutoconnectDiscoveredCount()
+        let configText = PythonConfigWriter.write(interfaces: interfaces, enableTransport: transportEnabled, discoverInterfaces: discoverOn, autoconnectDiscoveredCount: autoCount)
         let configFile = pyDir.appendingPathComponent("config")
         do {
             try configText.write(to: configFile, atomically: true, encoding: .utf8)
@@ -2581,7 +2756,7 @@ public final class AppServices {
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
 
         // 1. Durability — always persist, even if there's no live backend.
-        writePythonConfig(interfaces: fresh)
+        _ = await writePythonConfig(interfaces: fresh)
 
         guard let backend = backend else {
             DiagLog.log("[RNS-HOT] no running backend — config written, applies on next launch")
@@ -3174,6 +3349,10 @@ public final class AppServices {
         DiagLog.log("[INIT2] Starting with identity: \(identityHash), tcp: \(tcpServerAddress)")
 
         self.identity = identity
+        // Cache the tcp-server address used at this (re)start so a same-identity
+        // restart (restartPythonBackend) re-inits with the real address. The
+        // launch path uses THIS 3-arg overload, not the 1-arg one.
+        self.lastTcpServerAddress = tcpServerAddress
         self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
         // Model B: make this identity reachable by the in-NE node. This overload
         // receives the identity pre-loaded (multi-identity path) and never calls
@@ -3481,6 +3660,17 @@ public final class AppServices {
         announceManager.start()
     }
 
+    /// Copy of the transport's Python-discovered auxiliary interfaces
+    /// (AutoInterfacePeer / discovery auto-connects / BLEPeer). The Settings
+    /// Network card and the connection-state observer read this — the aux
+    /// snapshots are pushed into the transport by `applyPythonInterfaceStatus`
+    /// but are not user-configured stubs, so `tcpInterfaces` alone never sees
+    /// an interface RNS auto-connected from a discovery announce
+    /// (issue #193 follow-up).
+    public func auxiliaryInterfaceSnapshots() -> [InterfaceSnapshot] {
+        transport?.pythonAuxiliarySnapshotList() ?? []
+    }
+
     // MARK: - State Observation
 
     /// Start observing interface state for UI updates.
@@ -3503,6 +3693,12 @@ public final class AppServices {
                 let autoIface = await MainActor.run { self.autoInterface }
                 let rnodeIface = await MainActor.run { self.rnodeInterface }
                 let bleIface = await MainActor.run { self.bleInterface }
+                // Discovery auto-connects / LAN / BLE peers live only in the
+                // transport's auxiliary snapshot (not in tcpInterfaces), so a
+                // discovery-only connection would otherwise read "Disconnected".
+                let auxOnlineCount = await MainActor.run {
+                    self.auxiliaryInterfaceSnapshots().filter { $0.online }.count
+                }
 
                 // Aggregate TCP state across all interfaces
                 var anyTCPConnected = false
@@ -3536,7 +3732,7 @@ public final class AppServices {
                     bleConnected = false
                 }
 
-                let anyConnected = tcpConnected || autoConnected || rnodeConnected || bleConnected
+                let anyConnected = tcpConnected || autoConnected || rnodeConnected || bleConnected || auxOnlineCount > 0
                 let tcpReconnecting = anyTCPReconnecting && !anyTCPConnected
 
                 // Batch all UI mutations into a single MainActor.run
@@ -4441,9 +4637,21 @@ public final class AppServices {
             throw AppServicesError.transportNotConnected
         }
 
+        // Prefer the configured name the user typed in Manage Interfaces.
+        // This path historically hardcoded "TCP Server" — even for TCP
+        // clients — which is what the Network Status card showed instead of
+        // the user's name (issue #193 follow-up). The onboarding "tcp-server"
+        // relay has no InterfaceEntity, so it keeps the legacy type label.
+        // The status poll re-syncs this on rename.
+        let configuredName: String
+        if let entity = pythonInterfaceEntities[entityId], !entity.name.isEmpty {
+            configuredName = entity.name
+        } else {
+            configuredName = "TCP Server"
+        }
         let config = InterfaceConfig(
             id: entityId,
-            name: "TCP Server",
+            name: configuredName,
             type: .tcp,
             enabled: true,
             mode: .full,
