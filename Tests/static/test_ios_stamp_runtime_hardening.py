@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FETCH = ROOT / "support" / "fetch-wheels.sh"
 BRIDGE = ROOT / "app" / "rns_bridge.py"
 STAMP = ROOT / "Sources" / "SwiftBLEBridge" / "StampGenerator.swift"
-RNS_SHA = "5b3a6ee4f25e2925cf84d4a2b108e6a708fbd395"
+RNS_SHA = "754654fe8cbca180c784e9274d033cb3ce229312"
 LXMF_SHA = "8912186e48b482a76bf04e2ac4b6c8940991aecc"
 
 
