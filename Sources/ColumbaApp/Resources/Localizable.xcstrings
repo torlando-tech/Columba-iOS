@@ -2922,6 +2922,28 @@
           }
         }
       }
+    },
+    "Saved. Applies on the next app relaunch because an AutoInterface is active.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved. Applies on the next app relaunch because an AutoInterface is active."
+          }
+        }
+      }
+    },
+    "Interface discovery is unavailable in this build.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interface discovery is unavailable in this build."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

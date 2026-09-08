@@ -29,12 +29,18 @@ if str(ROOT) not in sys.path:
 
 # ── Stubs, installed BEFORE `import app.rns_bridge` ─────────────────────────
 
-def _make_autoconnected_iface(endpoint: str):
+def _make_autoconnected_iface(host: str, port: int):
+    # Expose the two attributes the bridge reads (`target_ip` /
+    # `target_port`) — mirroring the real BackboneClientInterface that
+    # Discovery.autoconnect() creates from an announce's
+    # `reachable_on`/`port`.
     class _Iface:
         autoconnect_hash = "fake_hash"
+        target_ip = host
+        target_port = port
 
         def __str__(self) -> str:
-            return endpoint
+            return f"{host}:{port}"
 
     return _Iface()
 
@@ -82,7 +88,8 @@ def _install_stubs() -> None:
         # One auto-connected endpoint ("1.2.3.4:4242") and one plain
         # interface that must be filtered out of `autoconnected`.
         interfaces = [
-            _make_autoconnected_iface("1.2.3.4:4242"),
+            _make_autoconnected_iface("1.2.3.4", 4242),
+            _make_autoconnected_iface("2001:db8::1", 8080),
             _make_plain_iface("9.9.9.9:4444"),
         ]
 
@@ -147,8 +154,14 @@ class DiscoveryJsonTest(unittest.TestCase):
         # Autoconnect flag surfaces through the stub (True).
         self.assertIs(data["enabled"], True)
 
-        # Only auto-connected interfaces appear, sorted.
-        self.assertEqual(data["autoconnected"], ["1.2.3.4:4242"])
+        # Only auto-connected interfaces appear, sorted. IPv4 is bare
+        # host:port; IPv6 is bracketed exactly as BackboneInterface.__str__
+        # renders it, so the Swift card's `reachable_on:port` comparison
+        # matches a real autoconnect (issue #193 / Greptile P1 #1).
+        self.assertEqual(
+            data["autoconnected"],
+            ["1.2.3.4:4242", "[2001:db8::1]:8080"],
+        )
 
     def test_enabled_follows_discover_interfaces_flag_not_autoconnect_count(self):
         """Regression (issue #193): the auto-connect limit is INDEPENDENT of

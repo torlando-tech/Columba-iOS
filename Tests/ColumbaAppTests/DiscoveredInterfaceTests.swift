@@ -173,10 +173,13 @@ final class DiscoveredInterfaceTests: XCTestCase {
     /// Let the VM's init-spawned load task settle.
     ///
     /// NOTE: in the hosted ColumbaAppTests flavor `COLUMBA_RUNTIME_PYTHON` is
-    /// defined but no Python backend is ever started, so `loadAsync()` exits
-    /// at the `guard let snapshot` (backend nil) BEFORE `loadSettings()`
-    /// would run. Tests therefore seed the pending/applied state explicitly
-    /// via `await vm.loadSettings()` (public, @MainActor, idempotent) right
+    /// defined but no Python backend is ever started, so `loadAsync()` finds
+    /// no snapshot and leaves the LIVE indicator (`isDiscoveryEnabled`) at its
+    /// default, but it STILL runs `loadSettings()` (issue #193 / Greptile P1
+    /// #3: persisted settings must load even when the backend snapshot is
+    /// unavailable). Tests seed the pending/applied state explicitly via
+    /// `await vm.loadSettings()` (public, @MainActor, idempotent — the
+    /// `hasLoadedDiscoverySettings` flag makes a second call a no-op) right
     /// after construction — the same seam the real load path uses.
     private func settle(_ ms: UInt64) async {
         try? await Task.sleep(for: .milliseconds(ms))
@@ -213,7 +216,8 @@ final class DiscoveredInterfaceTests: XCTestCase {
         XCTAssertFalse(vm.isRestarting,
                        "moving the slider must NOT start a backend restart")
         XCTAssertEqual(vm.isDiscoveryEnabled, false,
-                       "the live enabled indicator must not flip while pending")
+                       "the LIVE enabled indicator (snapshot.enabled) stays false with no backend; " +
+                       "issue #193/Greptile P1#3 fixed the PENDING controls via loadSettings, not this dot")
         // THE regression: the persisted value must still be the applied one
         // (5), not the slider value (3). The old code persisted on every
         // setter call, so this assertion is red against the regression.
@@ -330,6 +334,45 @@ final class DiscoveredInterfaceTests: XCTestCase {
         XCTAssertNotNil(vm.errorMessage,
                         "a failed restart must surface an error, not silently look applied")
         XCTAssertFalse(vm.isRestarting)
+    }
+
+    /// Issue #193 / Greptile P1 #3: when the backend snapshot is unavailable
+    /// (no Python backend started in the hosted flavor, or a failed restart),
+    /// the PERSISTED discovery settings must STILL load into the pending
+    /// controls — the old code early-returned before `loadSettings()`, so the
+    /// screen showed default `false`/`0` and a recovery edit could clobber the
+    /// saved auto-connect count. Here `pythonBackend` is nil, so `loadAsync()`
+    /// takes exactly that path: the pending controls must reflect what's
+    /// actually saved, the live indicator (snapshot-driven) stays false, and
+    /// an unavailability message is shown.
+    @MainActor
+    func testLoadAsyncLoadsPersistedSettingsWhenBackendUnavailable() async {
+        resetDiscoverySettings()
+        defer { resetDiscoverySettings() }
+        seedDiscovery(enabled: true, count: 5)
+
+        let vm = DiscoveredInterfacesViewModel(
+            appServices: AppServices(),
+            settings: SettingsRepository()
+        )
+        // Drive the real (no-snapshot) load path deterministically. In the
+        // hosted flavor `pythonBackend` is nil, so `discovery()` returns nil
+        // and `loadAsync()` runs the backend-unavailable branch.
+        await vm.loadAsync()
+
+        // THE fix: the persisted values are seeded into the pending controls
+        // even though there is no live snapshot.
+        XCTAssertEqual(vm.discoverInterfacesEnabled, true,
+                       "persisted enabled must seed the pending toggle (was hardcoded false)")
+        XCTAssertEqual(vm.autoconnectCount, 5,
+                       "persisted auto-connect count must seed the pending slider (was 0)")
+        XCTAssertEqual(vm.appliedAutoconnectCount, 5)
+        XCTAssertEqual(vm.appliedDiscoverInterfacesEnabled, true)
+        // The live indicator is snapshot-driven and has no backend → stays
+        // false, independent of the pending controls.
+        XCTAssertEqual(vm.isDiscoveryEnabled, false, "no snapshot → live dot stays false")
+        // An honest unavailability message is surfaced (not a crash).
+        XCTAssertNotNil(vm.errorMessage, "unavailable backend must surface a message")
     }
 
     /// With nothing pending, apply is a no-op guard (no persist, no restart,

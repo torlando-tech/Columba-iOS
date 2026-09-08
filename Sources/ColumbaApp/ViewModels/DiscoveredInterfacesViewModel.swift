@@ -180,6 +180,14 @@ public final class DiscoveredInterfacesViewModel {
 
     /// Load discovered interfaces from the running RNS backend, plus the
     /// persisted discovery settings, then recompute the visible list.
+    ///
+    /// The persisted settings are loaded EVEN WHEN the backend snapshot is
+    /// unavailable (Model B build, backend never started, or a failed
+    /// restart): they are a local preference read, independent of the
+    /// snapshot. Gating them behind the snapshot is what made the screen
+    /// show default `false`/`0` values (and, worse, let a recovery edit
+    /// silently overwrite the saved auto-connect count) while discovery
+    /// was actually enabled (issue #193 / Greptile P1 #3).
     @MainActor
     public func loadAsync() async {
         isLoading = true
@@ -195,26 +203,30 @@ public final class DiscoveredInterfacesViewModel {
         snapshot = nil
         #endif
 
-        guard let snapshot else {
-            isLoading = false
-            errorMessage = String(localized: "Interface discovery is unavailable in this build.")
+        if let snapshot {
+            originalInterfaces = snapshot.discovered
+            availableCount = snapshot.discovered.filter { $0.status == "available" }.count
+            unknownCount = snapshot.discovered.filter { $0.status == "unknown" }.count
+            staleCount = snapshot.discovered.filter { $0.status == "stale" }.count
+            isDiscoveryEnabled = snapshot.enabled
+            autoconnectedEndpoints = Set(snapshot.autoconnected)
+        } else {
+            // Backend unavailable: no live list to show, but the controls
+            // must still reflect the PERSISTED settings (below) so a
+            // recovery edit is seeded from what's actually saved.
             logger.warning("Discovery unavailable — no Python backend")
-            return
         }
-
-        originalInterfaces = snapshot.discovered
-        availableCount = snapshot.discovered.filter { $0.status == "available" }.count
-        unknownCount = snapshot.discovered.filter { $0.status == "unknown" }.count
-        staleCount = snapshot.discovered.filter { $0.status == "stale" }.count
-        isDiscoveryEnabled = snapshot.enabled
-        autoconnectedEndpoints = Set(snapshot.autoconnected)
 
         await loadSettings()
         recomputeVisible()
         isLoading = false
 
-        let endpointCount = autoconnectedEndpoints.count
-        logger.info("Loaded \(snapshot.discovered.count) discovered interfaces, \(endpointCount) auto-connected")
+        if let snapshot {
+            let endpointCount = autoconnectedEndpoints.count
+            logger.info("Loaded \(snapshot.discovered.count) discovered interfaces, \(endpointCount) auto-connected")
+        } else {
+            errorMessage = String(localized: "Interface discovery is unavailable in this build.")
+        }
     }
 
     /// Load discovery settings (persisted preferences) and the bootstrap-only
@@ -364,6 +376,18 @@ public final class DiscoveredInterfacesViewModel {
         return haversineDistanceKm(lat1: userLatitude, lon1: userLongitude, lat2: lat, lon2: lon)
     }
 
+    /// Canonical `host:port` endpoint string for the discovery card's
+    /// "Connected" badge — matches what `discovery_json()` emits in its
+    /// `autoconnected` list: the interface's `reachable_on` (a resolved
+    /// IP/hostname) plus port, with IPv6 bracketed exactly as
+    /// `BackboneInterface.__str__` renders it. Comparing against the
+    /// bridge's *friendly* string ("BackboneInterface[Name/ip:port]") is
+    /// what made the badge never appear (issue #193 / Greptile P1 #1).
+    static func canonicalEndpoint(host: String, port: Int) -> String {
+        let ip = host.contains(":") ? "[\(host)]" : host
+        return "\(ip):\(port)"
+    }
+
     /// Whether the backend has autoconnected to this interface's endpoint.
     public func isAutoconnected(_ iface: DiscoveredInterface) -> Bool {
         guard !autoconnectedEndpoints.isEmpty,
@@ -371,7 +395,7 @@ public final class DiscoveredInterfacesViewModel {
               let port = iface.port else {
             return false
         }
-        return autoconnectedEndpoints.contains("\(host):\(port)")
+        return autoconnectedEndpoints.contains(Self.canonicalEndpoint(host: host, port: port))
     }
 
     // MARK: - Discovery Settings (pending state + apply-and-restart)
@@ -410,6 +434,13 @@ public final class DiscoveredInterfacesViewModel {
     /// future restart picks them up) but are NOT live, so the pending flag
     /// stays set (button remains tappable to retry) and an error is
     /// surfaced. The user's in-flight control values are never clobbered.
+    ///
+    /// AutoInterface (Greptile P1 #2): when an AutoInterface is configured the
+    /// in-process restart is REFUSED (its multicast sockets are not released
+    /// on detach, so same-process re-init is unsafe) and the settings take
+    /// effect on the next clean relaunch. That is a deliberate, safe
+    /// deferral — not a failure — so the pending flag is CLEARED and an
+    /// informational (non-alarming) message is shown instead of "failed".
     @MainActor
     public func applyDiscoverySettings() async {
         guard hasPendingDiscoveryChanges, !isRestarting else { return }
@@ -424,17 +455,30 @@ public final class DiscoveredInterfacesViewModel {
         await settings.setDiscoverInterfacesEnabled(toEnable)
         await settings.setAutoconnectDiscoveredCount(toCount)
 
-        let succeeded = await appServices.restartPythonBackend()
+        let outcome = await appServices.restartPythonBackend()
 
-        if succeeded {
+        switch outcome {
+        case .applied:
             // Commit: pending == applied from here on; the
             // `ColumbaBackendRestarted` re-poll refreshes the list, the
             // status dot, and the corrected `enabled` flag from the bridge.
             appliedDiscoverInterfacesEnabled = toEnable
             appliedAutoconnectCount = toCount
-        } else {
+        case .requiresRelaunch:
+            // Deliberate deferral: the settings were persisted and will be
+            // read at the next clean launch, so the pending flag is cleared
+            // (no retry loop) but an informational message tells the user
+            // when the change goes live.
+            appliedDiscoverInterfacesEnabled = toEnable
+            appliedAutoconnectCount = toCount
+            errorMessage = String(localized: "Saved. Applies on the next app relaunch because an AutoInterface is active.")
+            logger.info("Discovery settings persisted; in-process restart deferred (AutoInterface active)")
+        case .skipped, .failed:
+            // The backend is down / was never started: the settings were
+            // persisted (so a future restart picks them up) but are NOT
+            // live — keep the pending flag for a retry and surface the error.
             errorMessage = String(localized: "Restart failed — discovery settings were not applied.")
-            logger.error("Discovery settings apply failed (restart error); pending flag kept for retry")
+            logger.error("Discovery settings apply failed (restart outcome: \(outcome)); pending flag kept for retry")
         }
         isRestarting = false
     }

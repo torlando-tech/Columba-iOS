@@ -2199,12 +2199,23 @@ def discovery_json() -> str:
     except Exception:
         pass
     try:
+        # The Swift discovery card compares these against each discovered
+        # interface's "reachable_on:port" (e.g. "127.0.0.1:43221") to badge
+        # the auto-connected ones "Connected". `str(iface)` is the *friendly*
+        # form ("BackboneInterface[Synth Hub/127.0.0.1:43221]") which does NOT
+        # match that comparison, so emit the canonical endpoint instead: the
+        # BackboneClientInterface that autoconnect() creates carries
+        # `target_ip`/`target_port` set from the announce's `reachable_on`/
+        # `port`. Render IPv6 with brackets, exactly as `BackboneInterface
+        # .__str__` does, so the string is host:port-parseable either way.
         endpoints = set()
         for iface in list(RNS.Transport.interfaces):
             if hasattr(iface, "autoconnect_hash"):
-                s = str(iface)
-                if s:
-                    endpoints.add(s)
+                ip = getattr(iface, "target_ip", None)
+                port = getattr(iface, "target_port", None)
+                if ip is not None and port is not None:
+                    canonical_ip = f"[{ip}]" if ":" in str(ip) else str(ip)
+                    endpoints.add(f"{canonical_ip}:{port}")
         out["autoconnected"] = sorted(endpoints)
     except Exception:
         pass

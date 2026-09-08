@@ -2521,6 +2521,48 @@ public final class AppServices {
         }
     }
 
+    /// Outcome of an in-process `restartPythonBackend()` attempt. Closed enum
+    /// (house style) so callers can distinguish the four states: the restart
+    /// completed and the change is LIVE, it was skipped (backend never
+    /// started), it failed (the stack is DOWN), or it was refused because an
+    /// AutoInterface is configured and same-process re-init is unsafe
+    /// (settings persisted — they apply on the next clean relaunch).
+    public enum PythonBackendRestartOutcome: Equatable, CustomStringConvertible {
+        case applied
+        case skipped
+        case failed
+        case requiresRelaunch
+        /// True only when the restart actually completed and the change is
+        /// live — the single "did it work?" predicate for callers that don't
+        /// need to branch on the other outcomes.
+        public var didApply: Bool { self == .applied }
+        public var description: String {
+            switch self {
+            case .applied: return "applied"
+            case .skipped: return "skipped"
+            case .failed: return "failed"
+            case .requiresRelaunch: return "requiresRelaunch"
+            }
+        }
+    }
+
+    /// True when the configured interface set contains an AutoInterface — the
+    /// one case where a SAME-PROCESS Reticulum re-initialization is unsafe
+    /// (issue #193 / Greptile P1 #2). `AutoInterface.detach()` only sets
+    /// `online = False` and never closes its multicast sockets (local vars,
+    /// not stored on the instance) or joins its daemon threads, so re-init in
+    /// the same process hits the documented multicast-bind collision and the
+    /// re-init error path takes the whole backend down. Pure logic, split out
+    /// of `restartPythonBackend` so it can be unit-tested without a running
+    /// backend; `nonisolated` because it touches no actor state (and tests
+    /// call it from a nonisolated context).
+    nonisolated static func inProcessRestartBlockedByAutoInterface(_ interfaces: [InterfaceEntity]) -> Bool {
+        interfaces.contains {
+            if case .autoInterface = $0.config { return true }
+            return false
+        }
+    }
+
     /// Restart the running Python RNS stack IN-PROCESS: full teardown
     /// (`shutdownUnlocked()`) then re-init (`initializeUnlocked`) with the SAME
     /// identity — the exact primitives identity-switch already uses. Used to
@@ -2532,16 +2574,27 @@ public final class AppServices {
     /// `ColumbaBackendRestarted` notification below tells the UI the stack is
     /// back up so it can re-poll (discovery screen, transport toggle).
     ///
-    /// Returns true when the in-process restart completed and the stack is
-    /// back up; false when it was skipped (backend never started) or failed
-    /// (re-init threw — the stack is down). Callers that need to know
-    /// whether their restart-gated change is now LIVE (the discovery
-    /// settings apply flow) must check this rather than assume success.
+    /// **AutoInterface guard (issue #193 / Greptile P1 #2):** when an enabled
+    /// AutoInterface is configured we REFUSE the same-process restart and
+    /// return `.requiresRelaunch`. `AutoInterface.detach()` only sets
+    /// `self.online = False` — its multicast sockets (local vars, not stored on
+    /// the instance) and daemon threads are never released, so re-initializing
+    /// Reticulum in the same process 200ms later deterministically hits the
+    /// documented multicast-bind collision and the re-init error path leaves
+    /// the whole backend down. The settings are still persisted, so they take
+    /// effect on the next clean relaunch.
+    ///
+    /// Returns the outcome: `.applied` when the in-process restart completed
+    /// and the stack is back up; `.skipped` when the backend was never
+    /// started; `.requiresRelaunch` when an AutoInterface makes in-process
+    /// re-init unsafe; `.failed` when the re-init threw (the stack is down).
+    /// Callers that need to know whether their restart-gated change is now
+    /// LIVE must check this rather than assume success.
     @discardableResult
-    public func restartPythonBackend() async -> Bool {
+    public func restartPythonBackend() async -> PythonBackendRestartOutcome {
         guard let identity = pythonStartIdentity else {
             DiagLog.log("[RNS] restartPythonBackend skipped — backend was never started")
-            return false
+            return .skipped
         }
         let addr = lastTcpServerAddress
         // Durability: rewrite the RNS config with the current interface set AND
@@ -2549,6 +2602,15 @@ public final class AppServices {
         // settings — T-C) before tearing down, so the re-init reads fresh values.
         let fresh = InterfaceRepository().getEnabledInterfaces()
         _ = await writePythonConfig(interfaces: fresh)
+        // AutoInterface guard: its teardown does not release the multicast
+        // sockets / daemon threads (see doc comment), so a same-process
+        // re-init would hit the multicast-bind collision and take the backend
+        // down. Refuse; the config write above persisted the change, so it
+        // applies on the next clean relaunch.
+        if Self.inProcessRestartBlockedByAutoInterface(fresh) {
+            DiagLog.log("[RNS] restartPythonBackend: AutoInterface configured — same-process re-init is unsafe (multicast sockets are not released on detach); refusing; change persisted for the next relaunch")
+            return .requiresRelaunch
+        }
         DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
         do {
             try await withLifecycleOperation {
@@ -2565,11 +2627,10 @@ public final class AppServices {
             // shutdownUnlocked() has already run (backend = nil, isConnected =
             // false) and the re-init threw — the stack is now DOWN. Do NOT post
             // the "back up" notification and do NOT log success; log the real
-            // error so a swallowed backend death (e.g. the documented
-            // AutoInterface multicast-socket re-init flake) is diagnosable.
+            // error so a swallowed backend death is diagnosable.
             logger.error("[RNS] restartPythonBackend FAILED: \(error) — backend is down")
             DiagLog.log("[RNS] restartPythonBackend FAILED: \(error)")
-            return false
+            return .failed
         }
         // Signal the UI that the stack is back up so it can re-poll discovery
         // state. (Replaces the dead ColumbaRelaunchRequired notification.)
@@ -2577,7 +2638,7 @@ public final class AppServices {
             name: Notification.Name("ColumbaBackendRestarted"), object: nil
         )
         DiagLog.log("[RNS] restartPythonBackend: in-process restart complete")
-        return true
+        return .applied
     }
 
     /// Force the Python RNS stack to flush its path table + known destinations
