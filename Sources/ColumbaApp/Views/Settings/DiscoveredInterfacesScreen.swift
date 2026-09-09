@@ -699,7 +699,9 @@ private struct DiscoveredInterfaceCard: View {
                     Text(String(localized: "Contact:"))
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
-                    Text(verbatim: contact)
+                    // Truncated like the transport ID row above — the full
+                    // address stays available in the detail section.
+                    Text(verbatim: String(contact.prefix(12)) + "…")
                         .font(.caption.monospaced())
                         .foregroundStyle(Theme.accentColor)
                 }
