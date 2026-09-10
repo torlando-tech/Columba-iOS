@@ -2944,6 +2944,26 @@
           }
         }
       }
+    },
+    "Contact": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contact"
+          }
+        }
+      }
+    },
+    "Contact:": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contact:"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

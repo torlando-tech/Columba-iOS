@@ -60,6 +60,8 @@ public struct DiscoveredInterface: Codable, Equatable, Sendable, Identifiable {
     public let ifacNetname: String?
     /// IFAC passphrase.
     public let ifacNetkey: String?
+    /// Operator LXMF address (RNS 1.5.0+ contact field; 32-hex, nil if absent).
+    public let operatorLxmfAddress: String?
     /// Whether the remote interface is a transport (routing) node.
     public let transport: Bool
     /// Unique identifier for this announce (hex SHA256 of transportId + name).
@@ -122,6 +124,7 @@ public struct DiscoveredInterface: Codable, Equatable, Sendable, Identifiable {
         height: Double? = nil,
         ifacNetname: String? = nil,
         ifacNetkey: String? = nil,
+        operatorLxmfAddress: String? = nil,
         transport: Bool = false,
         discoveryHash: String? = nil,
         receivedAt: Double? = nil,
@@ -150,6 +153,7 @@ public struct DiscoveredInterface: Codable, Equatable, Sendable, Identifiable {
         self.height = height
         self.ifacNetname = ifacNetname
         self.ifacNetkey = ifacNetkey
+        self.operatorLxmfAddress = operatorLxmfAddress
         self.transport = transport
         self.discoveryHash = discoveryHash
         self.receivedAt = receivedAt
@@ -191,6 +195,7 @@ public struct DiscoveredInterface: Codable, Equatable, Sendable, Identifiable {
         height = try c.decodeIfPresent(Double.self, forKey: .height)
         ifacNetname = Self.emptyStringToNil(try c.decodeIfPresent(String.self, forKey: .ifacNetname))
         ifacNetkey = Self.emptyStringToNil(try c.decodeIfPresent(String.self, forKey: .ifacNetkey))
+        operatorLxmfAddress = Self.emptyStringToNil(try c.decodeIfPresent(String.self, forKey: .operatorLxmfAddress))
         transport = try c.decodeIfPresent(Bool.self, forKey: .transport) ?? false
         discoveryHash = Self.emptyStringToNil(try c.decodeIfPresent(String.self, forKey: .discoveryHash))
         receivedAt = try c.decodeIfPresent(Double.self, forKey: .receivedAt)
@@ -241,6 +246,7 @@ public struct DiscoveredInterface: Codable, Equatable, Sendable, Identifiable {
         case height
         case ifacNetname = "ifac_netname"
         case ifacNetkey = "ifac_netkey"
+        case operatorLxmfAddress = "operator_lxmf_address"
         case transport
         case discoveryHash = "discovery_hash"
         case receivedAt = "received"
