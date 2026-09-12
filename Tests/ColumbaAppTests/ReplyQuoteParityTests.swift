@@ -57,6 +57,8 @@ final class ReplyQuoteParityTests: XCTestCase {
         let originalID = String(repeating: "ab", count: 32)
 
         let captured = LockedBox<MessagingViewModel.OutboundSendRequest>(nil)
+        let optimisticPreview = LockedBox<String?>(nil)
+        let vmRef = LockedBox<MessagingViewModel>(nil)
         let viewModel = MessagingViewModel(
             conversationHash: destination,
             repository: repository,
@@ -64,9 +66,15 @@ final class ReplyQuoteParityTests: XCTestCase {
             identity: Identity(),
             outboundSendOperation: { request in
                 captured.value = request
+                // The seam runs after the optimistic row is appended and before
+                // it is replaced post-send — snapshot the display preview here.
+                if let vm = vmRef.value {
+                    optimisticPreview.value = vm.messages.last(where: { $0.isFromMe })?.replyToPreview
+                }
                 return .queued(messageHash: String(repeating: "cd", count: 32))
             }
         )
+        vmRef.value = viewModel
 
         // Seed the replied-to message so the reply-preview lookup can resolve it.
         viewModel.messages = [
@@ -92,6 +100,36 @@ final class ReplyQuoteParityTests: XCTestCase {
         // The quoted content (field 0x31) must be the FULL original — not the
         // 80-char preview. This is the Android/MeshChatX parity guarantee.
         XCTAssertEqual(originalContent, request.replyQuotedContent)
+
+        // The seam above returns before encoding runs, so assert the wire
+        // contract itself: feed the captured request's reply fields through the
+        // same codec both backends use and check the emitted field map.
+        let wireFields = LxmfFieldCodec.buildFieldMap(
+            imageData: request.imageData,
+            imageFormat: request.imageFormat,
+            fileAttachments: request.fileAttachments,
+            audioAttachment: request.audioAttachment,
+            iconAppearance: request.iconAppearance,
+            replyToMessageHashHex: request.replyToMessageHashHex,
+            replyQuotedContent: request.replyQuotedContent,
+            extraFields: request.extraFields
+        )
+        let quoteField = try XCTUnwrap(
+            wireFields[LxmfFields.FIELD_REPLY_QUOTE] as? Data,
+            "codec must emit FIELD_REPLY_QUOTE (0x31) for a reply with local quote content"
+        )
+        // Full content on the wire — byte-for-byte, no cap.
+        XCTAssertEqual(originalContent, String(data: quoteField, encoding: .utf8))
+        let hashField = try XCTUnwrap(
+            wireFields[LxmfFields.FIELD_REPLY_HASH] as? Data,
+            "codec must emit FIELD_REPLY_HASH (0x30)"
+        )
+        XCTAssertEqual(Data(repeating: 0xab, count: 32), hashField)
+
+        // The display-side preview must stay capped at 80 chars — the fix splits
+        // the two consumers, and this pins the display half (snapshotted from the
+        // optimistic row inside the seam, before the row is replaced post-send).
+        XCTAssertEqual(String(originalContent.prefix(80)), optimisticPreview.value)
     }
 
     /// A reply to a message within the preview cap is unaffected: the quote is
