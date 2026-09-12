@@ -285,6 +285,7 @@
 		AA9D3715FB399E675BD53B41 /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		ACT02 /* AnnounceClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACT01 /* AnnounceClassificationTests.swift */; };
+		RQP02 /* ReplyQuoteParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RQP01 /* ReplyQuoteParityTests.swift */; };
 		DRAFT002 /* DraftMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DRAFT001 /* DraftMessageTests.swift */; };
 		DA143A000000000000000002 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
 		DA143A000000000000000003 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
@@ -516,6 +517,7 @@
 		A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PeerChildInterfaceRegistry.swift; sourceTree = "<group>"; };
 		ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodecProfileInfo.swift; sourceTree = "<group>"; };
 		ACT01 /* AnnounceClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnounceClassificationTests.swift; sourceTree = "<group>"; };
+		RQP01 /* ReplyQuoteParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplyQuoteParityTests.swift; sourceTree = "<group>"; };
 		DRAFT001 /* DraftMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftMessageTests.swift; sourceTree = "<group>"; };
 		DA143A000000000000000001 /* DraftAutosaveController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftAutosaveController.swift; sourceTree = "<group>"; };
 		AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
@@ -1167,6 +1169,7 @@
 				A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */,
 				APVT001 /* MessageAttachmentPreviewTests.swift */,
 				ACT01 /* AnnounceClassificationTests.swift */,
+				RQP01 /* ReplyQuoteParityTests.swift */,
 				DRAFT001 /* DraftMessageTests.swift */,
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
 				853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */,
@@ -1947,6 +1950,7 @@
 				A1B2C3D4E5F60718293A4B5E /* MessageBubbleLayoutTests.swift in Sources */,
 				APVT002 /* MessageAttachmentPreviewTests.swift in Sources */,
 				ACT02 /* AnnounceClassificationTests.swift in Sources */,
+				RQP02 /* ReplyQuoteParityTests.swift in Sources */,
 				DRAFT002 /* DraftMessageTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* IncomingMessageSizeLimitTests.swift in Sources */,

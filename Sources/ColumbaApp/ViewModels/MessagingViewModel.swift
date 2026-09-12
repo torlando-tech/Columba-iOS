@@ -938,11 +938,27 @@ public final class MessagingViewModel {
             }
         }
 
-        // Build reply preview for optimistic display
+        // Build reply preview for optimistic display (capped at 80 chars for the
+        // compact bubble preview).
         let replyPreview: String? = {
             guard let replyToId else { return nil }
             if let msg = messages.first(where: { $0.id == replyToId }) {
                 return String(msg.content.prefix(80))
+            }
+            return nil
+        }()
+
+        // Full quoted content for the FIELD_REPLY_QUOTE (0x31) wire field. Upstream
+        // LXMF carries the reply target only by hash (0x30); 0x31 is the optional
+        // quoted-content add-on so recipients can render the quote without the
+        // original locally. Ship the FULL quote here — matching Android, which sends
+        // the complete original content — not the 80-char display preview. Both
+        // resolve from the local store, so when the message isn't local (e.g. never
+        // delivered to this device) the quote is nil, exactly as on Android.
+        let replyQuotedContent: String? = {
+            guard let replyToId else { return nil }
+            if let msg = messages.first(where: { $0.id == replyToId }) {
+                return msg.content
             }
             return nil
         }()
@@ -997,7 +1013,7 @@ public final class MessagingViewModel {
                     audioAttachment: audioAttachment.map { RnsAudio(mode: Int($0.mode.rawValue), bytes: $0.bytes) },
                     iconAppearance: icon,
                     replyToMessageHashHex: replyToId,
-                    replyQuotedContent: replyPreview,
+                    replyQuotedContent: replyQuotedContent,
                     extraFields: nil
                 ),
                 backend: backend
@@ -1087,7 +1103,7 @@ public final class MessagingViewModel {
                             audioAttachment: audioAttachment.map { RnsAudio(mode: Int($0.mode.rawValue), bytes: $0.bytes) },
                             iconAppearance: icon,
                             replyToMessageHashHex: replyToId,
-                            replyQuotedContent: replyPreview,
+                            replyQuotedContent: replyQuotedContent,
                             extraFields: nil
                         ),
                         backend: backend
