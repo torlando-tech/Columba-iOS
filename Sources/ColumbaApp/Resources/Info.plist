@@ -2,15 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Export compliance: Columba uses only published, standardized
-	     cryptographic primitives (AES-128/256 per FIPS-197, Ed25519 per
-	     RFC 8032, X25519 per RFC 7748, HKDF per RFC 5869, SHA-256 per
-	     FIPS-180) via Reticulum/LXMF, which are themselves fully
-	     published open-source protocols - not proprietary or unpublished
-	     "non-standard cryptography" as defined in EAR Part 772. The app
-	     therefore uses only export-exempt encryption, and declaring it
-	     here stops App Store Connect from re-asking the export compliance
-	     questionnaire on every upload. -->
+	<!-- Export compliance: Columba's cryptographic inventory, all of it
+	     published, standardized functionality:
+	       - Reticulum/LXMF messaging: AES-128/256 (FIPS-197), Ed25519
+	         (RFC 8032), X25519 (RFC 7748), HKDF (RFC 5869), SHA-256
+	         (FIPS-180) via fully published open-source protocols.
+	       - Encrypted .columba migration backups (MigrationCrypto):
+	         PBKDF2-HMAC-SHA256 key derivation (RFC 2898/PKCS#5,
+	         600k iterations) and AES-256-GCM (NIST SP 800-38D) via
+	         Apple CryptoKit/CommonCrypto.
+	     None of this is proprietary or unpublished "non-standard
+	     cryptography" as defined in EAR Part 772. The app therefore
+	     uses only export-exempt encryption, and declaring it here stops
+	     App Store Connect from re-asking the export compliance
+	     questionnaire on every upload. If a new subsystem introduces
+	     encryption, update this inventory. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
