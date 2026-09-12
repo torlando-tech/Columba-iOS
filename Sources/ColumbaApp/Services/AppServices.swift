@@ -99,20 +99,25 @@ enum DiagLog {
         return allClean
     }
 
-    /// One-shot retry path for a failed launch purge: attempts again at 30s
-    /// and 120s after launch (by which time a locked-at-boot device has
-    /// almost certainly seen its first unlock, which is what unblocks
-    /// deletion/truncation of these files). Logs the outcome of each retry.
+    /// One-shot retry path for a failed launch purge: attempts again at
+    /// +30s and +120s from launch (by which time a locked-at-boot device
+    /// has almost certainly seen its first unlock, which is what unblocks
+    /// deletion/truncation of these files). Delays are ABSOLUTE offsets
+    /// from launch: the second sleep is the delta (90s), not a fresh 120s.
+    /// Logs the outcome of each retry.
     static func schedulePurgeRetryIfNeeded(initiallyClean cleanAtLaunch: Bool) {
         guard !cleanAtLaunch else { return }
         Task.detached(priority: .utility) {
-            for delaySeconds: UInt64 in [30, 120] {
-                try? await Task.sleep(nanoseconds: delaySeconds * 1_000_000_000)
+            var elapsed: UInt64 = 0
+            for targetOffset: UInt64 in [30, 120] {
+                let delta = targetOffset - elapsed
+                try? await Task.sleep(nanoseconds: delta * 1_000_000_000)
+                elapsed = targetOffset
                 if purgeForNewLaunch() {
-                    NSLog("[DIAGLOG] purge retry at +\(delaySeconds)s succeeded")
+                    NSLog("[DIAGLOG] purge retry at +\(targetOffset)s succeeded")
                     return
                 }
-                NSLog("[DIAGLOG] purge retry at +\(delaySeconds)s failed")
+                NSLog("[DIAGLOG] purge retry at +\(targetOffset)s failed")
             }
         }
     }
