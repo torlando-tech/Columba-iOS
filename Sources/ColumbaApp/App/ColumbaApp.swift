@@ -54,6 +54,13 @@ struct ColumbaApp: App {
     // MARK: - Init
 
     init() {
+        // Privacy hygiene + bounded storage: wipe diag.log (and its rotated
+        // sibling) before ANY launch work so logs left by pre-#186 builds,
+        // which leaked received-message plaintext on every inbound message,
+        // are deleted, and no session can grow the log without bound.
+        // Must run before the first DiagLog.log call of this session.
+        DiagLog.purgeForNewLaunch()
+
         #if os(iOS) && COLUMBA_RUNTIME_PYTHON
         // Register before starting embedded Python or any other potentially slow
         // launch work. BGTaskScheduler requires every launch handler to be

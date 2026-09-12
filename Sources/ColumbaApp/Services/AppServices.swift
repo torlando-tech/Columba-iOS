@@ -24,27 +24,87 @@ import os.log
 
 /// Simple file logger for diagnostics when idevicesyslog isn't available (WiFi-only device).
 /// Writes to Documents/diag.log which can be extracted via Xcode or devicectl.
+///
+/// Bounded storage + privacy hygiene (pre-public-beta hardening):
+///   * `purgeForNewLaunch()` is called from `ColumbaApp.init()` and deletes
+///     `diag.log` / `diag.log.1` before anything else runs. This wipes logs
+///     left by pre-#186 builds, which leaked received-message plaintext here
+///     on every inbound message; without a purge that plaintext stays in the
+///     app container indefinitely.
+///   * Appends are capped at `maxLogFileBytes`; exceeding the cap rotates the
+///     current file to `diag.log.1` (replacing any previous one) so a
+///     long-running session can never grow the log without bound.
 enum DiagLog {
+    /// Maximum size of a single diag log file before rotation (5 MB).
+    static let maxLogFileBytes: Int = 5 * 1024 * 1024
+
+    #if DEBUG
+    /// Test seam: lower the cap so rotation is exercisable without writing 5 MB.
+    static var maxLogFileBytesOverride: Int?
+    #endif
+
+    /// Serializes appends/rotations/purges. The pre-existing append path raced
+    /// across concurrent callers (no lock); rotation makes that race visible
+    /// (rename under an open handle), so the lock is now required, not optional.
+    private static let lock = NSLock()
+
     private static let fileURL: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return docs.appendingPathComponent("diag.log")
     }()
 
+    private static var rotatedFileURL: URL {
+        URL(fileURLWithPath: fileURL.path + ".1")
+    }
+
+    private static var capBytes: Int {
+        #if DEBUG
+        return maxLogFileBytesOverride ?? maxLogFileBytes
+        #else
+        return maxLogFileBytes
+        #endif
+    }
+
+    /// Delete the diagnostic logs at launch. Called once from `ColumbaApp.init()`
+    /// before Python boot or any other launch work so the first line of the new
+    /// session lands in a fresh file and any pre-fix leaked plaintext from prior
+    /// builds is gone before the device could ever be extracted again.
+    static func purgeForNewLaunch() {
+        lock.lock()
+        defer { lock.unlock() }
+        try? FileManager.default.removeItem(at: fileURL)
+        try? FileManager.default.removeItem(at: rotatedFileURL)
+    }
+
     static func log(_ message: String) {
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)\n"
         NSLog("%@", message) // Also to ASL for USB capture
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                if let fh = try? FileHandle(forWritingTo: fileURL) {
-                    fh.seekToEndOfFile()
-                    fh.write(data)
-                    fh.closeFile()
+        guard let data = line.data(using: .utf8) else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            if let fh = try? FileHandle(forWritingTo: fileURL) {
+                let endOffset = fh.seekToEndOfFile()
+                fh.write(data)
+                let newSize = endOffset + UInt64(data.count)
+                fh.closeFile()
+                if Int(newSize) > capBytes {
+                    rotateLocked()
                 }
-            } else {
-                try? data.write(to: fileURL)
             }
+        } else {
+            try? data.write(to: fileURL)
         }
+    }
+
+    /// Rotate the current log to `diag.log.1`, replacing any previous rotated
+    /// file. Caller must hold `lock`.
+    private static func rotateLocked() {
+        try? FileManager.default.removeItem(at: rotatedFileURL)
+        try? FileManager.default.moveItem(at: fileURL, to: rotatedFileURL)
     }
 
     #if COLUMBA_RUNTIME_MODEL_B
