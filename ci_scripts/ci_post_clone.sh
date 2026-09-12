@@ -1,31 +1,21 @@
 #!/bin/bash
-# Xcode Cloud post-clone hook: sync the project's version fields to /VERSION
-# and the git commit count.
+# Xcode Cloud post-clone hook: stamp the build number and fetch build inputs.
 #
-# - MARKETING_VERSION (CFBundleShortVersionString) ← contents of /VERSION
-#   You bump this manually by editing /VERSION (any of major/minor/patch).
-# - CURRENT_PROJECT_VERSION (CFBundleVersion / build number) ← `git rev-list --count HEAD`
-#   Auto-increments per commit so every push is a uniquely-numbered TestFlight upload.
+# - CURRENT_PROJECT_VERSION (CFBundleVersion / build number) <- `git rev-list --count HEAD`
+#   Auto-increments per commit so every upload is uniquely numbered.
+# - MARKETING_VERSION is NOT handled here anymore: it lives in
+#   Config/Signing.xcconfig and is stamped from the release tag by
+#   ci_pre_xcodebuild.sh (tag-driven releases). The old /VERSION file was
+#   removed with that change.
 #
-# Modern Xcode projects with `GENERATE_INFOPLIST_FILE = YES` keep the version
-# in pbxproj build settings (not Info.plist), so we rewrite those directly.
+# Modern Xcode projects with `GENERATE_INFOPLIST_FILE = YES` keep the build
+# number in pbxproj build settings (not Info.plist), so we rewrite that
+# directly.
 
 set -euo pipefail
 
 REPO_ROOT="${CI_PRIMARY_REPOSITORY_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$REPO_ROOT"
-
-VERSION_FILE="$REPO_ROOT/VERSION"
-if [ ! -f "$VERSION_FILE" ]; then
-    echo "error: VERSION file missing at $VERSION_FILE" >&2
-    exit 1
-fi
-
-MARKETING_VERSION=$(tr -d '[:space:]' < "$VERSION_FILE")
-if ! echo "$MARKETING_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-    echo "error: VERSION must be MAJOR.MINOR.PATCH (e.g., 0.0.2). Got: '$MARKETING_VERSION'" >&2
-    exit 1
-fi
 
 BUILD_NUMBER=$(git rev-list --count HEAD)
 
@@ -35,11 +25,10 @@ if [ ! -f "$PBXPROJ" ]; then
     exit 1
 fi
 
-echo "Setting MARKETING_VERSION=$MARKETING_VERSION CURRENT_PROJECT_VERSION=$BUILD_NUMBER in $PBXPROJ"
+echo "Setting CURRENT_PROJECT_VERSION=$BUILD_NUMBER in $PBXPROJ"
 
 # In-place rewrite. Match every existing assignment regardless of value.
 sed -i.bak -E \
-    -e "s|MARKETING_VERSION = [^;]+;|MARKETING_VERSION = ${MARKETING_VERSION};|g" \
     -e "s|CURRENT_PROJECT_VERSION = [^;]+;|CURRENT_PROJECT_VERSION = ${BUILD_NUMBER};|g" \
     "$PBXPROJ"
 rm -f "${PBXPROJ}.bak"
@@ -51,7 +40,7 @@ rm -f "${PBXPROJ}.bak"
 # BeeWare release (no host toolchain needed) and is itself version-aware: it
 # bails fast when Frameworks/VERSIONS already matches the pinned build and
 # re-fetches when it's missing or stale. Call it unconditionally rather than
-# guarding on directory existence here — an outer guard would mask the
+# guarding on directory existence here - an outer guard would mask the
 # stale-version upgrade fetch-python.sh applies, and would duplicate the pinned
 # build tag in two places.
 "$REPO_ROOT/support/fetch-python.sh"

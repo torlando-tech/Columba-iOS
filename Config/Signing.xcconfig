@@ -1,2 +1,18 @@
 DEVELOPMENT_TEAM = M2977H5PM5
+
+// Marketing version (CFBundleShortVersionString) lives here, not in
+// project.pbxproj, so Xcode Cloud can stamp it from the release tag without
+// racing a pbxproj merge.
+//
+// This committed value is the LOCAL-DEV fallback only. Every Xcode Cloud
+// release build overwrites it from the git tag (see
+// ci_scripts/ci_pre_xcodebuild.sh), so the uploaded version can never
+// drift from the tag that triggered the build.
+//
+// Release ritual:
+//   git tag v0.0.5 && git push origin v0.0.5
+// The tag push is the build trigger; no file edit needed. Keep this
+// fallback roughly at the current release line so local builds look sane.
+MARKETING_VERSION = 0.0.4
+
 #include? "LocalSigning.xcconfig"
