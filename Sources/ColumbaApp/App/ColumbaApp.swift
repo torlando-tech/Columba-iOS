@@ -59,7 +59,10 @@ struct ColumbaApp: App {
         // which leaked received-message plaintext on every inbound message,
         // are deleted, and no session can grow the log without bound.
         // Must run before the first DiagLog.log call of this session.
-        DiagLog.purgeForNewLaunch()
+        // If deletion is blocked (device locked at boot, filesystem error),
+        // the failure is logged and retried at +30s / +120s rather than
+        // silently leaving legacy plaintext behind.
+        DiagLog.schedulePurgeRetryIfNeeded(initiallyClean: DiagLog.purgeForNewLaunch())
 
         #if os(iOS) && COLUMBA_RUNTIME_PYTHON
         // Register before starting embedded Python or any other potentially slow

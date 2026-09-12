@@ -69,12 +69,75 @@ enum DiagLog {
     /// before Python boot or any other launch work so the first line of the new
     /// session lands in a fresh file and any pre-fix leaked plaintext from prior
     /// builds is gone before the device could ever be extracted again.
-    static func purgeForNewLaunch() {
+    ///
+    /// Failures are NOT silent: if `removeItem` is blocked (file protection,
+    /// filesystem error), we fall back to in-place truncation - which works
+    /// under `completeUntilFirstUserAuthentication` after first unlock even
+    /// when unlink is refused - and if that also fails we log the failure
+    /// (file name + error domain/code only, no paths or content) and return
+    /// false so the caller can schedule a retry.
+    ///
+    /// - Returns: true when no diag log file survives with content.
+    @discardableResult
+    static func purgeForNewLaunch() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        try? FileManager.default.removeItem(at: fileURL)
-        try? FileManager.default.removeItem(at: rotatedFileURL)
+        var allClean = true
+        for (url, name) in [(fileURL, "diag.log"), (rotatedFileURL, "diag.log.1")] {
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                // Unlink blocked: try truncating in place before giving up.
+                if truncateInPlace(url) { continue }
+                let nsError = error as NSError
+                NSLog("[DIAGLOG] purge failed for %@ (domain=%@ code=%d)",
+                      name, nsError.domain, nsError.code)
+                allClean = false
+            }
+        }
+        return allClean
     }
+
+    /// One-shot retry path for a failed launch purge: attempts again at 30s
+    /// and 120s after launch (by which time a locked-at-boot device has
+    /// almost certainly seen its first unlock, which is what unblocks
+    /// deletion/truncation of these files). Logs the outcome of each retry.
+    static func schedulePurgeRetryIfNeeded(initiallyClean cleanAtLaunch: Bool) {
+        guard !cleanAtLaunch else { return }
+        Task.detached(priority: .utility) {
+            for delaySeconds: UInt64 in [30, 120] {
+                try? await Task.sleep(nanoseconds: delaySeconds * 1_000_000_000)
+                if purgeForNewLaunch() {
+                    NSLog("[DIAGLOG] purge retry at +\(delaySeconds)s succeeded")
+                    return
+                }
+                NSLog("[DIAGLOG] purge retry at +\(delaySeconds)s failed")
+            }
+        }
+    }
+
+    /// Zero the file's contents without unlinking it. Works when the file is
+    /// writable but unlink is refused. Returns true only when the file is
+    /// verifiably empty afterwards.
+    private static func truncateInPlace(_ url: URL) -> Bool {
+        guard let fh = try? FileHandle(forWritingTo: url) else { return false }
+        defer { try? fh.close() }
+        do {
+            try fh.truncate(atOffset: 0)
+        } catch {
+            return false
+        }
+        let size = (try? Data(contentsOf: url).count) ?? -1
+        return size == 0
+    }
+
+    #if DEBUG
+    /// Test seam for the unlink-blocked fallback path.
+    static func truncateInPlaceForTesting(_ url: URL) -> Bool {
+        truncateInPlace(url)
+    }
+    #endif
 
     static func log(_ message: String) {
         let ts = ISO8601DateFormatter().string(from: Date())

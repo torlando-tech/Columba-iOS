@@ -33,21 +33,35 @@ final class DiagLogRotationTests: XCTestCase {
 
     func testPurgeRemovesDiagLogAndRotatedFile() throws {
         // Seed a "pre-fix build" log containing fake leaked content plus a
-        // rotated sibling, then purge: both must be gone.
+        // rotated sibling, then purge: both must be gone and report clean.
         try "old leaked plaintext SECRET".data(using: .utf8)!.write(to: diagURL)
         try "old rotated plaintext SECRET".data(using: .utf8)!.write(to: rotatedURL)
         XCTAssertTrue(FileManager.default.fileExists(atPath: diagURL.path))
 
-        DiagLog.purgeForNewLaunch()
+        let clean = DiagLog.purgeForNewLaunch()
 
+        XCTAssertTrue(clean, "purge of deletable files must report clean")
         XCTAssertFalse(FileManager.default.fileExists(atPath: diagURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: rotatedURL.path))
     }
 
     func testPurgeOnMissingFilesIsSafe() {
-        // No files at all: purge must not throw or create anything.
-        DiagLog.purgeForNewLaunch()
+        // No files at all: purge must not throw and must report clean.
+        let clean = DiagLog.purgeForNewLaunch()
+        XCTAssertTrue(clean)
         XCTAssertFalse(FileManager.default.fileExists(atPath: diagURL.path))
+    }
+
+    func testPurgeTruncatesWhenUnlinkBlocked() throws {
+        // Simulate the unlink-blocked-but-writable case: make the file's
+        // directory immutable is not portable in the sandbox, so instead we
+        // exercise the truncation fallback directly and verify the file is
+        // left empty (not silently full) when deletion would fail.
+        try "leaked content that must not survive".data(using: .utf8)!.write(to: diagURL)
+        let truncated = DiagLog.truncateInPlaceForTesting(diagURL)
+        XCTAssertTrue(truncated)
+        let size = try Data(contentsOf: diagURL).count
+        XCTAssertEqual(size, 0, "fallback must zero the file, not leave content")
     }
 
     // MARK: - Size-capped rotation
