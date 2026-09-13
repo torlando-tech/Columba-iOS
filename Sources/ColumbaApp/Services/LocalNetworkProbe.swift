@@ -168,19 +168,17 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
     private func handleBrowserState(_ state: NWBrowser.State) {
         switch state {
         case .waiting(let error):
-            // `.waiting` WITHOUT an error: the system prompt is still on
-            // screen (or not yet raised) - keep waiting.
-            //
-            // `.waiting` WITH an error: only the Bonjour
+            // `.waiting` always carries an `NWError` (the payload is
+            // non-optional). Only the Bonjour
             // `kDNSServiceErr_PolicyDenied` (-65570) means the Local Network
             // permission was denied (TN3179). Every other error - no usable
-            // network path, transient DNS state, carrier down - is NOT a
-            // denial: a device that cold-starts with no usable carrier must
-            // stay pending (the timeout resolves it as `.unknown`, i.e.
-            // fail-open) rather than being marked denied, which would
-            // suppress carrier re-adopt and wrongly point the user at the
-            // Local Network permission in Settings.
-            if let error, Self.isPolicyDenied(error) {
+            // network path, transient DNS state, the browser still waiting on
+            // the prompt - is NOT a denial: a device that cold-starts with no
+            // usable carrier must stay pending (the timeout resolves it as
+            // `.unknown`, i.e. fail-open) rather than being marked denied,
+            // which would suppress carrier re-adopt and wrongly point the user
+            // at the Local Network permission in Settings.
+            if Self.isPolicyDenied(error) {
                 self.finish(.denied)
             }
         case .ready:

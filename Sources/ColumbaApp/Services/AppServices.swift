@@ -671,6 +671,16 @@ public final class AppServices {
     /// backend start (cancelled on shutdown). Kept so a backend restart can
     /// cancel a stale probe mid-flight.
     private var localNetworkProbeTask: Task<Void, Never>?
+    /// Monotonic generation for the probe task. Bumped on every start and on
+    /// shutdown so a stale (superseded or cancelled) probe that finally
+    /// returns from `await probe()` can detect it is no longer current and
+    /// drop its result instead of overwriting the live health state.
+    private var localNetworkProbeGeneration = 0
+    /// Bumped on every `backend` reassignment (start and teardown). Lets an
+    /// async operation that captured a backend reference detect that the
+    /// backend was torn down / replaced while it was suspended, so it does not
+    /// apply changes through a stale handle.
+    private var backendGeneration = 0
     /// Set once the probe has run for this backend start. We probe at most
     /// once per backend start: re-probing a denial re-shows nothing (the user's
     /// Open-Settings action is the recovery), and a prior grant makes a second
@@ -1621,6 +1631,7 @@ public final class AppServices {
         let backend = BackendFactory.make()
         #endif
         self.backend = backend
+        backendGeneration &+= 1
 
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B: CoreBluetooth lives in the app process, but it is optional. Do not
@@ -1710,6 +1721,7 @@ public final class AppServices {
             DiagLog.log("[RNS] start FAILED: \(error)")
             logger.error("Python backend start failed: \(error.localizedDescription, privacy: .public)")
             self.backend = nil
+            backendGeneration &+= 1
             throw error
         }
 
@@ -1724,6 +1736,7 @@ public final class AppServices {
                 rollback: { [weak self] in
                     await backend.stop()
                     self?.backend = nil
+                    self?.backendGeneration &+= 1
                 }
             )
         }
@@ -3983,6 +3996,8 @@ public final class AppServices {
     func startLocalNetworkProbe() {
         guard !BackendPreference.modelB else { return }
         localNetworkProbeTask?.cancel()
+        localNetworkProbeGeneration &+= 1
+        let generation = localNetworkProbeGeneration
         localNetworkProbeRan = false
         autoReadoptInFlight = false
         lastReadoptAttempt = .distantPast
@@ -4001,6 +4016,15 @@ public final class AppServices {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let self, !Task.isCancelled, !self.localNetworkProbeRan else { return }
             let result = await LocalNetworkProbe().probe()
+            // The probe is NOT cancellation-aware (its continuation outlives a
+            // task.cancel()). If a backend shutdown/restart superseded this
+            // task while we were awaiting, the result is stale: drop it instead
+            // of overwriting the current health state or marking the (new)
+            // backend start as "probed".
+            guard self.localNetworkProbeGeneration == generation else {
+                DiagLog.log("[LN] probe result dropped (stale generation after backend churn)")
+                return
+            }
             self.localNetworkProbeRan = true
             DiagLog.log("[LN] probe result: \(result.rawValue) (adopted=\(self.autoAdoptedCount))")
             switch result {
@@ -4055,7 +4079,12 @@ public final class AppServices {
         autoReadoptInFlight = true
         Task { @MainActor [weak self] in
             defer { self?.autoReadoptInFlight = false }
-            guard let self, !BackendPreference.modelB, let backend = self.backend else { return }
+            guard let self, !BackendPreference.modelB else { return }
+            // Capture the backend generation at scheduling time. It is re-checked
+            // inside the gated operation (after any suspension) so a
+            // shutdown/restart that owns the gate and swaps the backend cannot be
+            // applied through a stale handle.
+            let sourceGen = self.backendGeneration
             // Re-read fresh state (user may have disabled the interface in the
             // meantime - a MainActor read sees the repository's current value).
             guard let entity = InterfaceRepository().getEnabledInterfaces().first(where: { $0.type == .autoInterface }) else {
@@ -4069,9 +4098,19 @@ public final class AppServices {
             // mid-flight; the revalidation after the removal catches that.
             DiagLog.log("[LN] re-adopting AutoInterface (adopted=0, retry after \(Int(self.reAdoptCooldown))s cooldown)")
             await self.withLifecycleOperation {
-                // 1. Hot-remove (re-synthesize on re-add).
+                // 1. Re-resolve the backend INSIDE the gate (not a reference
+                //    captured before we awaited it) and verify the backend has
+                //    not churned. If shutdown/restart owns the gate and stops or
+                //    replaces the backend, applying the re-adopt through the
+                //    stale handle would leave the live replacement backend
+                //    unrepaired and seed stale Swift-side interface state.
+                guard let backend = self.backend, self.backendGeneration == sourceGen else {
+                    DiagLog.log("[LN] re-adopt aborted: backend torn down or replaced before re-adopt")
+                    return
+                }
+                // 2. Hot-remove (re-synthesize on re-add).
                 await self.hotRemoveInterface(entity, backend: backend)
-                // 2. Revalidate: if an Apply disabled or deleted the interface
+                // 3. Revalidate: if an Apply disabled or deleted the interface
                 //    while the removal was in flight, do NOT restore it - the
                 //    user's saved configuration wins. The removal above already
                 //    tore down the Python instance; the re-add would resurrect
@@ -4083,7 +4122,13 @@ public final class AppServices {
                     self.localNetworkState = .notConfigured
                     return
                 }
-                // 3. Hot-add (fresh AutoInterface constructor re-scans
+                // 4. Re-check the backend has not churned while we removed, so
+                //    the re-add also hits the current backend, not a stale one.
+                guard self.backendGeneration == sourceGen else {
+                    DiagLog.log("[LN] re-adopt aborted: backend changed during removal, not re-adding through a stale handle")
+                    return
+                }
+                // 5. Hot-add (fresh AutoInterface constructor re-scans
                 //    list_interfaces(), now with the link up).
                 await self.hotAddInterface(entity, backend: backend)
             }
@@ -4093,6 +4138,10 @@ public final class AppServices {
     /// Tear down the probe on shutdown / backend teardown.
     func stopLocalNetworkProbe() {
         localNetworkProbeTask?.cancel()
+        // Invalidate the generation so a probe that is still awaiting when we
+        // tear down drops its result on return (it must not repopulate the
+        // state we are clearing below).
+        localNetworkProbeGeneration &+= 1
         localNetworkProbeTask = nil
         localNetworkState = nil
         autoAdoptedCount = -1
@@ -4791,6 +4840,7 @@ public final class AppServices {
         if let backend = backend {
             await backend.stop()
             self.backend = nil
+            backendGeneration &+= 1
         }
 
         // Stop auto-announce manager

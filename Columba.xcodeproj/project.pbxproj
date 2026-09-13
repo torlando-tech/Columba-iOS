@@ -45,7 +45,6 @@
 		C01110CA1100000000000003 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C01110CA1100000000000001 /* Localizable.xcstrings */; };
 		0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */; };
 		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
-		LNP001 /* LocalNetworkProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNP002 /* LocalNetworkProbe.swift */; };
 		LNP003 /* LocalNetworkProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNP002 /* LocalNetworkProbe.swift */; };
 		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
 		CHF004 /* CallHistoryFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHF003 /* CallHistoryFormatting.swift */; };
