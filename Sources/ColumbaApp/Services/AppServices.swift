@@ -1720,8 +1720,8 @@ public final class AppServices {
         } catch {
             DiagLog.log("[RNS] start FAILED: \(error)")
             logger.error("Python backend start failed: \(error.localizedDescription, privacy: .public)")
-            self.backend = nil
             backendGeneration &+= 1
+            self.backend = nil
             throw error
         }
 
