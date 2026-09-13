@@ -155,8 +155,15 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
         self.browser = browser
 
         // 2. Confirmation: publish fires `netServiceDidPublish` only when access
-        //    is actually granted.
-        let service = NetService(domain: Self.probeDomain, type: Self.probeServiceType, name: Self.probeName)
+        //    is actually granted. The 4-ARG initializer is required: the 3-arg
+        //    form defaults to port -1, which marks the service as
+        //    RESOLUTION-oriented, and publish() on it raises
+        //    NSInvalidArgumentException ("cannot publish an NSNetService
+        //    created for resolution") -> SIGABRT on device. Port 0 publishes
+        //    as an ephemeral service, which is exactly what the probe wants
+        //    (no real endpoint, no payload, stopped as soon as the outcome
+        //    is known).
+        let service = NetService(domain: Self.probeDomain, type: Self.probeServiceType, name: Self.probeName, port: 0)
         service.delegate = self
         self.netService = service
         service.publish()
