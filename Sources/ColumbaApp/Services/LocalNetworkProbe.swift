@@ -90,7 +90,12 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
     /// `_reticulum._tcp` protocol type so the probe never advertises a service
     /// that a real peer could mistake for a Reticulum endpoint.
     public static let probeServiceType = "_columba-lnp._tcp"
-    public static let probeDomain = "local."
+    /// Domain/zone for the probe, the DEFAULT local zone. `NWBrowser` takes
+    /// the zone NAME (nil = the default "local" zone) and `NetService` takes
+    /// "" for the default domain. Passing the literal "local." (a zone
+    /// string) to `NetService` is an NSException -> SIGABRT on publish, which
+    /// crashed the app on first device launch (iOS 26.6, 2026-09-13).
+    public static let probeDomain = ""
     private static let probeName = "columba-lnp-probe"
 
     /// `kDNSServiceErr_PolicyDenied` from dns_sd.h (-65570). Per Apple
@@ -136,10 +141,10 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
     private func begin(timeout: TimeInterval) {
         // 1. Trigger: browsing a declared type is the operation that makes the
         //    OS raise the Local Network prompt when the permission is
-        //    undetermined.
+        //    undetermined. nil domain = the default local zone.
         let params = NWParameters()
         params.includePeerToPeer = true
-        let browser = NWBrowser(for: .bonjour(type: Self.probeServiceType, domain: Self.probeDomain), using: params)
+        let browser = NWBrowser(for: .bonjour(type: Self.probeServiceType, domain: nil), using: params)
         browser.stateUpdateHandler = { [weak self] state in
             DispatchQueue.main.async {
                 guard let self else { return }
