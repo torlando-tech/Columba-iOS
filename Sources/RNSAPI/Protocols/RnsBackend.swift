@@ -171,11 +171,18 @@ public struct StatusSnapshot: Decodable, Sendable {
         /// (the `autoconnect_hash` marker). The status poll renders these
         /// with a "via discovery" badge.
         public let isAutoconnect: Bool?
+        /// Number of system interfaces the AutoInterface adopted at
+        /// construction (Python backend only; nil elsewhere or for non-Auto
+        /// interfaces). A cold start before link-local IPv6 is ready can
+        /// adopt 0 and RNS never re-scans, so 0 stays 0 until the interface
+        /// is re-created. The carrier re-adopt coordinator keys off this
+        /// (not `online`, which is True either way).
+        public let adoptedCount: Int?
 
         public init(sectionName: String, name: String, online: Bool, rxBytes: Int, txBytes: Int,
                     typeRaw: String? = nil, isBLEPeer: Bool? = nil, isAutoPeer: Bool? = nil,
                     peerAddress: String? = nil, lastError: String? = nil,
-                    isAutoconnect: Bool? = nil) {
+                    isAutoconnect: Bool? = nil, adoptedCount: Int? = nil) {
             self.sectionName = sectionName
             self.name = name
             self.online = online
@@ -187,6 +194,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.peerAddress = peerAddress
             self.lastError = lastError
             self.isAutoconnect = isAutoconnect
+            self.adoptedCount = adoptedCount
         }
 
         enum CodingKeys: String, CodingKey {
@@ -200,6 +208,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             case peerAddress = "peer_address"
             case lastError = "last_error"
             case isAutoconnect = "is_autoconnect"
+            case adoptedCount = "adopted_count"
         }
 
         public init(from decoder: Decoder) throws {
@@ -215,6 +224,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.peerAddress = try? c.decode(String.self, forKey: .peerAddress)
             self.lastError = try? c.decode(String.self, forKey: .lastError)
             self.isAutoconnect = try? c.decode(Bool.self, forKey: .isAutoconnect)
+            self.adoptedCount = (try? c.decode(Int?.self, forKey: .adoptedCount)) ?? nil
         }
     }
 

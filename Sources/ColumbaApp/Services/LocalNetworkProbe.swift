@@ -81,7 +81,7 @@ public enum LocalNetworkHealthState: Equatable, Sendable {
 /// on `.main`, NSNetService delegate on the main run loop, dispatch work items
 /// on main) runs on the main queue, so the instance is serialized without a
 /// lock and safe to hand across executors. Hence `@unchecked Sendable`.
-public final class LocalNetworkProbe: NSObject, NSNetServiceDelegate, @unchecked Sendable {
+public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked Sendable {
 
     /// Bonjour service type used to trigger + confirm Local Network access.
     /// Declared in `Info.plist` `NSBonjourServices`. Distinct from the real
@@ -92,7 +92,7 @@ public final class LocalNetworkProbe: NSObject, NSNetServiceDelegate, @unchecked
     private static let probeName = "columba-lnp-probe"
 
     private var browser: NWBrowser?
-    private var netService: NSNetService?
+    private var netService: NetService?
     private var continuation: CheckedContinuation<LocalNetworkPermission, Never>?
     private var timeoutItem: DispatchWorkItem?
     private var readyGraceItem: DispatchWorkItem?
@@ -159,7 +159,7 @@ public final class LocalNetworkProbe: NSObject, NSNetServiceDelegate, @unchecked
 
         // 2. Confirmation: publish fires `netServiceDidPublish` only when access
         //    is actually granted.
-        let service = NSNetService(domain: Self.probeDomain, type: Self.probeServiceType, name: Self.probeName)
+        let service = NetService(domain: Self.probeDomain, type: Self.probeServiceType, name: Self.probeName)
         service.delegate = self
         self.netService = service
         service.publish()
@@ -194,9 +194,9 @@ public final class LocalNetworkProbe: NSObject, NSNetServiceDelegate, @unchecked
         cont?.resume(returning: result)
     }
 
-    // MARK: - NSNetServiceDelegate (main run loop)
+    // MARK: - NetServiceDelegate (main run loop)
 
-    public func netServiceDidPublish(_ netService: NSNetService) {
+    public func netServiceDidPublish(_ netService: NetService) {
         DispatchQueue.main.async { [weak self] in
             self?.finish(.granted)
         }
