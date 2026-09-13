@@ -14,6 +14,9 @@ import RNSAPI
 import LXSTSwift
 import SwiftBLEBridge
 import CryptoKit
+#if canImport(Network)
+import Network
+#endif
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -640,11 +643,53 @@ public final class AppServices {
     /// launch-time snapshot — that was the source of the stale-status bug).
     private var pythonInterfaceEntities: [String: InterfaceEntity] = [:]
 
-/// Periodic poller that mirrors Python's RNS.Transport interface state
+    /// Periodic poller that mirrors Python's RNS.Transport interface state
     /// into the Compat TCPInterface stubs so the existing
     /// NetworkStatusView / InterfaceManagementScreen show correct
     /// connected/disconnected badges. Cancelled in `shutdown()`.
     private var pythonStatusPollTask: Task<Void, Never>?
+
+    // MARK: - Local Network coordinator (Option C)
+    //
+    // The AutoInterface (raw IPv6 link-local multicast, discovery-only) needs
+    // two things the stock RNS stack does not provide on iOS:
+    //   1. A RELIABLE trigger for the Local Network permission prompt. A raw
+    //      multicast join can fail to raise the prompt at all, leaving the
+    //      interface silently dead. The probe (LocalNetworkProbe) forces the
+    //      prompt via a declared Bonjour type.
+    //   2. A CARRIER RE-ADOPT. RNS AutoInterface scans system interfaces once,
+    //      in its constructor. If link-local IPv6 is not ready at cold start
+    //      (0 adopted) it logs "could not autoconfigure", sets receives=False,
+    //      and never re-scans - dead until relaunch. We detect the 0-adopted
+    //      state (via the Python `adopted_count`) and re-adopt on the first
+    //      carrier change (NWPathMonitor).
+    //
+    // Both are Python-backend-only: the Model B node runs in the NE, which
+    // already owns its socket lifecycle and does not use this path.
+    #if COLUMBA_RUNTIME_PYTHON
+    /// Task that runs the one-shot Local Network permission probe for this
+    /// backend start (cancelled on shutdown). Kept so a backend restart can
+    /// cancel a stale probe mid-flight.
+    private var localNetworkProbeTask: Task<Void, Never>?
+    /// Set once the probe has run for this backend start. We probe at most
+    /// once per backend start: re-probing a denial re-shows nothing (the user's
+    /// Open-Settings action is the recovery), and a prior grant makes a second
+    /// probe redundant.
+    private var localNetworkProbeRan = false
+    /// Guards the re-adopt against concurrent evaluation (the status poll and a
+    /// re-adopt can both fire). A re-adopt is a hot-remove + hot-add, so it must
+    /// never run twice for the same dead interface.
+    private var autoReadoptInFlight = false
+    private var lastReadoptAttempt = Date.distantPast
+    private let reAdoptCooldown: TimeInterval = 30
+    /// Public Local Network health state for the UI warning. nil = not yet
+    /// evaluated (no AutoInterface, or the coordinator has not run).
+    public private(set) var localNetworkState: LocalNetworkHealthState?
+    /// Live adopted-interface count for the enabled AutoInterface (from the
+    /// Python `adopted_count`); -1 until the first snapshot. The UI warning
+    /// keys off this (0 = dead), not `online` (which is True either way).
+    public private(set) var autoAdoptedCount: Int = -1
+    #endif
 
     /// Last interface snapshot key we logged, so the poll only logs
     /// changes (not every 2s tick).
@@ -1754,6 +1799,14 @@ public final class AppServices {
             DiagLog.log("[RNS-POLL] task exiting (cancelled)")
         }
 
+        #if COLUMBA_RUNTIME_PYTHON
+        // Local Network coordination (Option C): probe the Local Network
+        // permission (triggering the prompt if undetermined) and arm the
+        // carrier re-adopt. Python backend only - the Model B node owns its
+        // own sockets in the NE and never uses this path.
+        startLocalNetworkProbe()
+        #endif
+
         #if DEBUG
         // Test-only deep-link observers (the `lxma://test-*` surface used by the
         // interop / smoke harnesses). The matching `onOpenURL` trigger in
@@ -2499,6 +2552,14 @@ public final class AppServices {
                     auto.state = newState
                     auto.online = status.online
                 }
+                #if COLUMBA_RUNTIME_PYTHON
+                // The real liveness signal for the AutoInterface is the adopted
+                // count (0 = cold-start dead, RNS will never re-scan on its own).
+                // `online` alone is useless here: final_init() sets it True even
+                // with zero adopted interfaces. Drive Local Network health + the
+                // carrier re-adopt from it.
+                updateLocalNetworkHealth(adoptedCount: status.adoptedCount)
+                #endif
             case .ble:
                 if let ble = self.bleInterface, ble.state != newState {
                     DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (BLE, rx=\(status.rxBytes) tx=\(status.txBytes))")
@@ -2818,6 +2879,11 @@ public final class AppServices {
             DiagLog.log("[RNS-HOT] add \(section) error: \(error)")
         }
         await seedSwiftStub(for: entity)
+        #if COLUMBA_RUNTIME_PYTHON
+        if entity.type == .autoInterface {
+            noteAutoInterfaceAvailability(changed: false)
+        }
+        #endif
     }
 
     /// Hot-remove one interface from the running Python stack and tear down its
@@ -2832,6 +2898,11 @@ public final class AppServices {
             DiagLog.log("[RNS-HOT] remove \(section) error: \(error)")
         }
         await teardownSwiftStub(for: entity)
+        #if COLUMBA_RUNTIME_PYTHON
+        if entity.type == .autoInterface {
+            noteAutoInterfaceAvailability(changed: true)
+        }
+        #endif
     }
 
     /// Create the Swift-side status mirror for a freshly hot-added interface so
@@ -3898,6 +3969,134 @@ public final class AppServices {
         logger.info("AutoInterface stopped")
     }
 
+    #if COLUMBA_RUNTIME_PYTHON
+    // MARK: - Local Network coordination (Option C)
+
+    /// Run the Local Network permission probe for this backend start and keep
+    /// `localNetworkState` current. Started from `startPythonBackend()`, reset
+    /// (so a backend restart re-probes) and cancelled on shutdown.
+    ///
+    /// The probe triggers the system prompt (if undetermined) via a declared
+    /// Bonjour browse + publish. We run it at most once per backend start: a
+    /// prior grant makes it redundant, and a prior denial re-shows nothing
+    /// (the Open-Settings action is the recovery).
+    func startLocalNetworkProbe() {
+        guard !BackendPreference.modelB else { return }
+        localNetworkProbeTask?.cancel()
+        localNetworkProbeRan = false
+        autoReadoptInFlight = false
+        lastReadoptAttempt = .distantPast
+        autoAdoptedCount = -1
+
+        let hasAuto = InterfaceRepository().getEnabledInterfaces().contains { $0.type == .autoInterface }
+        guard hasAuto else {
+            localNetworkState = .notConfigured
+            return
+        }
+        localNetworkState = .noCarrier
+
+        localNetworkProbeTask = Task { @MainActor [weak self] in
+            // Give the backend a beat so its first status snapshot has landed
+            // (the probe result is combined with the adopted count below).
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self, !Task.isCancelled, !self.localNetworkProbeRan else { return }
+            let result = await LocalNetworkProbe().probe()
+            self.localNetworkProbeRan = true
+            DiagLog.log("[LN] probe result: \(result.rawValue) (adopted=\(self.autoAdoptedCount))")
+            switch result {
+            case .denied:
+                self.localNetworkState = .denied
+            case .granted, .unknown:
+                // Granted (or undetermined - fail-open): the adopted count is
+                // the live signal; the poll hook refines it each snapshot.
+                self.localNetworkState = (self.autoAdoptedCount > 0) ? .healthy : .noCarrier
+            }
+        }
+    }
+
+    /// Update Local Network health from a fresh status snapshot and arm the
+    /// carrier re-adopt when the AutoInterface has adopted zero interfaces.
+    /// Called from the status poll (every snapshot).
+    func updateLocalNetworkHealth(adoptedCount: Int?) {
+        guard let adopted = adoptedCount else { return }
+        if adopted != autoAdoptedCount {
+            DiagLog.log("[LN] auto adopted_count: \(autoAdoptedCount) -> \(adopted)")
+        }
+        autoAdoptedCount = adopted
+        if localNetworkState == .denied || localNetworkState == .notConfigured {
+            return // denial is sticky; nothing to re-adopt with no interface
+        }
+        localNetworkState = (adopted > 0) ? .healthy : .noCarrier
+        if adopted == 0 {
+            scheduleAutoReadopt()
+        }
+    }
+
+    /// Re-adopt an AutoInterface that adopted zero system interfaces.
+    ///
+    /// SAFE ONLY when `adopted_count == 0`: that instance holds no discovery
+    /// sockets (they are created per adopted interface in the constructor), so
+    /// the hot-remove + hot-add cannot leak any. Upstream `AutoInterface
+    /// .detach()` does not release sockets, so re-adopting a LIVE interface
+    /// (one or more adopted) would leak the multicast sockets and split
+    /// incoming announcements between the dead and new instances - the same
+    /// reason `restartPythonBackend` refuses to run with an AutoInterface. A
+    /// live interface never needs re-adopting anyway: its `peer_jobs` loop
+    /// tracks address changes on the interfaces it already holds.
+    ///
+    /// The hot-remove + hot-add re-runs the AutoInterface constructor
+    /// (`_synthesize_interface` -> fresh `AutoInterface(...)`), which re-scans
+    /// `list_interfaces()` - now with the link up - and re-adopts en0.
+    private func scheduleAutoReadopt() {
+        guard !autoReadoptInFlight else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastReadoptAttempt) >= reAdoptCooldown else { return }
+        lastReadoptAttempt = now
+        autoReadoptInFlight = true
+        Task { @MainActor [weak self] in
+            defer { self?.autoReadoptInFlight = false }
+            guard let self, !BackendPreference.modelB, let backend = self.backend else { return }
+            // Re-read fresh state (user may have disabled the interface in the
+            // meantime - a MainActor read sees the repository's current value).
+            guard let entity = InterfaceRepository().getEnabledInterfaces().first(where: { $0.type == .autoInterface }) else {
+                self.localNetworkState = .notConfigured
+                return
+            }
+            DiagLog.log("[LN] re-adopting AutoInterface (adopted=0, retry after \(Int(self.reAdoptCooldown))s cooldown)")
+            // Exact same path as a user-driven interface change (the "changed"
+            // branch of applyInterfaceChanges): remove, then re-add (re-synthesize).
+            await self.hotRemoveInterface(entity, backend: backend)
+            await self.hotAddInterface(entity, backend: backend)
+        }
+    }
+
+    /// Tear down the probe on shutdown / backend teardown.
+    func stopLocalNetworkProbe() {
+        localNetworkProbeTask?.cancel()
+        localNetworkProbeTask = nil
+        localNetworkState = nil
+        autoAdoptedCount = -1
+    }
+
+    /// Called when the AutoInterface is hot-added or hot-removed by the user
+    /// (the UI's Apply path), so Local Network state tracks the interface
+    /// rather than going stale.
+    func noteAutoInterfaceAvailability(changed: Bool) {
+        guard !BackendPreference.modelB else { return }
+        if changed {
+            localNetworkState = .notConfigured
+            autoAdoptedCount = -1
+        } else {
+            // Auto interface enabled. If this backend start never probed (the
+            // interface was added after launch), run the probe now so the
+            // prompt is raised and denial is surfaced.
+            if !localNetworkProbeRan {
+                startLocalNetworkProbe()
+            }
+        }
+    }
+    #endif
+
     #if canImport(CoreBluetooth)
     /// Start the BLE interface for Bluetooth peer-to-peer networking.
     ///
@@ -4542,6 +4741,9 @@ public final class AppServices {
         pythonEventTask = nil
         pythonStatusPollTask?.cancel()
         pythonStatusPollTask = nil
+        #if COLUMBA_RUNTIME_PYTHON
+        stopLocalNetworkProbe()
+        #endif
         // Remove the test-deeplink NotificationCenter observers registered in
         // startPythonBackend(); without this they'd accumulate across restart
         // cycles and fire each handler once per past start.

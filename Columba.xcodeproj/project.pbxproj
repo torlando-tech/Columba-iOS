@@ -45,6 +45,8 @@
 		C01110CA1100000000000003 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C01110CA1100000000000001 /* Localizable.xcstrings */; };
 		0229B2C848210EE825D13B8E /* PythonBLECallbackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF4DCA18506B96230721ACC /* PythonBLECallbackBridge.swift */; };
 		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
+		LNP001 /* LocalNetworkProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNP002 /* LocalNetworkProbe.swift */; };
+		LNP003 /* LocalNetworkProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNP002 /* LocalNetworkProbe.swift */; };
 		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
 		CHF004 /* CallHistoryFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHF003 /* CallHistoryFormatting.swift */; };
 		CHM002 /* CallHistoryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHM001 /* CallHistoryModels.swift */; };
@@ -589,6 +591,7 @@
 		C01110CA1100000000000001 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		F023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F024 /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
+		LNP002 /* LocalNetworkProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNetworkProbe.swift; sourceTree = "<group>"; };
 		F025 /* MessageRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRepository.swift; sourceTree = "<group>"; };
 		CHF003 /* CallHistoryFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHistoryFormatting.swift; sourceTree = "<group>"; };
 		CHM001 /* CallHistoryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHistoryModels.swift; sourceTree = "<group>"; };
@@ -1109,6 +1112,7 @@
 			children = (
 				BGPSYNCREF001 /* BackgroundPropagationSync.swift */,
 				F024 /* AppServices.swift */,
+				LNP002 /* LocalNetworkProbe.swift */,
 				E284643CB4F95B1B3DBA965B /* OneShotLocationProvider.swift */,
 				BKF002 /* BackendFactory.swift */,
 				F025 /* MessageRepository.swift */,
@@ -1823,6 +1827,7 @@
 				021 /* MapView.swift in Sources */,
 				048 /* MapLibreMapView.swift in Sources */,
 				024 /* AppServices.swift in Sources */,
+				LNP003 /* LocalNetworkProbe.swift in Sources */,
 				A4EA60E22E1A3A65C6AFA5E7 /* OneShotLocationProvider.swift in Sources */,
 				099A0C66CE2C1444E52912D0 /* DiscoveredInterfacesViewModel.swift in Sources */,
 				BKF001 /* BackendFactory.swift in Sources */,

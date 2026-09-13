@@ -649,9 +649,16 @@ public final class PythonBridge: @unchecked Sendable {
             public let rxBytes: Int
             public let txBytes: Int
             /// True when RNS spawned this interface from a discovery announce
-            /// (the `autoconnect_hash` marker set by `Discovery.autoconnect`).
+            /// (`autoconnect_hash` marker set by `Discovery.autoconnect`).
             /// The status poll renders these with a "via discovery" badge.
             public let isAutoconnect: Bool
+            /// Number of system interfaces the AutoInterface adopted at
+            /// construction (nil for non-Auto interfaces). A cold start before
+            /// link-local IPv6 is ready can adopt 0 - and RNS never re-scans,
+            /// so 0 stays 0 until the interface is re-created. The carrier
+            /// re-adopt coordinator uses this (not `online`, which is True
+            /// either way) to detect the dead interface.
+            public let adoptedCount: Int?
 
             enum CodingKeys: String, CodingKey {
                 case sectionName = "section_name"
@@ -660,6 +667,7 @@ public final class PythonBridge: @unchecked Sendable {
                 case rxBytes = "rx_bytes"
                 case txBytes = "tx_bytes"
                 case isAutoconnect = "is_autoconnect"
+                case adoptedCount = "adopted_count"
             }
 
             public init(from decoder: Decoder) throws {
@@ -670,6 +678,7 @@ public final class PythonBridge: @unchecked Sendable {
                 self.rxBytes = (try? c.decode(Int.self, forKey: .rxBytes)) ?? 0
                 self.txBytes = (try? c.decode(Int.self, forKey: .txBytes)) ?? 0
                 self.isAutoconnect = (try? c.decode(Bool.self, forKey: .isAutoconnect)) ?? false
+                self.adoptedCount = (try? c.decode(Int?.self, forKey: .adoptedCount)) ?? nil
             }
         }
 

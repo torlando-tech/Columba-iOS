@@ -54,6 +54,14 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Current success message (auto-dismissing)
     public var successMessage: String?
 
+    /// Local Network permission + carrier health for the Auto Discovery
+    /// interface (Python backend only; the Model B node owns its sockets in
+    /// the NE and has no such state). nil = not applicable or not yet
+    /// evaluated. Drives the compact warning banner on Manage Interfaces.
+    #if COLUMBA_RUNTIME_PYTHON
+    public var localNetworkState: LocalNetworkHealthState?
+    #endif
+
     /// Whether there are pending changes to apply
     public var hasPendingChanges: Bool = false
 
@@ -688,6 +696,13 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                             self.interfaceStatus[autoEntity.id] = .disconnected
                         }
                     }
+
+                    // Mirror Local Network health (permission + carrier) so the
+                    // warning banner appears / clears reactively. Python
+                    // backend only.
+                    #if COLUMBA_RUNTIME_PYTHON
+                    self.localNetworkState = self.appServices.localNetworkState
+                    #endif
 
                     // Track BLE interface status
                     if let bleEntity = enabledIfs.first(where: { $0.type == .ble }) {
