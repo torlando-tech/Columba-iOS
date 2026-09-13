@@ -131,27 +131,10 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
         let params = NWParameters()
         params.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: Self.probeServiceType, domain: Self.probeDomain), using: params)
-        browser.stateUpdateHandler = { [weak self] (state: NWBrowser.State) in
+        browser.stateUpdateHandler = { [weak self] state in
             DispatchQueue.main.async {
-                guard let probe = self else { return }
-                switch state {
-                case .waiting(let error):
-                    // .waiting WITHOUT an error means the system prompt is
-                    // still on screen (or not yet raised) - keep waiting.
-                    // .waiting WITH an error is a (prior) denial: the browse
-                    // cannot proceed.
-                    if error != nil {
-                        probe.finish(.denied)
-                    }
-                case .ready:
-                    // The prompt was answered "Allow" (or already granted). The
-                    // publish callback is the authoritative grant confirmation;
-                    // give it a short grace, then trust the browser if the
-                    // callback is slow.
-                    probe.finish(.granted, afterGrace: 1.5)
-                case .failed, .cancelled, .shuttingDown, .setup:
-                    break
-                }
+                guard let self else { return }
+                self.handleBrowserState(state)
             }
         }
         browser.start(queue: .main)
@@ -168,6 +151,28 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
         let item = DispatchWorkItem { [weak self] in self?.finish(.unknown) }
         self.timeoutItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: item)
+    }
+
+    // MARK: - Browser state (main queue)
+
+    /// Interpret an NWBrowser state transition for the probe.
+    private func handleBrowserState(_ state: NWBrowser.State) {
+        switch state {
+        case .waiting(let error):
+            // .waiting WITHOUT an error means the system prompt is still on
+            // screen (or not yet raised) - keep waiting. .waiting WITH an
+            // error is a (prior) denial: the browse cannot proceed.
+            if error != nil {
+                self.finish(.denied)
+            }
+        case .ready:
+            // The prompt was answered "Allow" (or already granted). The
+            // publish callback is the authoritative grant confirmation; give
+            // it a short grace, then trust the browser if it is slow.
+            self.finish(.granted, afterGrace: 1.5)
+        case .failed, .cancelled, .shuttingDown, .setup:
+            break
+        }
     }
 
     private func finish(_ result: LocalNetworkPermission, afterGrace: TimeInterval? = nil) {
