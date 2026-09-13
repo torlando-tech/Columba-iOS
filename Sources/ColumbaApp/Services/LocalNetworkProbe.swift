@@ -170,7 +170,7 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
             // publish callback is the authoritative grant confirmation; give
             // it a short grace, then trust the browser if it is slow.
             self.finish(.granted, afterGrace: 1.5)
-        case .failed, .cancelled, .shuttingDown, .setup:
+        case .failed, .cancelled, .setup:
             break
         }
     }
