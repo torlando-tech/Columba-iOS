@@ -131,9 +131,9 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
         let params = NWParameters()
         params.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: Self.probeServiceType, domain: Self.probeDomain), using: params)
-        browser.stateUpdateHandler = { [weak self] state in
+        browser.stateUpdateHandler = { [weak self] (state: NWBrowser.State) in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let probe = self else { return }
                 switch state {
                 case .waiting(let error):
                     // .waiting WITHOUT an error means the system prompt is
@@ -141,14 +141,14 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
                     // .waiting WITH an error is a (prior) denial: the browse
                     // cannot proceed.
                     if error != nil {
-                        self.finish(.denied)
+                        probe.finish(.denied)
                     }
                 case .ready:
                     // The prompt was answered "Allow" (or already granted). The
                     // publish callback is the authoritative grant confirmation;
                     // give it a short grace, then trust the browser if the
                     // callback is slow.
-                    self.finish(.granted, afterGrace: 1.5)
+                    probe.finish(.granted, afterGrace: 1.5)
                 case .failed, .cancelled, .shuttingDown, .setup:
                     break
                 }
