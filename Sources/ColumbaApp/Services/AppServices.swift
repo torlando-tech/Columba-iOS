@@ -4062,11 +4062,31 @@ public final class AppServices {
                 self.localNetworkState = .notConfigured
                 return
             }
+            // Serialize with every user-driven interface Apply and with
+            // lifecycle operations (initialize/shutdown/reconnect) via the
+            // same FIFO gate they use. The remove below suspends, and without
+            // the gate a concurrent Apply could disable/delete the interface
+            // mid-flight; the revalidation after the removal catches that.
             DiagLog.log("[LN] re-adopting AutoInterface (adopted=0, retry after \(Int(self.reAdoptCooldown))s cooldown)")
-            // Exact same path as a user-driven interface change (the "changed"
-            // branch of applyInterfaceChanges): remove, then re-add (re-synthesize).
-            await self.hotRemoveInterface(entity, backend: backend)
-            await self.hotAddInterface(entity, backend: backend)
+            await self.withLifecycleOperation {
+                // 1. Hot-remove (re-synthesize on re-add).
+                await self.hotRemoveInterface(entity, backend: backend)
+                // 2. Revalidate: if an Apply disabled or deleted the interface
+                //    while the removal was in flight, do NOT restore it - the
+                //    user's saved configuration wins. The removal above already
+                //    tore down the Python instance; the re-add would resurrect
+                //    the interface against the user's explicit choice and keep
+                //    its multicast resources alive.
+                let stillEnabled = InterfaceRepository().getEnabledInterfaces().contains { $0.type == .autoInterface }
+                guard stillEnabled else {
+                    DiagLog.log("[LN] re-adopt aborted: AutoInterface disabled or removed during removal")
+                    self.localNetworkState = .notConfigured
+                    return
+                }
+                // 3. Hot-add (fresh AutoInterface constructor re-scans
+                //    list_interfaces(), now with the link up).
+                await self.hotAddInterface(entity, backend: backend)
+            }
         }
     }
 

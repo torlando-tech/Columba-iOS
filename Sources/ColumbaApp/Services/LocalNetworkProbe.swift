@@ -23,8 +23,10 @@
 //       `netServiceDidPublish` delegate callback fires only when access is
 //       granted, giving us a positive grant signal (the browser reaching `.ready`
 //       alone is not a reliable grant confirmation on every iOS version).
-//    3. If the user denies, the `NWBrowser` transitions to `.waiting(error)` -
-//       that is our denial signal.
+//    3. If the user denies, the `NWBrowser` transitions to `.waiting` with
+//       the Bonjour `kDNSServiceErr_PolicyDenied` (-65570) error - that
+//       specific error is our denial signal (per Apple TN3179). Other
+//       waiting errors are transient, not denials.
 //
 //  The service type MUST be listed in `Info.plist` `NSBonjourServices`, or the
 //  browser silently fails to trigger the prompt. See `LocalNetworkProbe
@@ -90,6 +92,13 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
     public static let probeServiceType = "_columba-lnp._tcp"
     public static let probeDomain = "local."
     private static let probeName = "columba-lnp-probe"
+
+    /// `kDNSServiceErr_PolicyDenied` from dns_sd.h (-65570). Per Apple
+    /// TN3179 this is the only Bonjour error that means Local Network
+    /// permission is denied; every other waiting error (no usable path,
+    /// DNS hiccup, carrier down) is transient and must NOT be read as a
+    /// denial.
+    private static let policyDeniedCode = -65570
 
     private var browser: NWBrowser?
     private var netService: NetService?
@@ -159,10 +168,19 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
     private func handleBrowserState(_ state: NWBrowser.State) {
         switch state {
         case .waiting(let error):
-            // .waiting WITHOUT an error means the system prompt is still on
-            // screen (or not yet raised) - keep waiting. .waiting WITH an
-            // error is a (prior) denial: the browse cannot proceed.
-            if error != nil {
+            // `.waiting` WITHOUT an error: the system prompt is still on
+            // screen (or not yet raised) - keep waiting.
+            //
+            // `.waiting` WITH an error: only the Bonjour
+            // `kDNSServiceErr_PolicyDenied` (-65570) means the Local Network
+            // permission was denied (TN3179). Every other error - no usable
+            // network path, transient DNS state, carrier down - is NOT a
+            // denial: a device that cold-starts with no usable carrier must
+            // stay pending (the timeout resolves it as `.unknown`, i.e.
+            // fail-open) rather than being marked denied, which would
+            // suppress carrier re-adopt and wrongly point the user at the
+            // Local Network permission in Settings.
+            if let error, Self.isPolicyDenied(error) {
                 self.finish(.denied)
             }
         case .ready:
@@ -173,6 +191,17 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
         case .failed, .cancelled, .setup:
             break
         }
+    }
+
+    /// Whether a `NWBrowser` waiting error is the Local Network
+    /// policy-denial signal (Bonjour `kDNSServiceErr_PolicyDenied`, -65570,
+    /// surfaced as `NWError.dns` per Apple TN3179). Everything else is a
+    /// transient transport/DNS state, not a permission denial.
+    private static func isPolicyDenied(_ error: NWError) -> Bool {
+        if case .dns(let code) = error {
+            return Int(code) == policyDeniedCode
+        }
+        return false
     }
 
     private func finish(_ result: LocalNetworkPermission, afterGrace: TimeInterval? = nil) {
