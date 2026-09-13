@@ -130,7 +130,7 @@ public final class LocalNetworkProbe: NSObject, NetServiceDelegate, @unchecked S
         //    undetermined.
         let params = NWParameters()
         params.includePeerToPeer = true
-        let browser = NWBrowser(for: .bonjour(Self.probeServiceType, Self.probeDomain), using: params)
+        let browser = NWBrowser(for: .bonjour(type: Self.probeServiceType, domain: Self.probeDomain), using: params)
         browser.stateUpdateHandler = { [weak self] state in
             DispatchQueue.main.async {
                 guard let self else { return }
