@@ -287,6 +287,7 @@
 		ACT02 /* AnnounceClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACT01 /* AnnounceClassificationTests.swift */; };
 		RQP02 /* ReplyQuoteParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RQP01 /* ReplyQuoteParityTests.swift */; };
 		DRAFT002 /* DraftMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DRAFT001 /* DraftMessageTests.swift */; };
+		DIAGROT002 /* DiagLogRotationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DIAGROT001 /* DiagLogRotationTests.swift */; };
 		DA143A000000000000000002 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
 		DA143A000000000000000003 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
 		ADABD423CE22B9E00BC5D7F3 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
@@ -519,6 +520,7 @@
 		ACT01 /* AnnounceClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnounceClassificationTests.swift; sourceTree = "<group>"; };
 		RQP01 /* ReplyQuoteParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplyQuoteParityTests.swift; sourceTree = "<group>"; };
 		DRAFT001 /* DraftMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftMessageTests.swift; sourceTree = "<group>"; };
+		DIAGROT001 /* DiagLogRotationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagLogRotationTests.swift; sourceTree = "<group>"; };
 		DA143A000000000000000001 /* DraftAutosaveController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftAutosaveController.swift; sourceTree = "<group>"; };
 		AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
 		AGBF /* AppGroupBridgeInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBridgeInterface.swift; sourceTree = "<group>"; };
@@ -1171,6 +1173,7 @@
 				ACT01 /* AnnounceClassificationTests.swift */,
 				RQP01 /* ReplyQuoteParityTests.swift */,
 				DRAFT001 /* DraftMessageTests.swift */,
+				DIAGROT001 /* DiagLogRotationTests.swift */,
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
 				853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */,
 				B1C2D3E4F5061728394A5B6C /* IncomingMessageSizeLimitTests.swift */,
@@ -1952,6 +1955,7 @@
 				ACT02 /* AnnounceClassificationTests.swift in Sources */,
 				RQP02 /* ReplyQuoteParityTests.swift in Sources */,
 				DRAFT002 /* DraftMessageTests.swift in Sources */,
+				DIAGROT002 /* DiagLogRotationTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* IncomingMessageSizeLimitTests.swift in Sources */,
 				26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */,

@@ -24,27 +24,155 @@ import os.log
 
 /// Simple file logger for diagnostics when idevicesyslog isn't available (WiFi-only device).
 /// Writes to Documents/diag.log which can be extracted via Xcode or devicectl.
+///
+/// Bounded storage + privacy hygiene (pre-public-beta hardening):
+///   * `purgeForNewLaunch()` is called from `ColumbaApp.init()` and deletes
+///     `diag.log` / `diag.log.1` before anything else runs. This wipes logs
+///     left by pre-#186 builds, which leaked received-message plaintext here
+///     on every inbound message; without a purge that plaintext stays in the
+///     app container indefinitely.
+///   * Appends are capped at `maxLogFileBytes`; exceeding the cap rotates the
+///     current file to `diag.log.1` (replacing any previous one) so a
+///     long-running session can never grow the log without bound.
 enum DiagLog {
+    /// Maximum size of a single diag log file before rotation (5 MB).
+    static let maxLogFileBytes: Int = 5 * 1024 * 1024
+
+    #if DEBUG
+    /// Test seam: lower the cap so rotation is exercisable without writing 5 MB.
+    static var maxLogFileBytesOverride: Int?
+    #endif
+
+    /// Serializes appends/rotations/purges. The pre-existing append path raced
+    /// across concurrent callers (no lock); rotation makes that race visible
+    /// (rename under an open handle), so the lock is now required, not optional.
+    private static let lock = NSLock()
+
     private static let fileURL: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return docs.appendingPathComponent("diag.log")
     }()
 
+    private static var rotatedFileURL: URL {
+        URL(fileURLWithPath: fileURL.path + ".1")
+    }
+
+    private static var capBytes: Int {
+        #if DEBUG
+        return maxLogFileBytesOverride ?? maxLogFileBytes
+        #else
+        return maxLogFileBytes
+        #endif
+    }
+
+    /// Delete the diagnostic logs at launch. Called once from `ColumbaApp.init()`
+    /// before Python boot or any other launch work so the first line of the new
+    /// session lands in a fresh file and any pre-fix leaked plaintext from prior
+    /// builds is gone before the device could ever be extracted again.
+    ///
+    /// Failures are NOT silent: if `removeItem` is blocked (file protection,
+    /// filesystem error), we fall back to in-place truncation - which works
+    /// under `completeUntilFirstUserAuthentication` after first unlock even
+    /// when unlink is refused - and if that also fails we log the failure
+    /// (file name + error domain/code only, no paths or content) and return
+    /// false so the caller can schedule a retry.
+    ///
+    /// - Returns: true when no diag log file survives with content.
+    @discardableResult
+    static func purgeForNewLaunch() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        var allClean = true
+        for (url, name) in [(fileURL, "diag.log"), (rotatedFileURL, "diag.log.1")] {
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                // Unlink blocked: try truncating in place before giving up.
+                if truncateInPlace(url) { continue }
+                let nsError = error as NSError
+                NSLog("[DIAGLOG] purge failed for %@ (domain=%@ code=%d)",
+                      name, nsError.domain, nsError.code)
+                allClean = false
+            }
+        }
+        return allClean
+    }
+
+    /// One-shot retry path for a failed launch purge: attempts again at
+    /// +30s and +120s from launch (by which time a locked-at-boot device
+    /// has almost certainly seen its first unlock, which is what unblocks
+    /// deletion/truncation of these files). Delays are ABSOLUTE offsets
+    /// from launch: the second sleep is the delta (90s), not a fresh 120s.
+    /// Logs the outcome of each retry.
+    static func schedulePurgeRetryIfNeeded(initiallyClean cleanAtLaunch: Bool) {
+        guard !cleanAtLaunch else { return }
+        Task.detached(priority: .utility) {
+            var elapsed: UInt64 = 0
+            for targetOffset: UInt64 in [30, 120] {
+                let delta = targetOffset - elapsed
+                try? await Task.sleep(nanoseconds: delta * 1_000_000_000)
+                elapsed = targetOffset
+                if purgeForNewLaunch() {
+                    NSLog("[DIAGLOG] purge retry at +\(targetOffset)s succeeded")
+                    return
+                }
+                NSLog("[DIAGLOG] purge retry at +\(targetOffset)s failed")
+            }
+        }
+    }
+
+    /// Zero the file's contents without unlinking it. Works when the file is
+    /// writable but unlink is refused. Returns true only when the file is
+    /// verifiably empty afterwards.
+    private static func truncateInPlace(_ url: URL) -> Bool {
+        guard let fh = try? FileHandle(forWritingTo: url) else { return false }
+        defer { try? fh.close() }
+        do {
+            try fh.truncate(atOffset: 0)
+        } catch {
+            return false
+        }
+        let size = (try? Data(contentsOf: url).count) ?? -1
+        return size == 0
+    }
+
+    #if DEBUG
+    /// Test seam for the unlink-blocked fallback path.
+    static func truncateInPlaceForTesting(_ url: URL) -> Bool {
+        truncateInPlace(url)
+    }
+    #endif
+
     static func log(_ message: String) {
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)\n"
         NSLog("%@", message) // Also to ASL for USB capture
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                if let fh = try? FileHandle(forWritingTo: fileURL) {
-                    fh.seekToEndOfFile()
-                    fh.write(data)
-                    fh.closeFile()
+        guard let data = line.data(using: .utf8) else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            if let fh = try? FileHandle(forWritingTo: fileURL) {
+                let endOffset = fh.seekToEndOfFile()
+                fh.write(data)
+                let newSize = endOffset + UInt64(data.count)
+                fh.closeFile()
+                if Int(newSize) > capBytes {
+                    rotateLocked()
                 }
-            } else {
-                try? data.write(to: fileURL)
             }
+        } else {
+            try? data.write(to: fileURL)
         }
+    }
+
+    /// Rotate the current log to `diag.log.1`, replacing any previous rotated
+    /// file. Caller must hold `lock`.
+    private static func rotateLocked() {
+        try? FileManager.default.removeItem(at: rotatedFileURL)
+        try? FileManager.default.moveItem(at: fileURL, to: rotatedFileURL)
     }
 
     #if COLUMBA_RUNTIME_MODEL_B
