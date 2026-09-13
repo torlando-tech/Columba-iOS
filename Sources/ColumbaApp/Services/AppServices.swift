@@ -534,6 +534,13 @@ public final class AppServices {
     /// (announce listening, opportunistic LXMF send/receive) through this.
     public private(set) var backend: (any RnsBackend)?
 
+    /// Bumped on every `backend` reassignment (start and teardown). Lets an
+    /// async operation that captured a backend reference detect that the
+    /// backend was torn down / replaced while it was suspended, so it does not
+    /// apply changes through a stale handle. (Always-compiled: the re-adopt /
+    /// start-failure sites are shared by both runtime flavors.)
+    private var backendGeneration = 0
+
     /// Generation-bound retain on the process-global activity monitor. Each
     /// active AppServices instance holds one lease; only the last release stops
     /// instrumentation.
@@ -676,11 +683,6 @@ public final class AppServices {
     /// returns from `await probe()` can detect it is no longer current and
     /// drop its result instead of overwriting the live health state.
     private var localNetworkProbeGeneration = 0
-    /// Bumped on every `backend` reassignment (start and teardown). Lets an
-    /// async operation that captured a backend reference detect that the
-    /// backend was torn down / replaced while it was suspended, so it does not
-    /// apply changes through a stale handle.
-    private var backendGeneration = 0
     /// Set once the probe has run for this backend start. We probe at most
     /// once per backend start: re-probing a denial re-shows nothing (the user's
     /// Open-Settings action is the recovery), and a prior grant makes a second
