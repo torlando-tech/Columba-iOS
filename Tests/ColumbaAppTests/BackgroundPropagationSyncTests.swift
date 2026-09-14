@@ -143,7 +143,7 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         let summary = BackgroundRefreshDiagnosticFormatter.pendingRequests(
             [
                 .init(
-                    identifier: BackgroundPropagationRefreshScheduler.taskIdentifier,
+                    identifier: BackgroundPropagationTaskScheduler.refreshTaskIdentifier,
                     earliestBeginDate: Date(timeIntervalSince1970: 1_722_240_900)
                 )
             ]
@@ -153,6 +153,118 @@ final class BackgroundPropagationSyncTests: XCTestCase {
             summary,
             "count=1 [network.columba.Columba.sync earliest=2024-07-29T08:15:00Z]"
         )
+    }
+
+    func testTaskKindsDeclareDistinctPermittedIdentifiers() {
+        XCTAssertEqual(
+            BackgroundPropagationTaskKind.refresh.taskIdentifier,
+            "network.columba.Columba.sync"
+        )
+        XCTAssertEqual(
+            BackgroundPropagationTaskKind.processing.taskIdentifier,
+            "network.columba.Columba.sync-processing"
+        )
+        XCTAssertEqual(Set(BackgroundPropagationTaskKind.allCases.map(\.taskIdentifier)).count, 2)
+    }
+
+    func testSchedulePolicyAnchorsToLastCompletedSyncNotSubmitTime() {
+        let lastSync = Date(timeIntervalSince1970: 1_000_000)
+        let now = lastSync.addingTimeInterval(30 * 60)
+        let desired = BackgroundPropagationSchedulePolicy.desiredEarliest(
+            kind: .refresh,
+            userInterval: 3_600,
+            now: now,
+            lastSyncTime: lastSync
+        )
+
+        // A now-anchored submit would be one hour out; the last-run anchor
+        // keeps the target at lastSync + interval.
+        XCTAssertEqual(desired, lastSync.addingTimeInterval(3_600))
+        XCTAssertLessThan(desired, now.addingTimeInterval(3_600))
+    }
+
+    func testSchedulePolicyStaysNearTermWhenNoSyncEverCompleted() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let desired = BackgroundPropagationSchedulePolicy.desiredEarliest(
+            kind: .processing,
+            userInterval: 3_600,
+            now: now,
+            lastSyncTime: nil
+        )
+
+        XCTAssertEqual(desired, now.addingTimeInterval(60))
+    }
+
+    func testProcessingIntervalIsNeverShorterThanFiveMinutes() {
+        XCTAssertEqual(BackgroundPropagationSchedulePolicy.processingInterval(userInterval: 60), 5 * 60)
+        XCTAssertEqual(BackgroundPropagationSchedulePolicy.processingInterval(userInterval: 30 * 60), 30 * 60)
+        XCTAssertGreaterThanOrEqual(
+            BackgroundPropagationSchedulePolicy.processingInterval(userInterval: 3_600),
+            BackgroundPropagationSchedulePolicy.refreshInterval(userInterval: 3_600)
+        )
+    }
+
+    func testShouldSkipSubmitKeepsEarlierOrOverduePendingRequests() {
+        let desired = Date(timeIntervalSince1970: 1_000_000)
+
+        // A nil earliestBeginDate can start any time; replacing it only moves it later.
+        XCTAssertTrue(
+            BackgroundPropagationSchedulePolicy.shouldSkipSubmit(
+                existingEarliest: nil,
+                desiredEarliest: desired
+            )
+        )
+        // Overdue requests are what iOS is already waiting on.
+        XCTAssertTrue(
+            BackgroundPropagationSchedulePolicy.shouldSkipSubmit(
+                existingEarliest: desired.addingTimeInterval(-60),
+                desiredEarliest: desired
+            )
+        )
+        // Within the 5s tolerance, the difference is insignificant.
+        XCTAssertTrue(
+            BackgroundPropagationSchedulePolicy.shouldSkipSubmit(
+                existingEarliest: desired.addingTimeInterval(4),
+                desiredEarliest: desired
+            )
+        )
+        // A pending request that starts later must be replaced with the earlier one.
+        XCTAssertFalse(
+            BackgroundPropagationSchedulePolicy.shouldSkipSubmit(
+                existingEarliest: desired.addingTimeInterval(60),
+                desiredEarliest: desired
+            )
+        )
+    }
+
+    func testCoordinatorCompletesEachDeliveredTaskKindIndependently() async {
+        let coordinator = BackgroundTaskCoordinator()
+        let refreshTask = FakeBackgroundTaskHandle()
+        let processingTask = FakeBackgroundTaskHandle()
+        let gate = AsyncGate()
+        var handlerRuns = 0
+
+        coordinator.receive(refreshTask)
+        coordinator.receive(processingTask)
+        XCTAssertTrue(refreshTask.completions.isEmpty)
+        XCTAssertTrue(processingTask.completions.isEmpty)
+
+        coordinator.installHandler {
+            handlerRuns += 1
+            if handlerRuns == 1 {
+                // Hold the first workflow so the second delivery must be
+                // tracked independently, not merged into it.
+                await gate.wait()
+            }
+            return true
+        }
+        gate.open()
+        await refreshTask.waitForCompletion()
+        await processingTask.waitForCompletion()
+
+        XCTAssertEqual(handlerRuns, 2)
+        XCTAssertEqual(refreshTask.completions, [true])
+        XCTAssertEqual(processingTask.completions, [true])
     }
 
     func testRuntimeDiagnosticsIncludeSchedulingConditions() {
@@ -191,14 +303,16 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertFalse(IncomingMessageHandler.isUserNotifiableMessage(cease))
     }
 
-    func testBuiltAppDeclaresBackgroundRefreshRequirements() throws {
+    func testBuiltAppDeclaresBackgroundTaskRequirements() throws {
         let modes = try XCTUnwrap(Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])
         let identifiers = try XCTUnwrap(
             Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String]
         )
 
         XCTAssertTrue(modes.contains("fetch"))
-        XCTAssertTrue(identifiers.contains(BackgroundPropagationRefreshScheduler.taskIdentifier))
+        XCTAssertTrue(modes.contains("processing"))
+        XCTAssertTrue(identifiers.contains(BackgroundPropagationTaskScheduler.refreshTaskIdentifier))
+        XCTAssertTrue(identifiers.contains(BackgroundPropagationTaskScheduler.processingTaskIdentifier))
     }
 
     func testHostEventGateKeepsNormalDrainOutsideBackgroundTransaction() async {
@@ -331,8 +445,8 @@ final class BackgroundPropagationSyncTests: XCTestCase {
     }
 
     func testTaskReceivedBeforeHandlerRunsAfterHandlerInstallation() async {
-        let coordinator = BackgroundRefreshTaskCoordinator()
-        let task = FakeBackgroundRefreshTask()
+        let coordinator = BackgroundTaskCoordinator()
+        let task = FakeBackgroundTaskHandle()
 
         coordinator.receive(task)
         XCTAssertTrue(task.completions.isEmpty)
@@ -344,8 +458,8 @@ final class BackgroundPropagationSyncTests: XCTestCase {
     }
 
     func testExpirationWaitsForOperationCleanupThenCompletesOnceAndSuppressesLateSuccess() async {
-        let coordinator = BackgroundRefreshTaskCoordinator()
-        let task = FakeBackgroundRefreshTask()
+        let coordinator = BackgroundTaskCoordinator()
+        let task = FakeBackgroundTaskHandle()
         let gate = AsyncGate()
 
         coordinator.installHandler {
@@ -401,7 +515,7 @@ private actor EventRecorder {
     }
 }
 
-private final class FakeBackgroundRefreshTask: BackgroundRefreshTaskHandle {
+private final class FakeBackgroundTaskHandle: BackgroundTaskHandle {
     var expirationHandler: (() -> Void)?
     private(set) var completions: [Bool] = []
     private var continuation: CheckedContinuation<Void, Never>?

@@ -68,7 +68,7 @@ struct ColumbaApp: App {
         // Register before starting embedded Python or any other potentially slow
         // launch work. BGTaskScheduler requires every launch handler to be
         // registered during application launch, including cold background launch.
-        BackgroundPropagationRefreshScheduler.register()
+        BackgroundPropagationTaskScheduler.register()
         ColumbaApplicationRuntime.shared.installBackgroundHandler()
         #endif
 
@@ -518,9 +518,16 @@ final class ColumbaApplicationRuntime {
         #if os(iOS) && COLUMBA_RUNTIME_PYTHON
         guard !backgroundHandlerInstalled else { return }
         backgroundHandlerInstalled = true
-        BackgroundRefreshTaskCoordinator.shared.installHandler { [weak self] in
+        BackgroundTaskCoordinator.shared.installHandler { [weak self] in
             guard let self else { return false }
-            return await self.performBackgroundPropagationSync()
+            let success = await self.performBackgroundPropagationSync()
+            // Anchor the next schedule to a COMPLETED run. Both task kinds
+            // (refresh and processing) funnel through this one handler, so the
+            // anchor is shared: a processing win overnight advances the next
+            // refresh no earlier than the interval, and a failed run leaves
+            // the next lane near-term.
+            BackgroundPropagationTaskScheduler.markSyncCompleted(success: success)
+            return success
         }
         #endif
     }
@@ -545,7 +552,7 @@ final class ColumbaApplicationRuntime {
     /// path rather than starting a competing identity/router initialization.
     @MainActor
     private func performBackgroundPropagationSync() async -> Bool {
-        BackgroundPropagationRefreshScheduler.logRuntime(context: "workflow-entered")
+        BackgroundPropagationTaskScheduler.logRuntime(context: "workflow-entered")
         DiagLog.log("[BG-SYNC] workflow entered initialized=\(isInitialized)")
         guard await settingsRepository.getPeriodicSyncEnabled() else {
             DiagLog.log("[BG-SYNC] skipped: periodic sync disabled")
@@ -651,8 +658,8 @@ final class ColumbaApplicationRuntime {
     func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
         #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-        BackgroundPropagationRefreshScheduler.logRuntime(context: "initialize-services")
-        BackgroundPropagationRefreshScheduler.logPendingRequests(context: "initialize-services")
+        BackgroundPropagationTaskScheduler.logRuntime(context: "initialize-services")
+        BackgroundPropagationTaskScheduler.logPendingRequests(context: "initialize-services")
         #endif
 
         #if COLUMBA_RUNTIME_MODEL_B
@@ -917,7 +924,7 @@ final class ColumbaApplicationRuntime {
             // Submit after startup as well as on scene/settings transitions. This
             // survives the startup diagnostic-log reset and ensures the first
             // request is based on fully restored persisted settings.
-            BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+            BackgroundPropagationTaskScheduler.scheduleFromCurrentSettings()
             #endif
 
             // DEBUG: Auto-trigger propagation sync on launch for testing
@@ -1088,8 +1095,8 @@ struct RootView: View {
             let context = phaseValue == .active
                 ? "scene-active"
                 : (phaseValue == .background ? "scene-background" : "scene-inactive")
-            BackgroundPropagationRefreshScheduler.logRuntime(context: context)
-            BackgroundPropagationRefreshScheduler.logPendingRequests(context: context)
+            BackgroundPropagationTaskScheduler.logRuntime(context: context)
+            BackgroundPropagationTaskScheduler.logPendingRequests(context: context)
             #endif
             if phaseValue == .active {
                 if let repository = messageRepository {
@@ -1113,7 +1120,7 @@ struct RootView: View {
             #if os(iOS)
             if newPhase == .background {
                 #if COLUMBA_RUNTIME_PYTHON
-                BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+                BackgroundPropagationTaskScheduler.scheduleFromCurrentSettings()
                 #endif
                 // Flush RNS's path table + known destinations to disk now —
                 // iOS won't run RNS's clean-exit persist, so without this a
@@ -1125,7 +1132,7 @@ struct RootView: View {
         }
         #if os(iOS) && COLUMBA_RUNTIME_PYTHON
         .task {
-            BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+            BackgroundPropagationTaskScheduler.scheduleFromCurrentSettings()
         }
         #endif
     }

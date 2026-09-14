@@ -22,6 +22,7 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>network.columba.Columba.sync</string>
+		<string>network.columba.Columba.sync-processing</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
@@ -83,6 +84,7 @@
 		<string>bluetooth-peripheral</string>
 		<string>fetch</string>
 		<string>location</string>
+		<string>processing</string>
 		<string>voip</string>
 	</array>
 	<key>UILaunchScreen</key>

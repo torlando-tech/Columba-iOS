@@ -117,7 +117,7 @@ def strip_swift_noncode(source: str) -> str:
 class BackgroundRefreshWiringContractTests(unittest.TestCase):
     def test_registration_precedes_embedded_python_start(self):
         source = (APP / "App" / "ColumbaApp.swift").read_text()
-        registration = source.index("BackgroundPropagationRefreshScheduler.register()")
+        registration = source.index("BackgroundPropagationTaskScheduler.register()")
         python_start = source.index("PythonRuntime.shared.start()")
         self.assertLess(registration, python_start)
 
@@ -126,7 +126,67 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         app_init = source[source.index("struct ColumbaApp: App"):source.index("// MARK: - App Body")]
         root_view = source[source.index("struct RootView: View"):]
         self.assertIn("ColumbaApplicationRuntime.shared.installBackgroundHandler()", app_init)
-        self.assertNotIn("BackgroundRefreshTaskCoordinator.shared.installHandler", root_view)
+        self.assertNotIn("BackgroundTaskCoordinator.shared.installHandler", root_view)
+
+    def test_both_task_kinds_register_and_deliver_into_one_coordinator(self):
+        services = strip_swift_noncode(
+            (APP / "Services" / "BackgroundPropagationSync.swift").read_text()
+        )
+        scheduler = services[
+            services.index("enum BackgroundPropagationTaskScheduler") :
+        ]
+        self.assertIn("BGAppRefreshTaskRequest(identifier: kind.taskIdentifier)", scheduler)
+        self.assertIn("BGProcessingTaskRequest(identifier: kind.taskIdentifier)", scheduler)
+        self.assertIn("task as? BGAppRefreshTask", scheduler)
+        self.assertIn("task as? BGProcessingTask", scheduler)
+        self.assertEqual(scheduler.count("BackgroundTaskCoordinator.shared.receive"), 1)
+
+    def test_processing_request_knobs_allow_off_charger_and_offline_wakes(self):
+        services = strip_swift_noncode(
+            (APP / "Services" / "BackgroundPropagationSync.swift").read_text()
+        )
+        scheduler = services[services.index("enum BackgroundPropagationTaskScheduler"):]
+        self.assertIn("request.requiresExternalPower = false", scheduler)
+        self.assertIn("request.requiresNetworkConnectivity = false", scheduler)
+
+    def test_both_task_kinds_share_one_sync_handler_and_anchor(self):
+        app = (APP / "App" / "ColumbaApp.swift").read_text()
+        runtime = app[app.index("final class ColumbaApplicationRuntime"):]
+        handler_install = runtime[
+            runtime.index("func installBackgroundHandler") :
+            runtime.index("func resetAfterIdentitySwitch")
+        ]
+        self.assertIn("BackgroundTaskCoordinator.shared.installHandler", handler_install)
+        self.assertIn("BackgroundPropagationTaskScheduler.markSyncCompleted", handler_install)
+        self.assertIn("performBackgroundPropagationSync()", handler_install)
+
+    def test_scheduling_is_anchored_to_last_completed_sync(self):
+        raw = (APP / "Services" / "BackgroundPropagationSync.swift").read_text()
+        services = strip_swift_noncode(raw)
+        policy = services[
+            services.index("enum BackgroundPropagationSchedulePolicy") :
+            services.index("struct PendingBackgroundRefreshRequestDiagnostic")
+        ]
+        self.assertIn("lastSyncTime.addingTimeInterval(interval)", policy)
+        self.assertIn("max(lastSyncTime.addingTimeInterval(interval), floor)", policy)
+
+        scheduler = services[services.index("enum BackgroundPropagationTaskScheduler"):]
+        self.assertIn("for kind in BackgroundPropagationTaskKind.allCases", scheduler)
+        self.assertIn("BackgroundPropagationSchedulePolicy.desiredEarliest(", scheduler)
+        self.assertIn("lastSyncTime: lastSyncTime", scheduler)
+        self.assertIn("getPendingTaskRequests", scheduler)
+        self.assertIn("markSyncCompleted", scheduler)
+        self.assertNotIn(
+            "cancel(taskRequestWithIdentifier: taskIdentifier)\n        guard let delay",
+            scheduler,
+        )
+        # The preserve-branch log line lives in a string literal, so assert it
+        # on the raw source next to the preserve logic.
+        raw_scheduler = raw[raw.index("enum BackgroundPropagationTaskScheduler"):]
+        self.assertIn("preserving existing pending request", raw_scheduler)
+        # Post-reboot / post-OS-upgrade recovery must force a fresh submit.
+        self.assertIn("refreshRecoveryState", scheduler)
+        self.assertIn("systemUptime", scheduler)
 
     def test_embedded_backend_start_failure_propagates_to_readiness(self):
         services = strip_swift_noncode(
@@ -211,7 +271,7 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         source = (APP / "Services" / "BackgroundPropagationSync.swift").read_text()
         schedule = source[
             source.index("static func scheduleFromCurrentSettings") :
-            source.index("static func logRuntime")
+            source.index("static func markSyncCompleted")
         ]
         self.assertIn("getPendingTaskRequests", schedule)
         self.assertIn("preserving existing pending request", schedule)
@@ -227,11 +287,13 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         self.assertIn("synchronizeBadgeWithDurableUnreadCount", app)
         self.assertIn("synchronizeBadgeWithDurableUnreadCount", messaging)
 
-    def test_built_source_declares_refresh_identifier_and_fetch_mode(self):
+    def test_built_source_declares_both_task_identifiers_and_background_modes(self):
         plist = (APP / "Resources" / "Info.plist").read_text()
         self.assertIn("BGTaskSchedulerPermittedIdentifiers", plist)
         self.assertIn("network.columba.Columba.sync", plist)
+        self.assertIn("network.columba.Columba.sync-processing", plist)
         self.assertIn("<string>fetch</string>", plist)
+        self.assertIn("<string>processing</string>", plist)
 
     def test_background_sync_uses_immediate_local_notification_and_badge(self):
         notifications = (APP / "Services" / "NotificationService.swift").read_text()
