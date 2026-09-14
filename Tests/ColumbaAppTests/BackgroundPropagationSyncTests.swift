@@ -195,10 +195,21 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertEqual(desired, now.addingTimeInterval(60))
     }
 
-    func testProcessingIntervalIsNeverShorterThanFiveMinutes() {
-        XCTAssertEqual(BackgroundPropagationSchedulePolicy.processingInterval(userInterval: 60), 5 * 60)
+    func testBothLanesUseTheSameUserConfiguredInterval() {
+        // Both task lanes must honor the user's chosen cadence (floored at
+        // the 15-minute platform minimum). The processing lane is extra grant
+        // opportunity, not a second, faster schedule.
+        XCTAssertEqual(
+            BackgroundPropagationSchedulePolicy.processingInterval(userInterval: 60),
+            BackgroundPropagationSchedulePolicy.refreshInterval(userInterval: 60)
+        )
+        XCTAssertEqual(BackgroundPropagationSchedulePolicy.processingInterval(userInterval: 60), 15 * 60)
+        XCTAssertEqual(
+            BackgroundPropagationSchedulePolicy.processingInterval(userInterval: 30 * 60),
+            BackgroundPropagationSchedulePolicy.refreshInterval(userInterval: 30 * 60)
+        )
         XCTAssertEqual(BackgroundPropagationSchedulePolicy.processingInterval(userInterval: 30 * 60), 30 * 60)
-        XCTAssertGreaterThanOrEqual(
+        XCTAssertEqual(
             BackgroundPropagationSchedulePolicy.processingInterval(userInterval: 3_600),
             BackgroundPropagationSchedulePolicy.refreshInterval(userInterval: 3_600)
         )

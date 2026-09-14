@@ -28,8 +28,10 @@ private let backgroundPropagationLogger = Logger(
     category: "BackgroundPropagationSync"
 )
 
-/// The two system-scheduled task kinds that both trigger the same
-/// propagation sync workflow.
+/// Two system-scheduled task kinds that both trigger the SAME sync workflow.
+/// Both lanes use the user-configured cadence: registering both multiplies
+/// the grant opportunities (daytime active refresh vs charging/overnight
+/// processing) without diverging the sync interval.
 enum BackgroundPropagationTaskKind: String, CaseIterable, Sendable {
     case refresh
     case processing
@@ -51,23 +53,27 @@ enum BackgroundPropagationSchedulePolicy {
     /// lower bound, so this only prevents a past-due target from being
     /// requested as "run immediately".
     static let minimumDelay: TimeInterval = 60
-    /// The processing lane is the longer-lived one. It never goes shorter
-    /// than five minutes and never shorter than the refresh lane, so the two
-    /// lanes do not collapse into the same cadence.
-    static let processingMinimumInterval: TimeInterval = 5 * 60
     /// Differences smaller than this are ignored when deciding whether an
     /// existing pending request can be kept instead of replaced.
     static let replacementTolerance: TimeInterval = 5
 
-    static func refreshInterval(userInterval: TimeInterval) -> TimeInterval {
+    /// The user-configured cadence for BOTH task lanes, floored at the
+    /// platform minimum. The lanes must never diverge from the interval the
+    /// user chose - their value is extra grant opportunities, not a second
+    /// schedule.
+    static func interval(userInterval: TimeInterval) -> TimeInterval {
         let requested = userInterval.isFinite && userInterval > 0
             ? userInterval
             : defaultInterval
         return max(minimumInterval, requested)
     }
 
+    static func refreshInterval(userInterval: TimeInterval) -> TimeInterval {
+        interval(userInterval: userInterval)
+    }
+
     static func processingInterval(userInterval: TimeInterval) -> TimeInterval {
-        max(processingMinimumInterval, refreshInterval(userInterval: userInterval))
+        interval(userInterval: userInterval)
     }
 
     /// Kept for the existing unit tests and settings diagnostics.
@@ -89,13 +95,7 @@ enum BackgroundPropagationSchedulePolicy {
         now: Date,
         lastSyncTime: Date?
     ) -> Date {
-        let interval: TimeInterval
-        switch kind {
-        case .refresh:
-            interval = refreshInterval(userInterval: userInterval)
-        case .processing:
-            interval = processingInterval(userInterval: userInterval)
-        }
+        let interval = Self.interval(userInterval: userInterval)
         let floor = now.addingTimeInterval(minimumDelay)
         guard let lastSyncTime else { return floor }
         return max(lastSyncTime.addingTimeInterval(interval), floor)
