@@ -41,6 +41,12 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_reticulum._tcp</string>
+		<!-- Probe-only type for the Local Network permission trigger
+		     (LocalNetworkProbe.swift). Not a real protocol service: the probe
+		     browses + briefly publishes this type to make iOS reliably raise
+		     the Local Network prompt and to detect a grant/denial. Declaring
+		     it here is what makes the prompt actually fire. -->
+		<string>_columba-lnp._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Columba uses the local network for peer-to-peer communication with nearby Reticulum devices.</string>

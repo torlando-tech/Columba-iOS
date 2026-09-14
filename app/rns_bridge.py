@@ -2124,6 +2124,14 @@ def status() -> dict[str, Any]:
                 # their friendly name didn't start with AutoInterfacePeer /
                 # BLEPeer, so the user couldn't tell which interfaces were
                 # auto-connected from discovery (issue #193 follow-up).
+                # AutoInterface: `online` is True even when ZERO system
+                # interfaces were adopted at construction (a cold start before
+                # link-local IPv6 is ready) and it stays that way forever -
+                # RNS never re-scans. `adopted_count` is the real liveness
+                # signal: 0 means the interface has no sockets and cannot
+                # discover peers until it is re-created. Non-Auto interfaces
+                # report None (Swift treats that as "no re-adopt signal").
+                adopted = getattr(iface, "adopted_interfaces", None)
                 iface_info.append({
                     "section_name": section_name,
                     "name": str(iface),
@@ -2132,6 +2140,7 @@ def status() -> dict[str, Any]:
                     "rx_bytes": getattr(iface, "rxb", 0),
                     "tx_bytes": getattr(iface, "txb", 0),
                     "is_autoconnect": bool(getattr(iface, "autoconnect_hash", None)),
+                    "adopted_count": (len(adopted) if isinstance(adopted, dict) else None),
                 })
             out["interfaces"] = iface_info
         except Exception as e:

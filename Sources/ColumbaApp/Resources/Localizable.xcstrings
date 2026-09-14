@@ -1,6 +1,46 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Local Network access is off": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local Network access is off"
+          }
+        }
+      }
+    },
+    "Columba can't find nearby peers until Local Network access is allowed. This setting can be changed in iOS Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Columba can't find nearby peers until Local Network access is allowed. This setting can be changed in iOS Settings."
+          }
+        }
+      }
+    },
+    "Waiting for a network connection": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for a network connection"
+          }
+        }
+      }
+    },
+    "Auto Discovery is ready and will connect as soon as a Wi-Fi or cellular connection is available.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto Discovery is ready and will connect as soon as a Wi-Fi or cellular connection is available."
+          }
+        }
+      }
+    },
     "Common causes include an unavailable route, an offline recipient, or a delivery timeout. Check your interfaces and try again.": {
       "localizations": {
         "en": {
