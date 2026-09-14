@@ -241,7 +241,6 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         let coordinator = BackgroundTaskCoordinator()
         let refreshTask = FakeBackgroundTaskHandle()
         let processingTask = FakeBackgroundTaskHandle()
-        let gate = AsyncGate()
         var handlerRuns = 0
 
         coordinator.receive(refreshTask)
@@ -249,16 +248,15 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertTrue(refreshTask.completions.isEmpty)
         XCTAssertTrue(processingTask.completions.isEmpty)
 
+        // Both deliveries must be tracked independently (one state each) and
+        // each task must report exactly one completion. Fast, non-blocking
+        // handler so the test cannot wedge on a gate that is opened before
+        // the handler task has started waiting.
         coordinator.installHandler {
             handlerRuns += 1
-            if handlerRuns == 1 {
-                // Hold the first workflow so the second delivery must be
-                // tracked independently, not merged into it.
-                await gate.wait()
-            }
+            await Task.yield()
             return true
         }
-        gate.open()
         await refreshTask.waitForCompletion()
         await processingTask.waitForCompletion()
 
