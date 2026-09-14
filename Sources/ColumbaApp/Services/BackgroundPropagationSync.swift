@@ -399,7 +399,7 @@ enum BackgroundPropagationTaskScheduler {
         logPendingRequests(context: "after-registration")
     }
 
-    private static func deliver(_ task: BGTask, kind: BackgroundPropagationTaskKind) {
+    private static func deliver(task: BGTask, kind: BackgroundPropagationTaskKind) {
         let launchOwnedTask = LaunchOwnedBackgroundTask(task: task)
         backgroundPropagationLogger.info("System background \(kind.rawValue) task launch handler entered")
         Task { @MainActor in
@@ -441,20 +441,29 @@ enum BackgroundPropagationTaskScheduler {
             return
         }
         schedulingReconciliationActive = true
+
+        // Resolve every shared-mutable input BEFORE entering the @Sendable
+        // scheduler callback: UserDefaults is not Sendable and must not be
+        // captured there.
+        let now = Date()
+        let lastSyncTime = (defaults.object(forKey: lastSyncKey) as? Double)
+            .map { Date(timeIntervalSince1970: $0) }
+        let recoveryForced = refreshRecoveryState(defaults: defaults)
+        let forced = force || recoveryForced
+        let desiredByKind = Dictionary(uniqueKeysWithValues: BackgroundPropagationTaskKind.allCases.map { kind in
+            (kind, BackgroundPropagationSchedulePolicy.desiredEarliest(
+                kind: kind,
+                userInterval: userInterval,
+                now: now,
+                lastSyncTime: lastSyncTime
+            ))
+        })
+
         BGTaskScheduler.shared.getPendingTaskRequests { requests in
             Task { @MainActor in
                 defer { schedulingReconciliationActive = false }
-                let now = Date()
-                let forced = force || refreshRecoveryState(defaults: defaults)
-                let lastSyncTime = (defaults.object(forKey: lastSyncKey) as? Double)
-                    .map { Date(timeIntervalSince1970: $0) }
                 for kind in BackgroundPropagationTaskKind.allCases {
-                    let desired = BackgroundPropagationSchedulePolicy.desiredEarliest(
-                        kind: kind,
-                        userInterval: userInterval,
-                        now: now,
-                        lastSyncTime: lastSyncTime
-                    )
+                    let desired = desiredByKind[kind]!
                     let existing = requests.first { $0.identifier == kind.taskIdentifier }
                     if let existing,
                        !forced,
