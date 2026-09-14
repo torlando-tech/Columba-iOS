@@ -790,7 +790,7 @@ public final class SettingsViewModel {
         await settingsRepository.setPeriodicSyncEnabled(autoRetrieveEnabled)
         await settingsRepository.setSyncInterval(autoRetrieveInterval)
         #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-        BackgroundPropagationRefreshScheduler.scheduleFromCurrentSettings()
+        BackgroundPropagationTaskScheduler.scheduleFromCurrentSettings()
         #endif
         await appServices.applyIncomingMessageSizeLimitFromSettings()
 
