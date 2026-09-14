@@ -195,6 +195,38 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertEqual(desired, now.addingTimeInterval(60))
     }
 
+    /// Regression guard for the stale-timestamp cadence bug (Greptile P1,
+    /// PR #206). When a due task re-arms using the PREVIOUS run's completion
+    /// time, `desiredEarliest` returns a near-term target (the floor), NOT
+    /// the user's interval. This is exactly why the re-arm must be deferred to
+    /// after the anchor is advanced by `markSyncCompleted` - re-arming from
+    /// `deliver` with this stale anchor would let the OS grant the next run
+    /// almost immediately instead of after the configured cadence.
+    func testSchedulePolicyStaysNearTermWhenRearmedFromStalePreviousAnchor() {
+        // The lane's pending request targets now+interval; the OS grants it
+        // on time, and the task is delivered. The completion timestamp is
+        // still the PREVIOUS run's (one full interval in the past).
+        let previousCompletion = Date(timeIntervalSince1970: 1_000_000)
+        let now = previousCompletion.addingTimeInterval(3_600)
+        let interval: TimeInterval = 3_600
+
+        let desired = BackgroundPropagationSchedulePolicy.desiredEarliest(
+            kind: .refresh,
+            userInterval: interval,
+            now: now,
+            lastSyncTime: previousCompletion
+        )
+
+        // A correct (post-completion) re-arm would be one interval out...
+        let correctTarget = now.addingTimeInterval(interval)
+        // ...but the stale previous anchor collapses to the near-term floor.
+        XCTAssertEqual(desired, now.addingTimeInterval(60))
+        XCTAssertLessThan(
+            desired.timeIntervalSince(correctTarget),
+            -interval / 2
+        )
+    }
+
     func testBothLanesUseTheSameUserConfiguredInterval() {
         // Both task lanes must honor the user's chosen cadence (floored at
         // the 15-minute platform minimum). The processing lane is extra grant

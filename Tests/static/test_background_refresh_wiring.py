@@ -280,6 +280,32 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
             schedule,
         )
 
+    def test_rearm_deferred_to_completion_not_delivery(self):
+        # Regression guard (Greptile P1, PR #206): re-arming the pending
+        # request from `deliver` captures the PREVIOUS run's completion
+        # timestamp, so a due task re-arms BOTH lanes to a near-term target
+        # and a later successful sync never reconciles them - allowing the
+        # OS to grant the next run much sooner than the configured cadence.
+        # The re-arm must happen in `markSyncCompleted`, after the anchor is
+        # advanced, and with force so the other lane's near-term request is
+        # replaced rather than preserved.
+        services = (APP / "Services" / "BackgroundPropagationSync.swift").read_text()
+        scheduler = services[services.index("enum BackgroundPropagationTaskScheduler"):]
+
+        deliver = scheduler[
+            scheduler.index("private static func deliver") :
+            scheduler.index("static func scheduleFromCurrentSettings")
+        ]
+        self.assertNotIn("scheduleFromCurrentSettings(", deliver)
+
+        anchor = "defaults.set(Date().timeIntervalSince1970, forKey: lastSyncKey)"
+        rearm = "scheduleFromCurrentSettings(force: true)"
+        self.assertIn(anchor, scheduler)
+        self.assertIn(rearm, scheduler)
+        self.assertEqual(scheduler.count(rearm), 1)
+        # The anchor write must precede the post-completion re-arm.
+        self.assertLess(scheduler.index(anchor), scheduler.index(rearm))
+
     def test_badge_is_not_cleared_while_durable_unread_rows_remain(self):
         app = (APP / "App" / "ColumbaApp.swift").read_text()
         messaging = (APP / "ViewModels" / "MessagingViewModel.swift").read_text()

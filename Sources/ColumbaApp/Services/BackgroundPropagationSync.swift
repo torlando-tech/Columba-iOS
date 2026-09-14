@@ -399,20 +399,26 @@ enum BackgroundPropagationTaskScheduler {
         logPendingRequests(context: "after-registration")
     }
 
+    /// Hand the delivered system task to the coordinator so the shared sync
+    /// workflow runs. The pending-request reconciliation is deliberately NOT
+    /// done here: at delivery time the completion timestamp is still the
+    /// PREVIOUS run's, so re-arming now would anchor both lanes to a stale
+    /// (too-early) target. The re-arm happens in `markSyncCompleted`, after
+    /// the anchor has been advanced for this run.
     private static func deliver(task: BGTask, kind: BackgroundPropagationTaskKind) {
         let launchOwnedTask = LaunchOwnedBackgroundTask(task: task)
         backgroundPropagationLogger.info("System background \(kind.rawValue) task launch handler entered")
         Task { @MainActor in
             DiagLog.log("[BG-SYNC] system task delivered kind=\(kind.rawValue)")
             logRuntime(context: "task-delivered")
-            scheduleFromCurrentSettings()
             BackgroundTaskCoordinator.shared.receive(launchOwnedTask)
         }
     }
 
     /// Reconcile the pending request for BOTH task kinds from the persisted
-    /// user settings. Called after every task delivery, on scene transitions,
-    /// on settings changes, and after startup.
+    /// user settings. Called after a completed sync (`markSyncCompleted`), on
+    /// scene transitions, on settings changes, and after startup. Not called
+    /// from `deliver`: the completion anchor is stale until the run finishes.
     @MainActor
     static func scheduleFromCurrentSettings(force: Bool = false) {
         let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
@@ -483,15 +489,27 @@ enum BackgroundPropagationTaskScheduler {
         }
     }
 
-    /// Anchor the next schedule to this run. Called exactly once per system
-    /// grant (the coordinator hands the handler a single completion). Failed
-    /// runs do not move the anchor, so the next lane stays near-term.
+    /// Anchor the next schedule to this run, then re-arm BOTH lanes so the
+    /// pending request targets the just-advanced completion time. A
+    /// successful run moves the anchor forward, so the next grant no earlier
+    /// than `interval` from now; a failed run leaves the anchor in place so
+    /// the next lane stays near-term for a retry. This is the ONLY
+    /// task-driven re-arm: `deliver` must NOT reconcile, because at delivery
+    /// time the completion timestamp is still the previous run's and re-arming
+    /// there would anchor both lanes to a stale, too-early target.
     @MainActor
     static func markSyncCompleted(success: Bool) {
-        guard success else { return }
         let defaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
-        defaults.set(Date().timeIntervalSince1970, forKey: lastSyncKey)
-        DiagLog.log("[BG-SYNC] last completed sync anchored")
+        if success {
+            defaults.set(Date().timeIntervalSince1970, forKey: lastSyncKey)
+            DiagLog.log("[BG-SYNC] last completed sync anchored")
+        }
+        // Reconcile after the anchor write. `force: true` is required: the
+        // other lane's pending request may still hold a near-term target
+        // (e.g. it re-armed near-term while THIS lane's run was in flight),
+        // and `shouldSkipSubmit` would preserve that earlier target and let
+        // the OS grant a run much sooner than the configured cadence.
+        scheduleFromCurrentSettings(force: true)
     }
 
     /// Reboots and OS upgrades are observable one-off events: pending
