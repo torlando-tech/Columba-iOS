@@ -689,8 +689,10 @@ final class PythonRNodeBLESessionRegistry: @unchecked Sendable {
         let bridge = PythonRNodeBLEBridge(makeTransport: makeTransport)
         sessions[handle] = Session(physicalKey: physicalKey, bridge: bridge)
         claims[physicalKey] = handle
-        // A fresh session supersedes any prior failure for this device.
-        lastFailureByDevice[physicalKey] = nil
+        // Do NOT clear lastFailureByDevice here: the BLE connect is async and
+        // the failure may not have been re-detected yet. The persisted failure
+        // is cleared lazily in failureCode(deviceIdentifier:deviceName:) once
+        // the session reports CONNECTED.
         lock.unlock()
 
         guard bridge.connect(deviceName: name, deviceIdentifier: identifier) else {
@@ -763,7 +765,22 @@ final class PythonRNodeBLESessionRegistry: @unchecked Sendable {
         )
         lock.lock(); defer { lock.unlock() }
         if let handle = claims[key], let bridge = sessions[handle]?.bridge {
-            return bridge.failureCode()
+            // Prefer the live session's captured failure.
+            let live = bridge.failureCode()
+            if live != .none {
+                return live
+            }
+            // No live failure. If the session is already connected, the bond is
+            // healthy - clear the stale persisted failure now (lazy clear, in
+            // place of the open() clear which would race the async connect).
+            let (state, _) = bridge.snapshot()
+            if state == .connected {
+                lastFailureByDevice[key] = nil
+                return .none
+            }
+            // Still connecting (async): retain the persisted failure so the UI
+            // keeps showing Repair until the connect succeeds or re-fails.
+            return lastFailureByDevice[key] ?? .none
         }
         return lastFailureByDevice[key] ?? .none
     }
