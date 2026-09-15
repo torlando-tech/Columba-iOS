@@ -400,6 +400,11 @@ final class RuntimeFlavorTests: XCTestCase {
         // An AutoInterface (even alongside others) blocks it.
         XCTAssertTrue(AppServices.inProcessRestartBlockedByAutoInterface([autoInterfaceEntity()]))
         XCTAssertTrue(AppServices.inProcessRestartBlockedByAutoInterface([tcpClientEntity(), autoInterfaceEntity()]))
+        // The named version returns the display name of the blocking interface.
+        XCTAssertNil(AppServices.inProcessRestartBlockingInterfaceName([]))
+        XCTAssertNil(AppServices.inProcessRestartBlockingInterfaceName([tcpClientEntity(), rnodeEntity()]))
+        XCTAssertEqual(AppServices.inProcessRestartBlockingInterfaceName([autoInterfaceEntity()]), "Auto")
+        XCTAssertEqual(AppServices.inProcessRestartBlockingInterfaceName([tcpClientEntity(), autoInterfaceEntity()]), "Auto")
     }
     #endif
 }

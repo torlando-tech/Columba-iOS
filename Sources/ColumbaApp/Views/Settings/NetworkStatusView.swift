@@ -305,6 +305,16 @@ struct NetworkStatusView: View {
                         if let addr = info.peerAddress {
                             detailRow(label: "Peer Address", value: addr)
                         }
+                        if let rates = info.announceRates {
+                            detailRow(label: "Announce In", value: formatHz(rates.incomingHz))
+                            detailRow(label: "Announce Out", value: formatHz(rates.outgoingHz))
+                            if let target = rates.targetHz, target > 0 {
+                                detailRow(label: "Rate Target", value: formatHz(Double(target)))
+                            }
+                            if rates.heldCount > 0 {
+                                detailRow(label: "Held Announces", value: String(rates.heldCount))
+                            }
+                        }
                     }
                     .padding(16)
                     .glassCard()
@@ -359,6 +369,11 @@ struct NetworkStatusView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// Format a Hz value for display: "<0.01" for near-zero, "X.XX Hz" otherwise.
+    private func formatHz(_ hz: Double) -> String {
+        hz < 0.01 ? "<0.01 Hz" : String(format: "%.2f Hz", hz)
     }
 
     private func detailRow(label: String, value: String) -> some View {

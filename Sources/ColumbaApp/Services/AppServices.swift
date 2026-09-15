@@ -2582,6 +2582,20 @@ public final class AppServices {
         // field of the status dict is `str(iface)` which gives us the
         // friendly "AutoInterfacePeer[en0/fe80::xxxx]" — peel out the
         // peer address from there for the row subtitle.
+        // Push per-interface announce-rate metrics into the Compat transport
+        // so getInterfaceSnapshots() can surface them in the UI.
+        if let transport = transport {
+            var rates: [String: AnnounceRates] = [:]
+            for (entityId, status) in byEntity {
+                rates[entityId] = AnnounceRates(
+                    incomingHz: status.incomingAnnounceFrequency,
+                    outgoingHz: status.outgoingAnnounceFrequency,
+                    targetHz: status.announceRateTarget,
+                    heldCount: status.heldAnnounces
+                )
+            }
+            transport.setInterfaceAnnounceRates(rates)
+        }
         var auxiliary: [InterfaceSnapshot] = []
         for status in snapshot.interfaces where !matchedSectionNames.contains(status.sectionName) {
             let isAutoPeer = status.name.hasPrefix("AutoInterfacePeer")
@@ -2735,7 +2749,7 @@ public final class AppServices {
         case applied
         case skipped
         case failed
-        case requiresRelaunch
+        case requiresRelaunch(blockingInterfaceName: String)
         /// True only when the restart actually completed and the change is
         /// live — the single "did it work?" predicate for callers that don't
         /// need to branch on the other outcomes.
@@ -2760,11 +2774,21 @@ public final class AppServices {
     /// of `restartPythonBackend` so it can be unit-tested without a running
     /// backend; `nonisolated` because it touches no actor state (and tests
     /// call it from a nonisolated context).
-    nonisolated static func inProcessRestartBlockedByAutoInterface(_ interfaces: [InterfaceEntity]) -> Bool {
-        interfaces.contains {
+    /// Returns the display name of the first configured AutoInterface, or nil
+    /// if none is present. Used both as the guard predicate (nil = safe to
+    /// restart in-process) and to name the blocking interface in the UI message.
+    nonisolated static func inProcessRestartBlockingInterfaceName(
+        _ interfaces: [InterfaceEntity]
+    ) -> String? {
+        interfaces.first {
             if case .autoInterface = $0.config { return true }
             return false
-        }
+        }?.name
+    }
+
+    /// Legacy predicate kept for test compatibility; delegates to the named version.
+    nonisolated static func inProcessRestartBlockedByAutoInterface(_ interfaces: [InterfaceEntity]) -> Bool {
+        inProcessRestartBlockingInterfaceName(interfaces) != nil
     }
 
     /// Restart the running Python RNS stack IN-PROCESS: full teardown
@@ -2811,9 +2835,9 @@ public final class AppServices {
         // re-init would hit the multicast-bind collision and take the backend
         // down. Refuse; the config write above persisted the change, so it
         // applies on the next clean relaunch.
-        if Self.inProcessRestartBlockedByAutoInterface(fresh) {
-            DiagLog.log("[RNS] restartPythonBackend: AutoInterface configured — same-process re-init is unsafe (multicast sockets are not released on detach); refusing; change persisted for the next relaunch")
-            return .requiresRelaunch
+        if let blockingName = Self.inProcessRestartBlockingInterfaceName(fresh) {
+            DiagLog.log("[RNS] restartPythonBackend: AutoInterface '\(blockingName)' configured — same-process re-init is unsafe (multicast sockets are not released on detach); refusing; change persisted for the next relaunch")
+            return .requiresRelaunch(blockingInterfaceName: blockingName)
         }
         DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
         do {
