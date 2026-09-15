@@ -5337,6 +5337,15 @@ public final class AppServices {
         return (online: iface.online, lastError: iface.lastError)
     }
 
+    /// One-shot transport status snapshot from the active backend. The Python backend
+    /// surfaces per-interface `status_reason` here (e.g. `"pairing_required"` for a
+    /// stale RNode Bluetooth bond) so the interface card can offer a Repair action.
+    /// Returns nil before the backend is started or after teardown.
+    public func statusSnapshot() async -> StatusSnapshot? {
+        guard let backend = backend else { return nil }
+        return await backend.statusSnapshot()
+    }
+
     /// Send both the LXMF delivery announce and the LXST telephony announce.
     ///
     /// This is the single entry point for all announce triggers (app start,
