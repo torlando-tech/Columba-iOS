@@ -471,8 +471,7 @@ public final class DiscoveredInterfacesViewModel {
             // when the change goes live.
             appliedDiscoverInterfacesEnabled = toEnable
             appliedAutoconnectCount = toCount
-            let formatKey = String(localized: "Saved. Applies on the next app relaunch because the “%@” interface (multicast LAN discovery) requires a full restart to apply safely.")
-            errorMessage = String(format: formatKey, blockingInterfaceName)
+            errorMessage = String(localized: "Saved. Takes effect on the next app launch because an AutoInterface (multicast LAN) is active, which requires a full restart to apply safely.")
             logger.info("Discovery settings persisted; in-process restart deferred (AutoInterface '\(blockingInterfaceName)' active)")
         case .skipped, .failed:
             // The backend is down / was never started: the settings were

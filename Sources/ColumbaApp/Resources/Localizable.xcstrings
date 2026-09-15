@@ -2994,13 +2994,12 @@
         }
       }
     },
-    "Saved. Applies on the next app relaunch because the “%@” interface (multicast LAN discovery) requires a full restart to apply safely.": {
-      "extractionState": "manual",
+    "Saved. Takes effect on the next app launch because an AutoInterface (multicast LAN) is active, which requires a full restart to apply safely.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Saved. Applies on the next app relaunch because the “%@” interface (multicast LAN discovery) requires a full restart to apply safely."
+            "value": "Saved. Takes effect on the next app launch because an AutoInterface (multicast LAN) is active, which requires a full restart to apply safely."
           }
         }
       }
