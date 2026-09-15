@@ -399,6 +399,7 @@ struct InterfaceManagementScreen: View {
                 InterfaceCard(
                     interface: interface,
                     status: viewModel.getStatus(for: interface),
+                    statusReason: viewModel.getStatusReason(for: interface),
                     onToggle: { enabled in
                         viewModel.toggleInterface(interface, enabled: enabled)
                     },
@@ -478,6 +479,7 @@ struct InterfaceCard: View {
 
     let interface: InterfaceEntity
     let status: InterfaceStatus
+    let statusReason: String?
     let onToggle: (Bool) -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
@@ -539,6 +541,15 @@ struct InterfaceCard: View {
                         .font(.caption.monospaced())
                 }
                 .foregroundStyle(Theme.textSecondary)
+            }
+
+            // Stale-bond repair card (Android PR #1100 parity). Shown only for an
+            // enabled RNode whose Python backend reported status_reason ==
+            // "pairing_required": the phone's saved Bluetooth bond is missing or was
+            // rejected by the RNode, so auto-reconnect is stopped and a human must
+            // re-pair. Repair opens the RNode wizard (device step) to re-bond.
+            if case .rnode = interface.config, interface.enabled, statusReason == "pairing_required" {
+                pairingRequiredCard
             }
 
             // Status row
@@ -606,6 +617,40 @@ struct InterfaceCard: View {
         case .disconnected: return Theme.textSecondary
         case .error: return Theme.error
         }
+    }
+
+    /// Red repair card shown when the RNode's Bluetooth bond is stale. Mirrors the
+    /// Android `rnode_pairing_required` card: a warning glyph + explanation + a
+    /// Repair action. Repair opens the RNode wizard (same path as Edit) where the
+    /// user re-bonds the device — the phone's saved pairing was rejected by the
+    /// RNode, so it must be re-paired (hold USR 5s, complete iOS pairing).
+    private var pairingRequiredCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.error)
+                Text(String(localized: "Pairing required"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.error)
+            }
+            Text(String(localized: "The saved Bluetooth pairing for this RNode is missing or was rejected. Open Repair, hold the RNode's USR button for 5 seconds, then complete iOS's pairing prompt."))
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+            Button {
+                onEdit()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "wrench.and.screwdriver")
+                    Text(String(localized: "Repair"))
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Theme.accentColor)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.error.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 

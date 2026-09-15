@@ -2141,6 +2141,10 @@ def status() -> dict[str, Any]:
                     "tx_bytes": getattr(iface, "txb", 0),
                     "is_autoconnect": bool(getattr(iface, "autoconnect_hash", None)),
                     "adopted_count": (len(adopted) if isinstance(adopted, dict) else None),
+                    # Machine-readable RNode failure reason ("pairing_required" or
+                    # None). Lets the interface card offer a Repair action for a
+                    # stale Bluetooth bond instead of sitting on "Unreachable".
+                    "status_reason": getattr(iface, "status_reason", None),
                 })
             out["interfaces"] = iface_info
         except Exception as e:

@@ -17,12 +17,50 @@ public enum PythonRNodeLinkState: Int32, Sendable {
     case failed = 3
 }
 
+/// Machine-readable classification of a native BLE failure. The raw CoreBluetooth
+/// reason string is not stable enough to key UI on, so the transport classifies the
+/// underlying error and hands this typed code up alongside the link state.
+public enum PythonRNodeFailureCode: Int32, Sendable {
+    case none = 0
+    case failed = 1
+    case pairingRequired = 2
+
+    public var diagnostic: String {
+        switch self {
+        case .none: return "none"
+        case .failed: return "failed"
+        case .pairingRequired: return "pairing_required"
+        }
+    }
+}
+
 protocol PythonRNodeTransporting: AnyObject {
     var onDataReceived: ((Data) -> Void)? { get set }
-    var onStateChange: ((PythonRNodeLinkState, String?) -> Void)? { get set }
+    var onStateChange: ((PythonRNodeLinkState, String?, PythonRNodeFailureCode) -> Void)? { get set }
     func connect()
     func disconnect()
     func send(_ data: Data, completion: @escaping (Error?) -> Void)
+}
+
+/// Map a CoreBluetooth error to a machine-readable failure code.
+///
+/// Verified against the iPhoneOS26.4 SDK `CBError.h`: a stale Bluetooth bond whose
+/// key the RNode no longer accepts surfaces as `CBErrorPeerRemovedPairingInformation`
+/// (14) in `CBErrorDomain` ("Peer removed pairing information"). The GATT
+/// insufficient-auth/encryption codes in `CBATTErrorDomain` (0x05 / 0x0F) are the
+/// same class of failure when it is reported at the characteristic level. Anything
+/// else is a generic failure.
+func classifyRNodeBLEFailure(_ error: Error) -> PythonRNodeFailureCode {
+    guard let nsError = error as NSError? else { return .failed }
+    if nsError.domain == CBErrorDomain,
+       nsError.code == 14 { // CBErrorPeerRemovedPairingInformation
+        return .pairingRequired
+    }
+    if nsError.domain == CBATTErrorDomain,
+       nsError.code == 0x05 || nsError.code == 0x0F { // InsufficientAuthentication / InsufficientEncryption
+        return .pairingRequired
+    }
+    return .failed
 }
 
 private enum PythonRNodeNativeBLEError: LocalizedError {
@@ -68,7 +106,7 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
     private var linkState: PythonRNodeLinkState = .disconnected
 
     var onDataReceived: ((Data) -> Void)?
-    var onStateChange: ((PythonRNodeLinkState, String?) -> Void)?
+    var onStateChange: ((PythonRNodeLinkState, String?, PythonRNodeFailureCode) -> Void)?
 
     init(deviceName: String, deviceIdentifier: UUID?, restorationIdentifier: String) {
         self.deviceName = deviceName
@@ -318,12 +356,16 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
         timeout = nil
         central.stopScan()
         clearPeripheral()
-        publish(.failed, error.localizedDescription)
+        publish(.failed, error.localizedDescription, classifyRNodeBLEFailure(error))
     }
 
-    private func publish(_ state: PythonRNodeLinkState, _ reason: String? = nil) {
+    private func publish(
+        _ state: PythonRNodeLinkState,
+        _ reason: String? = nil,
+        _ code: PythonRNodeFailureCode = .none
+    ) {
         linkState = state
-        onStateChange?(state, reason)
+        onStateChange?(state, reason, code)
     }
 }
 
@@ -337,6 +379,7 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     private var inbound = Data()
     private var linkState: PythonRNodeLinkState = .disconnected
     private var failureReason: String?
+    private var failureCodeValue: PythonRNodeFailureCode = .none
     private var stateHandler: ((PythonRNodeLinkState, String?) -> Void)?
     private var generation: UInt64 = 0
     private var interfaceOnline = false
@@ -364,6 +407,15 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     public func snapshot() -> (PythonRNodeLinkState, String?) {
         lock.lock(); defer { lock.unlock() }
         return (linkState, failureReason)
+    }
+
+    /// The typed classification of the most recent failure (`.none` when the link is
+    /// up, not yet failed, or was deliberately disconnected). Exposed so the C ABI can
+    /// hand the machine-readable reason to Python without relying on the transport
+    /// still being alive (the Python driver closes the session on a failed connect).
+    public func failureCode() -> PythonRNodeFailureCode {
+        lock.lock(); defer { lock.unlock() }
+        return failureCodeValue
     }
 
     /// RNS calls this only after RNode detection and radio configuration finish.
@@ -400,12 +452,13 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
         inbound.removeAll(keepingCapacity: true)
         linkState = .connecting
         failureReason = nil
+        failureCodeValue = .none
         interfaceOnline = false
         radio.onDataReceived = { [weak self] data in
             self?.receive(data, generation: currentGeneration)
         }
-        radio.onStateChange = { [weak self] state, reason in
-            self?.update(state: state, reason: reason, generation: currentGeneration)
+        radio.onStateChange = { [weak self] state, reason, code in
+            self?.update(state: state, reason: reason, code: code, generation: currentGeneration)
         }
         let handler = stateHandler
         lock.unlock()
@@ -533,6 +586,7 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
     private func update(
         state: PythonRNodeLinkState,
         reason: String?,
+        code: PythonRNodeFailureCode,
         generation callbackGeneration: UInt64
     ) {
         lock.lock()
@@ -542,11 +596,12 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
         }
         linkState = state
         failureReason = reason
+        failureCodeValue = (state == .connected) ? .none : code
         if state != .connected { interfaceOnline = false }
         let publishedState = publishedStateLocked()
         let handler = stateHandler
         lock.unlock()
-        DiagLog.log("[RNODE_PY] native BLE state=\(state.rawValue) reason=\(reason ?? "none")")
+        DiagLog.log("[RNODE_PY] native BLE state=\(state.rawValue) reason=\(reason ?? "none") failure=\(failureCodeValue.diagnostic)")
         handler?(publishedState, reason)
     }
 
@@ -660,6 +715,13 @@ final class PythonRNodeBLESessionRegistry: @unchecked Sendable {
         bridge(handle: handle)?.snapshot()
     }
 
+    /// Typed classification of the most recent failure for an OPEN session. Must be
+    /// read while the handle is still open: closing the session drops the bridge, so
+    /// the Python driver captures this before it calls `_close`.
+    func failureCode(handle: Int32) -> PythonRNodeFailureCode {
+        bridge(handle: handle)?.failureCode() ?? .none
+    }
+
     func snapshot(
         deviceIdentifier: UUID?,
         deviceName: String
@@ -735,6 +797,13 @@ public func columba_rnode_session_close(_ handle: Int32) -> Int32 {
 public func columba_rnode_session_state(_ handle: Int32) -> Int32 {
     PythonRNodeBLESessionRegistry.shared.snapshot(handle: handle)?.0.rawValue
         ?? PythonRNodeLinkState.disconnected.rawValue
+}
+
+/// Machine-readable classification of the most recent failure for an OPEN session:
+/// 0 = none, 1 = failed, 2 = pairing_required. Read before closing the handle.
+@_cdecl("columba_rnode_session_failure")
+public func columba_rnode_session_failure(_ handle: Int32) -> Int32 {
+    PythonRNodeBLESessionRegistry.shared.failureCode(handle: handle).rawValue
 }
 
 @_cdecl("columba_rnode_session_read")

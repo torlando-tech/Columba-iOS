@@ -149,7 +149,7 @@ final class PythonConfigWriterTests: XCTestCase {
 #if COLUMBA_RUNTIME_PYTHON
 private final class FakePythonRNodeTransport: PythonRNodeTransporting {
     var onDataReceived: ((Data) -> Void)?
-    var onStateChange: ((PythonRNodeLinkState, String?) -> Void)?
+    var onStateChange: ((PythonRNodeLinkState, String?, PythonRNodeFailureCode) -> Void)?
     var connectCount = 0
     var disconnectCount = 0
     var sent: [Data] = []
@@ -157,12 +157,12 @@ private final class FakePythonRNodeTransport: PythonRNodeTransporting {
 
     func connect() {
         connectCount += 1
-        onStateChange?(.connected, nil)
+        onStateChange?(.connected, nil, .none)
     }
 
     func disconnect() {
         disconnectCount += 1
-        onStateChange?(.disconnected, nil)
+        onStateChange?(.disconnected, nil, .none)
     }
 
     func send(_ data: Data, completion: @escaping (Error?) -> Void) {
@@ -211,9 +211,10 @@ extension PythonConfigWriterTests {
         bridge.setStateHandler { observed = ($0, $1) }
         XCTAssertTrue(bridge.connect(deviceName: "RNode 1234"))
 
-        fake.onStateChange?(.failed, "pairing lost")
+        fake.onStateChange?(.failed, "pairing lost", .pairingRequired)
         XCTAssertEqual(bridge.snapshot().0, .failed)
         XCTAssertEqual(bridge.snapshot().1, "pairing lost")
+        XCTAssertEqual(bridge.failureCode(), .pairingRequired)
         XCTAssertEqual(observed?.0, .failed)
         XCTAssertEqual(observed?.1, "pairing lost")
     }
@@ -235,7 +236,7 @@ extension PythonConfigWriterTests {
         bridge.disconnect()
         XCTAssertTrue(bridge.connect(deviceName: "RNode B"))
         XCTAssertEqual(transports.count, 2)
-        stale.onStateChange?(.failed, "stale failure")
+        stale.onStateChange?(.failed, "stale failure", .failed)
         XCTAssertEqual(bridge.snapshot().0, .connected)
         XCTAssertNil(bridge.snapshot().1)
     }

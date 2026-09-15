@@ -34,6 +34,7 @@ class FakeNativeLibrary:
         self.columba_rnode_session_read = FakeFunction(self.read)
         self.columba_rnode_session_write = FakeFunction(self.write)
         self.columba_rnode_session_set_online = FakeFunction(self.set_online)
+        self.columba_rnode_session_failure = FakeFunction(self.failure)
 
     @staticmethod
     def _text(value):
@@ -94,6 +95,11 @@ class FakeNativeLibrary:
             return -1
         session["online"].append(int(value))
         return 0
+
+    def failure(self, handle):
+        # 0 = none, 1 = failed, 2 = pairing_required (mirrors the Swift enum).
+        session = self.sessions.get(int(handle))
+        return session.get("failure_code", 0) if session else 0
 
 
 def load_driver(native):
@@ -178,6 +184,61 @@ class IOSRNodeDriverTests(unittest.TestCase):
         driver = module.IOSRNodeDriver()
         self.assertFalse(driver.connect("RNode 1234", "classic"))
         self.assertEqual(native.sessions, {})
+
+    def test_failed_connect_with_stale_bond_reports_pairing_required(self):
+        native = FakeNativeLibrary()
+        module = load_driver(native)
+        driver = module.IOSRNodeDriver()
+
+        original_open = native.open
+        def failing_open(name, identifier):
+            handle = original_open(name, identifier)
+            native.sessions[handle]["state"] = 3  # _STATE_FAILED
+            native.sessions[handle]["failure_code"] = 2  # pairing_required
+            return handle
+        native.columba_rnode_session_open.implementation = failing_open
+
+        self.assertFalse(driver.connect("RNode E517", "ble"))
+        # The reason is captured while the handle is open and survives the close.
+        self.assertEqual(driver.getLastConnectionFailure(), "pairing_required")
+        self.assertEqual(native.closed_handles, [1], "failed session must be closed")
+        self.assertIsNone(driver.getConnectedDeviceName())
+
+    def test_failed_connect_without_stale_bond_has_no_reason(self):
+        native = FakeNativeLibrary()
+        module = load_driver(native)
+        driver = module.IOSRNodeDriver()
+
+        original_open = native.open
+        def failing_open(name, identifier):
+            handle = original_open(name, identifier)
+            native.sessions[handle]["state"] = 3
+            native.sessions[handle]["failure_code"] = 1  # generic failed
+            return handle
+        native.columba_rnode_session_open.implementation = failing_open
+
+        self.assertFalse(driver.connect("RNode E517", "ble"))
+        self.assertIsNone(driver.getLastConnectionFailure())
+
+    def test_successful_connect_clears_prior_failure_reason(self):
+        native = FakeNativeLibrary()
+        module = load_driver(native)
+        driver = module.IOSRNodeDriver()
+
+        original_open = native.open
+        def failing_open(name, identifier):
+            handle = original_open(name, identifier)
+            native.sessions[handle]["state"] = 3
+            native.sessions[handle]["failure_code"] = 2
+            return handle
+        native.columba_rnode_session_open.implementation = failing_open
+        self.assertFalse(driver.connect("RNode E517", "ble"))
+        self.assertEqual(driver.getLastConnectionFailure(), "pairing_required")
+
+        # A fresh, successful connect supersedes the stale reason.
+        native.columba_rnode_session_open.implementation = original_open
+        self.assertTrue(driver.connect("RNode E517", "ble"))
+        self.assertIsNone(driver.getLastConnectionFailure())
 
 
 if __name__ == "__main__":

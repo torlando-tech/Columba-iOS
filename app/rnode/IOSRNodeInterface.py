@@ -346,6 +346,10 @@ class IOSRNodeInterface(Interface):
         self._reconnecting = False
         self._max_reconnect_attempts = 30  # Try for ~5 minutes (30 * 10s)
         self._reconnect_interval = 10.0  # Seconds between reconnection attempts
+        # Machine-readable reason for the last failed connect ("pairing_required"
+        # or None). Exposed to the UI via rns_bridge.status() so the interface
+        # card can offer a Repair action instead of sitting on "Unreachable".
+        self.status_reason = None
 
         # Error / status callbacks (Kotlin sets these via setOnErrorReceived /
         # setOnOnlineStatusChanged on the constructed interface — optional).
@@ -478,8 +482,28 @@ class IOSRNodeInterface(Interface):
             str(self.connection_mode),
             self.target_device_identifier,
         ):
-            RNS.log(f"Failed to connect to {self.target_device_name}", RNS.LOG_ERROR)
+            # Consume the machine-readable failure reason the native driver
+            # captured while its session handle was still open. The driver is
+            # per-interface here, so a plain getter is atomic (no shared-bridge
+            # race). A stale bond ("pairing_required") must stop auto-reconnect
+            # and surface a repair action; any other failure retries as before.
+            failure_reason = None
+            try:
+                failure_reason = self.kotlin_bridge.getLastConnectionFailure()
+            except Exception as e:  # noqa: BLE001
+                RNS.log(f"Could not read RNode connection failure reason: {e}", RNS.LOG_DEBUG)
+            self.status_reason = failure_reason
+            if failure_reason == "pairing_required":
+                RNS.log(
+                    f"Pairing required for {self.target_device_name}; "
+                    "stopping automatic reconnect until the user repairs the bond",
+                    RNS.LOG_ERROR,
+                )
+            else:
+                RNS.log(f"Failed to connect to {self.target_device_name}", RNS.LOG_ERROR)
             return False
+
+        self.status_reason = None
 
         # Set up data + connection-state callbacks. KotlinRNodeBridge in this
         # codebase exposes listener-based registration via add*Listener
@@ -1361,6 +1385,16 @@ class IOSRNodeInterface(Interface):
                     return
                 else:
                     RNS.log(f"Reconnection attempt {attempt} failed, will retry in {self._reconnect_interval}s", RNS.LOG_WARNING)
+                    if self.status_reason == "pairing_required":
+                        # A stale bond will never heal by re-attempting GATT. Stop
+                        # here instead of burning the retry budget, and leave the
+                        # reason on the interface so the UI can offer Repair.
+                        self._reconnecting = False
+                        RNS.log(
+                            f"Automatic reconnect stopped for {self.target_device_name}: pairing required",
+                            RNS.LOG_WARNING,
+                        )
+                        return
             except Exception as e:  # noqa: BLE001
                 RNS.log(f"Reconnection attempt {attempt} error: {e}", RNS.LOG_ERROR)
 
