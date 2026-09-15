@@ -28,6 +28,9 @@ struct InterfaceInfo: Identifiable {
     let endpoint: String?
     /// True when RNS auto-connected this interface from a discovery announce.
     let isAutoconnect: Bool
+    /// Per-interface announce-rate metrics from the Python status poll.
+    /// nil for auxiliary / NE rows that don't carry them.
+    let announceRates: AnnounceRates?
 }
 
 // MARK: - Network Status ViewModel
@@ -164,7 +167,8 @@ final class NetworkStatusViewModel {
                 peerAddress: snap.peerAddress,
                 lastErrorDescription: snap.lastErrorDescription,
                 endpoint: snap.endpoint,
-                isAutoconnect: snap.isAutoconnect
+                isAutoconnect: snap.isAutoconnect,
+                announceRates: snap.announceRates
             ))
         }
 
@@ -233,7 +237,8 @@ final class NetworkStatusViewModel {
                 peerAddress: addr,
                 lastErrorDescription: err,
                 endpoint: nil,
-                isAutoconnect: iface.isAutoconnect ?? false
+                isAutoconnect: iface.isAutoconnect ?? false,
+                announceRates: nil
             )
         }
 

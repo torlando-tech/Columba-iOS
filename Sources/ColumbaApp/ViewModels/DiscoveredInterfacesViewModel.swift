@@ -464,15 +464,16 @@ public final class DiscoveredInterfacesViewModel {
             // status dot, and the corrected `enabled` flag from the bridge.
             appliedDiscoverInterfacesEnabled = toEnable
             appliedAutoconnectCount = toCount
-        case .requiresRelaunch:
+        case .requiresRelaunch(let blockingInterfaceName):
             // Deliberate deferral: the settings were persisted and will be
             // read at the next clean launch, so the pending flag is cleared
             // (no retry loop) but an informational message tells the user
             // when the change goes live.
             appliedDiscoverInterfacesEnabled = toEnable
             appliedAutoconnectCount = toCount
-            errorMessage = String(localized: "Saved. Applies on the next app relaunch because an AutoInterface is active.")
-            logger.info("Discovery settings persisted; in-process restart deferred (AutoInterface active)")
+            let formatKey = String(localized: "Saved. Applies on the next app relaunch because the “%@” interface (multicast LAN discovery) requires a full restart to apply safely.")
+            errorMessage = String(format: formatKey, blockingInterfaceName)
+            logger.info("Discovery settings persisted; in-process restart deferred (AutoInterface '\(blockingInterfaceName)' active)")
         case .skipped, .failed:
             // The backend is down / was never started: the settings were
             // persisted (so a future restart picks them up) but are NOT

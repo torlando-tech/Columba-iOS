@@ -2141,6 +2141,14 @@ def status() -> dict[str, Any]:
                     "tx_bytes": getattr(iface, "txb", 0),
                     "is_autoconnect": bool(getattr(iface, "autoconnect_hash", None)),
                     "adopted_count": (len(adopted) if isinstance(adopted, dict) else None),
+                    "incoming_announce_frequency": float(
+                        getattr(iface, "incoming_announce_frequency", lambda: 0.0)()
+                    ),
+                    "outgoing_announce_frequency": float(
+                        getattr(iface, "outgoing_announce_frequency", lambda: 0.0)()
+                    ),
+                    "announce_rate_target": getattr(iface, "announce_rate_target", None),
+                    "held_announces": len(getattr(iface, "held_announces", []) or []),
                 })
             out["interfaces"] = iface_info
         except Exception as e:
