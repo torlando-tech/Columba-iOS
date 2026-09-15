@@ -97,9 +97,24 @@ struct RNodeWizardView: View {
                     spreadingFactor: UInt8(viewModel.configSpreadingFactor) ?? 7,
                     codingRate: UInt8(viewModel.configCodingRate) ?? 5
                 )
-                // Jump to review step for editing
-                wizard.currentStepIndex = wizard.activeSteps.count - 1
+                if viewModel.rnodeRepairMode {
+                    // Repair mode: start at the Device step so the user
+                    // re-pairs the stale bond. Normal edit jumps to Review.
+                    wizard.currentStepIndex = 0
+                    wizard.isRepairMode = true
+                    // populateFromConfig set devicePaired=true (edit assumption);
+                    // in repair mode the bond is stale - force a fresh probe.
+                    wizard.devicePaired = false
+                    wizard.selectedDeviceName = ""
+                    wizard.selectedDeviceIdentifier = nil
+                } else {
+                    // Jump to review step for editing
+                    wizard.currentStepIndex = wizard.activeSteps.count - 1
+                }
             }
+        }
+        .onDisappear {
+            viewModel.rnodeRepairMode = false
         }
         // Save validation errors belong to the parent interface view model, but
         // this wizard is presented as a full-screen cover above that screen.

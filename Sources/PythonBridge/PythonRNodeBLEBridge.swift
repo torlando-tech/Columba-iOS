@@ -596,7 +596,15 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
         }
         linkState = state
         failureReason = reason
-        failureCodeValue = (state == .connected) ? .none : code
+        // A captured failure code (e.g. pairing_required from a stale bond)
+        // must persist across the subsequent DISCONNECTED state that the
+        // transport emits after FAILED. Only a successful CONNECTED clears it.
+        if state == .connected {
+            failureCodeValue = .none
+        } else if code != .none {
+            failureCodeValue = code
+        }
+        // code == .none && state != .connected → keep the existing failureCodeValue
         if state != .connected { interfaceOnline = false }
         let publishedState = publishedStateLocked()
         let handler = stateHandler
@@ -629,6 +637,14 @@ final class PythonRNodeBLESessionRegistry: @unchecked Sendable {
     private var sessions: [Int32: Session] = [:]
     private var claims: [String: Int32] = [:]
     private var nextHandle: Int32 = 1
+    /// Per-device failure code that persists across session close.
+    /// Keyed by physicalKey (UUID or normalized name). Set when the bridge
+    /// reports a non-.none failure code; cleared on successful connect.
+    /// The Python driver's 50 ms poll often misses the transient FAILED state
+    /// (the bridge goes FAILED → DISCONNECTED in <1 ms, then the session
+    /// closes), so the C-ABI `failureCode(handle:)` returns .none by the time
+    /// Python calls it. This map lets the Swift VM read the code directly.
+    private var lastFailureByDevice: [String: PythonRNodeFailureCode] = [:]
 
     init(makeTransport: @escaping (String, UUID?) -> PythonRNodeTransporting = {
         let stableComponent = $1?.uuidString.lowercased()
@@ -673,6 +689,8 @@ final class PythonRNodeBLESessionRegistry: @unchecked Sendable {
         let bridge = PythonRNodeBLEBridge(makeTransport: makeTransport)
         sessions[handle] = Session(physicalKey: physicalKey, bridge: bridge)
         claims[physicalKey] = handle
+        // A fresh session supersedes any prior failure for this device.
+        lastFailureByDevice[physicalKey] = nil
         lock.unlock()
 
         guard bridge.connect(deviceName: name, deviceIdentifier: identifier) else {
@@ -692,6 +710,13 @@ final class PythonRNodeBLESessionRegistry: @unchecked Sendable {
         }
         if claims[session.physicalKey] == handle {
             claims.removeValue(forKey: session.physicalKey)
+        }
+        // Persist the failure classification across close so the UI can read it
+        // after the session is gone. The bridge captured it when the transport
+        // reported FAILED (and now retains it past the follow-on DISCONNECTED).
+        let code = session.bridge.failureCode()
+        if code != .none {
+            lastFailureByDevice[session.physicalKey] = code
         }
         lock.unlock()
         session.bridge.disconnect()
@@ -720,6 +745,27 @@ final class PythonRNodeBLESessionRegistry: @unchecked Sendable {
     /// the Python driver captures this before it calls `_close`.
     func failureCode(handle: Int32) -> PythonRNodeFailureCode {
         bridge(handle: handle)?.failureCode() ?? .none
+    }
+
+    /// Typed classification of the most recent failure for a device, readable
+    /// AFTER the session is closed. Returns the live session's code if the
+    /// session is still open, otherwise the last code persisted at close time.
+    /// This is what the VM's status poll uses (the Python 50 ms driver poll
+    /// misses the transient FAILED state, so the Python-side capture is
+    /// unreliable).
+    func failureCode(
+        deviceIdentifier: UUID?,
+        deviceName: String
+    ) -> PythonRNodeFailureCode {
+        let key = Self.physicalKey(
+            deviceIdentifier: deviceIdentifier,
+            deviceName: deviceName
+        )
+        lock.lock(); defer { lock.unlock() }
+        if let handle = claims[key], let bridge = sessions[handle]?.bridge {
+            return bridge.failureCode()
+        }
+        return lastFailureByDevice[key] ?? .none
     }
 
     func snapshot(

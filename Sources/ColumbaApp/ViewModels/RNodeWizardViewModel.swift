@@ -53,6 +53,12 @@ final class RNodeWizardViewModel {
     /// Whether the wizard is in edit mode (pre-populated from existing config).
     var isEditing: Bool = false
 
+    /// Whether the wizard is in repair mode: same as edit mode but the Device
+    /// step shows a "forget the old bond first" banner, because iOS has no
+    /// programmatic BLE-forget API and a stale cached bond lets the probe
+    /// succeed without a fresh pairing dialog.
+    var isRepairMode: Bool = false
+
     // MARK: - Step 1: Device
 
     var selectedDeviceName: String = ""

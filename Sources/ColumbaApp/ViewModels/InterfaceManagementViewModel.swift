@@ -92,6 +92,11 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Whether the RNode wizard is shown (uses fullScreenCover to survive BLE pairing dialog)
     public var showRNodeWizard: Bool = false
 
+    /// When true, the RNode wizard is in repair mode: pre-populated from the
+    /// existing config like edit mode, but starts at the Device step so the
+    /// user re-pairs the Bluetooth bond rather than jumping straight to Review.
+    public var rnodeRepairMode: Bool = false
+
     /// Whether the TCP client wizard is shown (community server picker → review/configure)
     public var showTCPWizard: Bool = false
 
@@ -345,11 +350,26 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         }
     }
 
+    /// Open the RNode wizard in repair mode: pre-populated from the existing
+    /// config but starting at the Device step so the user re-pairs the stale
+    /// Bluetooth bond. Used by the pairing-required card's Repair button.
+    public func showRepairInterface(_ interface: InterfaceEntity) {
+        guard interface.type == .rnode else {
+            showEditInterface(interface)
+            return
+        }
+        editingInterface = interface
+        populateConfigForm(from: interface)
+        rnodeRepairMode = true
+        showRNodeWizard = true
+    }
+
     /// Dismiss the config sheet.
     public func dismissConfigSheet() {
         showConfigSheet = false
         showRNodeWizard = false
         showTCPWizard = false
+        rnodeRepairMode = false
         editingInterface = nil
         resetConfigForm()
     }
@@ -645,19 +665,13 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 var pythonRNodeUpdates: [(String, String, InterfaceStatus)] = []
                 var pythonRNodeReasons: [String: String?] = [:]
                 #if COLUMBA_RUNTIME_PYTHON
-                // One statusSnapshot() per tick carries the per-interface `status_reason`
-                // (the Python backend's IOSRNodeInterface.status_reason). The native BLE
-                // registry above only reports the live link state; the reason persists on
-                // the interface object after the BLE session closes, so the card can offer
-                // Repair for a stale bond even while the link reads "disconnected".
-                var statusReasons: [String: String?] = [:]
-                if let snap = await appSvc.statusSnapshot() {
-                    for iface in snap.interfaces {
-                        if let reason = iface.statusReason, !reason.isEmpty {
-                            statusReasons[iface.sectionName] = reason
-                        }
-                    }
-                }
+                // The RNode failure reason (e.g. "pairing_required" for a stale
+                // Bluetooth bond) is read DIRECTLY from the native BLE registry,
+                // not through the Python status poll. The Python driver's 50 ms
+                // poll misses the transient FAILED state (the bridge goes
+                // FAILED -> DISCONNECTED in <1 ms and the session closes), so the
+                // Python-side `status_reason` is unreliable. The registry
+                // persists the typed failure code per device across close.
                 for entity in enabledIfs where entity.type == .rnode {
                     guard case .rnode(let config) = entity.config else { continue }
                     let state = PythonRNodeBLESessionRegistry.shared.snapshot(
@@ -672,9 +686,18 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                     case .disconnected, .none: status = .disconnected
                     }
                     pythonRNodeUpdates.append((entity.id, entity.name, status))
-                    // The RNode's snapshot `sectionName` is its config interface name,
-                    // which matches `entity.name`.
-                    pythonRNodeReasons[entity.id] = statusReasons[entity.name]
+                    // Read the failure classification straight from the registry
+                    // (live session, or the code persisted at close time).
+                    let failure = PythonRNodeBLESessionRegistry.shared.failureCode(
+                        deviceIdentifier: config.deviceIdentifier,
+                        deviceName: config.deviceName
+                    )
+                    switch failure {
+                    case .pairingRequired:
+                        pythonRNodeReasons[entity.id] = "pairing_required"
+                    default:
+                        pythonRNodeReasons[entity.id] = nil
+                    }
                 }
                 #endif
 

@@ -406,6 +406,9 @@ struct InterfaceManagementScreen: View {
                     onEdit: {
                         viewModel.showEditInterface(interface)
                     },
+                    onRepair: {
+                        viewModel.showRepairInterface(interface)
+                    },
                     onDelete: {
                         viewModel.interfaceToDelete = interface
                         viewModel.showDeleteConfirmation = true
@@ -482,6 +485,7 @@ struct InterfaceCard: View {
     let statusReason: String?
     let onToggle: (Bool) -> Void
     let onEdit: () -> Void
+    let onRepair: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -637,7 +641,7 @@ struct InterfaceCard: View {
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
             Button {
-                onEdit()
+                onRepair()
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "wrench.and.screwdriver")
