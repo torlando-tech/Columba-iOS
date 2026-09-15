@@ -57,6 +57,27 @@ _set_online = _required(
 )
 
 
+def _optional(name, argtypes, restype):
+    """Bind a symbol that older app builds may not export.
+
+    ``columba_rnode_session_failure`` was added with the stale-bond recovery fix.
+    The Python bundle and the native binary ship together, but guarding keeps an
+    interface running (with a generic failure, no pairing diagnosis) against a
+    native binary that predates the symbol rather than raising at import time.
+    """
+    try:
+        fn = getattr(_lib, name)
+    except AttributeError:
+        return None
+    fn.argtypes = argtypes
+    fn.restype = restype
+    return fn
+
+
+# 0 = none, 1 = failed, 2 = pairing_required (mirrors PythonRNodeFailureCode).
+_failure = _optional("columba_rnode_session_failure", [ctypes.c_int32], ctypes.c_int32)
+
+
 class IOSRNodeDriver:
     """Android ``KotlinRNodeBridge``-compatible facade over native Swift BLE."""
 
@@ -70,6 +91,10 @@ class IOSRNodeDriver:
         self._state_callback = None
         self._state_lock = threading.Lock()
         self._last_connected = False
+        # Machine-readable reason for the most recent failed connect
+        # ("pairing_required" or None), retained across disconnect so the
+        # interface can read it after the session is closed.
+        self._last_failure = None
 
     def _poll_state_transition(self):
         handle = self._session_handle
@@ -83,6 +108,19 @@ class IOSRNodeDriver:
         if callback is not None:
             callback(connected, self._device_name)
         return state
+
+    def _capture_failure(self):
+        """Read the native failure code while the session handle is still open.
+
+        The registry drops the bridge when the session closes, so this must run
+        BEFORE ``disconnect()`` clears ``_session_handle``. Maps the code to the
+        machine-readable string the interface keys its recovery on.
+        """
+        handle = self._session_handle
+        if _failure is None or handle <= _INVALID_SESSION:
+            return
+        code = int(_failure(handle))
+        self._last_failure = "pairing_required" if code == 2 else None
 
     def connect(self, device_name, connection_mode="ble", device_identifier=None):
         if connection_mode != "ble" or not device_name:
@@ -99,6 +137,9 @@ class IOSRNodeDriver:
                 return True
             self.disconnect()
 
+        # A fresh attempt supersedes any prior failure reason.
+        self._last_failure = None
+
         identifier_bytes = requested_identifier.encode("utf-8") if requested_identifier else None
         handle = int(_open(requested_name.encode("utf-8"), identifier_bytes))
         if handle <= _INVALID_SESSION:
@@ -113,11 +154,13 @@ class IOSRNodeDriver:
             if state == _STATE_CONNECTED:
                 return True
             if state == _STATE_FAILED:
+                self._capture_failure()
                 self.disconnect()
                 return False
             time.sleep(0.05)
         # Close only this timed-out session, invalidating any late callbacks while
         # leaving other physical RNode sessions untouched.
+        self._capture_failure()
         self.disconnect()
         return False
 
@@ -129,6 +172,15 @@ class IOSRNodeDriver:
         self._poll_state_transition()
         self._device_name = None
         self._device_identifier = None
+
+    def getLastConnectionFailure(self):
+        """Machine-readable reason for the last failed connect, or ``None``.
+
+        Returns ``"pairing_required"`` when CoreBluetooth rejected the link with
+        a stale-bond error, so the interface can stop auto-reconnecting and
+        surface a repair action instead of blind-retrying.
+        """
+        return self._last_failure
 
     def isConnected(self):
         return self._poll_state_transition() == _STATE_CONNECTED

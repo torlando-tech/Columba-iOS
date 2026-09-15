@@ -91,6 +91,33 @@ struct DeviceDiscoveryStep: View {
             }
             .padding(.bottom, 16)
 
+            // Repair mode: the phone still holds the stale BLE bond, so a fresh
+            // scan + probe succeeds over the OLD bond and never shows a pairing
+            // dialog. iOS has no programmatic BLE-forget API, so instruct the
+            // user to forget the device in Settings first, then re-pair.
+            if wizard.isRepairMode {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Theme.warning)
+                        Text("Remove the old pairing first")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(Theme.warning)
+                    }
+                    Text("This RNode needs a fresh Bluetooth pairing. Go to Settings → Bluetooth and pair with your RNode directly (hold USR 5s first, then tap Pair in iOS and enter the PIN). Once paired there, return here and select the RNode from the scan list to confirm it responds.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.warning.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+            }
+
             // Scan button
             Button {
                 toggleScanning()

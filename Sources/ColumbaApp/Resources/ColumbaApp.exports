@@ -20,6 +20,7 @@ _columba_rnode_connect
 _columba_rnode_disconnect
 _columba_rnode_read
 _columba_rnode_session_close
+_columba_rnode_session_failure
 _columba_rnode_session_open
 _columba_rnode_session_read
 _columba_rnode_session_set_online

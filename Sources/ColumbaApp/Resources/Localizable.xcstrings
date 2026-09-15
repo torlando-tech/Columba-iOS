@@ -3004,6 +3004,36 @@
           }
         }
       }
+    },
+    "Pairing required": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pairing required"
+          }
+        }
+      }
+    },
+    "Repair": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repair"
+          }
+        }
+      }
+    },
+    "The saved Bluetooth pairing for this RNode is missing or was rejected. Open Repair, hold the RNode's USR button for 5 seconds, then complete iOS's pairing prompt.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The saved Bluetooth pairing for this RNode is missing or was rejected. Open Repair, hold the RNode's USR button for 5 seconds, then complete iOS's pairing prompt."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

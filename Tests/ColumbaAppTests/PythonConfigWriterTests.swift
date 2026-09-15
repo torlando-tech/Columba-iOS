@@ -12,6 +12,7 @@
 
 import XCTest
 import RNSAPI
+import CoreBluetooth
 @testable import ColumbaApp
 
 final class PythonConfigWriterTests: XCTestCase {
@@ -149,20 +150,25 @@ final class PythonConfigWriterTests: XCTestCase {
 #if COLUMBA_RUNTIME_PYTHON
 private final class FakePythonRNodeTransport: PythonRNodeTransporting {
     var onDataReceived: ((Data) -> Void)?
-    var onStateChange: ((PythonRNodeLinkState, String?) -> Void)?
+    var onStateChange: ((PythonRNodeLinkState, String?, PythonRNodeFailureCode) -> Void)?
     var connectCount = 0
     var disconnectCount = 0
     var sent: [Data] = []
     var sendHandler: ((Data, @escaping (Error?) -> Void) -> Void)?
+    /// When false, connect() does NOT immediately report .connected - it simulates
+    /// the async "connecting" window (real CoreBluetooth connects asynchronously).
+    var autoConnect = true
 
     func connect() {
         connectCount += 1
-        onStateChange?(.connected, nil)
+        if autoConnect {
+            onStateChange?(.connected, nil, .none)
+        }
     }
 
     func disconnect() {
         disconnectCount += 1
-        onStateChange?(.disconnected, nil)
+        onStateChange?(.disconnected, nil, .none)
     }
 
     func send(_ data: Data, completion: @escaping (Error?) -> Void) {
@@ -211,9 +217,10 @@ extension PythonConfigWriterTests {
         bridge.setStateHandler { observed = ($0, $1) }
         XCTAssertTrue(bridge.connect(deviceName: "RNode 1234"))
 
-        fake.onStateChange?(.failed, "pairing lost")
+        fake.onStateChange?(.failed, "pairing lost", .pairingRequired)
         XCTAssertEqual(bridge.snapshot().0, .failed)
         XCTAssertEqual(bridge.snapshot().1, "pairing lost")
+        XCTAssertEqual(bridge.failureCode(), .pairingRequired)
         XCTAssertEqual(observed?.0, .failed)
         XCTAssertEqual(observed?.1, "pairing lost")
     }
@@ -235,7 +242,7 @@ extension PythonConfigWriterTests {
         bridge.disconnect()
         XCTAssertTrue(bridge.connect(deviceName: "RNode B"))
         XCTAssertEqual(transports.count, 2)
-        stale.onStateChange?(.failed, "stale failure")
+        stale.onStateChange?(.failed, "stale failure", .failed)
         XCTAssertEqual(bridge.snapshot().0, .connected)
         XCTAssertNil(bridge.snapshot().1)
     }
@@ -331,6 +338,115 @@ extension PythonConfigWriterTests {
             "a name-only legacy claim cannot safely coexist with another RNode"
         )
         XCTAssertTrue(registry.close(handle: legacy))
+    }
+
+    // MARK: - Failure persistence lifecycle (Greptile P1)
+
+    /// The persisted pairing_required failure must survive a re-open (the
+    /// reconnect after app restart / Apply) while the session is still
+    /// connecting, and only clear once the session reports CONNECTED.
+    func testPersistentFailureSurvivesReopenAndClearsOnConnect() {
+        let id = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        var transports: [FakePythonRNodeTransport] = []
+        let registry = PythonRNodeBLESessionRegistry(makeTransport: { _, _ in
+            let t = FakePythonRNodeTransport()
+            // The first session auto-connects (round 1). The second simulates
+            // the async "connecting" window: it does NOT report .connected on
+            // open(), so we can observe the persisted failure during that gap.
+            t.autoConnect = (transports.count == 0)
+            transports.append(t)
+            return t
+        })
+
+        // Round 1: open, connect, then the transport reports a stale-bond failure
+        // (pairingRequired). The session is still open when the failure lands.
+        let h1 = registry.open(deviceName: "RNode", deviceIdentifier: id)
+        XCTAssertGreaterThan(h1, 0)
+        // Simulate the FAILED state arriving (the transport reports it via the
+        // 3-param onStateChange; the bridge captures failureCodeValue).
+        transports[0].onStateChange?(.failed, "peer removed pairing", .pairingRequired)
+        XCTAssertEqual(
+            registry.failureCode(deviceIdentifier: UUID(uuidString: id), deviceName: "RNode"),
+            .pairingRequired,
+            "live session must report the captured failure"
+        )
+        // Close: the code persists in lastFailureByDevice.
+        XCTAssertTrue(registry.close(handle: h1))
+        XCTAssertEqual(
+            registry.failureCode(deviceIdentifier: UUID(uuidString: id), deviceName: "RNode"),
+            .pairingRequired,
+            "failure must survive close (session gone, code persisted)"
+        )
+
+        // Round 2 (app restart / Apply): re-open. The new session is in the
+        // async "connecting" window (autoConnect=false, so it has NOT reported
+        // .connected yet and has not failed yet). The persisted failure must
+        // STILL be visible - this is the P1 regression: open() used to clear it.
+        let h2 = registry.open(deviceName: "RNode", deviceIdentifier: id)
+        XCTAssertGreaterThan(h2, 0)
+        XCTAssertEqual(
+            registry.failureCode(deviceIdentifier: UUID(uuidString: id), deviceName: "RNode"),
+            .pairingRequired,
+            "failure must remain visible while the replacement session is still connecting"
+        )
+
+        // Now the replacement connects successfully. The persisted failure
+        // clears lazily (the bond is healthy again).
+        transports[1].onStateChange?(.connected, nil, .none)
+        XCTAssertEqual(
+            registry.failureCode(deviceIdentifier: UUID(uuidString: id), deviceName: "RNode"),
+            .none,
+            "successful connect must clear the stale persisted failure"
+        )
+        registry.closeAll()
+    }
+
+    /// Greptile P2: the static contract only greps for symbol presence; this
+    /// actually runs `classifyRNodeBLEFailure` with representative NSError
+    /// values to verify the numeric comparison and branches produce the
+    /// correct typed code. A wrong code constant or inverted branch would
+    /// disable stale-bond recovery while still passing the static contract.
+    func testClassifyStaleBondErrorsProducePairingRequired() {
+        // CBErrorDomain 14 = CBErrorPeerRemovedPairingInformation.
+        let peerRemoved = NSError(
+            domain: CBErrorDomain,
+            code: 14,
+            userInfo: [NSLocalizedDescriptionKey: "Peer removed pairing information"]
+        )
+        XCTAssertEqual(
+            classifyRNodeBLEFailure(peerRemoved), .pairingRequired,
+            "CBErrorDomain 14 (peer removed pairing info) must classify as pairingRequired"
+        )
+
+        // CBATTErrorDomain 0x05 = InsufficientAuthentication.
+        let insufficientAuth = NSError(domain: CBATTErrorDomain, code: 0x05)
+        XCTAssertEqual(
+            classifyRNodeBLEFailure(insufficientAuth), .pairingRequired,
+            "CBATTErrorDomain 0x05 (insufficient authentication) must classify as pairingRequired"
+        )
+
+        // CBATTErrorDomain 0x0F = InsufficientEncryption.
+        let insufficientEnc = NSError(domain: CBATTErrorDomain, code: 0x0F)
+        XCTAssertEqual(
+            classifyRNodeBLEFailure(insufficientEnc), .pairingRequired,
+            "CBATTErrorDomain 0x0F (insufficient encryption) must classify as pairingRequired"
+        )
+    }
+
+    func testClassifyUnrelatedErrorsProduceGenericFailed() {
+        // CBErrorDomain 5 = Unknown (not a stale-bond class).
+        let cbUnknown = NSError(domain: CBErrorDomain, code: 5)
+        XCTAssertEqual(
+            classifyRNodeBLEFailure(cbUnknown), .failed,
+            "CBErrorDomain 5 (unknown) must classify as generic failed"
+        )
+
+        // A generic non-CB error.
+        let generic = NSError(domain: "Test", code: 99)
+        XCTAssertEqual(
+            classifyRNodeBLEFailure(generic), .failed,
+            "unrelated error domain must classify as generic failed"
+        )
     }
 }
 #endif

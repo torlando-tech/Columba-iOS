@@ -84,6 +84,8 @@ jobs:
             Tests.static.test_collect_maestro_screenshots \
             Tests.static.test_voice_messages \
             Tests.static.test_discovered_interfaces_contract \
+            Tests.static.test_ios_rnode_driver \
+            Tests.static.test_ios_rnode_stale_bond_contract \
             Tests.static.test_tag_version_stamp
 
       # Verify a standalone production-layout app before xcodebuild test embeds

@@ -178,11 +178,17 @@ public struct StatusSnapshot: Decodable, Sendable {
         /// is re-created. The carrier re-adopt coordinator keys off this
         /// (not `online`, which is True either way).
         public let adoptedCount: Int?
+        /// Machine-readable RNode failure reason (`"pairing_required"`) surfaced
+        /// from the Python backend's `status_reason` (stale Bluetooth bond whose
+        /// key the RNode no longer accepts). The interface card keys its Repair
+        /// action on this instead of a raw CoreBluetooth error string.
+        public let statusReason: String?
 
         public init(sectionName: String, name: String, online: Bool, rxBytes: Int, txBytes: Int,
                     typeRaw: String? = nil, isBLEPeer: Bool? = nil, isAutoPeer: Bool? = nil,
                     peerAddress: String? = nil, lastError: String? = nil,
-                    isAutoconnect: Bool? = nil, adoptedCount: Int? = nil) {
+                    isAutoconnect: Bool? = nil, adoptedCount: Int? = nil,
+                    statusReason: String? = nil) {
             self.sectionName = sectionName
             self.name = name
             self.online = online
@@ -195,6 +201,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.lastError = lastError
             self.isAutoconnect = isAutoconnect
             self.adoptedCount = adoptedCount
+            self.statusReason = statusReason
         }
 
         enum CodingKeys: String, CodingKey {
@@ -209,6 +216,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             case lastError = "last_error"
             case isAutoconnect = "is_autoconnect"
             case adoptedCount = "adopted_count"
+            case statusReason = "status_reason"
         }
 
         public init(from decoder: Decoder) throws {
@@ -225,6 +233,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.lastError = try? c.decode(String.self, forKey: .lastError)
             self.isAutoconnect = try? c.decode(Bool.self, forKey: .isAutoconnect)
             self.adoptedCount = (try? c.decode(Int?.self, forKey: .adoptedCount)) ?? nil
+            self.statusReason = try? c.decode(String.self, forKey: .statusReason)
         }
     }
 
