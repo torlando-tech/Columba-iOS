@@ -1926,6 +1926,10 @@ public final class AppServices {
         // InterfaceManagementScreen show online / offline accurately.
         pythonStatusPollTask?.cancel()
         pythonStatusPollTask = Task { [weak self, backend] in
+            // Announce-rate metrics exist only on the Python bridge; a native
+            // (Model B) backend's status rows leave those fields at their
+            // defaults, which must not be published as live readings.
+            let isPythonBackend = backend.capabilities.backendId == .pythonEmbedded
             var tick = 0
             DiagLog.log("[RNS-POLL] task started")
             while !Task.isCancelled {
@@ -1937,7 +1941,7 @@ public final class AppServices {
                 }
                 guard let self else { return }
                 let entityById = await MainActor.run { self.pythonInterfaceEntities }
-                await self.applyPythonInterfaceStatus(snapshot: snapshot, entityById: entityById)
+                await self.applyPythonInterfaceStatus(snapshot: snapshot, entityById: entityById, publishRates: isPythonBackend)
             }
             DiagLog.log("[RNS-POLL] task exiting (cancelled)")
         }
@@ -2552,7 +2556,8 @@ public final class AppServices {
     /// `online` flag RNS.Transport reports.
     private func applyPythonInterfaceStatus(
         snapshot: StatusSnapshot,
-        entityById: [String: InterfaceEntity]
+        entityById: [String: InterfaceEntity],
+        publishRates: Bool
     ) async {
         // Log every interface Python reports so we can see AutoInterface /
         // RNode / etc. that don't have Compat stubs yet. One-shot per
@@ -2583,8 +2588,10 @@ public final class AppServices {
         // friendly "AutoInterfacePeer[en0/fe80::xxxx]" — peel out the
         // peer address from there for the row subtitle.
         // Push per-interface announce-rate metrics into the Compat transport
-        // so getInterfaceSnapshots() can surface them in the UI.
-        if let transport = transport {
+        // so getInterfaceSnapshots() can surface them in the UI. The metrics
+        // are Python-only (publishRates); the UI hides the rows when the
+        // snapshot carries no rates.
+        if publishRates, let transport = transport {
             var rates: [String: AnnounceRates] = [:]
             for (entityId, status) in byEntity {
                 rates[entityId] = AnnounceRates(
@@ -4170,15 +4177,18 @@ public final class AppServices {
 
     /// Re-adopt an AutoInterface that adopted zero system interfaces.
     ///
-    /// SAFE ONLY when `adopted_count == 0`: that instance holds no discovery
+    /// Run only when `adopted_count == 0`: that instance holds no discovery
     /// sockets (they are created per adopted interface in the constructor), so
-    /// the hot-remove + hot-add cannot leak any. Upstream `AutoInterface
-    /// .detach()` does not release sockets, so re-adopting a LIVE interface
-    /// (one or more adopted) would leak the multicast sockets and split
-    /// incoming announcements between the dead and new instances - the same
-    /// reason `restartPythonBackend` refuses to run with an AutoInterface. A
-    /// live interface never needs re-adopting anyway: its `peer_jobs` loop
-    /// tracks address changes on the interfaces it already holds.
+    /// there is nothing to rebind and no peers to interrupt. Re-adopting a
+    /// LIVE interface (one or more adopted) would drop and re-establish
+    /// working peers with no benefit, so we never do that. (The older
+    /// rationale - that `AutoInterface.detach()` leaked multicast sockets, so
+    /// re-adopting a live interface would collide on the multicast bind and
+    /// `restartPythonBackend` refused to run with an AutoInterface - no longer
+    /// applies: the RNS 1.5.2 fork `detach()` is a full teardown. The
+    /// `adopted_count == 0` guard remains because churning a working interface
+    /// is pointless.) A live interface's `peer_jobs` loop tracks address
+    /// changes on the interfaces it already holds.
     ///
     /// The hot-remove + hot-add re-runs the AutoInterface constructor
     /// (`_synthesize_interface` -> fresh `AutoInterface(...)`), which re-scans

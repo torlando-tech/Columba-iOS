@@ -1472,12 +1472,11 @@ def remove_interface(name: str) -> dict[str, Any]:
 
     Teardown completeness depends on the interface type's `detach()`:
       • TCPClientInterface.detach() shuts down + closes the socket — clean.
-      • AutoInterface.detach() upstream only sets `online = False`; it does NOT
-        close the multicast discovery sockets or join their daemon threads, so
-        the OS sockets stay bound until process exit. Re-adding the same
-        AutoInterface before a cold launch can therefore collide on the
-        multicast bind. (Tracked for an upstream RNS teardown fix; TCP/Backbone
-        removal is unaffected.)
+      • AutoInterface.detach() (RNS 1.5.2 fork) is a full teardown: it closes
+        the multicast discovery + outbound sockets, shuts down the per-interface
+        servers, detaches and tears down child interfaces, and joins the daemon
+        threads. Hot-removing and re-adding an AutoInterface is therefore safe —
+        the old multicast-bind collision on re-add is gone.
 
     Returns {"ok": bool, "reason": str}.
     """
