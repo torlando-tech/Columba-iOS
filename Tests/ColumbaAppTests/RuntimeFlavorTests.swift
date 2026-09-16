@@ -362,49 +362,5 @@ final class RuntimeFlavorTests: XCTestCase {
         )
     }
 
-    /// Issue #193 / Greptile P1 #2: a SAME-PROCESS Reticulum re-init is unsafe
-    /// when an AutoInterface is configured (its `detach()` only flips
-    /// `online = False` — the multicast sockets are local vars never closed,
-    /// so re-init hits the documented multicast-bind collision and the re-init
-    /// error path takes the backend down). `restartPythonBackend` must refuse
-    /// (`.requiresRelaunch`) exactly in that case and proceed for any other
-    /// interface set. Pure predicate, so it's testable without a backend.
-    func testInProcessRestartBlockedOnlyByAutoInterface() {
-        func autoInterfaceEntity() -> InterfaceEntity {
-            InterfaceEntity(
-                name: "Auto",
-                type: .autoInterface,
-                enabled: true,
-                config: .autoInterface(AutoInterfaceConfig())
-            )
-        }
-        func tcpClientEntity() -> InterfaceEntity {
-            InterfaceEntity(
-                name: "Relay",
-                type: .tcpClient,
-                enabled: true,
-                config: .tcpClient(TCPClientConfig(targetHost: "h", targetPort: 4242))
-            )
-        }
-        func rnodeEntity() -> InterfaceEntity {
-            InterfaceEntity(
-                name: "RNode",
-                type: .rnode,
-                enabled: true,
-                config: .rnode(RNodeConfig())
-            )
-        }
-        // Empty and non-AutoInterface sets: in-process restart is safe.
-        XCTAssertFalse(AppServices.inProcessRestartBlockedByAutoInterface([]))
-        XCTAssertFalse(AppServices.inProcessRestartBlockedByAutoInterface([tcpClientEntity(), rnodeEntity()]))
-        // An AutoInterface (even alongside others) blocks it.
-        XCTAssertTrue(AppServices.inProcessRestartBlockedByAutoInterface([autoInterfaceEntity()]))
-        XCTAssertTrue(AppServices.inProcessRestartBlockedByAutoInterface([tcpClientEntity(), autoInterfaceEntity()]))
-        // The named version returns the display name of the blocking interface.
-        XCTAssertNil(AppServices.inProcessRestartBlockingInterfaceName([]))
-        XCTAssertNil(AppServices.inProcessRestartBlockingInterfaceName([tcpClientEntity(), rnodeEntity()]))
-        XCTAssertEqual(AppServices.inProcessRestartBlockingInterfaceName([autoInterfaceEntity()]), "Auto")
-        XCTAssertEqual(AppServices.inProcessRestartBlockingInterfaceName([tcpClientEntity(), autoInterfaceEntity()]), "Auto")
-    }
     #endif
 }

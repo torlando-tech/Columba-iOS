@@ -2740,16 +2740,16 @@ public final class AppServices {
     }
 
     /// Outcome of an in-process `restartPythonBackend()` attempt. Closed enum
-    /// (house style) so callers can distinguish the four states: the restart
+    /// (house style) so callers can distinguish the three states: the restart
     /// completed and the change is LIVE, it was skipped (backend never
-    /// started), it failed (the stack is DOWN), or it was refused because an
-    /// AutoInterface is configured and same-process re-init is unsafe
-    /// (settings persisted — they apply on the next clean relaunch).
+    /// started), or it failed (the stack is DOWN). A configured AutoInterface
+    /// is no longer a blocker: the RNS 1.5.2 fork `AutoInterface.detach()` is
+    /// a full teardown (closes sockets, joins threads), so same-process
+    /// re-init is safe.
     public enum PythonBackendRestartOutcome: Equatable, CustomStringConvertible {
         case applied
         case skipped
         case failed
-        case requiresRelaunch(blockingInterfaceName: String)
         /// True only when the restart actually completed and the change is
         /// live — the single "did it work?" predicate for callers that don't
         /// need to branch on the other outcomes.
@@ -2759,36 +2759,8 @@ public final class AppServices {
             case .applied: return "applied"
             case .skipped: return "skipped"
             case .failed: return "failed"
-            case .requiresRelaunch: return "requiresRelaunch"
             }
         }
-    }
-
-    /// True when the configured interface set contains an AutoInterface — the
-    /// one case where a SAME-PROCESS Reticulum re-initialization is unsafe
-    /// (issue #193 / Greptile P1 #2). `AutoInterface.detach()` only sets
-    /// `online = False` and never closes its multicast sockets (local vars,
-    /// not stored on the instance) or joins its daemon threads, so re-init in
-    /// the same process hits the documented multicast-bind collision and the
-    /// re-init error path takes the whole backend down. Pure logic, split out
-    /// of `restartPythonBackend` so it can be unit-tested without a running
-    /// backend; `nonisolated` because it touches no actor state (and tests
-    /// call it from a nonisolated context).
-    /// Returns the display name of the first configured AutoInterface, or nil
-    /// if none is present. Used both as the guard predicate (nil = safe to
-    /// restart in-process) and to name the blocking interface in the UI message.
-    nonisolated static func inProcessRestartBlockingInterfaceName(
-        _ interfaces: [InterfaceEntity]
-    ) -> String? {
-        interfaces.first {
-            if case .autoInterface = $0.config { return true }
-            return false
-        }?.name
-    }
-
-    /// Legacy predicate kept for test compatibility; delegates to the named version.
-    nonisolated static func inProcessRestartBlockedByAutoInterface(_ interfaces: [InterfaceEntity]) -> Bool {
-        inProcessRestartBlockingInterfaceName(interfaces) != nil
     }
 
     /// Restart the running Python RNS stack IN-PROCESS: full teardown
@@ -2802,22 +2774,17 @@ public final class AppServices {
     /// `ColumbaBackendRestarted` notification below tells the UI the stack is
     /// back up so it can re-poll (discovery screen, transport toggle).
     ///
-    /// **AutoInterface guard (issue #193 / Greptile P1 #2):** when an enabled
-    /// AutoInterface is configured we REFUSE the same-process restart and
-    /// return `.requiresRelaunch`. `AutoInterface.detach()` only sets
-    /// `self.online = False` — its multicast sockets (local vars, not stored on
-    /// the instance) and daemon threads are never released, so re-initializing
-    /// Reticulum in the same process 200ms later deterministically hits the
-    /// documented multicast-bind collision and the re-init error path leaves
-    /// the whole backend down. The settings are still persisted, so they take
-    /// effect on the next clean relaunch.
+    /// A configured AutoInterface is NOT a blocker: the RNS 1.5.2 fork
+    /// `AutoInterface.detach()` fully tears down its multicast sockets and
+    /// daemon threads, so same-process re-init is safe (verified: clean
+    /// restart with the AutoInterface + its AutoInterfacePeer aux interfaces
+    /// re-bound, no multicast-bind collision).
     ///
     /// Returns the outcome: `.applied` when the in-process restart completed
     /// and the stack is back up; `.skipped` when the backend was never
-    /// started; `.requiresRelaunch` when an AutoInterface makes in-process
-    /// re-init unsafe; `.failed` when the re-init threw (the stack is down).
-    /// Callers that need to know whether their restart-gated change is now
-    /// LIVE must check this rather than assume success.
+    /// started; `.failed` when the re-init threw (the stack is down). Callers
+    /// that need to know whether their restart-gated change is now LIVE must
+    /// check this rather than assume success.
     @discardableResult
     public func restartPythonBackend() async -> PythonBackendRestartOutcome {
         guard let identity = pythonStartIdentity else {
@@ -2830,15 +2797,6 @@ public final class AppServices {
         // settings — T-C) before tearing down, so the re-init reads fresh values.
         let fresh = InterfaceRepository().getEnabledInterfaces()
         _ = await writePythonConfig(interfaces: fresh)
-        // AutoInterface guard: its teardown does not release the multicast
-        // sockets / daemon threads (see doc comment), so a same-process
-        // re-init would hit the multicast-bind collision and take the backend
-        // down. Refuse; the config write above persisted the change, so it
-        // applies on the next clean relaunch.
-        if let blockingName = Self.inProcessRestartBlockingInterfaceName(fresh) {
-            DiagLog.log("[RNS] restartPythonBackend: AutoInterface '\(blockingName)' configured — same-process re-init is unsafe (multicast sockets are not released on detach); refusing; change persisted for the next relaunch")
-            return .requiresRelaunch(blockingInterfaceName: blockingName)
-        }
         DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
         do {
             try await withLifecycleOperation {

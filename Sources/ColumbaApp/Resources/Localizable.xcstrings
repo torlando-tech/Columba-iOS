@@ -2993,16 +2993,6 @@
           }
         }
       }
-    },
-    "Saved. Takes effect on the next app launch because an AutoInterface (multicast LAN) is active, which requires a full restart to apply safely.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Saved. Takes effect on the next app launch because an AutoInterface (multicast LAN) is active, which requires a full restart to apply safely."
-          }
-        }
-      }
     }
   },
   "version": "1.0"
