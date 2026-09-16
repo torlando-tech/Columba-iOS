@@ -187,13 +187,19 @@ public struct StatusSnapshot: Decodable, Sendable {
         public let announceRateTarget: Int?
         /// Announces currently held back by rate-limiting.
         public let heldAnnounces: Int
+        /// Machine-readable RNode failure reason (`"pairing_required"`) surfaced
+        /// from the Python backend's `status_reason` (stale Bluetooth bond whose
+        /// key the RNode no longer accepts). The interface card keys its Repair
+        /// action on this instead of a raw CoreBluetooth error string.
+        public let statusReason: String?
 
         public init(sectionName: String, name: String, online: Bool, rxBytes: Int, txBytes: Int,
                     typeRaw: String? = nil, isBLEPeer: Bool? = nil, isAutoPeer: Bool? = nil,
                     peerAddress: String? = nil, lastError: String? = nil,
                     isAutoconnect: Bool? = nil, adoptedCount: Int? = nil,
                     incomingAnnounceFrequency: Double = 0, outgoingAnnounceFrequency: Double = 0,
-                    announceRateTarget: Int? = nil, heldAnnounces: Int = 0) {
+                    announceRateTarget: Int? = nil, heldAnnounces: Int = 0,
+                    statusReason: String? = nil) {
             self.sectionName = sectionName
             self.name = name
             self.online = online
@@ -210,6 +216,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.outgoingAnnounceFrequency = outgoingAnnounceFrequency
             self.announceRateTarget = announceRateTarget
             self.heldAnnounces = heldAnnounces
+            self.statusReason = statusReason
         }
 
         enum CodingKeys: String, CodingKey {
@@ -228,6 +235,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             case outgoingAnnounceFrequency = "outgoing_announce_frequency"
             case announceRateTarget = "announce_rate_target"
             case heldAnnounces = "held_announces"
+            case statusReason = "status_reason"
         }
 
         public init(from decoder: Decoder) throws {
@@ -248,6 +256,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.outgoingAnnounceFrequency = (try? c.decode(Double.self, forKey: .outgoingAnnounceFrequency)) ?? 0
             self.announceRateTarget = (try? c.decode(Int?.self, forKey: .announceRateTarget)) ?? nil
             self.heldAnnounces = (try? c.decode(Int.self, forKey: .heldAnnounces)) ?? 0
+            self.statusReason = try? c.decode(String.self, forKey: .statusReason)
         }
     }
 

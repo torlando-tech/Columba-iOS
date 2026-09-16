@@ -92,6 +92,11 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Whether the RNode wizard is shown (uses fullScreenCover to survive BLE pairing dialog)
     public var showRNodeWizard: Bool = false
 
+    /// When true, the RNode wizard is in repair mode: pre-populated from the
+    /// existing config like edit mode, but starts at the Device step so the
+    /// user re-pairs the Bluetooth bond rather than jumping straight to Review.
+    public var rnodeRepairMode: Bool = false
+
     /// Whether the TCP client wizard is shown (community server picker → review/configure)
     public var showTCPWizard: Bool = false
 
@@ -153,6 +158,11 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
     /// Interface connection status (interface ID -> status)
     public var interfaceStatus: [String: InterfaceStatus] = [:]
+
+    /// Machine-readable RNode failure reason (interface ID -> reason). Currently only
+    /// `"pairing_required"` (a stale Bluetooth bond) is set; nil/absent for every other
+    /// interface or state. The interface card keys its Repair action on this.
+    public var interfaceStatusReasons: [String: String?] = [:]
 
     /// Status observation task — polls APP-LOCAL interface state (MPC /
     /// MultipeerConnectivity, Auto, RNode, and the Model-A local TCP/BLE
@@ -340,11 +350,26 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         }
     }
 
+    /// Open the RNode wizard in repair mode: pre-populated from the existing
+    /// config but starting at the Device step so the user re-pairs the stale
+    /// Bluetooth bond. Used by the pairing-required card's Repair button.
+    public func showRepairInterface(_ interface: InterfaceEntity) {
+        guard interface.type == .rnode else {
+            showEditInterface(interface)
+            return
+        }
+        editingInterface = interface
+        populateConfigForm(from: interface)
+        rnodeRepairMode = true
+        showRNodeWizard = true
+    }
+
     /// Dismiss the config sheet.
     public func dismissConfigSheet() {
         showConfigSheet = false
         showRNodeWizard = false
         showTCPWizard = false
+        rnodeRepairMode = false
         editingInterface = nil
         resetConfigForm()
     }
@@ -638,7 +663,15 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 }
 
                 var pythonRNodeUpdates: [(String, String, InterfaceStatus)] = []
+                var pythonRNodeReasons: [String: String?] = [:]
                 #if COLUMBA_RUNTIME_PYTHON
+                // The RNode failure reason (e.g. "pairing_required" for a stale
+                // Bluetooth bond) is read DIRECTLY from the native BLE registry,
+                // not through the Python status poll. The Python driver's 50 ms
+                // poll misses the transient FAILED state (the bridge goes
+                // FAILED -> DISCONNECTED in <1 ms and the session closes), so the
+                // Python-side `status_reason` is unreliable. The registry
+                // persists the typed failure code per device across close.
                 for entity in enabledIfs where entity.type == .rnode {
                     guard case .rnode(let config) = entity.config else { continue }
                     let state = PythonRNodeBLESessionRegistry.shared.snapshot(
@@ -653,6 +686,18 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                     case .disconnected, .none: status = .disconnected
                     }
                     pythonRNodeUpdates.append((entity.id, entity.name, status))
+                    // Read the failure classification straight from the registry
+                    // (live session, or the code persisted at close time).
+                    let failure = PythonRNodeBLESessionRegistry.shared.failureCode(
+                        deviceIdentifier: config.deviceIdentifier,
+                        deviceName: config.deviceName
+                    )
+                    switch failure {
+                    case .pairingRequired:
+                        pythonRNodeReasons[entity.id] = "pairing_required"
+                    default:
+                        pythonRNodeReasons[entity.id] = nil
+                    }
                 }
                 #endif
 
@@ -731,6 +776,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                             DiagLog.log("[RNODE_UI] \(name) badge -> \(status.displayName)")
                         }
                         self.interfaceStatus[id] = status
+                        self.interfaceStatusReasons[id] = pythonRNodeReasons[id]
                     }
                     #else
                     if let rnodeEntity = enabledIfs.first(where: { $0.type == .rnode }) {
@@ -1102,5 +1148,12 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Get status for an interface.
     public func getStatus(for interface: InterfaceEntity) -> InterfaceStatus {
         interfaceStatus[interface.id] ?? .disconnected
+    }
+
+    /// Machine-readable RNode failure reason for an interface (e.g.
+    /// `"pairing_required"`), or nil when there is none. The card offers a Repair
+    /// action for RNode interfaces whose reason is `"pairing_required"`.
+    public func getStatusReason(for interface: InterfaceEntity) -> String? {
+        interfaceStatusReasons[interface.id] ?? nil
     }
 }

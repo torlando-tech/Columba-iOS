@@ -2149,6 +2149,10 @@ def status() -> dict[str, Any]:
                     ),
                     "announce_rate_target": getattr(iface, "announce_rate_target", None),
                     "held_announces": len(getattr(iface, "held_announces", []) or []),
+                    # Machine-readable RNode failure reason ("pairing_required" or
+                    # None). Lets the interface card offer a Repair action for a
+                    # stale Bluetooth bond instead of sitting on "Unreachable".
+                    "status_reason": getattr(iface, "status_reason", None),
                 })
             out["interfaces"] = iface_info
         except Exception as e:
