@@ -56,6 +56,45 @@ enum DiagLog {
         return docs.appendingPathComponent("diag.log")
     }()
 
+    /// Capture a stable, standalone report without requiring initialized services.
+    /// Read both log generations under the same lock as append/rotation/purge.
+    /// Call from a worker task; callers own and remove the returned temporary file.
+    static func exportSnapshot(startupError: String? = nil) throws -> URL {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        var report = Data("""
+        Columba Diagnostics
+        App version: \(version) (\(build))
+        OS: \(ProcessInfo.processInfo.operatingSystemVersionString)
+        Captured: \(ISO8601DateFormatter().string(from: Date()))
+
+        """.utf8)
+        if let startupError {
+            report.append(Data("\nStartup error: \(startupError)\n".utf8))
+        }
+
+        lock.lock()
+        do {
+            for url in [rotatedFileURL, fileURL] {
+                report.append(Data("\n--- \(url.lastPathComponent) ---\n".utf8))
+                do {
+                    report.append(try Data(contentsOf: url))
+                } catch CocoaError.fileReadNoSuchFile {
+                    report.append(Data("No log file available.\n".utf8))
+                }
+            }
+            lock.unlock()
+        } catch {
+            lock.unlock()
+            throw error
+        }
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Columba-Diagnostics-\(UUID().uuidString).txt")
+        try report.write(to: destination, options: .atomic)
+        return destination
+    }
+
     private static var rotatedFileURL: URL {
         URL(fileURLWithPath: fileURL.path + ".1")
     }

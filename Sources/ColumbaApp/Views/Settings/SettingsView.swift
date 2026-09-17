@@ -136,6 +136,13 @@ struct SettingsView: View {
 
                         // Transport Mode (advanced)
                         transportModeCard(vm)
+
+                        #if os(iOS)
+                        DiagnosticsShareButton()
+                            .buttonStyle(.bordered)
+                            .tint(Theme.accentColor)
+                            .padding(.vertical, 8)
+                        #endif
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)

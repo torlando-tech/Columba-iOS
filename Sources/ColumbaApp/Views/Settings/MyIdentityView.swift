@@ -650,6 +650,63 @@ struct SettingsIdenticonView: View {
 // MARK: - Share Sheet
 
 #if os(iOS)
+/// Available on the startup error screen as well as in Settings.
+/// Export runs independently of AppServices and never shares the live log URL.
+struct DiagnosticsShareButton: View {
+    var startupError: String? = nil
+    @State private var isPreparing = false
+    @State private var isSharing = false
+    @State private var snapshotURL: URL?
+    @State private var exportError: String?
+
+    var body: some View {
+        Button {
+            isPreparing = true
+        } label: {
+            Label("Share Diagnostics", systemImage: "square.and.arrow.up")
+        }
+        .disabled(isPreparing || isSharing)
+        .accessibilityIdentifier("share_diagnostics")
+        .task(id: isPreparing) {
+            guard isPreparing else { return }
+            defer { isPreparing = false }
+            do {
+                let error = startupError
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try DiagLog.exportSnapshot(startupError: error)
+                }.value
+                guard !Task.isCancelled else {
+                    try? FileManager.default.removeItem(at: url)
+                    return
+                }
+                snapshotURL = url
+                isSharing = true
+            } catch {
+                guard !Task.isCancelled else { return }
+                exportError = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: $isSharing, onDismiss: {
+            if let snapshotURL {
+                try? FileManager.default.removeItem(at: snapshotURL)
+            }
+            snapshotURL = nil
+        }) {
+            if let snapshotURL {
+                ShareSheet(items: [snapshotURL])
+            }
+        }
+        .alert("Couldn’t Export Diagnostics", isPresented: Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
+        }
+    }
+}
+
 /// UIKit share sheet wrapper for SwiftUI.
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
