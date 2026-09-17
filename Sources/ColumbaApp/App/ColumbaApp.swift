@@ -1208,6 +1208,11 @@ struct RootView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 .padding(.top, 10)
+
+                #if os(iOS)
+                DiagnosticsShareButton(startupError: message)
+                    .tint(Theme.accentColor)
+                #endif
             }
         }
     }

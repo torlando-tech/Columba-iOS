@@ -921,6 +921,26 @@
         }
       }
     },
+    "Share Diagnostics": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share Diagnostics"
+          }
+        }
+      }
+    },
+    "Couldn’t Export Diagnostics": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn’t Export Diagnostics"
+          }
+        }
+      }
+    },
     "Share Your Identity": {
       "localizations": {
         "en": {

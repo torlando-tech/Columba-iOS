@@ -106,6 +106,49 @@ final class DiagLogRotationTests: XCTestCase {
                        "staying under the cap must not rotate")
     }
 
+    // MARK: - Diagnostic export
+
+    func testExportWorksBeforeLogsExistAndIncludesStartupFailure() throws {
+        let snapshot = try DiagLog.exportSnapshot(startupError: "Keychain read failed (-25308)")
+        defer { try? FileManager.default.removeItem(at: snapshot) }
+        let report = try String(contentsOf: snapshot, encoding: .utf8)
+        XCTAssertTrue(report.contains("App version:"))
+        XCTAssertTrue(report.contains("OS:"))
+        XCTAssertTrue(report.contains("Startup error: Keychain read failed (-25308)"))
+        XCTAssertTrue(report.contains("No log file available."))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: diagURL.path))
+    }
+
+    func testExportPreservesBothGenerationsAndSurvivesLiveLogPurge() throws {
+        try Data("first startup attempt\n".utf8).write(to: rotatedURL)
+        try Data("last startup attempt\n".utf8).write(to: diagURL)
+        let snapshot = try DiagLog.exportSnapshot()
+        defer { try? FileManager.default.removeItem(at: snapshot) }
+        let captured = try Data(contentsOf: snapshot)
+        let report = String(decoding: captured, as: UTF8.self)
+        let older = try XCTUnwrap(report.range(of: "first startup attempt"))
+        let newer = try XCTUnwrap(report.range(of: "last startup attempt"))
+        XCTAssertLessThan(older.lowerBound, newer.lowerBound)
+        XCTAssertEqual(try String(contentsOf: diagURL, encoding: .utf8), "last startup attempt\n")
+        XCTAssertEqual(try String(contentsOf: rotatedURL, encoding: .utf8), "first startup attempt\n")
+        DiagLog.log("appended after export")
+        XCTAssertTrue(DiagLog.purgeForNewLaunch())
+        XCTAssertEqual(try Data(contentsOf: snapshot), captured)
+    }
+
+    func testExportPropagatesReadFailureAndReleasesLogLock() throws {
+        // A directory where the log should be causes a real read failure.
+        try FileManager.default.createDirectory(at: diagURL, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try DiagLog.exportSnapshot())
+        try FileManager.default.removeItem(at: diagURL)
+        // Subsequent exports and appends must still acquire the logger lock.
+        DiagLog.log("recovered after export failure")
+        let snapshot = try DiagLog.exportSnapshot()
+        defer { try? FileManager.default.removeItem(at: snapshot) }
+        let report = try String(contentsOf: snapshot, encoding: .utf8)
+        XCTAssertTrue(report.contains("recovered after export failure"))
+    }
+
     // MARK: - Concurrency
 
     func testConcurrentAppendsAreSerialized() throws {
