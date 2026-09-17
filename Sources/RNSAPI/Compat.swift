@@ -1535,6 +1535,10 @@ public final class ReticulumTransport: @unchecked Sendable {
     // here by `AppServices.applyPythonInterfaceStatus` each poll tick
     // (~2s) so getInterfaceSnapshots can include them.
     private var pythonAuxiliarySnapshots: [InterfaceSnapshot] = []
+    /// Per-interface announce-rate metrics, keyed by entity id.
+    /// Populated by AppServices.applyPythonInterfaceStatus from the Python
+    /// status poll; read by getInterfaceSnapshots() to fill InterfaceSnapshot.
+    private var interfaceAnnounceRates: [String: AnnounceRates] = [:]
 
     public func setPythonAuxiliarySnapshots(_ snapshots: [InterfaceSnapshot]) {
         _interfaceLock.lock(); defer { _interfaceLock.unlock() }
@@ -1627,6 +1631,13 @@ public final class ReticulumTransport: @unchecked Sendable {
         // "AutoInterfacePeer[en0/fe80::xxxx]" which we want shown as-is).
         return nil
     }
+    /// Update the per-interface announce-rate metrics (keyed by entity id).
+    /// Called by AppServices after each Python status poll.
+    public func setInterfaceAnnounceRates(_ rates: [String: AnnounceRates]) {
+        _interfaceLock.lock(); defer { _interfaceLock.unlock() }
+        interfaceAnnounceRates = rates
+    }
+
     public func getInterfaceSnapshots() async -> [InterfaceSnapshot] {
         _interfaceLock.lock(); defer { _interfaceLock.unlock() }
         var out: [InterfaceSnapshot] = registeredInterfaces.values.map { iface in
@@ -1658,7 +1669,8 @@ public final class ReticulumTransport: @unchecked Sendable {
                 peerAddress: nil,
                 lastErrorDescription: nil,
                 endpoint: (iface as? TCPInterface)?.endpoint,
-                isAutoconnect: (iface as? TCPInterface)?.isAutoconnect ?? false
+                isAutoconnect: (iface as? TCPInterface)?.isAutoconnect ?? false,
+                announceRates: interfaceAnnounceRates[iface.id]
             )
         }
         // Append python-discovered auxiliary interfaces (AutoInterfacePeer,
@@ -1727,6 +1739,22 @@ public final class ReticulumTransport: @unchecked Sendable {
     public func applyIFAC(raw: Data, interfaceId: String) -> Data { raw }
 }
 
+/// Per-interface announce-rate metrics from RNS 1.4.2 (Interface.py).
+/// `incomingHz` / `outgoingHz` are 0 until RNS accumulates enough samples.
+public struct AnnounceRates: Equatable, Sendable {
+    public let incomingHz: Double
+    public let outgoingHz: Double
+    public let targetHz: Int?
+    public let heldCount: Int
+
+    public init(incomingHz: Double, outgoingHz: Double, targetHz: Int?, heldCount: Int) {
+        self.incomingHz = incomingHz
+        self.outgoingHz = outgoingHz
+        self.targetHz = targetHz
+        self.heldCount = heldCount
+    }
+}
+
 public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
@@ -1746,6 +1774,9 @@ public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
     /// True when RNS spawned this interface from a discovery announce
     /// (`autoconnect_hash` marker); rendered with a "via discovery" badge.
     public let isAutoconnect: Bool
+    /// Per-interface announce-rate metrics from the Python status poll;
+    /// nil for interfaces the poll hasn't seen yet (auxiliary / NE rows).
+    public let announceRates: AnnounceRates?
 
     public init(
         id: String,
@@ -1759,7 +1790,8 @@ public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
         peerAddress: String? = nil,
         lastErrorDescription: String? = nil,
         endpoint: String? = nil,
-        isAutoconnect: Bool = false
+        isAutoconnect: Bool = false,
+        announceRates: AnnounceRates? = nil
     ) {
         self.id = id
         self.name = name
@@ -1773,6 +1805,7 @@ public struct InterfaceSnapshot: Identifiable, Equatable, Sendable {
         self.lastErrorDescription = lastErrorDescription
         self.endpoint = endpoint
         self.isAutoconnect = isAutoconnect
+        self.announceRates = announceRates
     }
 }
 

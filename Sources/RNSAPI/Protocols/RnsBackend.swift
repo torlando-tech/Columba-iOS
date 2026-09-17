@@ -178,6 +178,15 @@ public struct StatusSnapshot: Decodable, Sendable {
         /// is re-created. The carrier re-adopt coordinator keys off this
         /// (not `online`, which is True either way).
         public let adoptedCount: Int?
+        /// Per-interface announce frequency this interface is RECEIVING (Hz);
+        /// 0 until RNS accumulates enough samples. Python backend only.
+        public let incomingAnnounceFrequency: Double
+        /// Per-interface announce frequency this interface is SENDING (Hz).
+        public let outgoingAnnounceFrequency: Double
+        /// Configured announce rate target (Hz); nil when unset.
+        public let announceRateTarget: Int?
+        /// Announces currently held back by rate-limiting.
+        public let heldAnnounces: Int
         /// Machine-readable RNode failure reason (`"pairing_required"`) surfaced
         /// from the Python backend's `status_reason` (stale Bluetooth bond whose
         /// key the RNode no longer accepts). The interface card keys its Repair
@@ -188,6 +197,8 @@ public struct StatusSnapshot: Decodable, Sendable {
                     typeRaw: String? = nil, isBLEPeer: Bool? = nil, isAutoPeer: Bool? = nil,
                     peerAddress: String? = nil, lastError: String? = nil,
                     isAutoconnect: Bool? = nil, adoptedCount: Int? = nil,
+                    incomingAnnounceFrequency: Double = 0, outgoingAnnounceFrequency: Double = 0,
+                    announceRateTarget: Int? = nil, heldAnnounces: Int = 0,
                     statusReason: String? = nil) {
             self.sectionName = sectionName
             self.name = name
@@ -201,6 +212,10 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.lastError = lastError
             self.isAutoconnect = isAutoconnect
             self.adoptedCount = adoptedCount
+            self.incomingAnnounceFrequency = incomingAnnounceFrequency
+            self.outgoingAnnounceFrequency = outgoingAnnounceFrequency
+            self.announceRateTarget = announceRateTarget
+            self.heldAnnounces = heldAnnounces
             self.statusReason = statusReason
         }
 
@@ -216,6 +231,10 @@ public struct StatusSnapshot: Decodable, Sendable {
             case lastError = "last_error"
             case isAutoconnect = "is_autoconnect"
             case adoptedCount = "adopted_count"
+            case incomingAnnounceFrequency = "incoming_announce_frequency"
+            case outgoingAnnounceFrequency = "outgoing_announce_frequency"
+            case announceRateTarget = "announce_rate_target"
+            case heldAnnounces = "held_announces"
             case statusReason = "status_reason"
         }
 
@@ -233,6 +252,10 @@ public struct StatusSnapshot: Decodable, Sendable {
             self.lastError = try? c.decode(String.self, forKey: .lastError)
             self.isAutoconnect = try? c.decode(Bool.self, forKey: .isAutoconnect)
             self.adoptedCount = (try? c.decode(Int?.self, forKey: .adoptedCount)) ?? nil
+            self.incomingAnnounceFrequency = (try? c.decode(Double.self, forKey: .incomingAnnounceFrequency)) ?? 0
+            self.outgoingAnnounceFrequency = (try? c.decode(Double.self, forKey: .outgoingAnnounceFrequency)) ?? 0
+            self.announceRateTarget = (try? c.decode(Int?.self, forKey: .announceRateTarget)) ?? nil
+            self.heldAnnounces = (try? c.decode(Int.self, forKey: .heldAnnounces)) ?? 0
             self.statusReason = try? c.decode(String.self, forKey: .statusReason)
         }
     }

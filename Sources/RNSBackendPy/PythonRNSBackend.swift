@@ -502,7 +502,11 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
                     sectionName: $0.sectionName, name: $0.name, online: $0.online,
                     rxBytes: $0.rxBytes, txBytes: $0.txBytes,
                     isAutoconnect: $0.isAutoconnect,
-                    adoptedCount: $0.adoptedCount
+                    adoptedCount: $0.adoptedCount,
+                    incomingAnnounceFrequency: $0.incomingAnnounceFrequency,
+                    outgoingAnnounceFrequency: $0.outgoingAnnounceFrequency,
+                    announceRateTarget: $0.announceRateTarget,
+                    heldAnnounces: $0.heldAnnounces
                 )
             },
             destinationTableSize: s.destinationTableSize,

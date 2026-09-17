@@ -1965,6 +1965,10 @@ public final class AppServices {
         // InterfaceManagementScreen show online / offline accurately.
         pythonStatusPollTask?.cancel()
         pythonStatusPollTask = Task { [weak self, backend] in
+            // Announce-rate metrics exist only on the Python bridge; a native
+            // (Model B) backend's status rows leave those fields at their
+            // defaults, which must not be published as live readings.
+            let isPythonBackend = backend.capabilities.backendId == .pythonEmbedded
             var tick = 0
             DiagLog.log("[RNS-POLL] task started")
             while !Task.isCancelled {
@@ -1976,7 +1980,7 @@ public final class AppServices {
                 }
                 guard let self else { return }
                 let entityById = await MainActor.run { self.pythonInterfaceEntities }
-                await self.applyPythonInterfaceStatus(snapshot: snapshot, entityById: entityById)
+                await self.applyPythonInterfaceStatus(snapshot: snapshot, entityById: entityById, publishRates: isPythonBackend)
             }
             DiagLog.log("[RNS-POLL] task exiting (cancelled)")
         }
@@ -2591,7 +2595,8 @@ public final class AppServices {
     /// `online` flag RNS.Transport reports.
     private func applyPythonInterfaceStatus(
         snapshot: StatusSnapshot,
-        entityById: [String: InterfaceEntity]
+        entityById: [String: InterfaceEntity],
+        publishRates: Bool
     ) async {
         // Log every interface Python reports so we can see AutoInterface /
         // RNode / etc. that don't have Compat stubs yet. One-shot per
@@ -2621,6 +2626,22 @@ public final class AppServices {
         // field of the status dict is `str(iface)` which gives us the
         // friendly "AutoInterfacePeer[en0/fe80::xxxx]" — peel out the
         // peer address from there for the row subtitle.
+        // Push per-interface announce-rate metrics into the Compat transport
+        // so getInterfaceSnapshots() can surface them in the UI. The metrics
+        // are Python-only (publishRates); the UI hides the rows when the
+        // snapshot carries no rates.
+        if publishRates, let transport = transport {
+            var rates: [String: AnnounceRates] = [:]
+            for (entityId, status) in byEntity {
+                rates[entityId] = AnnounceRates(
+                    incomingHz: status.incomingAnnounceFrequency,
+                    outgoingHz: status.outgoingAnnounceFrequency,
+                    targetHz: status.announceRateTarget,
+                    heldCount: status.heldAnnounces
+                )
+            }
+            transport.setInterfaceAnnounceRates(rates)
+        }
         var auxiliary: [InterfaceSnapshot] = []
         for status in snapshot.interfaces where !matchedSectionNames.contains(status.sectionName) {
             let isAutoPeer = status.name.hasPrefix("AutoInterfacePeer")
@@ -2765,16 +2786,16 @@ public final class AppServices {
     }
 
     /// Outcome of an in-process `restartPythonBackend()` attempt. Closed enum
-    /// (house style) so callers can distinguish the four states: the restart
+    /// (house style) so callers can distinguish the three states: the restart
     /// completed and the change is LIVE, it was skipped (backend never
-    /// started), it failed (the stack is DOWN), or it was refused because an
-    /// AutoInterface is configured and same-process re-init is unsafe
-    /// (settings persisted — they apply on the next clean relaunch).
+    /// started), or it failed (the stack is DOWN). A configured AutoInterface
+    /// is no longer a blocker: the RNS 1.5.2 fork `AutoInterface.detach()` is
+    /// a full teardown (closes sockets, joins threads), so same-process
+    /// re-init is safe.
     public enum PythonBackendRestartOutcome: Equatable, CustomStringConvertible {
         case applied
         case skipped
         case failed
-        case requiresRelaunch
         /// True only when the restart actually completed and the change is
         /// live — the single "did it work?" predicate for callers that don't
         /// need to branch on the other outcomes.
@@ -2784,25 +2805,7 @@ public final class AppServices {
             case .applied: return "applied"
             case .skipped: return "skipped"
             case .failed: return "failed"
-            case .requiresRelaunch: return "requiresRelaunch"
             }
-        }
-    }
-
-    /// True when the configured interface set contains an AutoInterface — the
-    /// one case where a SAME-PROCESS Reticulum re-initialization is unsafe
-    /// (issue #193 / Greptile P1 #2). `AutoInterface.detach()` only sets
-    /// `online = False` and never closes its multicast sockets (local vars,
-    /// not stored on the instance) or joins its daemon threads, so re-init in
-    /// the same process hits the documented multicast-bind collision and the
-    /// re-init error path takes the whole backend down. Pure logic, split out
-    /// of `restartPythonBackend` so it can be unit-tested without a running
-    /// backend; `nonisolated` because it touches no actor state (and tests
-    /// call it from a nonisolated context).
-    nonisolated static func inProcessRestartBlockedByAutoInterface(_ interfaces: [InterfaceEntity]) -> Bool {
-        interfaces.contains {
-            if case .autoInterface = $0.config { return true }
-            return false
         }
     }
 
@@ -2817,22 +2820,17 @@ public final class AppServices {
     /// `ColumbaBackendRestarted` notification below tells the UI the stack is
     /// back up so it can re-poll (discovery screen, transport toggle).
     ///
-    /// **AutoInterface guard (issue #193 / Greptile P1 #2):** when an enabled
-    /// AutoInterface is configured we REFUSE the same-process restart and
-    /// return `.requiresRelaunch`. `AutoInterface.detach()` only sets
-    /// `self.online = False` — its multicast sockets (local vars, not stored on
-    /// the instance) and daemon threads are never released, so re-initializing
-    /// Reticulum in the same process 200ms later deterministically hits the
-    /// documented multicast-bind collision and the re-init error path leaves
-    /// the whole backend down. The settings are still persisted, so they take
-    /// effect on the next clean relaunch.
+    /// A configured AutoInterface is NOT a blocker: the RNS 1.5.2 fork
+    /// `AutoInterface.detach()` fully tears down its multicast sockets and
+    /// daemon threads, so same-process re-init is safe (verified: clean
+    /// restart with the AutoInterface + its AutoInterfacePeer aux interfaces
+    /// re-bound, no multicast-bind collision).
     ///
     /// Returns the outcome: `.applied` when the in-process restart completed
     /// and the stack is back up; `.skipped` when the backend was never
-    /// started; `.requiresRelaunch` when an AutoInterface makes in-process
-    /// re-init unsafe; `.failed` when the re-init threw (the stack is down).
-    /// Callers that need to know whether their restart-gated change is now
-    /// LIVE must check this rather than assume success.
+    /// started; `.failed` when the re-init threw (the stack is down). Callers
+    /// that need to know whether their restart-gated change is now LIVE must
+    /// check this rather than assume success.
     @discardableResult
     public func restartPythonBackend() async -> PythonBackendRestartOutcome {
         guard let identity = pythonStartIdentity else {
@@ -2845,15 +2843,6 @@ public final class AppServices {
         // settings — T-C) before tearing down, so the re-init reads fresh values.
         let fresh = InterfaceRepository().getEnabledInterfaces()
         _ = await writePythonConfig(interfaces: fresh)
-        // AutoInterface guard: its teardown does not release the multicast
-        // sockets / daemon threads (see doc comment), so a same-process
-        // re-init would hit the multicast-bind collision and take the backend
-        // down. Refuse; the config write above persisted the change, so it
-        // applies on the next clean relaunch.
-        if Self.inProcessRestartBlockedByAutoInterface(fresh) {
-            DiagLog.log("[RNS] restartPythonBackend: AutoInterface configured — same-process re-init is unsafe (multicast sockets are not released on detach); refusing; change persisted for the next relaunch")
-            return .requiresRelaunch
-        }
         DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
         do {
             try await withLifecycleOperation {
@@ -4227,15 +4216,18 @@ public final class AppServices {
 
     /// Re-adopt an AutoInterface that adopted zero system interfaces.
     ///
-    /// SAFE ONLY when `adopted_count == 0`: that instance holds no discovery
+    /// Run only when `adopted_count == 0`: that instance holds no discovery
     /// sockets (they are created per adopted interface in the constructor), so
-    /// the hot-remove + hot-add cannot leak any. Upstream `AutoInterface
-    /// .detach()` does not release sockets, so re-adopting a LIVE interface
-    /// (one or more adopted) would leak the multicast sockets and split
-    /// incoming announcements between the dead and new instances - the same
-    /// reason `restartPythonBackend` refuses to run with an AutoInterface. A
-    /// live interface never needs re-adopting anyway: its `peer_jobs` loop
-    /// tracks address changes on the interfaces it already holds.
+    /// there is nothing to rebind and no peers to interrupt. Re-adopting a
+    /// LIVE interface (one or more adopted) would drop and re-establish
+    /// working peers with no benefit, so we never do that. (The older
+    /// rationale - that `AutoInterface.detach()` leaked multicast sockets, so
+    /// re-adopting a live interface would collide on the multicast bind and
+    /// `restartPythonBackend` refused to run with an AutoInterface - no longer
+    /// applies: the RNS 1.5.2 fork `detach()` is a full teardown. The
+    /// `adopted_count == 0` guard remains because churning a working interface
+    /// is pointless.) A live interface's `peer_jobs` loop tracks address
+    /// changes on the interfaces it already holds.
     ///
     /// The hot-remove + hot-add re-runs the AutoInterface constructor
     /// (`_synthesize_interface` -> fresh `AutoInterface(...)`), which re-scans

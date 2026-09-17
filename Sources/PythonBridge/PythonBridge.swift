@@ -659,6 +659,15 @@ public final class PythonBridge: @unchecked Sendable {
             /// re-adopt coordinator uses this (not `online`, which is True
             /// either way) to detect the dead interface.
             public let adoptedCount: Int?
+            /// Announce frequency this interface is RECEIVING (Hz). 0 until
+            /// RNS accumulates enough samples (IC_DEQUE_MIN_SAMPLE).
+            public let incomingAnnounceFrequency: Double
+            /// Announce frequency this interface is SENDING (Hz).
+            public let outgoingAnnounceFrequency: Double
+            /// Configured per-interface announce rate target (Hz); nil if unset.
+            public let announceRateTarget: Int?
+            /// Announces currently held back by rate-limiting on this iface.
+            public let heldAnnounces: Int
 
             enum CodingKeys: String, CodingKey {
                 case sectionName = "section_name"
@@ -668,6 +677,10 @@ public final class PythonBridge: @unchecked Sendable {
                 case txBytes = "tx_bytes"
                 case isAutoconnect = "is_autoconnect"
                 case adoptedCount = "adopted_count"
+                case incomingAnnounceFrequency = "incoming_announce_frequency"
+                case outgoingAnnounceFrequency = "outgoing_announce_frequency"
+                case announceRateTarget = "announce_rate_target"
+                case heldAnnounces = "held_announces"
             }
 
             public init(from decoder: Decoder) throws {
@@ -679,6 +692,10 @@ public final class PythonBridge: @unchecked Sendable {
                 self.txBytes = (try? c.decode(Int.self, forKey: .txBytes)) ?? 0
                 self.isAutoconnect = (try? c.decode(Bool.self, forKey: .isAutoconnect)) ?? false
                 self.adoptedCount = (try? c.decode(Int?.self, forKey: .adoptedCount)) ?? nil
+                self.incomingAnnounceFrequency = (try? c.decode(Double.self, forKey: .incomingAnnounceFrequency)) ?? 0
+                self.outgoingAnnounceFrequency = (try? c.decode(Double.self, forKey: .outgoingAnnounceFrequency)) ?? 0
+                self.announceRateTarget = (try? c.decode(Int?.self, forKey: .announceRateTarget)) ?? nil
+                self.heldAnnounces = (try? c.decode(Int.self, forKey: .heldAnnounces)) ?? 0
             }
         }
 
