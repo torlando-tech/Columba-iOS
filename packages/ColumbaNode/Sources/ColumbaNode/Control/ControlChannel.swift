@@ -128,7 +128,7 @@ public enum ControlChannel {
                 throw ControlChannelError.undecodable("unknown reply value tag '\(innerTag)'")
             }
             result = .success(value)
-        } else if resultTag == "failure", let err = try decodeError(resultValue) {
+        } else if resultTag == "failure", let err = decodeError(resultValue) {
             result = .failure(err)
         } else {
             throw ControlChannelError.undecodable("unknown reply result tag '\(resultTag)'")
