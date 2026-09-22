@@ -50,6 +50,12 @@ public enum AppGroupPaths {
     /// co-located with the GRDB store under the per-identity directory.
     private static let ratchetStorageFileName = "ratchets"
 
+    /// Node-service v1 durable store filename (contract 5). Sits at the Columba
+    /// directory ROOT (not per-identity): the node store spans all identities for
+    /// the node group, unlike the per-identity LXMF GRDB store. Shared by the app
+    /// (typed facade) and the NE (node owner) — both open the SAME file.
+    private static let nodeServiceStoreFileName = "columba-node.db"
+
     // MARK: - Public API
 
     /// The App-Group container root, or `nil` when the container is unavailable
@@ -62,6 +68,18 @@ public enum AppGroupPaths {
         FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
         )
+    }
+
+    /// URL of the App-Group-shared node-service v1 durable store (contract 5)
+    /// — the single shared `columba-node.db` both the app's typed facade and the
+    /// NE's node owner open (the shared durable seam). Rooted at the Columba
+    /// directory (not per-identity). Returns `nil` when the App-Group container
+    /// is unavailable; callers handle the `nil` (the NE logs + degrades).
+    public static func nodeServiceStoreURL() -> URL? {
+        guard let container = containerURL() else { return nil }
+        let dir = container.appendingPathComponent(columbaDirectoryName, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent(nodeServiceStoreFileName)
     }
 
     /// URL of the App-Group-shared canonical `lxmf-swift.db` for `identityHashHex`

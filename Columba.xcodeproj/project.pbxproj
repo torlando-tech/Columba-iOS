@@ -356,6 +356,7 @@
 		DF2A7839A4D81C4DAEEF6A2A /* lucide.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FF6CE45231CD48906B9C226D /* lucide.ttf */; };
 		DF6654D386454C56AF75302E /* ModelBBLEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FMBS /* ModelBBLEService.swift */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
+		E0C1 /* NEMicroRNSEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC1 /* NEMicroRNSEngine.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		E079C55745CBDD622CA51842 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
 		E154CBBB80370FD16B8319CA /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
@@ -688,6 +689,7 @@
 		FBST /* AppGroupBLESeamTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBLESeamTransport.swift; sourceTree = "<group>"; };
 		FBSV /* AppGroupBLEServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBLEServer.swift; sourceTree = "<group>"; };
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
+		FEC1 /* NEMicroRNSEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEMicroRNSEngine.swift; sourceTree = "<group>"; };
 		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
 		FF6CE45231CD48906B9C226D /* lucide.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = lucide.ttf; sourceTree = "<group>"; };
@@ -959,6 +961,7 @@
 			isa = PBXGroup;
 			children = (
 				FE01 /* PacketTunnelProvider.swift */,
+				FEC1 /* NEMicroRNSEngine.swift */,
 				NERN1 /* NEReticulumNode.swift */,
 				FE02 /* Info.plist */,
 				FE03 /* ColumbaNetworkExtension.entitlements */,
@@ -1761,6 +1764,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E001 /* PacketTunnelProvider.swift in Sources */,
+				E0C1 /* NEMicroRNSEngine.swift in Sources */,
 				E002 /* SharedFrameQueue.swift in Sources */,
 				EBST /* AppGroupBLESeamTransport.swift in Sources */,
 				EBSV /* AppGroupBLEServer.swift in Sources */,

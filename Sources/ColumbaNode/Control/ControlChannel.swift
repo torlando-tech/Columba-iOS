@@ -40,6 +40,15 @@ public enum ControlChannel {
     /// Hard envelope cap including framing (contract 6).
     public static let maxEnvelopeBytes: UInt = 65_536   // 64 KiB
 
+    /// True if `data` carries the control-channel magic prefix `[0xF5, 0x02]`
+    /// (a control frame, not a legacy `ProxyRequest`). Cheap two-byte check used
+    /// by the NE's `handleAppMessage` BEFORE the legacy `0xF5` branch, so a
+    /// control frame is never misrouted to the legacy path (contract 6).
+    public static func isControlFrame(_ data: Data) -> Bool {
+        let bytes = [UInt8](data)
+        return bytes.count >= magic.count && bytes[0] == magic[0] && bytes[1] == magic[1]
+    }
+
     /// Encode a request into a framed envelope ready to hand to the transport.
     public static func encode(request: RequestBody, requestID: RequestID? = nil) throws -> Data {
         let id = requestID ?? RequestID()

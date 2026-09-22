@@ -20,6 +20,7 @@
 import Foundation
 import Network
 import NetworkExtension
+import ColumbaNode
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
@@ -32,6 +33,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// only before start / after stop. `NEReticulumNode.modelBNodeEnabled` is
     /// hardcoded `true` — the NE exists solely to host this node.
     private var reticulumNode: NEReticulumNode?
+
+    // MARK: - Node-service v1 node owner (contract 6)
+
+    /// The node-owner coordinator for the bounded control channel. Wraps the
+    /// in-NE `NEReticulumNode` behind the `NodeEngine` seam (via
+    /// `NEMicroRNSEngine`) + the shared durable `NodeStore`. The app reaches it
+    /// exclusively over `[0xF5 0x02]` control frames in `handleAppMessage`. The
+    /// LEGACY `ProxyRequest` path is preserved (contract 16: cut over later) —
+    /// it still handles the non-control `0xF5` envelopes.
+    private var nodeOwner: NodeOwner?
 
     // MARK: - Tunnel Lifecycle
 
@@ -74,8 +85,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // Track C3: tear down the in-NE node. Stopping the node drops its TCP
         // relay interface + AppGroupBridge. Fire-and-forget — teardown is
         // best-effort and the completion handler must not block on it.
+        // Also release the node owner (releases its shared NodeStore connection;
+        // the store is durable WAL, so a clean close here is safe).
         if let node = reticulumNode {
             reticulumNode = nil
+            nodeOwner = nil
             Task { await node.stop() }
         }
 
@@ -83,16 +97,56 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
-        // ── Track A5b (Model B app→NE send path) ────────────────────────────────
-        // The app talks to the NE node exclusively via `ProxyRequest` envelopes,
-        // marked by a leading magic byte (`ProxyIPC.magic` = 0xF5). Decode + reply
-        // with an encoded `ProxyResponse`. Any non-ProxyRequest message is ignored
-        // (the PoC raw-frame forwarding it used to carry is gone).
+        // ── Node-service v1 control channel (contract 6) ───────────────────────
+        // A `[0xF5, 0x02]` frame is a CONTROL message, full stop. Check it BEFORE
+        // the legacy `ProxyRequest` branch (which matches any `0xF5` first byte):
+        // an unknown control version is a hard control-protocol error that replies
+        // a typed failure — it must NEVER fall through to the legacy path
+        // (contract 6). The control path is engine-agnostic + async, so it
+        // dispatches on a Task and hands the framed reply back through the
+        // completion handler (the 1:1 request/response channel).
+        if ControlChannel.isControlFrame(messageData) {
+            let owner = nodeOwnerIfNeeded()
+            guard let owner else {
+                // Node owner unavailable (no shared store / node not up): a
+                // typed failure rather than a silent fallthrough to legacy.
+                completionHandler?(ProxyIPC.encodeResponse(.error("node owner not ready")))
+                return
+            }
+            Task {
+                let reply = await owner.handle(messageData)
+                completionHandler?(reply)
+            }
+            return
+        }
+
+        // ── Track A5b (Model B app→NE send path, LEGACY) ───────────────────────
+        // The app talks to the NE node via `ProxyRequest` envelopes, marked by a
+        // leading magic byte (`ProxyIPC.magic` = 0xF5, version 0x01). Decode +
+        // reply with an encoded `ProxyResponse`. Any non-ProxyRequest message is
+        // ignored. Preserved alongside the control channel (contract 16).
         if ProxyIPC.isProxyRequest(messageData) {
             handleProxyRequest(messageData, completionHandler: completionHandler)
             return
         }
         completionHandler?(nil)
+    }
+
+    /// Build (once per boot) the node-owner coordinator over the shared durable
+    /// store + the in-NE engine. Returns `nil` when it can't be built (no
+    /// App-Group store, or the node isn't started yet) — the caller replies a
+    /// typed failure in that case.
+    private func nodeOwnerIfNeeded() -> NodeOwner? {
+        if let existing = nodeOwner { return existing }
+        guard let node = reticulumNode,
+              let storeURL = AppGroupPaths.nodeServiceStoreURL(),
+              let store = try? NodeStore(config: .file(storeURL.path)) else {
+            return nil
+        }
+        let engine = NEMicroRNSEngine(node: node)
+        let owner = NodeOwner(store: store, engine: engine)
+        self.nodeOwner = owner
+        return owner
     }
 
     // MARK: - Track A5b — Model B app→NE IPC dispatch
