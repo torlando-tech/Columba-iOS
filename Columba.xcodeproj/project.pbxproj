@@ -2514,10 +2514,6 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = .;
 		};
-		F0818A694D3D225A0A6BE004 /* XCLocalSwiftPackageReference "ColumbaNode" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = packages/ColumbaNode;
-		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -2574,7 +2570,6 @@
 /* Begin XCSwiftPackageProductDependency section */
 		57110F986F2A3DFB3F95E483 /* ColumbaNode */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = F0818A694D3D225A0A6BE004 /* XCLocalSwiftPackageReference "ColumbaNode" */;
 			productName = ColumbaNode;
 		};
 		021FA3D73B6F8B711A97D40F /* ReticulumSwift */ = {
