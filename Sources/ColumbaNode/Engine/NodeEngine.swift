@@ -60,8 +60,12 @@ public enum EngineCommandResult: Hashable, Sendable {
 }
 
 /// The engine-adapter seam. An engine is constructed per NE boot (one node
-/// owner, one engine). All calls are synchronous and run on the node owner's
-/// serial actor; the engine must not block on app IPC.
+/// owner, one engine). The node owner is a serialized actor and drives the
+/// engine on its own executor, so the lifecycle + side-effect calls are `async`
+/// (the real engines - the C++ microRNS node and embedded Python RNS - are
+/// long-running + async). The capability gate (`canExecute`) stays synchronous:
+/// it is a pure state check the store's admission policy calls inside its
+/// transaction, and must not do I/O. The engine must not block on app IPC.
 public protocol NodeEngine: Sendable {
     /// Build info for the descriptor (IDL `record BuildInfo`).
     var buildInfo: BuildInfo { get }
@@ -69,26 +73,28 @@ public protocol NodeEngine: Sendable {
     /// Capabilities this engine advertises in hello (IDL `[Capability]`).
     var capabilities: [Capability] { get }
 
-    /// Bring the node up. Called once at start. Returns the descriptor the node
-    /// owner returns to hello (contract 6). Throws on a hard startup failure.
-    func start(store: NodeStore) throws -> Descriptor
+    /// Bring the node up. Called once at start (and on act `.start`). Returns the
+    /// descriptor the node owner returns to hello (contract 6). Throws on a hard
+    /// startup failure.
+    func start(store: NodeStore) async throws -> Descriptor
 
     /// Stop the node. Idempotent. Called at tunnel teardown / quiesce.
-    func stop()
+    func stop() async
 
     /// Current runtime snapshot (phase/enabled/connectivity) for a nodeState
     /// query.
-    func runtimeSnapshot() -> RuntimeSnapshot
+    func runtimeSnapshot() async -> RuntimeSnapshot
 
     /// Execute an admitted command. `intent` is the already-staged intent; the
     /// node owner has already committed an `accepted` ledger disposition, so this
     /// is the actual side effect (send, configure, etc.). The engine must not
     /// re-stage or re-admit.
-    func execute(_ intent: Intent) throws -> EngineCommandResult
+    func execute(_ intent: Intent) async throws -> EngineCommandResult
 
     /// Whether the engine can run `command` NOW (capability/scope check) for the
-    /// admission policy. A `nil` here means "cannot run; reject". This is the
+    /// admission policy. A non-nil here means "cannot run; reject". This is the
     /// capability gate the store's admission policy calls (contract 7, 11).
+    /// Synchronous: it runs inside the store's admission transaction.
     func canExecute(_ intent: Intent) -> NodeError?
 }
 
@@ -116,7 +122,7 @@ public struct StubEngine: NodeEngine {
     }
     public var capabilities: [Capability] { [] }
 
-    public func start(store: NodeStore) throws -> Descriptor {
+    public func start(store: NodeStore) async throws -> Descriptor {
         Descriptor(version: .v1_0, storeEpoch: store.epochValue, bootID: BootID(),
                    storeSchema: 1, capabilities: [],
                    backend: buildInfo,
@@ -125,13 +131,13 @@ public struct StubEngine: NodeEngine {
                                             enabledIdentities: [], connectivity: .noInterfaces,
                                             observedAt: Instant(date: Date())))
     }
-    public func stop() {}
-    public func runtimeSnapshot() -> RuntimeSnapshot {
+    public func stop() async {}
+    public func runtimeSnapshot() async -> RuntimeSnapshot {
         RuntimeSnapshot(bootID: BootID(), phase: .ready, desiredEnabled: false,
                         actualEnabled: false, enabledIdentities: [],
                         connectivity: .noInterfaces, observedAt: Instant(date: Date()))
     }
-    public func execute(_ intent: Intent) throws -> EngineCommandResult {
+    public func execute(_ intent: Intent) async throws -> EngineCommandResult {
         .rejected(NodeError(code: .unavailable, message: "stub engine has no backing node"))
     }
     public func canExecute(_ intent: Intent) -> NodeError? {

@@ -28,7 +28,7 @@ final class NodeOwnerTests: XCTestCase {
         var startCalls = 0
         var stopCalls = 0
 
-        func start(store: NodeStore) throws -> Descriptor {
+        func start(store: NodeStore) async throws -> Descriptor {
             startCalls += 1
             if let d = startDescriptor { return d }
             return Descriptor(version: .v1_0, storeEpoch: store.epochValue, bootID: BootID(),
@@ -38,12 +38,12 @@ final class NodeOwnerTests: XCTestCase {
                                                       enabledIdentities: [], connectivity: .interfacesAvailable,
                                                       observedAt: Instant(date: Date())))
         }
-        func stop() { stopCalls += 1 }
-        func runtimeSnapshot() -> RuntimeSnapshot {
+        func stop() async { stopCalls += 1 }
+        func runtimeSnapshot() async -> RuntimeSnapshot {
             RuntimeSnapshot(bootID: BootID(), phase: .ready, desiredEnabled: true, actualEnabled: true,
                             enabledIdentities: [], connectivity: .interfacesAvailable, observedAt: Instant(date: Date()))
         }
-        func execute(_ intent: Intent) throws -> EngineCommandResult {
+        func execute(_ intent: Intent) async throws -> EngineCommandResult {
             executeCalls.append(intent.commandID)
             if executeThrows { throw NodeError(code: .unavailable, message: "fake engine fault") }
             return executeResult

@@ -62,10 +62,10 @@ public actor NodeOwner {
     /// envelope (magic/version/size/decode) is a hard control-protocol error and
     /// replies `protocolFailure` - it never falls through to a legacy path
     /// (contract 6).
-    public func handle(_ envelope: Data) -> Data {
+    public func handle(_ envelope: Data) async -> Data {
         do {
             let (requestID, body) = try ControlChannel.decodeRequest(from: envelope)
-            let reply = try dispatch(requestID: requestID, body: body)
+            let reply = try await dispatch(requestID: requestID, body: body)
             return try ControlChannel.encode(reply: reply)
         } catch let e as ControlChannelError {
             return self.encodeFailure(requestID: RequestID(),
@@ -97,19 +97,19 @@ public actor NodeOwner {
 
     // MARK: - dispatch
 
-    private func dispatch(requestID: RequestID, body: RequestBody) throws -> Reply {
+    private func dispatch(requestID: RequestID, body: RequestBody) async throws -> Reply {
         switch body {
         case let .hello(versions, min, max):
-            return try hello(requestID: requestID, versions: versions, min: min, max: max)
+            return try await hello(requestID: requestID, versions: versions, min: min, max: max)
         case let .admit(session, commandID):
             try validate(session)
-            return admit(requestID: requestID, commandID: commandID)
+            return try await admit(requestID: requestID, commandID: commandID)
         case let .query(session, query):
             try validate(session)
-            return handleQuery(requestID: requestID, query: query)
+            return await handleQuery(requestID: requestID, query: query)
         case let .act(session, _, action):
             try validate(session)
-            return act(requestID: requestID, action: action)
+            return try await act(requestID: requestID, action: action)
         }
     }
 
@@ -118,7 +118,7 @@ public actor NodeOwner {
     /// Hello establishes the session and returns the descriptor (contract 6).
     /// It is side-effect-free beyond (re)starting the engine for this boot. An
     /// unsupported version is a hard negotiation failure (no legacy fallthrough).
-    private func hello(requestID: RequestID, versions: [Version], min: UInt64, max: UInt64) throws -> Reply {
+    private func hello(requestID: RequestID, versions: [Version], min: UInt64, max: UInt64) async throws -> Reply {
         // Negotiate: the node supports v1.0. The app must offer a version the
         // node supports within its schema range.
         let supported = Version.v1_0
@@ -133,7 +133,7 @@ public actor NodeOwner {
         // Start (or restart) the engine for this boot and capture its descriptor.
         let desc: Descriptor
         do {
-            desc = try engine.start(store: store)
+            desc = try await engine.start(store: store)
         } catch let e as NodeError {
             // A hard engine start failure: the node is up enough to answer, but
             // reports a failed phase rather than a protocol error.
@@ -172,7 +172,7 @@ public actor NodeOwner {
     /// Admit a staged command (contract 3.3-3.6). The complete intent is read
     /// from the shared store (the wire carries only the commandID). The durable
     /// disposition is committed in one transaction; execution follows outside it.
-    private func admit(requestID: RequestID, commandID: CommandID) -> Reply {
+    private func admit(requestID: RequestID, commandID: CommandID) async -> Reply {
         let record: CommandRecord
         // Capture the engine as a local Sendable so the @Sendable admission
         // policy closure does not capture the actor-isolated `self`.
@@ -204,7 +204,7 @@ public actor NodeOwner {
         if record.disposition == .accepted,
            !executedThisBoot.contains(commandID),
            let intent = try? store.intent(for: commandID) {
-            runExecution(intent: intent, operationID: record.operationID ?? OperationID(commandID.raw))
+            await runExecution(intent: intent, operationID: record.operationID ?? OperationID(commandID.raw))
         }
 
         return Reply(requestID: requestID, storeEpoch: record.committedThrough?.storeEpoch ?? store.epochValue,
@@ -214,12 +214,12 @@ public actor NodeOwner {
     /// The post-admission side effect (outside the admission transaction). The
     /// engine returns a typed outcome; the owner records it on the operation and
     /// commits any durable domain change the engine produced.
-    private func runExecution(intent: Intent, operationID: OperationID) {
+    private func runExecution(intent: Intent, operationID: OperationID) async {
         let commandID = intent.commandID
         executedThisBoot.insert(commandID)   // execute at most once this boot
         let kind = intent.body.tagName
         let now = Instant(date: Date())
-        switch (try? engine.execute(intent)) {
+        switch (try? await engine.execute(intent)) {
         case .some(.ok(let change)):
             if let change {
                 _ = try? store.commitChanges([change])
@@ -249,11 +249,11 @@ public actor NodeOwner {
 
     // MARK: - query
 
-    private func handleQuery(requestID: RequestID, query: Query) -> Reply {
+    private func handleQuery(requestID: RequestID, query: Query) async -> Reply {
         let value: QueryResult?
         switch query {
         case .nodeState:
-            value = .nodeState(currentDescriptor())
+            value = .nodeState(await currentDescriptor())
         case let .operation(opID):
             value = operation(opID).map(QueryResult.operation)
         case .identities, .identity, .conversations, .conversationMessages, .reachability:
@@ -300,13 +300,13 @@ public actor NodeOwner {
 
     // MARK: - act
 
-    private func act(requestID: RequestID, action: Action) -> Reply {
+    private func act(requestID: RequestID, action: Action) async -> Reply {
         switch action {
         case .start:
             // A re-start for the current boot: re-run the engine start and
             // refresh the descriptor.
             do {
-                let desc = try engine.start(store: store)
+                let desc = try await engine.start(store: store)
                 self.descriptor = desc
                 return Reply(requestID: requestID, storeEpoch: desc.storeEpoch, bootID: desc.bootID,
                              result: .success(.action(.unit)))
@@ -319,7 +319,7 @@ public actor NodeOwner {
                              result: .failure(NodeError(code: .unavailable, message: String(describing: error))))
             }
         case .stop:
-            engine.stop()
+            await engine.stop()
             return Reply(requestID: requestID, storeEpoch: store.epochValue,
                          bootID: descriptor?.bootID, result: .success(.action(.unit)))
         case .transmitGate:
@@ -337,19 +337,19 @@ public actor NodeOwner {
 
     /// The current descriptor: the live boot descriptor, or a degraded one built
     /// from the engine's live snapshot if hello has not yet run this boot.
-    private func currentDescriptor() -> Descriptor {
+    private func currentDescriptor() async -> Descriptor {
         if let desc = descriptor {
             // Refresh the runtime snapshot so a nodeState query reflects the
             // engine's live phase rather than the hello-time one.
             return Descriptor(version: desc.version, storeEpoch: desc.storeEpoch,
                               bootID: desc.bootID, storeSchema: desc.storeSchema,
                               capabilities: desc.capabilities, backend: desc.backend,
-                              runtime: engine.runtimeSnapshot())
+                              runtime: await engine.runtimeSnapshot())
         }
         let boot = BootID()
         return Descriptor(version: .v1_0, storeEpoch: store.epochValue, bootID: boot,
                           storeSchema: storeSchema, capabilities: engine.capabilities,
-                          backend: engine.buildInfo, runtime: engine.runtimeSnapshot())
+                          backend: engine.buildInfo, runtime: await engine.runtimeSnapshot())
     }
 
     private func encodeFailure(requestID: RequestID, error: NodeError) -> Data {
