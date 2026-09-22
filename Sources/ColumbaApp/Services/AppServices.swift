@@ -11,6 +11,7 @@
 
 import Foundation
 import RNSAPI
+import ColumbaNode
 import LXSTSwift
 import SwiftBLEBridge
 import CryptoKit
@@ -2067,6 +2068,45 @@ public final class AppServices {
                     DiagLog.log("[TEST-SEND] outcome=\(outcome) method=\(deliveryMethod)")
                 } catch {
                     DiagLog.log("[TEST-SEND] error=\(error)")
+                }
+            }
+        }
+
+        // Node-service v1 control-channel test trigger (lxma://test-node-send):
+        // the app-side NodeControlClient stages a submitMessage intent in the
+        // shared store, then drives the NE node owner with hello+admit over the
+        // app->NE transport. This exercises the NEW 0xF5 0x02 path, independent
+        // of the legacy backend.lxmf path above - the device-test seam for the
+        // node contract (contract 6). DEBUG-only (addPythonObserver is #if DEBUG).
+        addPythonObserver("ColumbaTestNodeSend") { [weak self] note in
+            guard let self else { return }
+            guard let to = note.userInfo?["to"] as? String, !to.isEmpty else {
+                DiagLog.log("[TEST-NODE-SEND] missing/empty 'to'")
+                return
+            }
+            let content = (note.userInfo?["content"] as? String) ?? "node contract test"
+            Task { @MainActor in
+                guard let tunnel = self.tunnelManager else {
+                    DiagLog.log("[TEST-NODE-SEND] no tunnelManager (NE session not up)")
+                    return
+                }
+                guard let storeURL = AppGroupPaths.nodeServiceStoreURL() else {
+                    DiagLog.log("[TEST-NODE-SEND] no shared App-Group store path")
+                    return
+                }
+                let send: @Sendable (Data) async -> Data? = { data in
+                    await tunnel.proxySend(data)
+                }
+                let client = NodeControlClient(send: send, storeURL: storeURL.path)
+                do {
+                    let admission = try await client.submitMessage(destinationHex: to, content: content)
+                    let r = admission.record
+                    DiagLog.log("[TEST-NODE-SEND] commandID=\(admission.commandID.wire.prefix(8))… disposition=\(r.disposition.rawValue) committedThrough=\(r.committedThrough != nil)")
+                    if let rej = r.rejection {
+                        DiagLog.log("[TEST-NODE-SEND] rejection code=\(rej.code.rawValue) field=\(rej.field ?? "-") msg=\(rej.message ?? "-")")
+                    }
+                } catch {
+                    DiagLog.log("[TEST-NODE-SEND] error=\(error)")
                 }
             }
         }

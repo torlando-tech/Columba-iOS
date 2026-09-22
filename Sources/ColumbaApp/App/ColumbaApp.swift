@@ -208,6 +208,24 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-node-send" {
+                    // lxma://test-node-send?to=HEX&content=...
+                    // Test trigger for the node-service v1 control channel (the
+                    // NEW 0xF5 0x02 path): stages a submitMessage intent in the
+                    // shared store and drives the NE node owner with hello+admit
+                    // over the app->NE transport, independent of the legacy
+                    // backend.lxmf path. DEBUG-only like the other test triggers.
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+                    let content = components?.queryItems?.first(where: { $0.name == "content" })?.value ?? "node contract test"
+                    DiagLog.log("[TEST-NODE-SEND] to=\(to.prefix(8))… content=\(content.prefix(24))")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestNodeSend"),
+                        object: nil,
+                        userInfo: ["to": to, "content": content]
+                    )
+                    return
+                }
                 if url.host == "test-link-open" {
                     // lxma://test-link-open?to=HEX&aspect=lxst.telephony
                     let components = URLComponents(url: url, resolvingAgainstBaseURL: false)

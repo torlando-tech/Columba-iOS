@@ -46,6 +46,13 @@ public final class SQLiteConnection: @unchecked Sendable {
         _ = try exec("PRAGMA journal_mode=WAL;")
         _ = try exec("PRAGMA foreign_keys=ON;")
         _ = try exec("PRAGMA synchronous=FULL;")
+        // Cross-process safety (contract 5): the app and the NE open the SAME
+        // WAL database (the app stages, the node owner admits). Without a busy
+        // timeout, an overlapping BEGIN IMMEDIATE fails instantly with
+        // SQLITE_BUSY instead of waiting for the other writer to release the
+        // write lock. 5s comfortably covers a single short commit while still
+        // bounding how long a wedged peer can hold the writer.
+        _ = try exec("PRAGMA busy_timeout=5000;")
     }
 
     deinit { lock.lock(); if let db { sqlite3_close(db) }; lock.unlock() }
