@@ -368,6 +368,30 @@ public final class NodeStore: @unchecked Sendable {
         return order.map { ChangeTransaction(sequence: Counter(UInt64($0)), changes: txns[$0] ?? []) }
     }
 
+    /// Commit the node owner's domain changes to the change index (contract 5:
+    /// the node owner is the SOLE writer for the node group; the engine never
+    /// writes the store directly). Each change is appended at `MAX(sequence)+1`,
+    /// in the given order; returns the cursor through which the index is now
+    /// committed (the last change's sequence), or `nil` if nothing was committed.
+    /// An epoch mismatch fails closed (a store replaced mid-flight).
+    @discardableResult
+    public func commitChanges(_ changes: [EngineChange]) throws -> Cursor? {
+        lock.lock(); defer { lock.unlock() }
+        guard !changes.isEmpty else { return highWater() }
+        var lastSeq: Int64 = 0
+        try conn.transaction { [self] in
+            for change in changes {
+                let seq: Int64 = (try conn.scalar("SELECT COALESCE(MAX(sequence),0)+1 FROM change_index", []).first?.asInt) ?? 1
+                lastSeq = seq
+                try conn.run(
+                    "INSERT INTO change_index(sequence, entity, entity_key, identity_id, revision, removed, store_epoch) VALUES(?,?,?,?,?,?,?)",
+                    [seq, change.entity.rawValue, change.key,
+                     change.identityID?.wire, change.revision.value, change.removed ? 1 : 0, epoch.wire])
+            }
+        }
+        return Cursor(storeEpoch: epochValue, sequence: Counter(UInt64(max(0, lastSeq))))
+    }
+
     // MARK: - helpers
 
     private func allocateSequence() throws -> Int64 {
