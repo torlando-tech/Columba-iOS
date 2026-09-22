@@ -324,6 +324,21 @@ public final class NodeStore: @unchecked Sendable {
         return Self.recordFromRow(commandID: commandID, state: r.state, digest: r.digest, msgID: r.msgID, opID: r.opID, acceptedAt: r.acceptedAt, rejectCode: r.rejectCode)
     }
 
+    /// Read back the staged intent for a commandID (the node owner uses this to
+    /// resolve an `admit`'s commandID against the shared store - contract 3.3).
+    /// Returns nil if the command was not staged under this epoch.
+    public func intent(for commandID: CommandID) throws -> Intent? {
+        lock.lock(); defer { lock.unlock() }
+        var canonical: String? = nil
+        try conn.query(
+            "SELECT body_json FROM commands WHERE store_epoch=? AND command_id=?",
+            [epoch.wire, commandID.wire]) { _, get in
+            canonical = get(0).asString
+        }
+        guard let c = canonical else { return nil }
+        return try Self.intentFromJSON(c)
+    }
+
     /// High-water cursor of the node change index for this epoch.
     public func highWater() -> Cursor {
         let seq: Int64 = (try? conn.scalar("SELECT COALESCE(MAX(sequence),0) FROM change_index", []).first?.asInt) ?? 0

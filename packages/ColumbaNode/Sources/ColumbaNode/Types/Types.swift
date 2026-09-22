@@ -147,3 +147,49 @@ public struct Cursor: Hashable, Sendable {
         self.sequence = sequence
     }
 }
+
+/// Feature capabilities (IDL `enum Feature`). Base service/store/hello/
+/// identity-create/status are mandatory, not listed features.
+public enum Feature: String, CaseIterable, Sendable {
+    case durableMessaging
+    case attachments
+    case replies
+    case reactions
+    case reactionRemoval
+    case extensionFields
+    case identitySwitching
+    case multipleEnabledIdentities
+    case propagation
+    case telemetry
+    case telemetryCollector
+    case nomadnetPages
+    case nomadnetMedia
+    case voiceSignaling
+    case voiceForegroundMedia
+    case voiceBackgroundMedia
+    case tcpClient
+    case tcpServer
+    case udp
+    case lanDiscovery
+    case blePeer
+    case rnode
+    case hostRadio
+    case transportRouting
+    case transportBlackhole
+    case diagnostics
+    case protocolProbe
+    case identityImport
+    case identityExport
+}
+
+/// Availability of a feature/capability (IDL `enum Availability`).
+public enum Availability: String, CaseIterable, Sendable {
+    case available
+    case disabled
+    case identityDisabled
+    case keyLocked
+    case noInterface
+    case requiresAppHost
+    case resourceConstrained
+    case recovering
+}

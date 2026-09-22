@@ -10,12 +10,12 @@
 import Foundation
 
 public protocol JsonEncodable: Sendable {
-    var json: JsonValue { get }
+    var jsonValue: JsonValue { get }
 }
 
 extension JsonEncodable {
     /// Canonical RFC 8785 UTF-8 bytes of this value.
-    public var canonicalData: Data { json.canonicalData() }
+    public var canonicalData: Data { jsonValue.canonicalData() }
     /// SHA-256 over the canonical bytes (lowercase hex).
     public var canonicalDigest: Digest {
         Digest(data: SHA256.digest(canonicalData))

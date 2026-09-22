@@ -86,3 +86,16 @@ public struct NodeError: Hashable, Sendable, Error {
                   message: "unknown identity \(id.wire)")
     }
 }
+
+extension NodeError: JsonEncodable {
+    public var jsonValue: JsonValue {
+        var o: [String: JsonValue] = [
+            "code": .string(code.rawValue),
+            "retry": .string(retry.rawValue),
+        ]
+        if let field { o["field"] = .string(field) }
+        if let retryAfterMs { o["retryAfterMs"] = .uint(retryAfterMs.value) }
+        if let message { o["detail"] = .string(message) }
+        return .object(o)
+    }
+}

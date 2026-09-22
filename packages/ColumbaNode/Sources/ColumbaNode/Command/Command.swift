@@ -27,7 +27,7 @@ import Foundation
 public struct Scope: Hashable, Sendable, JsonEncodable {
     public let identityID: IdentityID
     public init(identityID: IdentityID) { self.identityID = identityID }
-    public var json: JsonValue { .object(["identityID": .string(identityID.wire)]) }
+    public var jsonValue: JsonValue { .object(["identityID": .string(identityID.wire)]) }
 }
 
 /// How a message should be delivered (contract 8). Distinct from observed method.
@@ -45,7 +45,7 @@ public struct DeliveryPolicy: Hashable, Sendable, JsonEncodable {
         self.maxAttempts = maxAttempts
         self.stampBudgetMs = stampBudgetMs
     }
-    public var json: JsonValue {
+    public var jsonValue: JsonValue {
         .object([
             "preferred": .string(preferred.rawValue),
             "allowPropagationFallback": .boolean(allowPropagationFallback),
@@ -99,7 +99,7 @@ public struct OpaquePayload: Hashable, Sendable {
 }
 
 extension MessagePayload: JsonEncodable {
-    public var json: JsonValue {
+    public var jsonValue: JsonValue {
         switch self {
         case .chat(let c):
             return .object([
@@ -182,7 +182,7 @@ public struct RetryMessage: Hashable, Sendable {
 }
 
 extension Command: JsonEncodable {
-    public var json: JsonValue {
+    public var jsonValue: JsonValue {
         .object(["tag": .string(tagName), "value": valueJson])
     }
 
@@ -203,15 +203,15 @@ extension Command: JsonEncodable {
         switch self {
         case .submitMessage(let s):
             return .object([
-                "scope": s.scope.json,
+                "scope": s.scope.jsonValue,
                 "destination": .string(s.destination.hex),
-                "payload": s.payload.json,
-                "delivery": s.delivery.json,
+                "payload": s.payload.jsonValue,
+                "delivery": s.delivery.jsonValue,
                 "deadline": s.deadline.map { .number($0.wire) } ?? .null,
             ])
         case .retryMessage(let r):
             return .object([
-                "scope": r.scope.json,
+                "scope": r.scope.jsonValue,
                 "messageID": .string(r.messageID.wire),
                 "deadline": r.deadline.map { .number($0.wire) } ?? .null,
             ])
@@ -234,7 +234,7 @@ extension Command: JsonEncodable {
         case .announce(let scope, let services, let deadline):
             let sorted = services.map { $0.rawValue }.sorted()
             return .object([
-                "scope": scope.json,
+                "scope": scope.jsonValue,
                 "services": .array(sorted.map { .string($0) }),
                 "deadline": .number(deadline.wire),
             ])
@@ -246,7 +246,7 @@ extension Command: JsonEncodable {
             ])
         case .purgeHistory(let scope, let conversation, let through):
             return .object([
-                "scope": scope.json,
+                "scope": scope.jsonValue,
                 "conversation": conversation.map { .string($0.hex) } ?? .null,
                 "through": .number(through.wire),
             ])

@@ -47,14 +47,14 @@ public struct Intent: Hashable, Sendable, JsonEncodable {
     /// Field order is irrelevant (object keys are canonically sorted), but the
     /// SET of fields is fixed: afterCommandID, body, commandID, createdAt,
     /// expiresAt, storeEpoch. Absent optionals encode as explicit null.
-    public var json: JsonValue {
+    public var jsonValue: JsonValue {
         .object([
             "storeEpoch": .string(storeEpoch.wire),
             "commandID": .string(commandID.wire),
             "createdAt": .number(createdAt.wire),
             "expiresAt": expiresAt.map { .number($0.wire) } ?? .null,
             "afterCommandID": afterCommandID.map { .string($0.wire) } ?? .null,
-            "body": body.json,
+            "body": body.jsonValue,
         ])
     }
 }
@@ -102,5 +102,25 @@ public struct CommandRecord: Hashable, Sendable {
         self.operationID = operationID
         self.rejection = rejection
         self.committedThrough = committedThrough
+    }
+}
+
+extension CommandRecord: JsonEncodable {
+    public var jsonValue: JsonValue {
+        var o: [String: JsonValue] = [
+            "commandID": .string(commandID.wire),
+            "bodyDigest": .string(bodyDigest.hex),
+            "disposition": .string(disposition.rawValue),
+        ]
+        if let acceptedAt { o["acceptedAt"] = .int(acceptedAt.epochMillis) }
+        if let operationID { o["operationID"] = .string(operationID.wire) }
+        if let rejection { o["rejection"] = rejection.jsonValue }
+        if let committedThrough {
+            o["committedThrough"] = .object([
+                "storeEpoch": .string(committedThrough.storeEpoch.wire),
+                "sequence": .uint(committedThrough.sequence.value),
+            ])
+        }
+        return .object(o)
     }
 }

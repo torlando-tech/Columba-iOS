@@ -26,6 +26,20 @@ public indirect enum JsonValue: Sendable, Equatable {
 }
 
 extension JsonValue {
+    /// Convenience constructors so call sites read naturally. Numbers are stored
+    /// as their JCS decimal string (counters are decimal strings on the wire).
+    public static func uint(_ v: UInt64) -> JsonValue { .number(String(v)) }
+    public static func int(_ v: Int64) -> JsonValue { .number(String(v)) }
+    public static func bool(_ v: Bool) -> JsonValue { .boolean(v) }
+
+    /// Object-key lookup: `v["key"]` is the member value or nil (non-object -> nil).
+    public subscript(key: String) -> JsonValue? {
+        if case let .object(o) = self { return o[key] }
+        return nil
+    }
+}
+
+extension JsonValue {
     /// RFC 8785 (JCS) canonical serialization of this value.
     ///
     /// Rules implemented (subset sufficient for our records/commands, all of which
