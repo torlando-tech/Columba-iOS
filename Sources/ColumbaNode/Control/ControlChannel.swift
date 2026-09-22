@@ -259,11 +259,14 @@ public enum ControlChannel {
               let disp = CommandRecord.Disposition(rawValue: string(v?["disposition"]) ?? "") else { return nil }
         let op = string(v?["operationID"]).flatMap(OperationID.init(wire:))
         let acceptedAt = (v?["acceptedAt"]?.intValue).map(Instant.init)
+        // A committed rejection carries its typed error on the wire (contract
+        // 3.4) - decode it rather than dropping it (the encode emits `rejection`).
+        let rejection = v?["rejection"] == nil ? nil : decodeError(v?["rejection"])
         let committed = v?["committedThrough"] == nil ? nil : Cursor(
             storeEpoch: StoreEpoch(wire: string(v?["committedThrough"]?["storeEpoch"]) ?? "") ?? StoreEpoch(),
             sequence: Counter(v?["committedThrough"]?["sequence"]?.uintValue ?? 0))
         return CommandRecord(commandID: cmd, bodyDigest: digest, disposition: disp,
-                             acceptedAt: acceptedAt, operationID: op, rejection: nil,
+                             acceptedAt: acceptedAt, operationID: op, rejection: rejection,
                              committedThrough: committed)
     }
 

@@ -39,6 +39,13 @@ public actor NodeOwner {
     /// views the control channel returns for `query`.
     private var descriptor: Descriptor?
     private var operations: [OperationID: OperationRecord] = [:]
+    /// Commands that have already run their (post-admission) side effect THIS
+    /// boot. A repeated `admit` for an already-accepted command returns the
+    /// committed record WITHOUT re-executing - re-running a durable message send
+    /// would duplicate the side effect (contract 6.5/3: admit is idempotent;
+    /// the ledger is checked first). Recovery replay of a never-completed
+    /// operation is a separate, later increment.
+    private var executedThisBoot: Set<CommandID> = []
 
     /// Schema version the node owner reports in the descriptor.
     public let storeSchema: UInt64
@@ -136,6 +143,7 @@ public actor NodeOwner {
         }
         self.descriptor = desc
         self.operations.removeAll()
+        self.executedThisBoot.removeAll()
 
         return Reply(requestID: requestID, storeEpoch: desc.storeEpoch, bootID: desc.bootID,
                      result: .success(.hello(desc)))
@@ -188,11 +196,14 @@ public actor NodeOwner {
                          result: .failure(NodeError(code: .storageUnavailable, message: String(describing: error))))
         }
 
-        // Execution (contract 6.5): only an ACCEPTED command runs. A rejected
-        // disposition is terminal and never executes. An admitted command can
-        // later fail - that outcome is recorded on the operation, not the
-        // admission (contract 6.6).
-        if record.disposition == .accepted, let intent = try? store.intent(for: commandID) {
+        // Execution (contract 6.5): only an ACCEPTED command runs, and only ONCE
+        // this boot. A repeated `admit` for an already-accepted command returns
+        // the committed record without re-executing (re-running a durable message
+        // send would duplicate the side effect). A rejected disposition is
+        // terminal and never executes.
+        if record.disposition == .accepted,
+           !executedThisBoot.contains(commandID),
+           let intent = try? store.intent(for: commandID) {
             runExecution(intent: intent, operationID: record.operationID ?? OperationID(commandID.raw))
         }
 
@@ -205,6 +216,7 @@ public actor NodeOwner {
     /// commits any durable domain change the engine produced.
     private func runExecution(intent: Intent, operationID: OperationID) {
         let commandID = intent.commandID
+        executedThisBoot.insert(commandID)   // execute at most once this boot
         let kind = intent.body.tagName
         let now = Instant(date: Date())
         switch (try? engine.execute(intent)) {
