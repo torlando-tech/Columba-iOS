@@ -49,13 +49,15 @@ private func engineResult(from outcome: ProxySendOutcome) -> EngineCommandResult
     }
 }
 
-/// The `NodeEngine` conformance over the in-NE `NEReticulumNode`.
-public final class NEMicroRNSEngine: NodeEngine, @unchecked Sendable {
+/// The `NodeEngine` conformance over the in-NE `NEReticulumNode`. Internal: it
+/// wraps an internal NE node and is only constructed by the NE's
+/// `PacketTunnelProvider`.
+final class NEMicroRNSEngine: NodeEngine, @unchecked Sendable {
     private let node: NEReticulumNode
     private let bootID: BootID
     private var running = false
 
-    public init(node: NEReticulumNode) {
+    init(node: NEReticulumNode) {
         self.node = node
         self.bootID = BootID()
     }
