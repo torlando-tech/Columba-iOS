@@ -185,6 +185,8 @@
 		3C22AABC6B36F30028DF5A5A /* BackgroundVPNExplainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */; };
 		3D759EC171FEA82AD5A804DB /* BackgroundDeliveryPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */; };
 		3D93C9AD83DBD69265B1F5EF /* ColumbaNetworkExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = EPROD /* ColumbaNetworkExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
+		ED87073E0742395F2CA27807 /* ColumbaNode in Frameworks */ = {isa = PBXBuildFile; productRef = 57110F986F2A3DFB3F95E483 /* ColumbaNode */; };
+		3F9FA949D941CBF04061C136 /* ColumbaNode in Frameworks */ = {isa = PBXBuildFile; productRef = 57110F986F2A3DFB3F95E483 /* ColumbaNode */; };
 		3E8EDA16402CE9043F338509 /* AddContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04A /* AddContactSheet.swift */; };
 		40EBFB15B9FD4D5081AF4EBC /* ZoomableScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F085 /* ZoomableScrollView.swift */; };
 		422AB44ACCB2031F9DD721B2 /* ConnectivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04F /* ConnectivityPage.swift */; };
@@ -755,6 +757,7 @@
 			files = (
 				266929D6972E8D373E7A926D /* ReticulumSwift in Frameworks */,
 				BDC9FF09929596ECF0A1037F /* LXMFSwift in Frameworks */,
+				ED87073E0742395F2CA27807 /* ColumbaNode in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -769,6 +772,7 @@
 				13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */,
 				2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */,
 				D4E5F60718293A4B5C6D7E8B /* GRDB in Frameworks */,
+				3F9FA949D941CBF04061C136 /* ColumbaNode in Frameworks */,
 				MDUIBLD1 /* MarkdownUI in Frameworks */,
 				SPLASHBLD1 /* Splash in Frameworks */,
 				83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */,
@@ -1383,6 +1387,7 @@
 			packageProductDependencies = (
 				021FA3D73B6F8B711A97D40F /* ReticulumSwift */,
 				B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */,
+				57110F986F2A3DFB3F95E483 /* ColumbaNode */,
 			);
 			productName = ColumbaNetworkExtension;
 			productReference = EPROD /* ColumbaNetworkExtension.appex */;
@@ -1411,6 +1416,7 @@
 				2F8EC8222FC732AF00235991 /* LXMFSwift */,
 				D4E5F60718293A4B5C6D7E8A /* GRDB */,
 				A1380C075A9F67E1B173EA94 /* ReticulumSwift */,
+				57110F986F2A3DFB3F95E483 /* ColumbaNode */,
 				MDUIPROD1 /* MarkdownUI */,
 				SPLASHPROD1 /* Splash */,
 			);
@@ -2508,6 +2514,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = .;
 		};
+		F0818A694D3D225A0A6BE004 /* XCLocalSwiftPackageReference "ColumbaNode" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = packages/ColumbaNode;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -2562,6 +2572,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		57110F986F2A3DFB3F95E483 /* ColumbaNode */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F0818A694D3D225A0A6BE004 /* XCLocalSwiftPackageReference "ColumbaNode" */;
+			productName = ColumbaNode;
+		};
 		021FA3D73B6F8B711A97D40F /* ReticulumSwift */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
