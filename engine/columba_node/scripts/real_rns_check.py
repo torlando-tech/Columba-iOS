@@ -78,7 +78,10 @@ def main() -> int:
     assert rt["phase"] == "ready", f"phase {rt['phase']}"
     assert rt["actualEnabled"] is True
     ids = rt["enabledIdentities"]
-    assert len(ids) == 1 and len(ids[0]) == 64, f"identity {ids}"
+    # RNS identity.hash is 16 bytes = 32 hex chars (NOT 64; that's a destination
+    # hash). The transport identity carried in enabledIdentities is the identity hash.
+    assert len(ids) == 1 and len(ids[0]) == 32, f"identity {ids}"
+    assert ids[0].lower().strip("0123456789abcdef") == "", f"not hex: {ids[0]}"
     assert desc["storeSchema"] == 1
     assert desc["version"] == {"major": 1, "minor": 0}
     caps = {c["feature"]: c["support"] for c in desc["capabilities"]}
