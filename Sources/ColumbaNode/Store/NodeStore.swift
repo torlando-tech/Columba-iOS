@@ -376,8 +376,12 @@ public final class NodeStore: @unchecked Sendable {
     /// An epoch mismatch fails closed (a store replaced mid-flight).
     @discardableResult
     public func commitChanges(_ changes: [EngineChange]) throws -> Cursor? {
-        lock.lock(); defer { lock.unlock() }
+        // NOTE: the node owner only commits real changes (one transaction per
+        // committed outcome). An empty list is a no-op; return the high-water
+        // BEFORE taking the lock (highWater locks on its own - calling it while
+        // holding `lock` would self-deadlock the non-reentrant NSLock).
         guard !changes.isEmpty else { return highWater() }
+        lock.lock(); defer { lock.unlock() }
         var lastSeq: Int64 = 0
         try conn.transaction { [self] in
             for change in changes {
@@ -389,7 +393,9 @@ public final class NodeStore: @unchecked Sendable {
                      change.identityID?.wire, change.revision.value, change.removed ? 1 : 0, epoch.wire])
             }
         }
-        return Cursor(storeEpoch: epochValue, sequence: Counter(UInt64(max(0, lastSeq))))
+        // Use the private `epoch` field directly: `epochValue` is the locking
+        // getter, and calling it while `lock` is held would self-deadlock.
+        return Cursor(storeEpoch: epoch, sequence: Counter(UInt64(max(0, lastSeq))))
     }
 
     // MARK: - helpers
