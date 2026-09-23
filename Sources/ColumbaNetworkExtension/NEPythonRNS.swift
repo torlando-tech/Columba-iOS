@@ -23,6 +23,7 @@
 //
 
 import Foundation
+import Security
 
 /// The `NodeEngine`-style adapter over the in-NE Python RNS runtime.
 ///
@@ -153,9 +154,11 @@ final class NEPythonRNS: @unchecked Sendable {
         guard NEPythonRuntime.shared.state == .running else {
             // CPython not initialized yet (shouldn't happen - startTunnel boots
             // it) - try to init synchronously; if that fails we're not ready.
-            let r = NEPythonRuntime.shared.start()
-            guard case .success = r else {
-                ExtensionDiagLog.log("[NE-PY-RNS] start: python not ready (init failed: \(r.failure?.localizedDescription ?? "?"))")
+            switch NEPythonRuntime.shared.start() {
+            case .success:
+                break
+            case .failure(let err):
+                ExtensionDiagLog.log("[NE-PY-RNS] start: python not ready (init failed: \(err.localizedDescription))")
                 return nil
             }
         }
