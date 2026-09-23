@@ -483,6 +483,17 @@
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		EFEMB /* Embed Frameworks (NE) */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				6176037A389D1F97BB47992C /* Python.xcframework in Embed Frameworks (NE) */,
+			);
+			name = "Embed Frameworks (NE)";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -767,38 +778,6 @@
 				8A321B0938566F0D62D64563 /* Python.xcframework in Frameworks (NE) */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
-		};
-		EFEMB /* Embed Frameworks (NE) */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				6176037A389D1F97BB47992C /* Python.xcframework in Embed Frameworks (NE) */,
-			);
-			name = "Embed Frameworks (NE)";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		EPIPS /* Install Python stdlib (NE) */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh",
-			);
-			name = "Install Python stdlib (NE)";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -e\n\n# Install the Python stdlib into the appex (CODESIGNING_FOLDER_PATH = the\n# .appex resource root) so the NE's embedded interpreter finds PYTHONHOME at\n# <appex>/python. Mirrors the app's install_python phase but with NO wheels/app\n# (the RNS wheels + bridge ship to the appex in a later slice). install_python\n# only takes the stdlib + (optional) extra dylib dirs; pass just the framework\n# and let it lay down python/lib + process the lib-dynload .so's.\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh"\ninstall_python Frameworks/Python.xcframework\n";
-			showEnvVarsInLog = 0;
 		};
 		FWBP /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
@@ -1611,6 +1590,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -e\n\n# Copy platform-appropriate wheels into <app>/app_packages/ before\n# install_python processes the .so extensions inside them.\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || {\n  echo \"error: $WHEELS_SRC missing — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\n[ -s \"$WHEELS_SRC/ble_reticulum/BLEInterface.py\" ] || {\n  echo \"error: ble_reticulum missing from $WHEELS_SRC — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages\n";
+			showEnvVarsInLog = 0;
+		};
+		EPIPS /* Install Python stdlib (NE) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh",
+			);
+			name = "Install Python stdlib (NE)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
