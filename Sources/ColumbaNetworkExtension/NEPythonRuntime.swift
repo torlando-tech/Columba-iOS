@@ -114,61 +114,82 @@ final class NEPythonRuntime: @unchecked Sendable {
         return .success(version)
     }
 
-    /// Prove the real Python RNS runtime loads + runs in the NE. This is the
-    /// de-risk probe for the in-NE RNS port: it mirrors the app's rns_bridge
-    /// startup (the platform.system() -> "Darwin" patch, `import RNS/LXMF`,
-    /// `import rns_bridge`) and then constructs a live RNS.Node so the RNS
-    /// daemon threads actually run in the NE process. The constructed node is
-    /// kept in `__main__._ne_node` for later driving (the NodeEngine slice).
+    /// Prove the real Python RNS runtime loads + runs in the NE, STAGED: each
+    /// step runs as its own GIL-holding Python call and logs its result to
+    /// ext-diag BEFORE the next. If the process is terminated mid-probe (the
+    /// ~7s crash loop), the last logged line names the step that died - e.g.
+    /// `import RNS` (loads CRNS/cffi/cryptography) vs `RNS.Node()` (daemon
+    /// startup). This is the de-risk probe for the in-NE RNS port.
     ///
-    /// Runs on the GIL. Returns a short human-readable status string that the
-    /// caller logs to ext-diag.log. Never throws the NE down: a probe failure
-    /// is a logged result, not a crash.
-    func probeRNS() -> String {
-        let probe = """
-        import io, sys, traceback
-        _buf = io.StringIO(); _old = sys.stdout; sys.stdout = _buf
-        try:
+    /// The platform.system() -> "Darwin" patch (required before `import RNS` or
+    /// netinfo misreads addresses) is applied once at the front and persists for
+    /// the interpreter's life.
+    func probeRNS() {
+        runStage("prep") {
+            """
             import platform as _p
             _rs = _p.system
             _p.system = lambda *a, **k: "Darwin" if _rs(*a, **k) == "iOS" else _rs(*a, **k)
-            import RNS, LXMF
-            import rns_bridge
-            out = ["RNS=%s" % getattr(RNS, "__version__", "?"),
-                   "LXMF=%s" % getattr(LXMF, "__version__", "?")]
-            _node = RNS.Node(hash=bytes.fromhex("0123456789abcdef0123456789abcdef0123"))
-            import __main__
-            __main__._ne_node = _node
-            out.append("node=constructed")
-        except Exception:
-            traceback.print_exc(file=_buf)
-            out = ["PROBE_FAILED"]
-        sys.stdout = _old
-        import __main__
-        __main__._probe_result = _buf.getvalue()
-        """
-        withGIL {
-            PyRun_SimpleString(probe)
+            print("ok")
+            """
         }
-        let result = readMainAttr("_probe_result") ?? "(no probe result)"
-        return result
+        runStage("importRNS") {
+            """
+            import RNS, LXMF
+            print("RNS=%s LXMF=%s" % (getattr(RNS, "__version__", "?"), getattr(LXMF, "__version__", "?")))
+            """
+        }
+        runStage("importBridge") {
+            """
+            import rns_bridge
+            print("ok")
+            """
+        }
+        runStage("nodeConstruct") {
+            """
+            import RNS, __main__
+            _node = RNS.Node(hash=bytes.fromhex("0123456789abcdef0123456789abcdef0123"))
+            __main__._ne_node = _node
+            print("constructed")
+            """
+        }
+        // After construction, let the RNS daemon threads run (GIL released
+        // during the delay) and report whether the node is actually up.
+        Thread.sleep(forTimeInterval: 2.0)
+        runStage("nodeRunning") {
+            """
+            import __main__
+            _n = getattr(__main__, "_ne_node", None)
+            print("node=None" if _n is None else ("node=running" if _n.isRunning() else "node=stopped"))
+            """
+        }
     }
 
-    /// After the probe constructs the node, let the RNS daemon threads run
-    /// (GIL released during the delay) and then report whether the node is
-    /// actually running. Strong proof the runtime is live in the NE.
-    func probeNodeRunning() -> String {
-        Thread.sleep(forTimeInterval: 2.0)   // GIL is released at this point
-        let check = """
+    /// Run one Python statement block under the GIL, logging its captured
+    /// stdout (or the failure) to ext-diag under the `[NE-PY-RNS] <stage>`
+    /// marker. A stage that raises logs the traceback; a stage that is never
+    /// logged means the process died DURING it (the previous stage is the last
+    /// safe point).
+    private func runStage(_ stage: String, _ code: () -> String) {
+        let script = code() + "\n"
+        let wrapper = """
+        import io, sys, traceback
+        _buf = io.StringIO(); _o = sys.stdout; sys.stdout = _buf
+        try:
+            \(script)
+        except SystemExit:
+            raise
+        except BaseException:
+            traceback.print_exc(file=_buf)
+        sys.stdout = _o
         import __main__
-        _n = getattr(__main__, "_ne_node", None)
-        _r = "node=None" if _n is None else ("node=running" if _n.isRunning() else "node=stopped")
-        __main__._probe_result = _r
+        __main__._stage_out = _buf.getvalue()
         """
         withGIL {
-            PyRun_SimpleString(check)
+            PyRun_SimpleString(wrapper)
         }
-        return readMainAttr("_probe_result") ?? "(no node status)"
+        let out = readMainAttr("_stage_out").map { $0.replacingOccurrences(of: "\n", with: " | ") } ?? "(no output)"
+        ExtensionDiagLog.log("[NE-PY-RNS] \(stage): \(out)")
     }
 
     private func readMainAttr(_ name: String) -> String? {

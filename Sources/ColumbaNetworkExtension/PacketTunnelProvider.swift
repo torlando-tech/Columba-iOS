@@ -67,10 +67,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         Task {
             switch NEPythonRuntime.shared.start() {
             case .success:
-                let rnsProbe = NEPythonRuntime.shared.probeRNS()
-                ExtensionDiagLog.log("[NE-PY-RNS] probe: \(rnsProbe.replacingOccurrences(of: "\n", with: " | "))")
-                let nodeStatus = NEPythonRuntime.shared.probeNodeRunning()
-                ExtensionDiagLog.log("[NE-PY-RNS] \(nodeStatus)")
+                NEPythonRuntime.shared.probeRNS()
             case .failure(let err):
                 ExtensionDiagLog.log("[NE-PY-RNS] skipped (python init failed: \(err.localizedDescription))")
             }
