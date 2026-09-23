@@ -164,11 +164,15 @@ final class NEPythonRNS: @unchecked Sendable {
             return nil
         }
         let configDir = Self.sharedConfigDir()
-
+        // rns_bridge.start requires identity_path even when identity_bytes is
+        // supplied (the bytes win; the path is a fallback). Co-locate it in the
+        // shared config dir (the app also writes identity.bin there).
+        let identityPath = (configDir as NSString).appendingPathComponent("identity.bin")
         let kwargs: [String: Any] = [
             "config_dir": configDir,
-            "identity_bytes": Self.b64Wrapper(identity),
+            "identity_path": identityPath,
             "display_name": displayName,
+            "identity_bytes": Self.b64Wrapper(identity),
         ]
         guard let payload = Self.payload(kwargs: kwargs),
               let out = NEPythonRuntime.shared.callBridge("start", payload: payload) else {
