@@ -323,6 +323,17 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-start-tunnel" {
+                    // lxma://test-start-tunnel — headless Model B tunnel bring-up.
+                    // Bypasses the BackgroundDeliveryGate so the in-NE Python RNS
+                    // process can be booted + exercised without a manual tap.
+                    DiagLog.log("[TEST-START-TUNNEL] requested via URL")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestStartTunnel"),
+                        object: nil
+                    )
+                    return
+                }
                 if url.host == "test-ble-diagnose" {
                     DiagLog.log("[TEST-BLE-DIAG] requested")
                     NotificationCenter.default.post(

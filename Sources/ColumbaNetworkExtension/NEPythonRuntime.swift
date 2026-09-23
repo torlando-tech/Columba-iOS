@@ -170,6 +170,13 @@ final class NEPythonRuntime: @unchecked Sendable {
     /// marker. A stage that raises logs the traceback; a stage that is never
     /// logged means the process died DURING it (the previous stage is the last
     /// safe point).
+    ///
+    /// GIL: the embed thread released the GIL at init (so RNS background threads
+    /// can run), so EVERY C-API call here must re-acquire it. The run AND the
+    /// result-read happen inside ONE `withGIL` block - reading the result after
+    /// releasing the GIL is a hard crash (PyImport_ImportModule on a
+    /// non-GIL-holding thread → SIGSEGV in PyUnicode_New), which is exactly the
+    /// 0x10 fault we saw in the NE crash logs.
     private func runStage(_ stage: String, _ code: () -> String) {
         let script = code() + "\n"
         let wrapper = """
@@ -185,11 +192,11 @@ final class NEPythonRuntime: @unchecked Sendable {
         import __main__
         __main__._stage_out = _buf.getvalue()
         """
-        withGIL {
+        let out = withGIL {
             PyRun_SimpleString(wrapper)
+            return readMainAttr("_stage_out")
         }
-        let out = readMainAttr("_stage_out").map { $0.replacingOccurrences(of: "\n", with: " | ") } ?? "(no output)"
-        ExtensionDiagLog.log("[NE-PY-RNS] \(stage): \(out)")
+        ExtensionDiagLog.log("[NE-PY-RNS] \(stage): \(out.map { $0.replacingOccurrences(of: "\n", with: " | ") } ?? "(no output)")")
     }
 
     private func readMainAttr(_ name: String) -> String? {

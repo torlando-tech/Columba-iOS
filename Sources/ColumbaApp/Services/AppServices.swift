@@ -1757,6 +1757,35 @@ public final class AppServices {
         DiagLog.log("[TUNNEL-GATE] enable: tunnel connected + approval persisted")
         return true
     }
+
+    /// DEBUG-only headless tunnel bring-up for the in-NE Python RNS work.
+    ///
+    /// Mirrors `approveBackgroundDelivery` (install + start + wait + persist
+    /// approval) but does NOT resume the gate continuation - it is driven by
+    /// the `test-start-tunnel` deep link when the app is already past init (so
+    /// no suspended continuation exists). This lets the NE be booted +
+    /// exercised headlessly without the manual BackgroundDeliveryGate tap.
+    /// The system VPN permission (keyed to bundle id + team) is what actually
+    /// lets the tunnel up; once granted once it persists across reinstalls.
+    @discardableResult
+    func startTunnelForTest() async -> Bool {
+        guard let tunnel = tunnelManager else { return false }
+        do {
+            try await tunnel.install()
+            try await tunnel.start()
+        } catch {
+            DiagLog.log("[TEST-START-TUNNEL] start failed: \(error)")
+            return false
+        }
+        guard await tunnel.waitUntilConnected(timeoutMs: 25_000) else {
+            DiagLog.log("[TEST-START-TUNNEL] tunnel did not connect (VPN not allowed?)")
+            return false
+        }
+        SharedDefaults.suite.set(true, forKey: Self.backgroundDeliveryEnabledKey)
+        needsBackgroundDeliveryApproval = false
+        DiagLog.log("[TEST-START-TUNNEL] tunnel connected + approval persisted")
+        return true
+    }
     #endif
 
     /// Start the embedded Python RNS backend.
@@ -2158,6 +2187,17 @@ public final class AppServices {
                 DiagLog.log("[TEST-RESTART] invoking restartPythonBackend")
                 await self.restartPythonBackend()
                 DiagLog.log("[TEST-RESTART] done")
+            }
+        }
+
+        // Headless tunnel bring-up for the in-NE Python RNS work. Bypasses the
+        // BackgroundDeliveryGate (which needs a manual tap) so the NE process can
+        // be booted + exercised via `devicectl ... --payload-url`. DEBUG only.
+        addPythonObserver("ColumbaTestStartTunnel") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                let ok = await self.startTunnelForTest()
+                DiagLog.log("[TEST-START-TUNNEL] done ok=\(ok)")
             }
         }
 
