@@ -117,6 +117,7 @@ extension NodeEngine {
 /// wired into the NE. It advertises nothing and refuses every command, which is
 /// the correct fail-closed behavior when no engine is installed.
 public struct StubEngine: NodeEngine {
+    public init() {}
     public var buildInfo: BuildInfo {
         BuildInfo(name: "stub", revision: "0", adapterRevision: "0")
     }
