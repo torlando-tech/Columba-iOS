@@ -334,6 +334,19 @@ struct ColumbaApp: App {
                     )
                     return
                 }
+                if url.host == "test-stop-tunnel" {
+                    // lxma://test-stop-tunnel — tear down the running NE so a fresh
+                    // appex (with a new NE build) can be installed + brought up.
+                    // A running NE keeps its old appex until the tunnel is torn
+                    // down, so stop -> install -> start is how a NE rebuild is
+                    // exercised on-device.
+                    DiagLog.log("[TEST-STOP-TUNNEL] requested via URL")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestStopTunnel"),
+                        object: nil
+                    )
+                    return
+                }
                 if url.host == "test-ble-diagnose" {
                     DiagLog.log("[TEST-BLE-DIAG] requested")
                     NotificationCenter.default.post(

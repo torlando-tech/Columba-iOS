@@ -2200,6 +2200,13 @@ public final class AppServices {
                 DiagLog.log("[TEST-START-TUNNEL] done ok=\(ok)")
             }
         }
+        addPythonObserver("ColumbaTestStopTunnel") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.tunnelManager?.stop()
+                DiagLog.log("[TEST-STOP-TUNNEL] stopped")
+            }
+        }
 
         // Phase 4 smoke test: direct CB manager state probe. Bypasses the
         // Python driver so we can isolate Swift-side CB readiness from
