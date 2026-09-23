@@ -42,15 +42,39 @@ final class NEPythonRuntime: @unchecked Sendable {
     /// thread regardless, so it is not reused directly.
     private var savedThreadState: OpaquePointer?
 
+    /// Serializes CPython init so the `startTunnel` Task and the first `.start`
+    /// IPC (both of which may call `start()` at boot) can't both observe
+    /// `.uninitialized` and double-run `Py_Initialize`.
+    private let initLock = NSLock()
+
     private init() {}
 
-    /// Initialize CPython. Returns sys.version on success. Must be called exactly
-    /// once before any other Python operation.
+    /// Initialize CPython. Returns sys.version on success. Idempotent: safe to
+    /// call from any thread; a concurrent caller blocks until init settles, then
+    /// gets the same result (the real interpreter init runs exactly once).
     @discardableResult
     func start() -> Result<String, Error> {
-        guard state == .uninitialized else {
+        initLock.lock()
+        switch state {
+        case .running:
+            initLock.unlock()
+            return .success("python already running")
+        case .failed(let reason):
+            initLock.unlock()
+            return .failure(NEError.initFailed(reason))
+        case .uninitialized:
+            break
+        case .finalized:
+            initLock.unlock()
             return .failure(NEError.alreadyStarted)
         }
+        let result = performInit()
+        // On failure `performInit` already set state=.failed; on success .running.
+        initLock.unlock()
+        return result
+    }
+
+    private func performInit() -> Result<String, Error> {
         ExtensionDiagLog.log("[NE-PY] init begin")
 
         let resourcePath = Bundle.main.resourcePath ?? Bundle.main.bundlePath
