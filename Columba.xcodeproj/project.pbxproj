@@ -250,6 +250,8 @@
 		89551A07A2FB8693E6C465FC /* ChatsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* ChatsViewModel.swift */; };
 		895BF78C85D1C5471DA53961 /* AppGroupBLESeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBST /* AppGroupBLESeamTransport.swift */; };
 		8A321B0938566F0D62D64562 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
+		6176037A389D1F97BB47992C /* Python.xcframework in Embed Frameworks (NE) */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		8A321B0938566F0D62D64563 /* Python.xcframework in Frameworks (NE) */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; };
 		8A784DFE5A52489803B27984 /* lucide.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FF6CE45231CD48906B9C226D /* lucide.ttf */; };
 		8EB34878FB401C9E5F9F5202 /* FrequencySlotStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = F058 /* FrequencySlotStep.swift */; };
 		8EF58D2BD45FCDF79EDB49AB /* InterfaceManagementScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031 /* InterfaceManagementScreen.swift */; };
@@ -357,6 +359,7 @@
 		DF6654D386454C56AF75302E /* ModelBBLEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FMBS /* ModelBBLEService.swift */; };
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
 		E0C1 /* NEMicroRNSEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC1 /* NEMicroRNSEngine.swift */; };
+		E0C2 /* NEPythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC2 /* NEPythonRuntime.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		E079C55745CBDD622CA51842 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
 		E154CBBB80370FD16B8319CA /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
@@ -690,6 +693,7 @@
 		FBSV /* AppGroupBLEServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBLEServer.swift; sourceTree = "<group>"; };
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		FEC1 /* NEMicroRNSEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEMicroRNSEngine.swift; sourceTree = "<group>"; };
+		FEC2 /* NEPythonRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEPythonRuntime.swift; sourceTree = "<group>"; };
 		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
 		FF6CE45231CD48906B9C226D /* lucide.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = lucide.ttf; sourceTree = "<group>"; };
@@ -760,8 +764,41 @@
 				266929D6972E8D373E7A926D /* ReticulumSwift in Frameworks */,
 				BDC9FF09929596ECF0A1037F /* LXMFSwift in Frameworks */,
 				ED87073E0742395F2CA27807 /* ColumbaNode in Frameworks */,
+				8A321B0938566F0D62D64563 /* Python.xcframework in Frameworks (NE) */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EFEMB /* Embed Frameworks (NE) */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				6176037A389D1F97BB47992C /* Python.xcframework in Embed Frameworks (NE) */,
+			);
+			name = "Embed Frameworks (NE)";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EPIPS /* Install Python stdlib (NE) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh",
+			);
+			name = "Install Python stdlib (NE)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n\n# Install the Python stdlib into the appex (CODESIGNING_FOLDER_PATH = the\n# .appex resource root) so the NE's embedded interpreter finds PYTHONHOME at\n# <appex>/python. Mirrors the app's install_python phase but with NO wheels/app\n# (the RNS wheels + bridge ship to the appex in a later slice). install_python\n# only takes the stdlib + (optional) extra dylib dirs; pass just the framework\n# and let it lay down python/lib + process the lib-dynload .so's.\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh"\ninstall_python Frameworks/Python.xcframework\n";
+			showEnvVarsInLog = 0;
 		};
 		FWBP /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
@@ -962,6 +999,7 @@
 			children = (
 				FE01 /* PacketTunnelProvider.swift */,
 				FEC1 /* NEMicroRNSEngine.swift */,
+				FEC2 /* NEPythonRuntime.swift */,
 				NERN1 /* NEReticulumNode.swift */,
 				FE02 /* Info.plist */,
 				FE03 /* ColumbaNetworkExtension.entitlements */,
@@ -1382,6 +1420,8 @@
 			buildPhases = (
 				ESRCBP /* Sources */,
 				EFWBP /* Frameworks */,
+				EFEMB /* Embed Frameworks (NE) */,
+				EPIPS /* Install Python stdlib (NE) */,
 			);
 			buildRules = (
 			);
@@ -1766,6 +1806,7 @@
 			files = (
 				E001 /* PacketTunnelProvider.swift in Sources */,
 				E0C1 /* NEMicroRNSEngine.swift in Sources */,
+				E0C2 /* NEPythonRuntime.swift in Sources */,
 				E002 /* SharedFrameQueue.swift in Sources */,
 				EBST /* AppGroupBLESeamTransport.swift in Sources */,
 				EBSV /* AppGroupBLEServer.swift in Sources */,
@@ -2187,6 +2228,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/ColumbaNetworkExtension/ColumbaNEPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -2213,6 +2255,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/ColumbaNetworkExtension/ColumbaNEPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

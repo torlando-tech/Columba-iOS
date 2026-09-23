@@ -56,6 +56,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         ExtensionDiagLog.log("startTunnel: Model B — in-NE node owns delivery")
         let node = NEReticulumNode()
         self.reticulumNode = node
+        // Embedded-Python foundation probe (first slice): initialize CPython in
+        // the NE and read sys.version back, logging to ext-diag. Non-blocking —
+        // it must never gate the tunnel/node bring-up. This proves the CPython
+        // C API works in the NE sandbox before the real RNS engine is wired in.
+        Task {
+            NEPythonRuntime.shared.start()
+        }
         Task {
             do {
                 _ = try await node.start()

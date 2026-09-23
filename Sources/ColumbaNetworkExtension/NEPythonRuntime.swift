@@ -1,0 +1,155 @@
+//
+//  NEPythonRuntime.swift
+//  ColumbaNetworkExtension
+//
+//  Embedded CPython interpreter lifecycle for the NE process.
+//
+//  This is the FOUNDATION for running the real Python RNS runtime in the NE
+//  (moving the entire Reticulum runtime out of the app into the extension).
+//  It mirrors the app's Sources/PythonBridge/PythonRuntime.swift but:
+//    • targets the NE (Bundle.main = the appex, resourcePath = appex root),
+//    • logs through ExtensionDiagLog (the NE's PII-free channel), never NSLog,
+//    • is deliberately minimal in this first slice: it proves the CPython C
+//      API initializes in the NE sandbox, by reading sys.version back.
+//
+//  The Python framework is embedded in the appex (Frameworks/Python.framework)
+//  and resolves at runtime via the appex's @executable_path/Frameworks rpath
+//  (the framework's install name is @rpath/Python.framework/Python). The
+//  standard library is installed into <appex>/python by the "Install Python
+//  stdlib (NE)" build phase; PYTHONHOME = <appex>/python.
+//
+//  After init, the calling thread releases the GIL via PyEval_SaveThread() so
+//  RNS/LXMF background threads can run; all later Python work wraps in
+//  withGIL { } (PyGILState_Ensure/Release is reentrant, safe from any thread).
+//
+//  COLLISION RULE (hard): this file imports ONLY Foundation + the CPython C API
+//  (via the NE bridging header). It must NOT import RNSAPI / ReticulumSwift /
+//  LXMFSwift. The RNS engine that will use this interpreter lives behind the
+//  NodeEngine seam as a sibling conformance, not in this file.
+//
+
+import Foundation
+
+/// Owns the embedded Python interpreter in the NE process.
+final class NEPythonRuntime: @unchecked Sendable {
+    static let shared = NEPythonRuntime()
+
+    enum State: Equatable { case uninitialized, running, failed(String), finalized }
+    private(set) var state: State = .uninitialized
+
+    /// The embed thread's saved state from PyEval_SaveThread(). Kept alive so
+    /// Py_Finalize can find it; PyGILState_Ensure/Release re-acquires from any
+    /// thread regardless, so it is not reused directly.
+    private var savedThreadState: OpaquePointer?
+
+    private init() {}
+
+    /// Initialize CPython. Returns sys.version on success. Must be called exactly
+    /// once before any other Python operation.
+    @discardableResult
+    func start() -> Result<String, Error> {
+        guard state == .uninitialized else {
+            return .failure(NEError.alreadyStarted)
+        }
+        ExtensionDiagLog.log("[NE-PY] init begin")
+
+        let resourcePath = Bundle.main.resourcePath ?? Bundle.main.bundlePath
+        let pythonHome = "\(resourcePath)/python"
+
+        setenv("NO_COLOR", "1", 1)
+        setenv("PYTHON_COLORS", "0", 1)
+
+        var preconfig = PyPreConfig()
+        PyPreConfig_InitIsolatedConfig(&preconfig)
+        preconfig.utf8_mode = 1
+
+        var pyStatus = Py_PreInitialize(&preconfig)
+        if PyStatus_Exception(pyStatus) != 0 {
+            return failed("Py_PreInitialize: \(message(pyStatus))")
+        }
+
+        var config = PyConfig()
+        PyConfig_InitIsolatedConfig(&config)
+        config.buffered_stdio = 0
+        config.write_bytecode = 0
+        config.install_signal_handlers = 1
+
+        if let homeWide = Py_DecodeLocale(pythonHome, nil) {
+            pyStatus = ColumbaNEPy_PyConfig_SetHome(&config, homeWide)
+            PyMem_RawFree(homeWide)
+            if PyStatus_Exception(pyStatus) != 0 {
+                PyConfig_Clear(&config)
+                return failed("PyConfig_SetString(home): \(message(pyStatus))")
+            }
+        }
+
+        pyStatus = PyConfig_Read(&config)
+        if PyStatus_Exception(pyStatus) != 0 {
+            PyConfig_Clear(&config)
+            return failed("PyConfig_Read: \(message(pyStatus))")
+        }
+
+        pyStatus = Py_InitializeFromConfig(&config)
+        PyConfig_Clear(&config)
+        if PyStatus_Exception(pyStatus) != 0 {
+            return failed("Py_InitializeFromConfig: \(message(pyStatus))")
+        }
+
+        guard let version = readSysVersion() else {
+            return failed("could not read sys.version after init (stdlib missing at \(pythonHome)?)")
+        }
+
+        // Release the GIL so RNS/LXMF threads can run when started later.
+        savedThreadState = OpaquePointer(PyEval_SaveThread())
+
+        state = .running
+        ExtensionDiagLog.log("[NE-PY] init OK sys.version=\(version)")
+        return .success(version)
+    }
+
+    /// Run a block while holding the Python GIL. Safe from any thread; nested
+    /// calls are fine (PyGILState_Ensure/Release is reentrant).
+    func withGIL<T>(_ body: () throws -> T) rethrows -> T {
+        let gilState = PyGILState_Ensure()
+        defer { PyGILState_Release(gilState) }
+        return try body()
+    }
+
+    private func readSysVersion() -> String? {
+        guard let sysModule = PyImport_ImportModule("sys") else {
+            PyErr_Print()
+            return nil
+        }
+        defer { Py_DecRef(sysModule) }
+        guard let versionObj = PyObject_GetAttrString(sysModule, "version") else {
+            PyErr_Print()
+            return nil
+        }
+        defer { Py_DecRef(versionObj) }
+        guard let cstr = PyUnicode_AsUTF8(versionObj) else { return nil }
+        return String(cString: cstr)
+    }
+
+    private func message(_ status: PyStatus) -> String {
+        if let cstr = status.err_msg { return String(cString: cstr) }
+        return "(no message)"
+    }
+
+    private func failed(_ reason: String) -> Result<String, Error> {
+        state = .failed(reason)
+        ExtensionDiagLog.log("[NE-PY] init FAILED \(reason)")
+        return .failure(NEError.initFailed(reason))
+    }
+
+    enum NEError: LocalizedError {
+        case alreadyStarted
+        case initFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .alreadyStarted: return "NE Python runtime already started"
+            case .initFailed(let reason): return "NE Python init failed: \(reason)"
+            }
+        }
+    }
+}
