@@ -37,11 +37,19 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: - Node-service v1 node owner (contract 6)
 
     /// The node-owner coordinator for the bounded control channel. Wraps the
-    /// in-NE `NEReticulumNode` behind the `NodeEngine` seam (via
-    /// `NEMicroRNSEngine`) + the shared durable `NodeStore`. The app reaches it
-    /// exclusively over `[0xF5 0x02]` control frames in `handleAppMessage`. The
-    /// LEGACY `ProxyRequest` path is preserved (contract 16: cut over later) —
-    /// it still handles the non-control `0xF5` envelopes.
+    /// in-NE Python RNS engine behind the `NodeEngine` seam + the shared durable
+    /// `NodeStore`. The app reaches it exclusively over `[0xF5 0x02]` control
+    /// frames in `handleAppMessage`. The LEGACY `ProxyRequest` path is preserved
+    /// (contract 16: cut over later) — it still handles the non-control `0xF5`
+    /// envelopes.
+    ///
+    /// SINGLE RUNTIME: the NE hosts exactly ONE Reticulum runtime — Python RNS
+    /// (the abandoned ReticulumSwift/LXMFSwift C++ microReticulum node was
+    /// removed; it cannot coexist with Python RNS in the NE's memory budget, and
+    /// is not part of the target architecture). Until the Python RNS engine
+    /// conformance lands, the owner runs the engine-agnostic fail-closed
+    /// `StubEngine`; the control channel stays reachable + honest, and the swap
+    /// to the real engine is a one-line change in `nodeOwnerIfNeeded`.
     private var nodeOwner: NodeOwner?
 
     // MARK: - Tunnel Lifecycle
@@ -49,18 +57,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         ExtensionDiagLog.log("startTunnel called")
 
-        // Construct + start the in-NE Reticulum + LXMF node (Track A5a + C3). It
-        // owns its own TCP relay interface (read from the same App-Group config)
-        // + the AppGroupBridge. `start()` is a clean no-op if the shared identity
-        // isn't available yet.
-        ExtensionDiagLog.log("startTunnel: Model B — in-NE node owns delivery")
-        let node = NEReticulumNode()
-        self.reticulumNode = node
-        // Embedded-Python foundation probe (slice 2): initialize CPython in
-        // the NE, prove `import RNS` + construct a live RNS.Node, and report
-        // whether the node's daemon threads actually run. Non-blocking — it
-        // must never gate the tunnel/node bring-up. This de-risks the in-NE
-        // Python RNS runtime before the NodeEngine slice drives it.
+        // SINGLE RUNTIME: Python RNS is the only Reticulum runtime in the NE.
+        // The abandoned ReticulumSwift/LXMFSwift C++ microReticulum node was
+        // removed (it cannot coexist with Python RNS in the NE's memory budget
+        // — running both crash-looped the process). The Python runtime is
+        // brought up here: initialize CPython, prove `import RNS` + a live
+        // RNS.Node, and report whether its daemon threads actually run.
+        // Non-blocking — it must never gate the tunnel bring-up.
         Task {
             switch NEPythonRuntime.shared.start() {
             case .success:
@@ -70,13 +73,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 ExtensionDiagLog.log("[NE-PY-RNS] \(nodeStatus)")
             case .failure(let err):
                 ExtensionDiagLog.log("[NE-PY-RNS] skipped (python init failed: \(err.localizedDescription))")
-            }
-        }
-        Task {
-            do {
-                _ = try await node.start()
-            } catch {
-                ExtensionDiagLog.log("startTunnel: NEReticulumNode.start failed: \(String(describing: error))")
             }
         }
 
