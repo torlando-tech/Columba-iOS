@@ -95,6 +95,13 @@ final class NEPythonRuntime: @unchecked Sendable {
             return failed("Py_InitializeFromConfig: \(message(pyStatus))")
         }
 
+        if !addSiteDir("app_packages") {
+            return failed("failed to add app_packages site dir (\(resourcePath)/app_packages)")
+        }
+        if !prependSysPath("app") {
+            return failed("failed to prepend app dir to sys.path (\(resourcePath)/app)")
+        }
+
         guard let version = readSysVersion() else {
             return failed("could not read sys.version after init (stdlib missing at \(pythonHome)?)")
         }
@@ -105,6 +112,103 @@ final class NEPythonRuntime: @unchecked Sendable {
         state = .running
         ExtensionDiagLog.log("[NE-PY] init OK sys.version=\(version)")
         return .success(version)
+    }
+
+    /// Prove the real Python RNS runtime loads + runs in the NE. This is the
+    /// de-risk probe for the in-NE RNS port: it mirrors the app's rns_bridge
+    /// startup (the platform.system() -> "Darwin" patch, `import RNS/LXMF`,
+    /// `import rns_bridge`) and then constructs a live RNS.Node so the RNS
+    /// daemon threads actually run in the NE process. The constructed node is
+    /// kept in `__main__._ne_node` for later driving (the NodeEngine slice).
+    ///
+    /// Runs on the GIL. Returns a short human-readable status string that the
+    /// caller logs to ext-diag.log. Never throws the NE down: a probe failure
+    /// is a logged result, not a crash.
+    func probeRNS() -> String {
+        let probe = """
+        import io, sys, traceback
+        _buf = io.StringIO(); _old = sys.stdout; sys.stdout = _buf
+        try:
+            import platform as _p
+            _rs = _p.system
+            _p.system = lambda *a, **k: "Darwin" if _rs(*a, **k) == "iOS" else _rs(*a, **k)
+            import RNS, LXMF
+            import rns_bridge
+            out = ["RNS=%s" % getattr(RNS, "__version__", "?"),
+                   "LXMF=%s" % getattr(LXMF, "__version__", "?")]
+            _node = RNS.Node(hash=bytes.fromhex("0123456789abcdef0123456789abcdef0123"))
+            import __main__
+            __main__._ne_node = _node
+            out.append("node=constructed")
+        except Exception:
+            traceback.print_exc(file=_buf)
+            out = ["PROBE_FAILED"]
+        sys.stdout = _old
+        import __main__
+        __main__._probe_result = _buf.getvalue()
+        """
+        withGIL {
+            PyRun_SimpleString(probe)
+        }
+        let result = readMainAttr("_probe_result") ?? "(no probe result)"
+        return result
+    }
+
+    /// After the probe constructs the node, let the RNS daemon threads run
+    /// (GIL released during the delay) and then report whether the node is
+    /// actually running. Strong proof the runtime is live in the NE.
+    func probeNodeRunning() -> String {
+        Thread.sleep(forTimeInterval: 2.0)   // GIL is released at this point
+        let check = """
+        import __main__
+        _n = getattr(__main__, "_ne_node", None)
+        _r = "node=None" if _n is None else ("node=running" if _n.isRunning() else "node=stopped")
+        __main__._probe_result = _r
+        """
+        withGIL {
+            PyRun_SimpleString(check)
+        }
+        return readMainAttr("_probe_result") ?? "(no node status)"
+    }
+
+    private func readMainAttr(_ name: String) -> String? {
+        guard let mainModule = PyImport_ImportModule("__main__") else { return nil }
+        defer { Py_DecRef(mainModule) }
+        guard let val = PyObject_GetAttrString(mainModule, name) else { return nil }
+        defer { Py_DecRef(val) }
+        guard let cstr = PyUnicode_AsUTF8(val) else { return nil }
+        return String(cString: cstr)
+    }
+
+    private func addSiteDir(_ relPath: String) -> Bool {
+        let resourcePath = Bundle.main.resourcePath ?? Bundle.main.bundlePath
+        let siteDir = "\(resourcePath)/\(relPath)"
+        guard let siteModule = PyImport_ImportModule("site") else { return false }
+        defer { Py_DecRef(siteModule) }
+        guard let addsitedir = PyObject_GetAttrString(siteModule, "addsitedir") else { return false }
+        defer { Py_DecRef(addsitedir) }
+        guard PyCallable_Check(addsitedir) != 0 else { return false }
+        guard let pathObj = PyUnicode_FromString(siteDir) else { return false }
+        guard let result = PyObject_CallOneArg(addsitedir, pathObj) else {
+            Py_DecRef(pathObj)
+            return false
+        }
+        Py_DecRef(pathObj)
+        Py_DecRef(result)
+        return true
+    }
+
+    private func prependSysPath(_ relPath: String) -> Bool {
+        let resourcePath = Bundle.main.resourcePath ?? Bundle.main.bundlePath
+        let appDir = "\(resourcePath)/\(relPath)"
+        guard let sysModule = PyImport_ImportModule("sys") else { return false }
+        defer { Py_DecRef(sysModule) }
+        guard let sysPath = PyObject_GetAttrString(sysModule, "path") else { return false }
+        defer { Py_DecRef(sysPath) }
+        guard let pathObj = PyUnicode_FromString(appDir) else { return false }
+        let result = PyList_Insert(sysPath, 0, pathObj)
+        Py_DecRef(pathObj)
+        return result == 0
     }
 
     /// Run a block while holding the Python GIL. Safe from any thread; nested

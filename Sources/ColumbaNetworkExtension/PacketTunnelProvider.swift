@@ -56,12 +56,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         ExtensionDiagLog.log("startTunnel: Model B — in-NE node owns delivery")
         let node = NEReticulumNode()
         self.reticulumNode = node
-        // Embedded-Python foundation probe (first slice): initialize CPython in
-        // the NE and read sys.version back, logging to ext-diag. Non-blocking —
-        // it must never gate the tunnel/node bring-up. This proves the CPython
-        // C API works in the NE sandbox before the real RNS engine is wired in.
+        // Embedded-Python foundation probe (slice 2): initialize CPython in
+        // the NE, prove `import RNS` + construct a live RNS.Node, and report
+        // whether the node's daemon threads actually run. Non-blocking — it
+        // must never gate the tunnel/node bring-up. This de-risks the in-NE
+        // Python RNS runtime before the NodeEngine slice drives it.
         Task {
-            NEPythonRuntime.shared.start()
+            switch NEPythonRuntime.shared.start() {
+            case .success:
+                let rnsProbe = NEPythonRuntime.shared.probeRNS()
+                ExtensionDiagLog.log("[NE-PY-RNS] probe: \(rnsProbe.replacingOccurrences(of: "\n", with: " | "))")
+                let nodeStatus = NEPythonRuntime.shared.probeNodeRunning()
+                ExtensionDiagLog.log("[NE-PY-RNS] \(nodeStatus)")
+            case .failure(let err):
+                ExtensionDiagLog.log("[NE-PY-RNS] skipped (python init failed: \(err.localizedDescription))")
+            }
         }
         Task {
             do {

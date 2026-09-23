@@ -1603,14 +1603,14 @@
 			inputPaths = (
 				"$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh",
 			);
-			name = "Install Python stdlib (NE)";
+			name = "Install Python stdlib + RNS wheels (NE)";
 			outputFileListPaths = (
 			);
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework\n";
+			shellScript = "set -e\n\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || { echo \"error: $WHEELS_SRC missing\" >&2; exit 1; }\n[ -s \"$WHEELS_SRC/ble_reticulum/BLEInterface.py\" ] || { echo \"error: ble_reticulum missing\" >&2; exit 1; }\n\n# RNS/LXMF wheels -> <appex>/app_packages (site-packages); bridge -> <appex>/app.\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app\"\ncp \"$PROJECT_DIR/app/rns_bridge.py\" \"$CODESIGNING_FOLDER_PATH/app/\"\n\n# stdlib + re-extension/sign the wheels' .so files (CRNS, cffi, cryptography).\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
