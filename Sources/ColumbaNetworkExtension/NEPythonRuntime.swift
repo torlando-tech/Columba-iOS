@@ -277,6 +277,81 @@ final class NEPythonRuntime: @unchecked Sendable {
         return result == 0
     }
 
+    /// Call `rns_bridge.<fn>(...)` and return its result as a JSON string.
+    ///
+    /// This is the generic seam the in-NE Python RNS engine (`NEPythonRNS`)
+    /// uses to drive the live node: it keeps ALL the CPython C-API detail here
+    /// (NEPythonRuntime's file) and exposes one plain-string-in / string-out
+    /// method so the engine never touches the C API directly.
+    ///
+    /// `payload` is JSON of the form `{"args":[...], "kwargs":{...}}`. A Python
+    /// `bytes` argument is carried as `{"__b64__": "<base64>"}` (JSON can't hold
+    /// raw bytes) and decoded back on the Python side; the identity private-key
+    /// blob rides this way. `rns_bridge` is imported on first use (its import
+    /// applies the `platform.system() -> "Darwin"` patch the NE needs).
+    ///
+    /// The return is a JSON string, one of:
+    ///   `{"ok":true,"result":"<json-string>"}`  - the call's JSON-serializable result
+    ///   `{"ok":false,"error":"<traceback>"}`    - the call raised
+    /// or `nil` if the wrapper itself failed to compile/run (a Swift-side error).
+    ///
+    /// GIL: the whole call (run + result-read) is one `withGIL` block. Holding
+    /// the GIL across a blocking call (e.g. `start`, which blocks until the node
+    /// is up) is correct: RNS's C-level daemon threads run without the GIL, and
+    /// the Python-level ones are scheduled when it's released on return.
+    func callBridge(_ fn: String, payload: String) -> String? {
+        let snippet = callBridgeSnippet(fn: fn, payload: payload)
+        return withGIL {
+            let rc = PyRun_SimpleString(snippet)
+            guard rc == 0 else { return nil }
+            return readMainAttr("_call_out")
+        }
+    }
+
+    /// Build the Python snippet that calls `rns_bridge.<fn>` with the decoded
+    /// payload and stores the result in `__main__._call_out`. See `callBridge`.
+    private func callBridgeSnippet(fn: String, payload: String) -> String {
+        // JSON-encode the fn name + payload as Python string literals so no user
+        // value can break out of the snippet (the values ride inside a quoted
+        // Python literal parsed by json.loads, not by string interpolation into
+        // executable code).
+        let fnLit = pyLiteral(fn)
+        let payloadLit = pyLiteral(payload)
+        return """
+        import json, base64, traceback
+        import rns_bridge
+        import __main__
+        def _dec(v):
+            if isinstance(v, dict) and set(v) == {'__b64__'}:
+                return base64.b64decode(v['__b64__'] or b'')
+            if isinstance(v, dict):
+                return {k: _dec(x) for k, x in v.items()}
+            if isinstance(v, list):
+                return [_dec(x) for x in v]
+            return v
+        _p = _dec(json.loads(\(payloadLit)))
+        _fn = \(fnLit)
+        try:
+            _res = getattr(rns_bridge, _fn)(*(_p.get('args') or []), **(_p.get('kwargs') or {}))
+            try:
+                _out = json.dumps(_res)
+            except TypeError:
+                _out = json.dumps({'__repr__': repr(_res)})
+            __main__._call_out = json.dumps({'ok': True, 'result': _out})
+        except BaseException:
+            __main__._call_out = json.dumps({'ok': False, 'error': traceback.format_exc()})
+        """
+    }
+
+    /// Encode `s` as a single-quoted Python string literal (escaping backslash +
+    /// single quote). Used to embed a value as a Python literal rather than
+    /// interpolating it into executable code.
+    private func pyLiteral(_ s: String) -> String {
+        let esc = s.replacingOccurrences(of: "\\", with: "\\\\")
+                   .replacingOccurrences(of: "'", with: "\\'")
+        return "'" + esc + "'"
+    }
+
     /// Run a block while holding the Python GIL. Safe from any thread; nested
     /// calls are fine (PyGILState_Ensure/Release is reentrant).
     func withGIL<T>(_ body: () throws -> T) rethrows -> T {

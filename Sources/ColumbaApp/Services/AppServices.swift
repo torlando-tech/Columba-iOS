@@ -1897,6 +1897,31 @@ public final class AppServices {
         let identityBytes = try? identity.exportPrivateKeys()
         DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
 
+        #if COLUMBA_RUNTIME_MODEL_B
+        // Model B: the Reticulum runtime lives in the Network Extension, so the
+        // RNS config (+ identity blob) MUST be written to the SHARED App-Group
+        // container - the app's private Application Support dir (above) is
+        // process-local and the NE cannot see it. The NE's in-NE Python RNS
+        // engine (NEPythonRNS) reads <shared dir>/config + the shared-keychain
+        // identity when it brings the node up. Mirror the private write here so
+        // both the (removed) in-process path and the NE Python path stay valid.
+        if let sharedDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) {
+            try? FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
+            try? configText.write(to: sharedDir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+            // The NE keys its config dir by the raw identity hash hex; persist it
+            // (Foundation-only, no PII beyond the hash) so NEPythonRNS resolves
+            // the same <shared dir>/config without re-deriving the RNS hash.
+            SharedDefaults.suite.set(identityHashHex, forKey: "rnsConfigIdentityHashHex")
+            // The identity blob co-locates with the config (rns_bridge.start also
+            // accepts identity_bytes, but the file path is the app's canonical
+            // source; the NE reads the shared keychain, so this is belt-and-braces).
+            if let identityBytes {
+                try? identityBytes.write(to: sharedDir.appendingPathComponent("identity.bin"), options: .atomic)
+            }
+            DiagLog.log("[RNS] Model B: shared config written to \(sharedDir.path) (\(interfaces.count) interfaces)")
+        }
+        #endif
+
         #if COLUMBA_RUNTIME_PYTHON
         // IOSBLEInterface starts synchronously inside backend.start(). Install
         // the native callback sink first so discoveries and handshakes that

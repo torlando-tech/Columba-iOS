@@ -123,4 +123,22 @@ public enum AppGroupPaths {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
+
+    /// The App-Group-shared RNS **config** directory for `identityHashHex`.
+    ///
+    /// Model B: the Reticulum runtime lives in the Network Extension, but the RNS
+    /// `config` file (interface list, transport mode, discovery) is derived by the
+    /// app from the user's `InterfaceEntity` records. The app writes it here - a
+    /// SHARED path both processes can reach - and the NE's in-NE Python RNS engine
+    /// reads `<dir>/config` when it brings the node up. Before this helper the app
+    /// wrote the config to its process-local Application Support, which the NE
+    /// cannot see, so a Python RNS node in the NE had no config to load.
+    ///
+    /// This is the SAME per-identity directory as `lxmfDatabaseURL` /
+    /// `ratchetStorageURL` (the `Columba/python-<hash>/` subdir), so the config
+    /// file, the identity blob, and the LXMF store all co-locate per identity.
+    /// Returns `nil` when the App-Group container is unavailable.
+    public static func rnsConfigDirectoryURL(identityHashHex: String) -> URL? {
+        perIdentityDirectoryURL(identityHashHex: identityHashHex)
+    }
 }
