@@ -178,12 +178,18 @@ final class NEPythonRuntime: @unchecked Sendable {
     /// non-GIL-holding thread → SIGSEGV in PyUnicode_New), which is exactly the
     /// 0x10 fault we saw in the NE crash logs.
     private func runStage(_ stage: String, _ code: () -> String) {
-        let script = code() + "\n"
+        // Indent EVERY line of the stage script by 4 so it sits inside the
+        // `try:` block. Interpolating the raw multi-line script only indents
+        // its first line (a leading newline), so the body lands at column 0 -
+        // an IndentationError that makes the whole wrapper fail to compile and
+        // _stage_out never get set. That is exactly why every stage reported
+        // "(no output)".
+        let indented = indentPython(code(), by: 4)
         let wrapper = """
         import io, sys, traceback
         _buf = io.StringIO(); _o = sys.stdout; sys.stdout = _buf
         try:
-            \(script)
+        \(indented)
         except SystemExit:
             raise
         except BaseException:
@@ -193,10 +199,28 @@ final class NEPythonRuntime: @unchecked Sendable {
         __main__._stage_out = _buf.getvalue()
         """
         let out = withGIL {
-            PyRun_SimpleString(wrapper)
+            let rc = PyRun_SimpleString(wrapper)
+            if rc < 0 {
+                // The wrapper itself failed to compile/run. Read whatever the
+                // stage may have emitted (e.g. output before an uncaught
+                // error), else report the failure so it is visible in
+                // ext-diag instead of a silent "(no output)".
+                let captured = readMainAttr("_stage_out")
+                if let captured, !captured.isEmpty { return captured }
+                return "(wrapper failed rc=\(rc))"
+            }
             return readMainAttr("_stage_out")
         }
         ExtensionDiagLog.log("[NE-PY-RNS] \(stage): \(out.map { $0.replacingOccurrences(of: "\n", with: " | ") } ?? "(no output)")")
+    }
+
+    /// Prefix every non-empty line of a multi-line Python snippet with `by`
+    /// spaces, so it can be embedded under an indented block (e.g. `try:`).
+    private func indentPython(_ s: String, by: Int) -> String {
+        let pad = String(repeating: " ", count: by)
+        return s.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.isEmpty ? "" : pad + $0 }
+            .joined(separator: "\n")
     }
 
     private func readMainAttr(_ name: String) -> String? {
