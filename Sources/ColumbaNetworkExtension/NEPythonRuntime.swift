@@ -145,12 +145,21 @@ final class NEPythonRuntime: @unchecked Sendable {
             print("ok")
             """
         }
+        // Construct the real RNS runtime, exactly as the app's known-good
+        // rns_bridge.py does (RNS.Reticulum(config_dir) - NOT RNS.Node, which
+        // does not exist; the earlier AttributeError was my wrong class name,
+        // not an RNS problem). tempfile.mkdtemp uses TMPDIR, which iOS sets to
+        // a writable per-process tmp dir for extensions; if it fails the
+        // runStage wrapper logs the traceback so we can pick another path.
         runStage("nodeConstruct") {
             """
-            import RNS, __main__
-            _node = RNS.Node(hash=bytes.fromhex("0123456789abcdef0123456789abcdef0123"))
-            __main__._ne_node = _node
-            print("constructed")
+            import os, tempfile
+            import RNS
+            _d = tempfile.mkdtemp(prefix="rnsne-")
+            _ret = RNS.Reticulum(_d)
+            import __main__
+            __main__._ne_ret = _ret
+            print("constructed dir=" + _d)
             """
         }
         // After construction, let the RNS daemon threads run (GIL released
@@ -158,9 +167,14 @@ final class NEPythonRuntime: @unchecked Sendable {
         Thread.sleep(forTimeInterval: 2.0)
         runStage("nodeRunning") {
             """
-            import __main__
-            _n = getattr(__main__, "_ne_node", None)
-            print("node=None" if _n is None else ("node=running" if _n.isRunning() else "node=stopped"))
+            import RNS, __main__
+            _r = getattr(__main__, "_ne_ret", None)
+            try:
+                _ifs = RNS.Transport.interfaces or []
+                _n = len(_ifs)
+            except Exception as _e:
+                _n = "err:" + repr(_e)
+            print("reticulum=" + ("up" if _r is not None else "none") + " ifaces=" + str(_n))
             """
         }
     }
