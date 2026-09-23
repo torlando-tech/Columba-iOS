@@ -198,7 +198,7 @@ final class NEPythonRuntime: @unchecked Sendable {
         import __main__
         __main__._stage_out = _buf.getvalue()
         """
-        let out = withGIL {
+        let out = withGIL { () -> String? in
             let rc = PyRun_SimpleString(wrapper)
             if rc < 0 {
                 // The wrapper itself failed to compile/run. Read whatever the
