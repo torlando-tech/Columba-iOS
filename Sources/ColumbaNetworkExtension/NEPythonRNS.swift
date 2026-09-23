@@ -151,13 +151,10 @@ final class NEPythonRNS: @unchecked Sendable {
     /// `displayName` rides in the `.start` request; it is passed to
     /// `rns_bridge.start` so the startup announce carries it.
     func start(displayName: String) -> String? {
-        guard NEPythonRuntime.shared.state == .running else {
+        if NEPythonRuntime.shared.state != .running {
             // CPython not initialized yet (shouldn't happen - startTunnel boots
             // it) - try to init synchronously; if that fails we're not ready.
-            switch NEPythonRuntime.shared.start() {
-            case .success:
-                break
-            case .failure(let err):
+            if case .failure(let err) = NEPythonRuntime.shared.start() {
                 ExtensionDiagLog.log("[NE-PY-RNS] start: python not ready (init failed: \(err.localizedDescription))")
                 return nil
             }
