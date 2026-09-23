@@ -583,6 +583,23 @@ private final class RuntimeActivityMonitorLeaseHolder {
 @MainActor
 public final class AppServices {
 
+    #if DEBUG
+    /// A cold-launch `lxma://test-node-send` deep link is delivered by the OS
+    /// at app launch, BEFORE `startPythonBackend()` registers the `ColumbaTestNodeSend`
+    /// observer, so a bare `NotificationCenter` post is lost (no listener yet).
+    /// The deep-link handler parks the request here; `drainNodeSendProbe()`
+    /// consumes it exactly once (on MainActor) after the observer exists. The
+    /// consume-once guard also prevents a double-run when the post lands while
+    /// the app is already warm (observer + drain both call the same method).
+    ///
+    /// `nonisolated(unsafe)`: the value is a simple value-tuple written by the
+    /// `.onOpenURL` handler (main thread) and read/cleared by the @MainActor
+    /// `drainNodeSendProbe()` - serialized by MainActor in practice, so no
+    /// runtime hazard, and it keeps the (non-isolated) deep-link closure able
+    /// to write it without an actor hop.
+    nonisolated(unsafe) static var pendingNodeSend: (to: String, content: String)?
+    #endif
+
     /// Host:port pair identifying a TCP interface's destination. Used to
     /// detect whether a `connectTCPInterface` call would change the
     /// interface's configuration or just re-apply the same one.
@@ -2078,36 +2095,16 @@ public final class AppServices {
         // app->NE transport. This exercises the NEW 0xF5 0x02 path, independent
         // of the legacy backend.lxmf path above - the device-test seam for the
         // node contract (contract 6). DEBUG-only (addPythonObserver is #if DEBUG).
-        addPythonObserver("ColumbaTestNodeSend") { [weak self] note in
-            guard let self else { return }
-            guard let to = note.userInfo?["to"] as? String, !to.isEmpty else {
-                DiagLog.log("[TEST-NODE-SEND] missing/empty 'to'")
-                return
-            }
-            let content = (note.userInfo?["content"] as? String) ?? "node contract test"
+        //
+        // Cold-launch handling: the OS delivers a launch-time --payload-url
+        // BEFORE startPythonBackend registers this observer, so a bare
+        // NotificationCenter post would be lost. The deep-link handler parks
+        // the request in AppServices.pendingNodeSend; drainNodeSendProbe()
+        // (called from this observer AND at the end of startPythonBackend)
+        // consumes it exactly once, covering both warm and cold launches.
+        addPythonObserver("ColumbaTestNodeSend") { [weak self] _ in
             Task { @MainActor in
-                guard let tunnel = self.tunnelManager else {
-                    DiagLog.log("[TEST-NODE-SEND] no tunnelManager (NE session not up)")
-                    return
-                }
-                guard let storeURL = AppGroupPaths.nodeServiceStoreURL() else {
-                    DiagLog.log("[TEST-NODE-SEND] no shared App-Group store path")
-                    return
-                }
-                let send: @Sendable (Data) async -> Data? = { data in
-                    await tunnel.proxySend(data)
-                }
-                let client = NodeControlClient(send: send, storeURL: storeURL.path)
-                do {
-                    let admission = try await client.submitMessage(destinationHex: to, content: content)
-                    let r = admission.record
-                    DiagLog.log("[TEST-NODE-SEND] commandID=\(admission.commandID.wire.prefix(8))… disposition=\(r.disposition.rawValue) committedThrough=\(r.committedThrough != nil)")
-                    if let rej = r.rejection {
-                        DiagLog.log("[TEST-NODE-SEND] rejection code=\(rej.code.rawValue) field=\(rej.field ?? "-") msg=\(rej.message ?? "-")")
-                    }
-                } catch {
-                    DiagLog.log("[TEST-NODE-SEND] error=\(error)")
-                }
+                await self?.drainNodeSendProbe()
             }
         }
 
@@ -2563,7 +2560,63 @@ public final class AppServices {
             }
         }
         #endif // DEBUG — test-only deep-link observers
+
+        // Consume a cold-launch test-node-send deep link that arrived before the
+        // observer above was registered (startPythonBackend runs at init-complete,
+        // after the OS delivers a launch-time --payload-url). Consume-once.
+        #if DEBUG
+        await drainNodeSendProbe()
+        #endif
     }
+
+    #if DEBUG
+    /// Drive the node-contract control channel once (stage in the shared store,
+    /// hello + admit over the app->NE transport) and log the committed
+    /// disposition. DEBUG-only test seam.
+    private func runNodeSendProbe(to: String, content: String) async {
+        guard let tunnel = tunnelManager else {
+            DiagLog.log("[TEST-NODE-SEND] no tunnelManager (NE session not up)")
+            return
+        }
+        guard let storeURL = AppGroupPaths.nodeServiceStoreURL() else {
+            DiagLog.log("[TEST-NODE-SEND] no shared App-Group store path")
+            return
+        }
+        // The NE tunnel is often still `.connecting` when a cold-launch deep link
+        // is drained right after init; wait for a live session before the
+        // hello+admit round-trip so the control frames reach the node owner.
+        let connected = await tunnel.waitUntilConnected(timeoutMs: 30_000)
+        DiagLog.log("[TEST-NODE-SEND] tunnel connected=\(connected)")
+        guard connected else {
+            DiagLog.log("[TEST-NODE-SEND] tunnel not connected within 30s - aborting")
+            return
+        }
+        let send: @Sendable (Data) async -> Data? = { [weak tunnel] data in
+            guard let tunnel else { return nil }
+            return await tunnel.proxySend(data)
+        }
+        let client = NodeControlClient(send: send, storeURL: storeURL.path)
+        do {
+            let admission = try await client.submitMessage(destinationHex: to, content: content)
+            let r = admission.record
+            DiagLog.log("[TEST-NODE-SEND] commandID=\(admission.commandID.wire.prefix(8))… disposition=\(r.disposition.rawValue) committedThrough=\(r.committedThrough != nil)")
+            if let rej = r.rejection {
+                DiagLog.log("[TEST-NODE-SEND] rejection code=\(rej.code.rawValue) field=\(rej.field ?? "-") msg=\(rej.message ?? "-")")
+            }
+        } catch {
+            DiagLog.log("[TEST-NODE-SEND] error=\(error)")
+        }
+    }
+
+    /// Consume a cold-launch `test-node-send` deep link parked in
+    /// `pendingNodeSend` (the OS delivers launch-time --payload-url before
+    /// startPythonBackend registers the observer). Consume-once + MainActor.
+    private func drainNodeSendProbe() async {
+        guard let (to, content) = Self.pendingNodeSend else { return }
+        Self.pendingNodeSend = nil
+        await runNodeSendProbe(to: to, content: content)
+    }
+    #endif
 
     /// Begin consuming queued backend events only after the app has installed its
     /// IncomingMessageHandler. Idempotent across repeated scene initialization.

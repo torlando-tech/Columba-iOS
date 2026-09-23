@@ -219,10 +219,20 @@ struct ColumbaApp: App {
                     let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
                     let content = components?.queryItems?.first(where: { $0.name == "content" })?.value ?? "node contract test"
                     DiagLog.log("[TEST-NODE-SEND] to=\(to.prefix(8))… content=\(content.prefix(24))")
+                    guard !to.isEmpty else {
+                        DiagLog.log("[TEST-NODE-SEND] missing/empty 'to'")
+                        return
+                    }
+                    // Park the request so a COLD-LAUNCH deep link (delivered by the
+                    // OS before startPythonBackend registers the observer) is not
+                    // lost. drainNodeSendProbe() consumes it once the observer +
+                    // tunnel are ready.
+                    AppServices.pendingNodeSend = (to: to, content: content)
+                    // Also post now: if the app is already warm the observer is
+                    // registered and will drain the parked request immediately.
                     NotificationCenter.default.post(
                         name: Notification.Name("ColumbaTestNodeSend"),
-                        object: nil,
-                        userInfo: ["to": to, "content": content]
+                        object: nil
                     )
                     return
                 }
