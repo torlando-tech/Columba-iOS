@@ -217,12 +217,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         case .announce(let displayName):
             guard let res = engine.announce(displayName: displayName) else { return .ok(try? JSONEncoder().encode(false)) }
-            let ok = (res.object(forKey: "ok") as? Bool) ?? false
+            let ok = (res["ok"] as? Bool) ?? false
             return .ok(try? JSONEncoder().encode(ok))
 
         case .announceTelephony(let displayName):
             guard let res = engine.announceTelephony(displayName: displayName) else { return .ok(try? JSONEncoder().encode(false)) }
-            let ok = (res.object(forKey: "ok") as? Bool) ?? false
+            let ok = (res["ok"] as? Bool) ?? false
             return .ok(try? JSONEncoder().encode(ok))
 
         case .statusSnapshot:
@@ -248,7 +248,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         case .persist:
             guard let res = engine.persist() else { return .error("persist failed") }
-            let ok = (res.object(forKey: "ok") as? Bool) ?? true
+            let ok = (res["ok"] as? Bool) ?? true
             return ok ? .ok(nil) : .error("persist failed")
 
         case .registeredDestinationHashes:
