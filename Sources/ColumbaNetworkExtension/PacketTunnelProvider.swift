@@ -5,11 +5,13 @@
 //  NEPacketTunnelProvider host for the Model B in-NE Reticulum + LXMF node.
 //  Model B is the SOLE architecture on the build that compiles the NE in
 //  (ENABLE_NETWORK_EXTENSION ⇔ COLUMBA_BACKEND_SWIFT): the extension exists
-//  solely to own and keep alive `NEReticulumNode` — the background LXMF
-//  delivery path — while the main app is backgrounded. It carries NO raw-frame
-//  forwarding: the node owns its own TCP relay interface + the AppGroupBridge,
-//  and the app→NE send path is the `ProxyRequest`/`ProxyResponse` IPC handled in
-//  `handleAppMessage` below.
+//  solely to own and keep alive the in-NE Python RNS node (`NEPythonRNS` over
+//  the embedded CPython) — the background LXMF delivery path — while the main
+//  app is backgrounded. It carries NO raw-frame forwarding: the node owns its
+//  own TCP relay interface + the AppGroupBridge, and the app→NE send path is
+//  the `ProxyRequest`/`ProxyResponse` IPC handled in `handleAppMessage` below.
+//  (The abandoned C++ microReticulum node is gone; Python RNS is the sole
+//  runtime in the NE.)
 //
 //  (The earlier "Model A" PoC dumb-pipe — NWConnection TCP/Auto frame forwarding
 //  over a shared HDLC queue, with an NWPathMonitor + a Darwin config-change
