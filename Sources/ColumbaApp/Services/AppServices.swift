@@ -3000,6 +3000,17 @@ public final class AppServices {
     /// LIVE must check this rather than assume success.
     @discardableResult
     public func restartPythonBackend() async -> PythonBackendRestartOutcome {
+        await withLifecycleOperation {
+            await restartPythonBackendUnlocked()
+        }
+    }
+
+    /// Lock-free restart body. Callers MUST already hold the lifecycle-operation
+    /// lock (`restartPythonBackend` does; `applyInterfaceChangesUnlocked` does,
+    /// since it runs inside `withLifecycleOperation`). Calling the *locked*
+    /// `restartPythonBackend()` from within `withLifecycleOperation` would
+    /// deadlock on the non-reentrant `lifecycleOperationActive` guard.
+    private func restartPythonBackendUnlocked() async -> PythonBackendRestartOutcome {
         guard let identity = pythonStartIdentity else {
             DiagLog.log("[RNS] restartPythonBackend skipped — backend was never started")
             return .skipped
@@ -3021,16 +3032,14 @@ public final class AppServices {
         }
         DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
         do {
-            try await withLifecycleOperation {
-                await shutdownUnlocked()
-                // Small delay to ensure clean shutdown (matches switchIdentityUnlocked).
-                try? await Task.sleep(for: .milliseconds(200))
-                try await initializeUnlocked(
-                    identity: identity,
-                    identityHash: identity.hexHash,
-                    tcpServerAddress: addr
-                )
-            }
+            await shutdownUnlocked()
+            // Small delay to ensure clean shutdown (matches switchIdentityUnlocked).
+            try? await Task.sleep(for: .milliseconds(200))
+            try await initializeUnlocked(
+                identity: identity,
+                identityHash: identity.hexHash,
+                tcpServerAddress: addr
+            )
         } catch {
             // shutdownUnlocked() has already run (backend = nil, isConnected =
             // false) and the re-init threw — the stack is now DOWN. Do NOT post
@@ -3111,6 +3120,19 @@ public final class AppServices {
         do {
             try configText.write(to: configFile, atomically: true, encoding: .utf8)
             DiagLog.log("[RNS] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
+
+            // Model B: the NE reads config from the shared App-Group dir, not the
+            // private app dir. Without this write the NE would re-read the stale
+            // shared config on .start and ignore the new interfaces.
+            #if COLUMBA_RUNTIME_MODEL_B
+            if let identityHashHex = SharedDefaults.suite.string(forKey: "rnsConfigIdentityHashHex"),
+               let sharedDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) {
+                try? FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
+                try configText.write(to: sharedDir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+                DiagLog.log("[RNS] Model B: shared config updated (\(interfaces.count) interfaces)")
+            }
+            #endif
+
             return true
         } catch {
             DiagLog.log("[RNS] config write FAILED: \(error)")
@@ -3148,15 +3170,22 @@ public final class AppServices {
 
     private func applyInterfaceChangesUnlocked() async {
         // Model B: the NE owns the RNS node + all interfaces; the app's `backend` here is
-        // the thin `ProxyRnsBackend`, whose `addInterface` throws `unsupportedInProxy`. The
-        // python-shaped hot-add/-remove path below is therefore both wrong (it would error
-        // on every relay) AND unnecessary — `InterfaceRepository.saveInterfaces()` already
-        // wrote the shared `interfacesKey` and posted `configChanged`, which the NE observes
-        // (`startTCPRelayConfigObserver` → `reconcileTCPRelays`) to live-reconcile its
-        // `ne-tcp-relay-*` interfaces. So a relay add/edit/remove takes effect with NO VPN
-        // restart. Nothing more to do app-side; bail before the python path.
+        // the thin `ProxyRnsBackend`, whose `addInterface` throws `unsupportedInProxy`.
+        //
+        // The in-NE Python RNS engine (NEPythonRNS) does NOT live-reconcile the way the
+        // deleted C++ engine did: `rns_bridge` has no add_interface / remove_interface
+        // ops, and RNS 1.1.x interface changes are restart-gated anyway. So a Model B
+        // interface add/edit/toggle/delete is applied by (1) rewriting the SHARED
+        // App-Group config file the NE reads and (2) restarting the NE's Python node
+        // over IPC (`.stop` + `.start`), which re-reads the fresh config. This replaces
+        // the old "the NE observes configChanged and reconciles" behavior, which lived
+        // in the C++ engine that no longer exists.
         if BackendPreference.modelB {
-            DiagLog.log("[RNS-HOT] modelB: interface change handed to NE via configChanged (no app-side hot-add)")
+            let fresh = InterfaceRepository().getEnabledInterfaces()
+            _ = await writePythonConfig(interfaces: fresh)
+            DiagLog.log("[RNS-HOT] modelB: shared config rewritten (\(fresh.count) interfaces); restarting NE python node")
+            let outcome = await restartPythonBackendUnlocked()
+            DiagLog.log("[RNS-HOT] modelB: restart outcome=\(outcome)")
             return
         }
 

@@ -276,6 +276,14 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         hasPendingChanges = true
         applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: enabled)
         showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled")\(applyHint)")
+        // Model B: the NE applies interface changes on restart (no hot toggle in
+        // rns_bridge). Restart the NE Python node so the new enabled-set takes
+        // effect live. No-op on Python (explicit Apply).
+        if BackendPreference.modelB {
+            Task { @MainActor in
+                await applyChanges()
+            }
+        }
     }
 
     /// Delete an interface. On Model B it's removed live; on Python the running
@@ -437,10 +445,17 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // resets the form. Other interface types stay live-reconciled by the NE.
         applyRNodeLiveChange(config: config, name: configName, enabled: configEnabled)
         dismissConfigSheet()
-        // On Python, don't auto-apply — the user taps "Apply" explicitly so a
-        // mid-edit change isn't pushed to the live stack until they're ready.
-        // On Model B there's no Apply step; the change is already live (the NE
-        // reconciles on save), so `requiresExplicitApply` hides the button.
+        // Model B: apply the change to the running NE Python node now (rewrite the
+        // shared config + `.stop`/`.start` over IPC). `rns_bridge` has no hot
+        // add/remove, so the NE applies interface changes on restart. This replaces
+        // the deleted C++ engine's live `configChanged` reconcile and is what makes
+        // "add/edit interface" take effect without a relaunch. No-op on Python
+        // (explicit Apply).
+        if BackendPreference.modelB {
+            Task { @MainActor in
+                await applyChanges()
+            }
+        }
     }
 
     /// Save a TCP client interface from the wizard flow.
