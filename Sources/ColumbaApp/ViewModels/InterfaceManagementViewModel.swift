@@ -65,6 +65,15 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Whether there are pending changes to apply
     public var hasPendingChanges: Bool = false
 
+    /// The interface entity IDs whose config has been staged (saved in the repo)
+    /// but NOT yet applied to the running NE node. Drives the per-entity "staged →
+    /// disconnected" badge: a staged-enabled interface is not in the running RNS
+    /// node, so its badge must read disconnected (ground truth), not the stale
+    /// cached NE state. Cleared by `applyChanges()` once the Apply-triggered
+    /// restart makes the node match the staged set. Non-isolated, written by the
+    /// non-isolated mutation methods (same pattern as hasPendingChanges).
+    private var stagedEntityIDs: Set<String> = []
+
     /// Whether changes are being applied
     public var isApplyingChanges: Bool = false
 
@@ -275,6 +284,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         repository.toggleInterface(id: interface.id, enabled: enabled)
         hasPendingChanges = true
         applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: enabled)
+        markStaged(interface.id, enabled: enabled)
         showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled")\(applyHint)")
     }
 
@@ -285,6 +295,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         hasPendingChanges = true
         // Tear down the app-side RNode radio when its interface is removed.
         applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: false)
+        markStaged(interface.id, enabled: false)
         showSuccess("Interface deleted\(applyHint)")
     }
 
@@ -379,6 +390,10 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // Validate
         guard validateForm() else { return }
 
+        // Captured when a NEW interface is created below (the edit path reuses the
+        // existing id). Used to stage the badge for the just-saved entity.
+        var savedEntityID: String? = nil
+
         if configType == .rnode, configEnabled {
             if BackendPreference.modelB,
                otherEnabledRNodeExists(excluding: editingInterface?.id) {
@@ -420,6 +435,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             )
 
             repository.addInterface(newInterface)
+            savedEntityID = newInterface.id
             // RNode bring-up is async (radio in app, RNS in NE); don't claim "added"
             // as if it's connected — the badge + a failure toast report the outcome.
             if configType == .rnode, BackendPreference.modelB {
@@ -436,6 +452,13 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // BEFORE dismissConfigSheet() resets the form. Other interface types are
         // staged and applied when the user taps "Apply".
         applyRNodeLiveChange(config: config, name: configName, enabled: configEnabled)
+        // Stage the badge: mark the saved entity (existing edit's id, or the new
+        // entity's id captured above) so the 1s loop + NE push show the ground-truth
+        // staged state, not the stale running-node state.
+        let stagedID = editingInterface?.id ?? savedEntityID
+        if let id = stagedID {
+            markStaged(id, enabled: configEnabled)
+        }
         dismissConfigSheet()
         // All builds: edits are staged; the user taps "Apply" to push them to the
         // running stack in one shot. (Model B: one `.stop`/`.start` over IPC;
@@ -456,6 +479,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     ) {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let interfaceConfig: InterfaceTypeConfig = .tcpClient(config)
+        var savedEntityID: String? = nil
 
         if let existing = editing {
             var updated = existing
@@ -464,6 +488,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             updated.mode = mode
             updated.config = interfaceConfig
             repository.updateInterface(updated)
+            savedEntityID = existing.id
             showSuccess("Interface updated\(applyHint)")
         } else {
             let newInterface = InterfaceEntity(
@@ -474,13 +499,42 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 config: interfaceConfig
             )
             repository.addInterface(newInterface)
+            savedEntityID = newInterface.id
             showSuccess("Interface added\(applyHint)")
         }
 
         hasPendingChanges = true
+        if let id = savedEntityID {
+            markStaged(id, enabled: enabled)
+        }
         dismissConfigSheet()
         // Stage only — the user taps "Apply" to push (batching multiple changes
         // into one RNS restart / hot reconfig).
+    }
+
+    /// Mark an interface entity as staged (config changed, not yet applied to the
+    /// running NE node) and update its badge IMMEDIATELY so the UI reflects the
+    /// ground truth without waiting for the 1s status loop - this is what kills
+    /// the "briefly connected" flash from the stale cached NE state.
+    ///
+    /// - enabled: the entity's enabled state AFTER the change. A staged-ENABLED
+    ///   entity is not in the running node -> disconnected. A staged-DISABLED
+    ///   entity may still be running in the node (the node won't drop it until
+    ///   Apply) -> keep the real cached NE state.
+    private func markStaged(_ entityID: String, enabled: Bool) {
+        guard BackendPreference.modelB else { return }
+        stagedEntityIDs.insert(entityID)
+        if enabled {
+            // Not yet in the running node: it is disconnected, not connecting.
+            interfaceStatus[entityID] = .disconnected
+        } else {
+            // Disable is staged: the running node still has it until Apply. Keep
+            // the real cached state (don't force disconnected - it IS connected
+            // in RNS right now). The 1s loop will keep showing the cached state
+            // because the entity is in stagedEntityIDs but enabled=false means
+            // the loop's enabled-filter skips it anyway (it only badges enabled
+            // entities). No action needed.
+        }
     }
 
     /// Bring an RNode interface change live immediately on Model B.
@@ -564,6 +618,12 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         defer {
             hasPendingChanges = false
             isApplyingChanges = false
+            // The Apply-triggered restart (Model B) / hot reconfig (Python) has now
+            // made the running node match the staged set, so the per-entity staged
+            // badges are stale - clear them so the 1s loop + NE push show the true
+            // (post-restart) state. On a failed apply the loop re-reads the real
+            // (still-old) node state next tick, so this is honest either way.
+            stagedEntityIDs.removeAll()
         }
 
         logger.info("Applying interface changes live (hot add/remove)")
@@ -598,19 +658,21 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 var tcpUpdates: [(String, InterfaceStatus, String?)] = []
                 if BackendPreference.modelB {
                     // Model B: the app owns no local TCP interface - the NE owns each
-                    // relay socket. While interface changes are STAGED (hasPendingChanges),
-                    // the running NE node is stale (it only re-reads config on the
-                    // Apply-triggered restart), so the badge must NOT reflect the old
-                    // node state - it shows "Staged - tap Apply" instead. Once Apply
-                    // completes (hasPendingChanges = false), the real per-relay NE
-                    // status is shown (cached by refreshNEBackedStatus, NE-push driven).
-                    let (cached, staged) = await MainActor.run { (self.modelBRelayStatuses, self.hasPendingChanges) }
+                    // relay socket. An interface whose config is STAGED (in
+                    // stagedEntityIDs) is not yet in the running NE node (the node
+                    // only re-reads config on the Apply-triggered restart), so its
+                    // badge reads disconnected (ground truth - it is NOT connected,
+                    // and NOT actively connecting either). Every OTHER enabled relay
+                    // is in the running node, so it shows its real cached NE state.
+                    // After Apply the set clears and the restart makes the node match
+                    // the staged set, so the badges transition to the true state.
+                    let (cached, staged) = await MainActor.run { (self.modelBRelayStatuses, self.stagedEntityIDs) }
                     for entity in tcpEntities {
-                        if staged {
-                            // Staged: not yet applied to the running node.
-                            tcpUpdates.append((entity.id, .connecting, "Staged - tap Apply to take effect"))
+                        if staged.contains(entity.id) {
+                            // Staged (config changed, not yet applied to the node).
+                            tcpUpdates.append((entity.id, .disconnected, nil))
                         } else {
-                            tcpUpdates.append((entity.id, cached[entity.id] ?? .connecting, nil))
+                            tcpUpdates.append((entity.id, cached[entity.id] ?? .disconnected, nil))
                         }
                     }
                 } else {
@@ -912,8 +974,14 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         }
         modelBRelayStatuses = fresh
         // Publish immediately so the badges update on the push, not the next tick.
+        // Skip STAGED entities (their config changed and is not yet in the running
+        // node - the 1s status loop owns their badge and forces it to disconnected;
+        // publishing the stale cached NE state here is what caused the "briefly
+        // connected" flash). Default absent relays to .disconnected (ground truth),
+        // not .connecting (a relay the node hasn't registered is not dialing).
         for entity in repository.getEnabledInterfaces() where entity.type == .tcpClient {
-            interfaceStatus[entity.id] = fresh[entity.id] ?? .connecting
+            guard !stagedEntityIDs.contains(entity.id) else { continue }
+            interfaceStatus[entity.id] = fresh[entity.id] ?? .disconnected
         }
 
         // --- RNode badge (NE-authoritative). GATED: skip the statusSnapshot() IPC entirely
