@@ -169,7 +169,21 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// itself — it polls this and re-emits `.announce` BackendEvents, exactly
     /// what `SwiftRNSBackend`'s PathTable poller does locally in Model A.
     /// Response payload: JSON `[ProxyHeardAnnounce]`.
+    ///
+    /// NOTE: superseded by `.drainEvents` for the live Model B event path. The
+    /// NE's `drain_events()` drains the FULL event queue (inbound messages,
+    /// delivery proofs, state, link, announces); `.heardAnnounces` maps only
+    /// announce events and would discard the rest the moment it popped them.
+    /// Kept only for compatibility.
     case heardAnnounces
+
+    /// Drain the NE's full event queue (every `rns_bridge._put` kind: inbound,
+    /// delivery, state, link_state, link_packet, link_identified, announce).
+    /// This is the Model B event bridge: the NE owns RNS in-process, so the app
+    /// can't observe delivery directly — it polls this and re-emits each event
+    /// as a `BackendEvent`, exactly what the in-process `PythonRNSBackend`'s
+    /// event drain does locally in Model A. Response payload: JSON `[ProxyEvent]`.
+    case drainEvents
 
     /// Send an LXMF message (mirrors `RnsLxmf.sendLxmfMessage`). The structured
     /// fields the typed seam carries (image / attachments / icon / reply) are
@@ -206,7 +220,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     private enum Op: String, Codable {
         case start, stop, announce, announceTelephony, statusSnapshot
         case persist, registeredDestinationHashes, lxmfSend, heardAnnounces
-        case bleConnections, nomadnetFetch
+        case drainEvents, bleConnections, nomadnetFetch
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -231,6 +245,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(Op.registeredDestinationHashes, forKey: .op)
         case .heardAnnounces:
             try c.encode(Op.heardAnnounces, forKey: .op)
+        case .drainEvents:
+            try c.encode(Op.drainEvents, forKey: .op)
         case .lxmfSend(let destHashHex, let content, let method, let fieldsData):
             try c.encode(Op.lxmfSend, forKey: .op)
             try c.encode(destHashHex, forKey: .destHashHex)
@@ -268,6 +284,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             self = .registeredDestinationHashes
         case .heardAnnounces:
             self = .heardAnnounces
+        case .drainEvents:
+            self = .drainEvents
         case .lxmfSend:
             self = .lxmfSend(
                 destHashHex: try c.decode(String.self, forKey: .destHashHex),
@@ -448,5 +466,98 @@ public struct ProxyHeardAnnounce: Codable, Sendable, Equatable {
         self.interfaceName = interfaceName
         self.hops = hops
         self.timestamp = timestamp
+    }
+}
+
+/// `Codable` mirror of a `rns_bridge` drained event — the union of every
+/// `BackendEvent` kind — Foundation-only so it crosses the NE↔app seam. The NE
+/// maps each `drain_events()` dict (snake_case) onto this; `ProxyRnsBackend`
+/// maps each kind back onto a `BackendEvent` and yields it on `eventStream`, so
+/// the app's existing `for await event in backend.events` consumer
+/// (`handlePythonEvent` → `persistInboundFromPython` / delivery proofs / link)
+/// works unchanged in Model B.
+///
+/// Every field is optional because each `kind` only populates a subset (the
+/// Python `_put` payload is per-kind). `kind` + `t` are always present.
+public struct ProxyEvent: Codable, Sendable, Equatable {
+    public let kind: String
+    /// Epoch seconds.
+    public let t: Double
+
+    // announce
+    public let destHashHex: String?
+    public let appDataHex: String?
+    public let aspect: String?
+    public let publicKeysHex: String?
+    public let interfaceName: String?
+    public let hops: Int?
+
+    // inbound
+    public let sourceHashHex: String?
+    public let messageHashHex: String?
+    public let content: String?
+    public let title: String?
+    /// MessagePack-packed LXMF field map, hex ("" when none).
+    public let fieldsHex: String?
+    /// Delivery method raw value ("opportunistic" / "direct" / "propagated" /
+    /// "paper" / "" when unknown). Shared by inbound and delivery.
+    public let method: String?
+
+    // delivery
+    public let state: String?
+    public let reason: String?
+
+    // signal metrics (inbound)
+    public let rssi: Double?
+    public let snr: Double?
+
+    // link_state / link_packet / link_identified
+    public let linkId: Int?
+    public let dataHex: String?
+    public let identityHashHex: String?
+    public let inbound: Bool?
+
+    public init(
+        kind: String, t: Double,
+        destHashHex: String? = nil, appDataHex: String? = nil, aspect: String? = nil,
+        publicKeysHex: String? = nil, interfaceName: String? = nil, hops: Int? = nil,
+        sourceHashHex: String? = nil, messageHashHex: String? = nil, content: String? = nil,
+        title: String? = nil, fieldsHex: String? = nil, method: String? = nil,
+        state: String? = nil, reason: String? = nil, rssi: Double? = nil, snr: Double? = nil,
+        linkId: Int? = nil, dataHex: String? = nil, identityHashHex: String? = nil, inbound: Bool? = nil
+    ) {
+        self.kind = kind
+        self.t = t
+        self.destHashHex = destHashHex
+        self.appDataHex = appDataHex
+        self.aspect = aspect
+        self.publicKeysHex = publicKeysHex
+        self.interfaceName = interfaceName
+        self.hops = hops
+        self.sourceHashHex = sourceHashHex
+        self.messageHashHex = messageHashHex
+        self.content = content
+        self.title = title
+        self.fieldsHex = fieldsHex
+        self.method = method
+        self.state = state
+        self.reason = reason
+        self.rssi = rssi
+        self.snr = snr
+        self.linkId = linkId
+        self.dataHex = dataHex
+        self.identityHashHex = identityHashHex
+        self.inbound = inbound
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, t
+        case destHashHex = "dest_hash", appDataHex = "app_data", aspect
+        case publicKeysHex = "public_keys", interfaceName = "interface_name", hops
+        case sourceHashHex = "source_hash", messageHashHex = "message_hash"
+        case content, title, fieldsHex = "fields_hex", method
+        case state, reason, rssi, snr
+        case linkId = "link_id", dataHex = "data_hex", identityHashHex = "identity_hash"
+        case inbound
     }
 }

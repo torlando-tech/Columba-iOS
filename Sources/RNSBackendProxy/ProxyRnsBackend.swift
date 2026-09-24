@@ -80,23 +80,26 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// `localInfo` is synchronous (`get`-only), so cache the async-fetched value
     /// here. Guarded by `stateLock`.
     private var cachedLocalInfo: LocalInfo?
-    /// Polls the NE's heard-announce snapshot over IPC and re-emits `.announce`
-    /// events on `eventStream` — the Model B incoming-announce bridge, since the
-    /// app owns no transport to hear announces itself. Guarded by `stateLock`;
-    /// cancelled in `stop()`.
-    private var announcePoller: Task<Void, Never>?
+    /// Drains the NE's full event queue over IPC and re-emits EVERY event kind
+    /// on `eventStream` — the Model B event bridge (inbound, delivery, state,
+    /// link, announce), since the NE owns RNS in-process and the app can't
+    /// observe delivery directly. Guarded by `stateLock`; cancelled in `stop()`.
+    /// See `startEventDrainPolling` for the exact contract.
+    private var eventDrainPoller: Task<Void, Never>?
     /// Bumped by `stop()` so an in-flight `start()` handshake loop (up to ~12s of
     /// retries) that completes AFTER a `stop()` does not resurrect `cachedLocalInfo`
-    /// or restart the announce poller. `start()` captures the generation up front and
-    /// re-checks it before committing. Guarded by `stateLock`.
+    /// or restart the event-drain poller. `start()` captures the generation up front
+    /// and re-checks it before committing. Guarded by `stateLock`.
     private var startGeneration = 0
     private let stateLock = NSLock()
 
-    /// The neutral event stream. Under Model B the NE owns inbound delivery and
-    /// notifies the app via the App-Group store + Darwin notification (A5a), NOT
-    /// via this stream — so the stream is intentionally inert here (no events are
-    /// yielded). It exists only to satisfy `RnsCore.events`; A5c/the live wiring
-    /// can later bridge NE-pushed events onto `eventContinuation`.
+    /// The neutral event stream. Under Model B the NE owns RNS in-process and
+    /// surfaces delivery via `drainEvents` over IPC; `startEventDrainPolling`
+    /// polls the NE's full event queue and re-emits every event kind on this
+    /// stream, so the app's `for await event in backend.events` consumer works
+    /// identically to the in-process backend. It exists to satisfy
+    /// `RnsCore.events`; the poller bridges the NE-pushed events onto
+    /// `eventContinuation`.
     private let eventStream: AsyncStream<BackendEvent>
     private let eventContinuation: AsyncStream<BackendEvent>.Continuation
 
@@ -221,7 +224,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                     }
                     cachedLocalInfo = local
                     stateLock.unlock()
-                    startAnnouncePolling(expectedGeneration: myGeneration)
+                    startEventDrainPolling(expectedGeneration: myGeneration)
                     return local
                 case .error(let message):
                     // A real backend error (not a not-ready condition) — don't retry.
@@ -247,58 +250,127 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         stateLock.lock()
         startGeneration &+= 1   // invalidate any in-flight start() handshake loop
         cachedLocalInfo = nil
-        announcePoller?.cancel()
-        announcePoller = nil
+        eventDrainPoller?.cancel()
+        eventDrainPoller = nil
         stateLock.unlock()
     }
 
-    /// Model B incoming-announce bridge: poll the NE's heard-announce snapshot
-    /// and re-emit each newly-seen / re-announced destination as a `.announce`
-    /// event, so the app's existing announce handling (`for await event in
-    /// backend.events`) populates the network-announce list even though the app
-    /// owns no transport. Mirrors `SwiftRNSBackend.startAnnouncePolling` (diff by
-    /// last-heard time) but sources the PathTable from the NE over IPC. Idempotent.
+    /// Drains the NE's full event queue over IPC and re-emits EVERY event kind
+    /// on `eventStream` — the Model B event bridge (inbound, delivery, state,
+    /// link, announce). Since the NE owns RNS in-process, the app can't observe
+    /// delivery directly; this is what feeds the app's
+    /// `for await event in backend.events` consumer (inbound messages →
+    /// `persistInboundFromPython`, delivery proofs, state, link). Mirrors the
+    /// in-process `PythonRNSBackend` event drain. Announces are diffed by
+    /// last-heard time so re-announces aren't re-yielded every tick; all other
+    /// kinds are yielded once per drain (the queue is emptied each tick, so no
+    /// double-delivery). Idempotent; cancelled in `stop()`.
     ///
-    /// `expectedGeneration` is the `startGeneration` snapshot taken by the `start()`
-    /// that is spawning this poller. Re-check it UNDER the lock: `start()` releases
-    /// `stateLock` before calling this, so a `stop()` can land in that window —
-    /// bumping the generation and cancelling a still-`nil` poller. Without the
-    /// re-check we'd then create a brand-new Task that `stop()` can never cancel (a
-    /// zombie poller that keeps issuing `.heardAnnounces` forever and, via its stale
-    /// `lastSeen`, silently drops announces after the next start).
-    private func startAnnouncePolling(expectedGeneration: Int) {
+    /// `expectedGeneration` is the `startGeneration` snapshot taken by the
+    /// `start()` that is spawning this poller. Re-check it UNDER the lock:
+    /// `start()` releases `stateLock` before calling this, so a `stop()` can land
+    /// in that window — bumping the generation and cancelling a still-`nil`
+    /// poller. Without the re-check we'd then create a brand-new Task that
+    /// `stop()` can never cancel (a zombie poller that keeps draining forever
+    /// and, via its stale `lastSeen`, silently drops announces after the next
+    /// start).
+    private func startEventDrainPolling(expectedGeneration: Int) {
         stateLock.lock()
-        guard announcePoller == nil, expectedGeneration == startGeneration else {
+        guard eventDrainPoller == nil, expectedGeneration == startGeneration else {
             stateLock.unlock(); return
         }
         let cont = eventContinuation
-        announcePoller = Task { [weak self] in
+        eventDrainPoller = Task { [weak self] in
             var lastSeen: [String: Double] = [:]
             while !Task.isCancelled {
-                // 2.5s: an IPC round-trip each tick, and announces are infrequent;
-                // a few seconds of latency surfacing a heard announce is fine. Use a
-                // throwing sleep and EXIT on cancellation — a `try?` here would swallow
-                // the CancellationError that stop() triggers and fire one extra
-                // `.heardAnnounces` round-trip before the while-check re-evaluates.
+                // 2.5s: an IPC round-trip each tick; inbound/delivery latency of
+                // a few seconds is fine. Use a throwing sleep and EXIT on
+                // cancellation — a `try?` here would swallow the CancellationError
+                // that stop() triggers and fire one extra drain round-trip before
+                // the while-check re-evaluates.
                 do { try await Task.sleep(nanoseconds: 2_500_000_000) }
                 catch { return }
                 guard let self else { return }
-                guard let response = try? await self.roundTrip(.heardAnnounces, op: "heardAnnounces"),
+                guard let response = try? await self.roundTrip(.drainEvents, op: "drainEvents"),
                       case .ok(let payload) = response, let payload,
-                      let announces = try? JSONDecoder().decode([ProxyHeardAnnounce].self, from: payload)
+                      let events = try? JSONDecoder().decode([ProxyEvent].self, from: payload)
                 else { continue }
-                for a in announces {
-                    if let prev = lastSeen[a.destHashHex], prev >= a.timestamp { continue }
-                    lastSeen[a.destHashHex] = a.timestamp
-                    cont.yield(.announce(
-                        destHash: a.destHashHex,
-                        appDataHex: a.appDataHex,
-                        aspect: a.aspect,
-                        publicKeysHex: a.publicKeysHex,
-                        interfaceName: a.interfaceName,
-                        hops: a.hops,
-                        t: Date(timeIntervalSince1970: a.timestamp)
-                    ))
+                for e in events {
+                    switch e.kind {
+                    case "announce":
+                        let dh = e.destHashHex ?? ""
+                        if let prev = lastSeen[dh], prev >= e.t { continue }
+                        lastSeen[dh] = e.t
+                        cont.yield(.announce(
+                            destHash: dh,
+                            appDataHex: e.appDataHex ?? "",
+                            aspect: e.aspect ?? "",
+                            publicKeysHex: e.publicKeysHex ?? "",
+                            interfaceName: e.interfaceName ?? "",
+                            hops: e.hops ?? 0,
+                            t: Date(timeIntervalSince1970: e.t)
+                        ))
+                    case "inbound":
+                        let deliveryMethod: LXDeliveryMethod?
+                        switch e.method {
+                        case "opportunistic": deliveryMethod = .opportunistic
+                        case "direct": deliveryMethod = .direct
+                        case "propagated": deliveryMethod = .propagated
+                        case "paper": deliveryMethod = .paper
+                        default: deliveryMethod = nil
+                        }
+                        cont.yield(.inbound(
+                            sourceHash: e.sourceHashHex ?? "",
+                            messageHash: e.messageHashHex ?? "",
+                            content: e.content ?? "",
+                            title: e.title ?? "",
+                            fieldsPacked: (try? (e.fieldsHex ?? "").hexToData()) ?? Data(),
+                            method: deliveryMethod,
+                            rssi: e.rssi,
+                            snr: e.snr,
+                            t: Date(timeIntervalSince1970: e.t)
+                        ))
+                    case "delivery":
+                        let deliveryMethod: LXDeliveryMethod?
+                        switch e.method {
+                        case "opportunistic": deliveryMethod = .opportunistic
+                        case "direct": deliveryMethod = .direct
+                        case "propagated": deliveryMethod = .propagated
+                        case "paper": deliveryMethod = .paper
+                        default: deliveryMethod = nil
+                        }
+                        cont.yield(.delivery(
+                            messageHash: e.messageHashHex ?? "",
+                            state: e.state ?? "",
+                            method: deliveryMethod,
+                            t: Date(timeIntervalSince1970: e.t)
+                        ))
+                    case "state":
+                        cont.yield(.state(e.state ?? "?", t: Date(timeIntervalSince1970: e.t)))
+                    case "link_state":
+                        cont.yield(.linkState(
+                            linkId: e.linkId ?? 0,
+                            state: e.state ?? "",
+                            reason: e.reason ?? "",
+                            inbound: e.inbound ?? false,
+                            t: Date(timeIntervalSince1970: e.t)
+                        ))
+                    case "link_packet":
+                        cont.yield(.linkPacket(
+                            linkId: e.linkId ?? 0,
+                            data: (try? (e.dataHex ?? "").hexToData()) ?? Data(),
+                            t: Date(timeIntervalSince1970: e.t)
+                        ))
+                    case "link_identified":
+                        cont.yield(.linkIdentified(
+                            linkId: e.linkId ?? 0,
+                            identityHashHex: e.identityHashHex ?? "",
+                            t: Date(timeIntervalSince1970: e.t)
+                        ))
+                    default:
+                        // Unknown kind (forward-compatible): drop, don't crash.
+                        continue
+                    }
                 }
             }
         }

@@ -242,6 +242,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             let announces = events.compactMap { Self.mapHeardAnnounce($0) }
             return .ok(try? JSONEncoder().encode(announces))
 
+        case .drainEvents:
+            // The Model B event bridge: drain the FULL queue (inbound, delivery,
+            // state, link, announce) and map every event onto ProxyEvent so the
+            // app's proxy poller can re-emit each as a BackendEvent. (The legacy
+            // .heardAnnounces op above only maps announces and discards the rest;
+            // this op carries everything.)
+            guard let events = engine.drainEvents() else { return .ok(try? JSONEncoder().encode([ProxyEvent]())) }
+            let mapped = events.map { Self.mapProxyEvent($0) }
+            return .ok(try? JSONEncoder().encode(mapped))
+
         case .bleConnections:
             // BLE/RNode radio state lives in the app process (CoreBluetooth);
             // the NE Python engine does not own the radio in this slice. The
@@ -286,6 +296,43 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
               let ih = obj["identity_hash"] as? String,
               let dh = obj["destination_hash"] as? String else { return nil }
         return try? JSONEncoder().encode(ProxyLocalInfo(identityHash: ih, destinationHash: dh))
+    }
+
+    /// Map one `rns_bridge` drained event (snake_case keys) onto a `ProxyEvent`,
+    /// preserving every field the Python `_put` payload carries so the app's
+    /// proxy can reconstruct the exact `BackendEvent`. Unlike `mapHeardAnnounce`
+    /// (announce-only), this handles all kinds and keeps the rest optional.
+    private static func mapProxyEvent(_ e: [String: Any]) -> ProxyEvent {
+        ProxyEvent(
+            kind: e["kind"] as? String ?? "",
+            t: e["t"] as? Double ?? 0,
+            // announce
+            destHashHex: e["dest_hash"] as? String,
+            appDataHex: e["app_data"] as? String,
+            aspect: e["aspect"] as? String,
+            publicKeysHex: e["public_keys"] as? String,
+            interfaceName: e["interface_name"] as? String,
+            hops: e["hops"] as? Int,
+            // inbound
+            sourceHashHex: e["source_hash"] as? String,
+            messageHashHex: e["message_hash"] as? String,
+            content: e["content"] as? String,
+            title: e["title"] as? String,
+            fieldsHex: e["fields_hex"] as? String,
+            // shared (inbound + delivery)
+            method: e["method"] as? String,
+            // delivery
+            state: e["state"] as? String,
+            reason: e["reason"] as? String,
+            // signal metrics (inbound)
+            rssi: e["rssi"] as? Double,
+            snr: e["snr"] as? Double,
+            // link
+            linkId: e["link_id"] as? Int,
+            dataHex: e["data_hex"] as? String,
+            identityHashHex: e["identity_hash"] as? String,
+            inbound: e["inbound"] as? Bool
+        )
     }
 
     /// Map one `rns_bridge` announce event (snake_case keys) onto
