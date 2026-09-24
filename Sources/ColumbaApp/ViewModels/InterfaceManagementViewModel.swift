@@ -70,14 +70,14 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
     /// Whether interface edits require an explicit "Apply" tap to take effect.
     ///
-    /// On the Swift / Model B build the NE live-reconciles every change the
-    /// instant it's saved — `InterfaceRepository.saveInterfaces()` posts
-    /// `configChanged` on each edit, which the NE observes (and
-    /// `AppServices.applyInterfaceChanges()` is a deliberate no-op on Model B).
-    /// So there is no Apply step: the toolbar omits the button and edit toasts
-    /// don't prompt for it. On the Python build, edits are staged and pushed to
-    /// the running stack only on Apply.
-    public var requiresExplicitApply: Bool { !BackendPreference.modelB }
+    /// All builds stage edits and apply them in one shot when Apply is tapped:
+    /// a user may make several interface changes, and each RNS restart (Model B)
+    /// or hot reconfig (Python) is expensive, so changes are batched into a
+    /// single Apply. Model B's Apply rewrites the shared App-Group config and
+    /// restarts the in-NE Python RNS node once (`.stop` + `.start` over IPC;
+    /// `rns_bridge` has no hot add/remove). The Python build hot-adds /
+    /// hot-removes the delta on a running Transport.
+    public var requiresExplicitApply: Bool { true }
 
     /// Trailing hint for edit toasts — prompt to Apply only when an explicit
     /// Apply is required; on the live (Model B) path the change is already in
@@ -276,14 +276,6 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         hasPendingChanges = true
         applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: enabled)
         showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled")\(applyHint)")
-        // Model B: the NE applies interface changes on restart (no hot toggle in
-        // rns_bridge). Restart the NE Python node so the new enabled-set takes
-        // effect live. No-op on Python (explicit Apply).
-        if BackendPreference.modelB {
-            Task { @MainActor in
-                await applyChanges()
-            }
-        }
     }
 
     /// Delete an interface. On Model B it's removed live; on Python the running
@@ -439,23 +431,15 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
         hasPendingChanges = true
         // On Model B the app hosts the CoreBluetooth RNode radio, so a saved RNode
-        // add/edit must start (or stop) the app-side radio NOW — the NE's
-        // `configChanged` reconcile only covers TCP relays and cannot start the
-        // app's radio. Read configName/configEnabled BEFORE dismissConfigSheet()
-        // resets the form. Other interface types stay live-reconciled by the NE.
+        // add/edit must start (or stop) the app-side radio NOW — the NE's Python
+        // engine cannot reach the app's BLE radio. Read configName/configEnabled
+        // BEFORE dismissConfigSheet() resets the form. Other interface types are
+        // staged and applied when the user taps "Apply".
         applyRNodeLiveChange(config: config, name: configName, enabled: configEnabled)
         dismissConfigSheet()
-        // Model B: apply the change to the running NE Python node now (rewrite the
-        // shared config + `.stop`/`.start` over IPC). `rns_bridge` has no hot
-        // add/remove, so the NE applies interface changes on restart. This replaces
-        // the deleted C++ engine's live `configChanged` reconcile and is what makes
-        // "add/edit interface" take effect without a relaunch. No-op on Python
-        // (explicit Apply).
-        if BackendPreference.modelB {
-            Task { @MainActor in
-                await applyChanges()
-            }
-        }
+        // All builds: edits are staged; the user taps "Apply" to push them to the
+        // running stack in one shot. (Model B: one `.stop`/`.start` over IPC;
+        // Python: hot add/remove delta.)
     }
 
     /// Save a TCP client interface from the wizard flow.
@@ -480,7 +464,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             updated.mode = mode
             updated.config = interfaceConfig
             repository.updateInterface(updated)
-            showSuccess("Interface updated")
+            showSuccess("Interface updated\(applyHint)")
         } else {
             let newInterface = InterfaceEntity(
                 name: trimmedName,
@@ -490,30 +474,26 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 config: interfaceConfig
             )
             repository.addInterface(newInterface)
-            showSuccess("Interface added")
+            showSuccess("Interface added\(applyHint)")
         }
 
         hasPendingChanges = true
         dismissConfigSheet()
-
-        Task { @MainActor in
-            await applyChanges()
-        }
+        // Stage only — the user taps "Apply" to push (batching multiple changes
+        // into one RNS restart / hot reconfig).
     }
 
     /// Bring an RNode interface change live immediately on Model B.
     ///
-    /// Unlike TCP relays — which the NE live-reconciles off the `configChanged`
-    /// notification the repository posts on every save — the RNode radio lives in
-    /// the **app** (the NE runs only the RNS/KISS stack over the App-Group seam).
-    /// So an RNode add / edit / enable / disable / remove must (re)start or stop
-    /// the app-side radio here: `startRNodeInterface` starts the app-side seam
-    /// server AND writes the `RNodeSeamConfig` the NE rebuilds its
-    /// `RNodeInterface` from (which then drives the BLE connect back over the
-    /// seam). Without this hook a freshly-added RNode never connects until the
-    /// next cold launch (`ColumbaApp` startup brings up persisted enabled RNodes),
-    /// which presents as a dead "connect" — the app and the RNode both show BLE
-    /// disconnected. No-op on Python (explicit Apply) and for non-RNode types.
+    /// The RNode radio lives in the **app** (the NE runs only the RNS/KISS stack
+    /// over the App-Group seam and cannot reach the app's BLE radio). So an RNode
+    /// add / edit / enable / disable / remove must (re)start or stop the app-side
+    /// radio here: `startRNodeInterface` starts the app-side seam server AND
+    /// writes the `RNodeSeamConfig` the NE rebuilds its `RNodeInterface` from
+    /// (which then drives the BLE connect back over the seam). This is live
+    /// regardless of Apply, because it's the app's own radio, not an NE
+    /// interface. Other interface types (TCP relays) are staged and applied when
+    /// the user taps "Apply". No-op on Python and for non-RNode types.
     private func applyRNodeLiveChange(config: InterfaceTypeConfig, name: String, enabled: Bool) {
         guard BackendPreference.modelB, case .rnode(let rnodeConfig) = config else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
