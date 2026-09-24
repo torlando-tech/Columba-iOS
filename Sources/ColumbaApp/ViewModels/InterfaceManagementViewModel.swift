@@ -597,15 +597,21 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 // Read TCP interface states off main thread
                 var tcpUpdates: [(String, InterfaceStatus, String?)] = []
                 if BackendPreference.modelB {
-                    // Model B: the app owns no local TCP interface — the NE owns each
-                    // relay socket. Read back the PER-RELAY status cached by the
-                    // event-driven `refreshNEBackedStatus()` (NE-push, not a per-second
-                    // round-trip) so each relay's badge reflects its own reachability and
-                    // the card isn't stuck "disconnected" while a relay is actually up. A
-                    // relay the NE hasn't registered yet (just added) defaults to connecting.
-                    let cached = await MainActor.run { self.modelBRelayStatuses }
+                    // Model B: the app owns no local TCP interface - the NE owns each
+                    // relay socket. While interface changes are STAGED (hasPendingChanges),
+                    // the running NE node is stale (it only re-reads config on the
+                    // Apply-triggered restart), so the badge must NOT reflect the old
+                    // node state - it shows "Staged - tap Apply" instead. Once Apply
+                    // completes (hasPendingChanges = false), the real per-relay NE
+                    // status is shown (cached by refreshNEBackedStatus, NE-push driven).
+                    let (cached, staged) = await MainActor.run { (self.modelBRelayStatuses, self.hasPendingChanges) }
                     for entity in tcpEntities {
-                        tcpUpdates.append((entity.id, cached[entity.id] ?? .connecting, nil))
+                        if staged {
+                            // Staged: not yet applied to the running node.
+                            tcpUpdates.append((entity.id, .connecting, "Staged - tap Apply to take effect"))
+                        } else {
+                            tcpUpdates.append((entity.id, cached[entity.id] ?? .connecting, nil))
+                        }
                     }
                 } else {
                     for entity in tcpEntities {
