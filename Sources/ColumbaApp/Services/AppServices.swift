@@ -5549,10 +5549,26 @@ public final class AppServices {
     public func neTcpRelayStatuses() async -> [(entityId: String, online: Bool, lastError: String?)] {
         guard BackendPreference.modelB, let backend = backend else { return [] }
         let snap = await backend.statusSnapshot()
-        return (snap?.interfaces ?? []).compactMap { iface in
-            guard iface.sectionName.hasPrefix("ne-tcp-relay-") else { return nil }
-            let entityId = String(iface.sectionName.dropFirst("ne-tcp-relay-".count))
-            return (entityId: entityId, online: iface.online, lastError: iface.lastError)
+        let ifaces = snap?.interfaces ?? []
+        // Match NE interfaces to app entities by the config section name the writer
+        // emits: `sectionName(for:)` is `<sanitized-name>-<entityid6>` (or just
+        // `<entityid6>` when the name is blank). The old `ne-tcp-relay-<full-uuid>`
+        // prefix was the C++ engine's naming, which no longer exists; the Python
+        // engine uses the writer's name, so match by that exact name (with a
+        // suffix fallback in case the writer's sanitize differs). Keep every
+        // matched interface (online OR offline) so the consumer can badge
+        // disconnected / error, not just connected.
+        return InterfaceRepository().getEnabledInterfaces().compactMap { entity in
+            guard entity.type == .tcpClient else { return nil }
+            let suffix = String(entity.id.prefix(6))
+            guard !suffix.isEmpty else { return nil }
+            let canonical = PythonConfigWriter.sectionName(for: entity)
+            // Exact writer name first (authoritative), then full id, then suffix.
+            let match = ifaces.first(where: { $0.sectionName == canonical })
+                ?? ifaces.first(where: { $0.sectionName == entity.id })
+                ?? ifaces.first(where: { $0.sectionName.hasSuffix("-\(suffix)") || $0.sectionName == suffix })
+            guard let iface = match else { return nil }
+            return (entityId: entity.id, online: iface.online, lastError: iface.lastError)
         }
     }
 
