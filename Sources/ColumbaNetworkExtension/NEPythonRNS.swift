@@ -168,11 +168,19 @@ final class NEPythonRNS: @unchecked Sendable {
         // supplied (the bytes win; the path is a fallback). Co-locate it in the
         // shared config dir (the app also writes identity.bin there).
         let identityPath = (configDir as NSString).appendingPathComponent("identity.bin")
+        // The `block_unknown_senders` privacy toggle lives in the app's standard
+        // UserDefaults (unreachable from the NE), so the app mirrors it into the
+        // AppGroup suite (`block_unknown_senders`). The NE passes it to Python so
+        // inbound from unknown senders is dropped BEFORE the NE persists the row
+        // (the app can't drop a row it never sees).
+        let blockUnknownSenders = UserDefaults(suiteName: appGroupIdentifier)?
+            .bool(forKey: "block_unknown_senders") ?? false
         let kwargs: [String: Any] = [
             "config_dir": configDir,
             "identity_path": identityPath,
             "display_name": displayName,
             "identity_bytes": Self.b64Wrapper(identity),
+            "block_unknown_senders": blockUnknownSenders,
         ]
         guard let payload = Self.payload(kwargs: kwargs),
               let out = NEPythonRuntime.shared.callBridge("start", payload: payload) else {

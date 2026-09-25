@@ -80,26 +80,44 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// `localInfo` is synchronous (`get`-only), so cache the async-fetched value
     /// here. Guarded by `stateLock`.
     private var cachedLocalInfo: LocalInfo?
-    /// Drains the NE's full event queue over IPC and re-emits EVERY event kind
-    /// on `eventStream` — the Model B event bridge (inbound, delivery, state,
-    /// link, announce), since the NE owns RNS in-process and the app can't
-    /// observe delivery directly. Guarded by `stateLock`; cancelled in `stop()`.
-    /// See `startEventDrainPolling` for the exact contract.
-    private var eventDrainPoller: Task<Void, Never>?
+    /// The Darwin-notification observer token registered by `startEventDrain` (the
+    /// event-driven drain of the NE's durable inbox). Guarded by `stateLock`;
+    /// removed in `stop()`. The Darwin `network.columba.newMessage` ping is the
+    /// wake signal; one initial drain at start covers the catch-up. See
+    /// `startEventDrain` for the exact contract.
+    private var eventDrainObserverToken: UnsafeMutableRawPointer?
+    /// Last-heard announce time per destination hash, used to de-dupe re-announces
+    /// across drains (the inbox is emptied each drain, but the NE may re-emit the
+    /// same announce). Guarded by `stateLock`.
+    private var lastSeenAnnounce: [String: Double] = [:]
+    /// Burst-coalescing for ping-driven drains: at most one in-flight drain; a ping
+    /// during one sets `rescanRequested` for a single trailing pass. Guarded by
+    /// `stateLock`.
+    private var draining = false
+    private var rescanRequested = false
+    /// The system-wide Darwin notification the NE posts when a new NON-INBOUND
+    /// event lands in the shared inbox (announce → path table, delivery proof,
+    /// state, link). This is `network.columba.events` - deliberately DISTINCT from
+    /// `network.columba.newMessage`, which ChatsViewModel observes to reload the
+    /// Chats list. Announces must NOT reload the Chats list (they feed the
+    /// Contacts → Network screen via the path table, not the conversation list).
+    /// Must stay in sync with `rns_bridge.py` `_DARWIN_EVENTS`.
+    private static let eventsDarwinName = "network.columba.events" as CFString
     /// Bumped by `stop()` so an in-flight `start()` handshake loop (up to ~12s of
     /// retries) that completes AFTER a `stop()` does not resurrect `cachedLocalInfo`
-    /// or restart the event-drain poller. `start()` captures the generation up front
-    /// and re-checks it before committing. Guarded by `stateLock`.
+    /// or re-register the event-drain observer. `start()` captures the generation up
+    /// front and re-checks it before committing. Guarded by `stateLock`.
     private var startGeneration = 0
     private let stateLock = NSLock()
 
     /// The neutral event stream. Under Model B the NE owns RNS in-process and
-    /// surfaces delivery via `drainEvents` over IPC; `startEventDrainPolling`
-    /// polls the NE's full event queue and re-emits every event kind on this
+    /// durably appends every event to a shared App-Group inbox, posting a Darwin
+    /// `newMessage` ping on each. `startEventDrain` subscribes to that ping (and
+    /// does one initial catch-up drain) and re-emits every drained event on this
     /// stream, so the app's `for await event in backend.events` consumer works
-    /// identically to the in-process backend. It exists to satisfy
-    /// `RnsCore.events`; the poller bridges the NE-pushed events onto
-    /// `eventContinuation`.
+    /// identically to the in-process backend. No poll: the durable inbox is the
+    /// event log, so a missed ping is harmless (caught up on the next ping or the
+    /// next start).
     private let eventStream: AsyncStream<BackendEvent>
     private let eventContinuation: AsyncStream<BackendEvent>.Continuation
 
@@ -218,13 +236,13 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                     stateLock.lock()
                     guard myGeneration == startGeneration else {
                         // stop() ran while this handshake was in flight — do NOT cache
-                        // or restart the poller; honor the stop.
+                        // or register the event-drain observer; honor the stop.
                         stateLock.unlock()
                         throw RNSError.backendNotReady
                     }
                     cachedLocalInfo = local
                     stateLock.unlock()
-                    startEventDrainPolling(expectedGeneration: myGeneration)
+                    startEventDrain(expectedGeneration: myGeneration)
                     return local
                 case .error(let message):
                     // A real backend error (not a not-ready condition) — don't retry.
@@ -250,131 +268,178 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         stateLock.lock()
         startGeneration &+= 1   // invalidate any in-flight start() handshake loop
         cachedLocalInfo = nil
-        eventDrainPoller?.cancel()
-        eventDrainPoller = nil
+        lastSeenAnnounce.removeAll()
+        draining = false
+        rescanRequested = false
+        if let token = eventDrainObserverToken {
+            CFNotificationCenterRemoveObserver(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                token,
+                CFNotificationName(Self.eventsDarwinName),
+                nil
+            )
+            eventDrainObserverToken = nil
+        }
         stateLock.unlock()
     }
 
-    /// Drains the NE's full event queue over IPC and re-emits EVERY event kind
-    /// on `eventStream` — the Model B event bridge (inbound, delivery, state,
-    /// link, announce). Since the NE owns RNS in-process, the app can't observe
-    /// delivery directly; this is what feeds the app's
-    /// `for await event in backend.events` consumer (inbound messages →
-    /// `persistInboundFromPython`, delivery proofs, state, link). Mirrors the
-    /// in-process `PythonRNSBackend` event drain. Announces are diffed by
-    /// last-heard time so re-announces aren't re-yielded every tick; all other
-    /// kinds are yielded once per drain (the queue is emptied each tick, so no
-    /// double-delivery). Idempotent; cancelled in `stop()`.
+    /// Event-driven drain of the NE's durable event inbox (Model B) — NO poll.
+    ///
+    /// The NE (which owns RNS in-process) durably appends every event to a shared
+    /// App-Group inbox and posts the system-wide Darwin `network.columba.newMessage`
+    /// notification when something lands. This method subscribes to that ping and,
+    /// on each one, performs a single `.drainEvents` IPC round-trip and re-emits
+    /// every drained event on `eventStream`. It also does ONE initial drain at
+    /// start (catch-up for anything the NE delivered while the app was suspended
+    /// or before this start). This is what feeds the app's
+    /// `for await event in backend.events` consumer (inbound → `persistInboundFromPython`,
+    /// delivery proofs, state, link, announce). The durable inbox is the event log,
+    /// so a missed/dropped ping is harmless: the events stay queued and are caught
+    /// up on the next ping or the next start.
+    ///
+    /// Burst-coalescing: at most one in-flight drain plus one trailing re-drain, so
+    /// a flurry of pings doesn't spawn overlapping round-trips (mirrors
+    /// `ModelBInboundReplay.requestDrain`). Announces are diffed by last-heard time
+    /// so a re-announce isn't re-yielded; all other kinds are yielded once per drain
+    /// (the inbox is emptied each drain, so no double-delivery).
     ///
     /// `expectedGeneration` is the `startGeneration` snapshot taken by the
-    /// `start()` that is spawning this poller. Re-check it UNDER the lock:
-    /// `start()` releases `stateLock` before calling this, so a `stop()` can land
-    /// in that window — bumping the generation and cancelling a still-`nil`
-    /// poller. Without the re-check we'd then create a brand-new Task that
-    /// `stop()` can never cancel (a zombie poller that keeps draining forever
-    /// and, via its stale `lastSeen`, silently drops announces after the next
-    /// start).
-    private func startEventDrainPolling(expectedGeneration: Int) {
+    /// `start()` that spawns this. Re-check it UNDER the lock before registering:
+    /// `start()` releases `stateLock` first, so a `stop()` can land in that window
+    /// (bumping the generation); without the re-check we'd register an observer
+    /// that `stop()` can never remove.
+    private func startEventDrain(expectedGeneration: Int) {
         stateLock.lock()
-        guard eventDrainPoller == nil, expectedGeneration == startGeneration else {
+        guard eventDrainObserverToken == nil, expectedGeneration == startGeneration else {
             stateLock.unlock(); return
         }
-        let cont = eventContinuation
-        eventDrainPoller = Task { [weak self] in
-            var lastSeen: [String: Double] = [:]
-            while !Task.isCancelled {
-                // 2.5s: an IPC round-trip each tick; inbound/delivery latency of
-                // a few seconds is fine. Use a throwing sleep and EXIT on
-                // cancellation — a `try?` here would swallow the CancellationError
-                // that stop() triggers and fire one extra drain round-trip before
-                // the while-check re-evaluates.
-                do { try await Task.sleep(nanoseconds: 2_500_000_000) }
-                catch { return }
-                guard let self else { return }
-                guard let response = try? await self.roundTrip(.drainEvents, op: "drainEvents"),
-                      case .ok(let payload) = response, let payload,
-                      let events = try? JSONDecoder().decode([ProxyEvent].self, from: payload)
-                else { continue }
-                for e in events {
-                    switch e.kind {
-                    case "announce":
-                        let dh = e.destHashHex ?? ""
-                        if let prev = lastSeen[dh], prev >= e.t { continue }
-                        lastSeen[dh] = e.t
-                        cont.yield(.announce(
-                            destHash: dh,
-                            appDataHex: e.appDataHex ?? "",
-                            aspect: e.aspect ?? "",
-                            publicKeysHex: e.publicKeysHex ?? "",
-                            interfaceName: e.interfaceName ?? "",
-                            hops: e.hops ?? 0,
-                            t: Date(timeIntervalSince1970: e.t)
-                        ))
-                    case "inbound":
-                        let deliveryMethod: LXDeliveryMethod?
-                        switch e.method {
-                        case "opportunistic": deliveryMethod = .opportunistic
-                        case "direct": deliveryMethod = .direct
-                        case "propagated": deliveryMethod = .propagated
-                        case "paper": deliveryMethod = .paper
-                        default: deliveryMethod = nil
-                        }
-                        cont.yield(.inbound(
-                            sourceHash: e.sourceHashHex ?? "",
-                            messageHash: e.messageHashHex ?? "",
-                            content: e.content ?? "",
-                            title: e.title ?? "",
-                            fieldsPacked: (try? (e.fieldsHex ?? "").hexToData()) ?? Data(),
-                            method: deliveryMethod,
-                            rssi: e.rssi,
-                            snr: e.snr,
-                            t: Date(timeIntervalSince1970: e.t)
-                        ))
-                    case "delivery":
-                        let deliveryMethod: LXDeliveryMethod?
-                        switch e.method {
-                        case "opportunistic": deliveryMethod = .opportunistic
-                        case "direct": deliveryMethod = .direct
-                        case "propagated": deliveryMethod = .propagated
-                        case "paper": deliveryMethod = .paper
-                        default: deliveryMethod = nil
-                        }
-                        cont.yield(.delivery(
-                            messageHash: e.messageHashHex ?? "",
-                            state: e.state ?? "",
-                            method: deliveryMethod,
-                            t: Date(timeIntervalSince1970: e.t)
-                        ))
-                    case "state":
-                        cont.yield(.state(e.state ?? "?", t: Date(timeIntervalSince1970: e.t)))
-                    case "link_state":
-                        cont.yield(.linkState(
-                            linkId: e.linkId ?? 0,
-                            state: e.state ?? "",
-                            reason: e.reason ?? "",
-                            inbound: e.inbound ?? false,
-                            t: Date(timeIntervalSince1970: e.t)
-                        ))
-                    case "link_packet":
-                        cont.yield(.linkPacket(
-                            linkId: e.linkId ?? 0,
-                            data: (try? (e.dataHex ?? "").hexToData()) ?? Data(),
-                            t: Date(timeIntervalSince1970: e.t)
-                        ))
-                    case "link_identified":
-                        cont.yield(.linkIdentified(
-                            linkId: e.linkId ?? 0,
-                            identityHashHex: e.identityHashHex ?? "",
-                            t: Date(timeIntervalSince1970: e.t)
-                        ))
-                    default:
-                        // Unknown kind (forward-compatible): drop, don't crash.
-                        continue
-                    }
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let token = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center,
+            token,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let self_ = Unmanaged<ProxyRnsBackend>.fromOpaque(observer).takeUnretainedValue()
+                self_.requestDrain()
+            },
+            Self.eventsDarwinName,
+            nil,
+            .deliverImmediately
+        )
+        eventDrainObserverToken = token
+        stateLock.unlock()
+        // Initial catch-up drain (anything delivered while the app was suspended or
+        // before this start). The ping-driven drains keep it current from here.
+        requestDrain()
+    }
+
+    /// Coalesce ping-driven drains into at most one in-flight + one trailing pass.
+    private func requestDrain() {
+        stateLock.lock()
+        if draining {
+            rescanRequested = true
+            stateLock.unlock()
+            return
+        }
+        draining = true
+        stateLock.unlock()
+        Task { [weak self] in
+            defer {
+                self?.stateLock.lock()
+                self?.draining = false
+                let again = self?.rescanRequested ?? false
+                self?.rescanRequested = false
+                self?.stateLock.unlock()
+                if again { self?.requestDrain() }
+            }
+            await self?.drainNow()
+        }
+    }
+
+    /// One `.drainEvents` round-trip; map + yield every drained event.
+    private func drainNow() async {
+        guard let response = try? await roundTrip(.drainEvents, op: "drainEvents"),
+              case .ok(let payload) = response, let payload,
+              let events = try? JSONDecoder().decode([ProxyEvent].self, from: payload)
+        else { return }
+        for e in events {
+            switch e.kind {
+            case "announce":
+                let dh = e.destHashHex ?? ""
+                if let prev = lastSeenAnnounce[dh], prev >= e.t { continue }
+                lastSeenAnnounce[dh] = e.t
+                eventContinuation.yield(.announce(
+                    destHash: dh,
+                    appDataHex: e.appDataHex ?? "",
+                    aspect: e.aspect ?? "",
+                    publicKeysHex: e.publicKeysHex ?? "",
+                    interfaceName: e.interfaceName ?? "",
+                    hops: e.hops ?? 0,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "inbound":
+                let deliveryMethod: LXDeliveryMethod?
+                switch e.method {
+                case "opportunistic": deliveryMethod = .opportunistic
+                case "direct": deliveryMethod = .direct
+                case "propagated": deliveryMethod = .propagated
+                case "paper": deliveryMethod = .paper
+                default: deliveryMethod = nil
                 }
+                eventContinuation.yield(.inbound(
+                    sourceHash: e.sourceHashHex ?? "",
+                    messageHash: e.messageHashHex ?? "",
+                    content: e.content ?? "",
+                    title: e.title ?? "",
+                    fieldsPacked: (try? (e.fieldsHex ?? "").hexToData()) ?? Data(),
+                    method: deliveryMethod,
+                    rssi: e.rssi,
+                    snr: e.snr,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "delivery":
+                let deliveryMethod: LXDeliveryMethod?
+                switch e.method {
+                case "opportunistic": deliveryMethod = .opportunistic
+                case "direct": deliveryMethod = .direct
+                case "propagated": deliveryMethod = .propagated
+                case "paper": deliveryMethod = .paper
+                default: deliveryMethod = nil
+                }
+                eventContinuation.yield(.delivery(
+                    messageHash: e.messageHashHex ?? "",
+                    state: e.state ?? "",
+                    method: deliveryMethod,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "state":
+                eventContinuation.yield(.state(e.state ?? "?", t: Date(timeIntervalSince1970: e.t)))
+            case "link_state":
+                eventContinuation.yield(.linkState(
+                    linkId: e.linkId ?? 0,
+                    state: e.state ?? "",
+                    reason: e.reason ?? "",
+                    inbound: e.inbound ?? false,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "link_packet":
+                eventContinuation.yield(.linkPacket(
+                    linkId: e.linkId ?? 0,
+                    data: (try? (e.dataHex ?? "").hexToData()) ?? Data(),
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "link_identified":
+                eventContinuation.yield(.linkIdentified(
+                    linkId: e.linkId ?? 0,
+                    identityHashHex: e.identityHashHex ?? "",
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            default:
+                // Unknown kind (forward-compatible): drop, don't crash.
+                continue
             }
         }
-        stateLock.unlock()
     }
 
     @discardableResult

@@ -1912,6 +1912,14 @@ public final class AppServices {
             // (Foundation-only, no PII beyond the hash) so NEPythonRNS resolves
             // the same <shared dir>/config without re-deriving the RNS hash.
             SharedDefaults.suite.set(identityHashHex, forKey: "rnsConfigIdentityHashHex")
+            // Mirror the `block_unknown_senders` privacy toggle into the AppGroup
+            // suite so the NE can read it (the app's standard UserDefaults is
+            // unreachable from the extension). The NE passes it to Python so inbound
+            // from unknown senders is dropped BEFORE the NE persists the row.
+            SharedDefaults.suite.set(
+                UserDefaults.standard.bool(forKey: "block_unknown_senders"),
+                forKey: "block_unknown_senders"
+            )
             // The identity blob co-locates with the config (rns_bridge.start also
             // accepts identity_bytes, but the file path is the app's canonical
             // source; the NE reads the shared keychain, so this is belt-and-braces).
