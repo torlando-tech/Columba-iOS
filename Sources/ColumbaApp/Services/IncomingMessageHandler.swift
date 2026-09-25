@@ -405,8 +405,13 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
                 }
             }
 
-            // Extract telemetry from LXMF Field 2 (FIELD_TELEMETRY)
-            if let fields = message.fields {
+            // Extract telemetry from LXMF Field 2 (FIELD_TELEMETRY).
+            // Skip for cease messages: a CEASE wire frame carries a zeroed
+            // FIELD_TELEMETRY blob (lat=0, lng=0) alongside the cease flag. The
+            // cease handler above already removed the pin; processing the
+            // zeroed telemetry here would re-add it at (0,0) - "null island"
+            // off the coast of Africa.
+            if !isCeaseMessage, let fields = message.fields {
                 // Extract icon appearance for map marker (may already be saved to DB above)
                 var peerIcon: IconAppearance? = nil
                 if let iconValue = fields[IconAppearance.fieldKey] {

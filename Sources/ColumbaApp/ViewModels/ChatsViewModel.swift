@@ -217,7 +217,7 @@ public final class ChatsViewModel {
         // Register for Darwin notifications (cross-process, fires before DB save)
         notificationObserver.onNewMessage { [weak self] in
             Task { @MainActor in
-                await self?.loadConversations()
+                await self?.refreshConversations()
             }
         }
 
@@ -228,7 +228,7 @@ public final class ChatsViewModel {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                await self?.loadConversations()
+                await self?.refreshConversations()
             }
         }
 

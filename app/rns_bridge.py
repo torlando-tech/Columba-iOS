@@ -689,46 +689,59 @@ def _write_inbound_to_grdb(message: Any) -> bool:
             snr = getattr(message, "snr", None)
             q = getattr(message, "q", None)
 
+            # Telemetry-only location shares must NOT bump the conversation's
+            # unread count / preview / recency: the app's chat view already
+            # filters these rows out of display (MessagingViewModel.swift:297),
+            # so counting them inflates the chats badge (SUM(unread_count)) and
+            # can surface a ghost conversation with no visible messages. The
+            # location maps from the MESSAGE row (the app's handleInbound
+            # telemetry side-channel reads the packed wire), not the
+            # conversation row, so we still persist the message below and only
+            # skip the conversation upsert here. Mirrors the app-side
+            # `isUserNotifiableMessage` / chat-view telemetry predicate.
+            skip_conversation = _is_telemetry_only_inbound(message)
+
             # 1. Conversation upsert (foreign key requires it first). Mirrors
             #    LXMFSwift: set preview/timestamp if newer, increment unread if
-            #    inbound.
-            cur = conn.execute(
-                "SELECT destination_hash, last_message_timestamp, unread_count "
-                "FROM conversations WHERE destination_hash = ?",
-                (conversation_hash,),
-            )
-            conv = cur.fetchone()
-            preview = None
-            try:
-                preview = content.decode("utf-8")[:100] if content else None
-            except Exception:  # noqa: BLE001
-                preview = None
-            if conv is None:
-                conn.execute(
-                    "INSERT INTO conversations "
-                    "(destination_hash, display_name, last_message_timestamp, "
-                    " last_message_preview, unread_count, is_unread, is_favorite, "
-                    " is_pinned, icon_name, icon_fg_color, icon_bg_color, "
-                    " created_at, updated_at) "
-                    "VALUES (?,?, ?,?,?,0,0,NULL,NULL,NULL,NULL,?,?)",
-                    (conversation_hash, None, timestamp, preview, 1, now, now),
+            #    inbound. Skipped for telemetry-only location shares (see above).
+            if not skip_conversation:
+                cur = conn.execute(
+                    "SELECT destination_hash, last_message_timestamp, unread_count "
+                    "FROM conversations WHERE destination_hash = ?",
+                    (conversation_hash,),
                 )
-            else:
-                _, last_ts, unread = conv
-                if timestamp >= (last_ts or 0):
+                conv = cur.fetchone()
+                preview = None
+                try:
+                    preview = content.decode("utf-8")[:100] if content else None
+                except Exception:  # noqa: BLE001
+                    preview = None
+                if conv is None:
                     conn.execute(
-                        "UPDATE conversations SET last_message_timestamp=?, "
-                        "last_message_preview=COALESCE(?, last_message_preview), "
-                        "unread_count=?, is_unread=1, updated_at=? "
-                        "WHERE destination_hash=?",
-                        (timestamp, preview, int(unread or 0) + 1, now, conversation_hash),
+                        "INSERT INTO conversations "
+                        "(destination_hash, display_name, last_message_timestamp, "
+                        " last_message_preview, unread_count, is_unread, is_favorite, "
+                        " is_pinned, icon_name, icon_fg_color, icon_bg_color, "
+                        " created_at, updated_at) "
+                        "VALUES (?,?, ?,?,?,0,0,NULL,NULL,NULL,NULL,?,?)",
+                        (conversation_hash, None, timestamp, preview, 1, now, now),
                     )
                 else:
-                    conn.execute(
-                        "UPDATE conversations SET unread_count=?, is_unread=1, "
-                        "updated_at=? WHERE destination_hash=?",
-                        (int(unread or 0) + 1, now, conversation_hash),
-                    )
+                    _, last_ts, unread = conv
+                    if timestamp >= (last_ts or 0):
+                        conn.execute(
+                            "UPDATE conversations SET last_message_timestamp=?, "
+                            "last_message_preview=COALESCE(?, last_message_preview), "
+                            "unread_count=?, is_unread=1, updated_at=? "
+                            "WHERE destination_hash=?",
+                            (timestamp, preview, int(unread or 0) + 1, now, conversation_hash),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE conversations SET unread_count=?, is_unread=1, "
+                            "updated_at=? WHERE destination_hash=?",
+                            (int(unread or 0) + 1, now, conversation_hash),
+                        )
 
             # 2. Message row (insert or replace by message_id). Mirrors
             #    MessageRecord(from:) column-for-column. `fields` column is left
@@ -758,6 +771,42 @@ def _write_inbound_to_grdb(message: Any) -> bool:
     except Exception as e:  # noqa: BLE001
         RNS.log(f"rns_bridge: grdb write failed: {e}", RNS.LOG_ERROR)
         return False
+
+
+def _is_telemetry_only_inbound(message: Any) -> bool:
+    """True for an inbound LXMF message that is a location share: empty content
+    AND the field map contains FIELD_TELEMETRY (0x02). Mirrors the app-side
+    `isUserNotifiableMessage` check (IncomingMessageHandler.swift:194) and the
+    chat-view filter (MessagingViewModel.swift:297) - the same predicate that
+    suppresses the message bubble. These messages must NOT produce a user-facing
+    notification banner; the row is still persisted so the location maps."""
+    try:
+        content = message.content_as_string() or ""
+    except Exception:  # noqa: BLE001
+        return False
+    if content:
+        return False
+    try:
+        fields = getattr(message, "fields", None)
+    except Exception:  # noqa: BLE001
+        return False
+    if not fields:
+        return False
+    try:
+        for key in fields.keys():
+            # Field keys may be bytes (b"\x02") or int (2) depending on the
+            # LXMF Python version / msgpack unpacking path.
+            if isinstance(key, (bytes, bytearray)):
+                value = key[0]
+            elif isinstance(key, int):
+                value = key
+            else:
+                value = bytes(key)[0]
+            if value == 0x02:  # FIELD_TELEMETRY
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 def _publish_inbound_banner(message: Any) -> None:
@@ -1059,7 +1108,15 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
             RNS.log(f"rns_bridge: inbound BLOCKED source={src[:8]} (block_unknown_senders)", RNS.LOG_DEBUG)
             return
         _write_inbound_to_grdb(message)
-        _publish_inbound_banner(message)
+        # Telemetry-only location shares (empty body + only FIELD_TELEMETRY 0x02)
+        # must NOT post a notification banner - the empty preview would render as
+        # the generic "New message" and spam the user while location is shared.
+        # The GRDB write above + the newMessage ping below still run, so the
+        # location persists and maps on the peer's screen; only the banner is
+        # suppressed. (The app's ModelBInboundReplay runs with
+        # suppressUserNotifications, so this NE banner is the only notification.)
+        if not _is_telemetry_only_inbound(message):
+            _publish_inbound_banner(message)
         _post_darwin(_DARWIN_NEW_MESSAGE)
         return
     _put(
