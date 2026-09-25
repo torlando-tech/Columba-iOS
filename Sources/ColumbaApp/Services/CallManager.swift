@@ -90,9 +90,10 @@ public final class CallManager {
     // MARK: - Internal
 
     private var telephone: Telephone?
-    #if COLUMBA_RUNTIME_PYTHON
-    private var networkTransport: PythonNetworkTransport?
-    #endif
+    // The runtime's LXST transport: in-process Compat RNS (Model A) or the NE
+    // Python RNS over IPC (Model B). `CallManager` holds it as an existential so
+    // its shared call logic compiles + runs identically under both runtimes.
+    private var networkTransport: (any ColumbaLXSTTransport)?
     private var transport: ReticulumTransport?
     private var pathTable: PathTable?
     private var database: LXMFDatabase?
@@ -229,17 +230,28 @@ public final class CallManager {
     /// 1. Creates the Telephone actor (which registers its destination with transport)
     /// 2. Registers a destination link callback so incoming links are routed to Telephone
     /// 3. Wires up ringing/established/ended callbacks for UI state updates
-    func initialize(identity: Identity, transport: ReticulumTransport, pathTable: PathTable?, database: LXMFDatabase?) async {
-        #if COLUMBA_RUNTIME_PYTHON
+    func initialize(identity: Identity, transport: ReticulumTransport, pathTable: PathTable?, database: LXMFDatabase?, backendProvider: (@Sendable () async -> (any RnsTelephony)?)? = nil) async {
         self.localIdentityHashHex = identity.hexHash
         self.pathTable = pathTable
         self.transport = transport
         self.database = database
-        // Build the LXST network transport over the Compat RNS layer, then the
-        // transport-agnostic Telephone on top of it. The transport owns
-        // identity, telephony-destination registration, link lifecycle,
-        // encryption, packetization, identify, and incoming-link detection.
-        let networkTransport = PythonNetworkTransport(identity: identity, transport: transport, pathTable: pathTable)
+        // Build the runtime's LXST transport, then the transport-agnostic
+        // Telephone on top of it. The transport owns identity,
+        // telephony-destination registration, link lifecycle, encryption,
+        // packetization, identify, and incoming-link detection. Only its
+        // CONSTRUCTION is runtime-specific: Model A drives the in-process Compat
+        // RNS; Model B drives the NE Python RNS over the IPC seam (the NE is
+        // the sole Reticulum runtime; the app stays UI-only).
+        let networkTransport: any ColumbaLXSTTransport
+        #if COLUMBA_RUNTIME_PYTHON
+        networkTransport = PythonNetworkTransport(identity: identity, transport: transport, pathTable: pathTable)
+        #elseif COLUMBA_RUNTIME_MODEL_B
+        guard let backendProvider else {
+            logger.error("[CALL] Model B LXST needs the NE proxy backend provider; none provided")
+            return
+        }
+        networkTransport = ModelBNetworkTransport(backendProvider: backendProvider, pathTable: pathTable)
+        #endif
         await networkTransport.start()
         let phone = await Telephone.make(transport: networkTransport)
         self.telephone = phone
@@ -422,14 +434,6 @@ public final class CallManager {
         #endif
 
         logger.error("[CALL] CallManager initialized")
-        #elseif COLUMBA_RUNTIME_MODEL_B
-        // Model B excludes PythonNetworkTransport. Its app process is a thin
-        // ProxyRnsBackend client and must not recreate a local RNS node.
-        self.pathTable = pathTable
-        self.transport = transport
-        self.database = database
-        logger.info("[CALL] unavailable in Model B app runtime")
-        #endif
     }
 
     // MARK: - Call Actions
@@ -440,7 +444,6 @@ public final class CallManager {
     /// Resolution happens before CallKit starts: LXSTSwift and the backend see
     /// only the canonical telephony destination hash.
     func initiateCall(destinationHash: Data, profile: TelephonyProfile = .qualityMedium, peerDisplayName: String?) {
-        #if COLUMBA_RUNTIME_PYTHON
         guard let telephone, let networkTransport else {
             logger.warning("Cannot call: Telephone not initialized")
             return
@@ -501,12 +504,8 @@ public final class CallManager {
         // Track the task so shutdown() can cancel + await it (it may be
         // suspended at a network await when the app tears down).
         self.outgoingCallTask = task
-        #else
-        logger.warning("Cannot call: telephony is unavailable in Model B app runtime")
-        #endif
     }
 
-    #if COLUMBA_RUNTIME_PYTHON
     /// Resolve a direct telephony announce or derive the telephony destination
     /// from any sibling announce carrying the same 64-byte public identity.
     /// A cached sibling telephony row is preferred but never required.
@@ -566,7 +565,6 @@ public final class CallManager {
             self?.resetState()
         }
     }
-    #endif
 
     /// Answer an incoming call.
     ///
@@ -939,12 +937,10 @@ public final class CallManager {
         // a task stuck in a non-cancellable await would hang the app's
         // teardown, and the latch already makes a post-drain attempt
         // impossible, so observing the task finish buys nothing.
-        #if COLUMBA_RUNTIME_PYTHON
         if let task = outgoingCallTask {
             task.cancel()
             outgoingCallTask = nil
         }
-        #endif
 
         // Drain the call-history write chain BEFORE returning. The queue is
         // CLOSED at this point: the pre-hangup finalization above cleared the

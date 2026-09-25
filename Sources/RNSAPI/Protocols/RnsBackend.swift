@@ -74,7 +74,11 @@ public enum BackendEvent: Equatable, Sendable {
     // RNS.Link events — consumed by lxst-swift for voice calls.
     case linkState(linkId: Int, state: String, reason: String, inbound: Bool, t: Date)
     case linkPacket(linkId: Int, data: Data, t: Date)
-    case linkIdentified(linkId: Int, identityHashHex: String, t: Date)
+    /// `publicKeyHex`: the remote's 64-byte public key (hex) on
+    /// `link_identified`. Lets the consumer compute the caller's
+    /// `<identity>.lxmf.delivery` contact hash. `nil` when the backend can't
+    /// provide it (the identity hash is still usable for a degraded lookup).
+    case linkIdentified(linkId: Int, identityHashHex: String, t: Date, publicKeyHex: String?)
 }
 
 /// Outcome of a blocking propagation-node sync.

@@ -461,8 +461,8 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
             return .linkState(linkId: l, state: s, reason: r, inbound: i, t: t)
         case let .linkPacket(l, dat, t):
             return .linkPacket(linkId: l, data: dat, t: t)
-        case let .linkIdentified(l, idh, t):
-            return .linkIdentified(linkId: l, identityHashHex: idh, t: t)
+        case let .linkIdentified(l, idh, t, _):
+            return .linkIdentified(linkId: l, identityHashHex: idh, t: t, publicKeyHex: nil)
         }
     }
 

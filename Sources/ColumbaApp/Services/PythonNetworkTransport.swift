@@ -17,7 +17,7 @@ import os.log
 /// delivery announce into `TelephonyCallTarget`, then stages the public identity
 /// here before invoking LXSTSwift. `remoteIdentified` still reports the caller's
 /// delivery hash because that is the app's conversation/contact key.
-public actor PythonNetworkTransport: NetworkTransport {
+public actor PythonNetworkTransport: ColumbaLXSTTransport {
 
     // LXST telephony destination aspect: <identity>.lxst.telephony
     private static let appName = "lxst"
@@ -274,6 +274,31 @@ public actor PythonNetworkTransport: NetworkTransport {
 struct TelephonyCallTarget: Sendable, Equatable {
     let destinationHash: Data
     let publicKeys: Data
+}
+
+/// The transport surface `CallManager` needs from either the Model A
+/// (`PythonNetworkTransport`, in-process RNS) or Model B
+/// (`ModelBNetworkTransport`, NE Python RNS over the IPC seam) LXST transport.
+///
+/// Both conform to `LXSTSwift`'s `NetworkTransport` (the neutral call seam the
+/// `Telephone` actor drives) and add these three Columba-specific lifecycle
+/// hooks. `CallManager` holds this as an existential so its shared call logic
+/// (`initialize` / `initiateCall`) compiles and runs identically under both
+/// runtimes; only the transport CONSTRUCTION is runtime-specific.
+protocol ColumbaLXSTTransport: NetworkTransport {
+    /// Install transport-side observers / destination registration. Called once
+    /// after construction, before any call.
+    func start() async
+    /// Stage the canonical target before `Telephone.call` invokes the neutral
+    /// `NetworkTransport` seam (lets the transport verify the destination and
+    /// recall the identity before the link opens). `async` so it is a valid
+    /// actor-isolated protocol witness (a synchronous requirement on an actor
+    /// conformer is rejected by the strict-concurrency checker).
+    func prepareOutboundCall(_ target: TelephonyCallTarget) async
+    /// Fire the pre-identify incoming-call hook
+    /// (`CallManager.prepareForIncomingCall`) when an inbound link establishes,
+    /// ahead of the post-identify ringing trigger.
+    func setIncomingCallStartedHandler(_ handler: @escaping @Sendable () async -> Void) async
 }
 
 /// Bridges the Compat `IdentifyCallbacks` protocol to the transport actor.

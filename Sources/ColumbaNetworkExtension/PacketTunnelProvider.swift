@@ -406,6 +406,50 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 contentType: (res["content_type"] as? String) ?? ""
             )
             return .ok(try? JSONEncoder().encode(outcome))
+
+        case .openLink(let destHashHex, let aspect, let identityPublicKeyHex):
+            // Open an outbound RNS.Link. The NE Python `open_link` performs a
+            // bounded path request (up to ~10s) and returns the exact
+            // `{ok, link_id, reason}` dict; forward it as a typed payload so
+            // the app's `openLink` proxy decodes the same shape the Python
+            // return carries. (A heterogeneous `[String: Value]` literal won't
+            // type-check for JSONEncoder - encode a struct, mirroring `Banner`.)
+            struct LinkOpen: Encodable {
+                let ok: Bool
+                let linkId: Int
+                let reason: String
+                enum CodingKeys: String, CodingKey { case ok; case linkId = "link_id"; case reason }
+            }
+            guard let res = engine.openLink(destHashHex: destHashHex, aspect: aspect, identityPublicKeyHex: identityPublicKeyHex) else {
+                return .ok(try? JSONEncoder().encode(LinkOpen(ok: false, linkId: 0, reason: "not-started")))
+            }
+            return .ok(try? JSONEncoder().encode(LinkOpen(
+                ok: (res["ok"] as? Bool) ?? false,
+                linkId: (res["link_id"] as? Int) ?? 0,
+                reason: (res["reason"] as? String) ?? ""
+            )))
+
+        case .linkSend(let linkId, let dataHex):
+            // Send opaque bytes over an established link. Per-frame IPC; a
+            // short deadline on the app keeps a wedged NE from hanging audio.
+            guard let res = engine.linkSend(linkId: linkId, dataHex: dataHex) else {
+                return .ok(try? JSONEncoder().encode(false))
+            }
+            return .ok(try? JSONEncoder().encode((res["ok"] as? Bool) ?? false))
+
+        case .linkIdentify(let linkId):
+            // Reveal our identity on the link (RNS LINKIDENTIFY).
+            guard let res = engine.linkIdentify(linkId: linkId) else {
+                return .ok(try? JSONEncoder().encode(false))
+            }
+            return .ok(try? JSONEncoder().encode((res["ok"] as? Bool) ?? false))
+
+        case .linkTeardown(let linkId):
+            // Tear down the link from our side.
+            guard let res = engine.linkTeardown(linkId: linkId) else {
+                return .ok(try? JSONEncoder().encode(false))
+            }
+            return .ok(try? JSONEncoder().encode((res["ok"] as? Bool) ?? false))
         }
     }
 
@@ -453,7 +497,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             linkId: e["link_id"] as? Int,
             dataHex: e["data_hex"] as? String,
             identityHashHex: e["identity_hash"] as? String,
-            inbound: e["inbound"] as? Bool
+            inbound: e["inbound"] as? Bool,
+            publicKeyHex: e["public_key"] as? String
         )
     }
 

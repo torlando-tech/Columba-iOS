@@ -433,7 +433,8 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                 eventContinuation.yield(.linkIdentified(
                     linkId: e.linkId ?? 0,
                     identityHashHex: e.identityHashHex ?? "",
-                    t: Date(timeIntervalSince1970: e.t)
+                    t: Date(timeIntervalSince1970: e.t),
+                    publicKeyHex: e.publicKeyHex
                 ))
             default:
                 // Unknown kind (forward-compatible): drop, don't crash.
@@ -745,29 +746,71 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     // MARK: - RnsTelephony
     //
-    // Voice links are driven by the in-process LXST state machine and require a
-    // live local RNS.Link — they CANNOT be proxied frame-by-frame at acceptable
-    // latency, so under Model B telephony stays app-local (out of A5b scope).
-    // Each throws so a missed UI capability gate fails loud rather than silently
-    // dropping audio. (Model B: runs NE-side / not proxied yet.)
+    // The NE Python RNS owns the live RNS.Link (it has `open_link` / `link_send`
+    // / `link_identify` / `link_teardown` + the inbound packet / identify / close
+    // callbacks that feed the `link_*` drain events). These four ops marshal the
+    // request side across the seam; the Model B `NetworkTransport` in the app
+    // drives LXSTSwift's `Telephone` over them. Inbound audio frames ride the
+    // `drainEvents` queue (the `link_packet` events) and are surfaced to the
+    // transport via the `ColumbaPythonLink*` notifications that
+    // `AppServices.handlePythonEvent` posts.
 
-    public func openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String?) async throws -> (ok: Bool, linkId: Int, reason: String) {
-        throw BackendError.unsupportedInProxy(feature: "openLink")
+    /// One IPC round-trip that returns the NE's raw `{ok, link_id, reason}` JSON.
+    /// `openLink` blocks up to ~10s inside the NE (the Python bounded path
+    /// request), so the deadline is generous.
+    private struct LinkOpenResult: Decodable {
+        let ok: Bool
+        let linkId: Int
+        let reason: String
+        enum CodingKeys: String, CodingKey {
+            case ok
+            case linkId = "link_id"
+            case reason
+        }
     }
 
+    public func openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String?) async throws -> (ok: Bool, linkId: Int, reason: String) {
+        // The NE `open_link` does a bounded path request (up to ~10s) before
+        // reporting unreachable. Give the IPC round-trip headroom on top.
+        let response = try await roundTrip(
+            .openLink(destHashHex: destHashHex, aspect: aspect, identityPublicKeyHex: identityPublicKeyHex ?? ""),
+            op: "openLink",
+            deadline: 15.0
+        )
+        switch response {
+        case .ok(let payload):
+            guard let payload, let result = try? JSONDecoder().decode(LinkOpenResult.self, from: payload) else {
+                return (ok: false, linkId: 0, reason: "malformed-reply")
+            }
+            return (ok: result.ok, linkId: result.linkId, reason: result.reason)
+        case .error(let message):
+            return (ok: false, linkId: 0, reason: message)
+        case .unsupported:
+            return (ok: false, linkId: 0, reason: "unsupported")
+        }
+    }
+
+    /// Send one opaque audio/signalling frame over the link. Bounded deadline:
+    /// a wedged / jetsammed NE must degrade the frame to `ipcFailed` instead of
+    /// hanging the audio pipeline. The transport treats a thrown error as a
+    /// dropped frame (the codec has its own retransmission / comfort-noise).
     @discardableResult
     public func linkSend(linkId: Int, data: Data) async throws -> Bool {
-        throw BackendError.unsupportedInProxy(feature: "linkSend")
+        try await marshalBool(
+            .linkSend(linkId: linkId, dataHex: data.toHex()),
+            op: "linkSend",
+            deadline: 0.5
+        )
     }
 
     @discardableResult
     public func linkIdentify(linkId: Int) async throws -> Bool {
-        throw BackendError.unsupportedInProxy(feature: "linkIdentify")
+        try await marshalBool(.linkIdentify(linkId: linkId), op: "linkIdentify")
     }
 
     @discardableResult
     public func linkTeardown(linkId: Int) async throws -> Bool {
-        throw BackendError.unsupportedInProxy(feature: "linkTeardown")
+        try await marshalBool(.linkTeardown(linkId: linkId), op: "linkTeardown")
     }
 
     // MARK: - RnsTransportAdmin
@@ -810,9 +853,11 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     // MARK: - Mapping helpers
 
-    /// Marshal a request whose `.ok` payload is a JSON-encoded `Bool`.
-    private func marshalBool(_ request: ProxyRequest, op: String) async throws -> Bool {
-        let response = try await roundTrip(request, op: op)
+    /// Marshal a request whose `.ok` payload is a JSON-encoded `Bool`. `deadline`
+    /// bounds the round-trip (a wedged / jetsammed NE degrades to `ipcFailed`
+    /// instead of hanging) - used by the per-frame `linkSend` voice path.
+    private func marshalBool(_ request: ProxyRequest, op: String, deadline: TimeInterval? = nil) async throws -> Bool {
+        let response = try await roundTrip(request, op: op, deadline: deadline)
         switch response {
         case .ok(let payload):
             guard let payload, let value = try? JSONDecoder().decode(Bool.self, from: payload) else {

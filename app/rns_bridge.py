@@ -509,6 +509,26 @@ def _trailing_events_ping(delay: float) -> None:
         pass
 
 
+def _post_link_events_ping() -> None:
+    """Immediate drain ping for voice link events (link_state / link_packet /
+    link_identified). Bypasses the trailing-edge coalesce so inbound audio frames
+    are delivered with minimal latency - the 1.2s coalesce window would batch a
+    whole second of voice into one drain, producing an unusable echo. Posts
+    `_DARWIN_EVENTS` (NOT `newMessage`), so it wakes the IPC drain without
+    reloading the Chats list. Updates `_last_ping_ts` so a coalesced announce that
+    follows restarts its own window instead of firing an immediate extra ping.
+    Never raises. The APP side already burst-coalesces its drains, so a stream of
+    per-frame pings collapses into one in-flight drain + trailing re-drain."""
+    global _last_ping_ts, _ping_trailing_scheduled
+    try:
+        with _ping_lock:
+            _last_ping_ts = time.time()
+            _ping_trailing_scheduled = False
+        _post_darwin(_DARWIN_EVENTS)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _publish_durable(kind: str, payload: dict) -> None:
     """Append `payload` (kind + t included) to the durable inbox + post the ping.
     Best-effort; never raises (the caller is an RNS/LXMF callback thread)."""
@@ -532,7 +552,16 @@ def _publish_durable(kind: str, payload: dict) -> None:
     # `newMessage`), so it wakes the IPC drain (path table → Network screen)
     # WITHOUT reloading the Chats list. Inbound messages post their own
     # `newMessage` ping directly (immediate), so a real message never waits.
-    _coalesced_events_ping()
+    #
+    # Voice link events (link_state / link_packet / link_identified) bypass the
+    # coalesce and post an IMMEDIATE ping: the 1.2s trailing-edge window would
+    # batch a full second of inbound audio into one drain, producing an
+    # unusable echo. The app's drain is itself burst-coalesced, so the per-frame
+    # pings collapse into one in-flight drain + a trailing re-drain.
+    if kind in ("link_state", "link_packet", "link_identified"):
+        _post_link_events_ping()
+    else:
+        _coalesced_events_ping()
 
 
 def drain_inbox() -> list:
@@ -1565,10 +1594,24 @@ def _wire_link_callbacks(link: Any, link_id: int) -> None:
 
     def _on_remote_identified(_l: Any, identity: Any) -> None:
         try:
+            # Carry the remote's 64-byte public key (X25519 || Ed25519) so the
+            # app can compute the caller's <identity>.lxmf.delivery contact hash
+            # (the same way Model A's in-process transport gets the full
+            # Identity object). The identity hash alone is insufficient - the
+            # delivery hash is derived from the full public-key blob.
+            pub_key = ""
+            if identity is not None:
+                try:
+                    pk = identity.get_public_key()
+                    if pk:
+                        pub_key = pk.hex()
+                except Exception:
+                    pass
             _put(
                 "link_identified",
                 link_id=link_id,
                 identity_hash=identity.hash.hex() if identity is not None else "",
+                public_key=pub_key,
             )
         except Exception:
             pass

@@ -1531,7 +1531,13 @@ public final class AppServices {
         //     (triggered by onInterfaceAdded) can send the telephony announce.
         DiagLog.log("[INIT] Step 7b: creating CallManager")
         let cm = CallManager()
-        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        // Model B: resolve the NE proxy backend's RnsTelephony facet lazily
+        // (it may not be assigned until startPythonBackend, and
+        // restartPythonBackend reassigns it).
+        let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = { [weak self] in
+            await MainActor.run { self?.backend?.telephony }
+        }
+        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase, backendProvider: mbProvider)
         cm.callHistoryRepository = self.callHistoryRepository
         self.callManager = cm
         DiagLog.log("[INIT] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
@@ -3756,12 +3762,20 @@ public final class AppServices {
                 userInfo: ["linkId": linkId, "data": data]
             )
             await self.dispatchLinkPacket(linkId: UInt64(linkId), data: data)
-        case .linkIdentified(let linkId, let identityHashHex, _):
+        case .linkIdentified(let linkId, let identityHashHex, _, let publicKeyHex):
             DiagLog.log("[RNS] link \(linkId) identified=\(identityHashHex.prefix(8))")
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonLinkIdentified"),
                 object: nil,
-                userInfo: ["linkId": linkId, "identityHashHex": identityHashHex]
+                userInfo: [
+                    "linkId": linkId,
+                    "identityHashHex": identityHashHex,
+                    // The caller's 64-byte public key (hex) so the Model B voice
+                    // transport can compute the <identity>.lxmf.delivery contact
+                    // hash. Absent (not in userInfo) when the backend couldn't
+                    // provide it (Model A in-process path).
+                    "publicKeyHex": publicKeyHex,
+                ]
             )
             await self.dispatchLinkIdentified(linkId: UInt64(linkId), identityHashHex: identityHashHex)
         }
@@ -3893,7 +3907,19 @@ public final class AppServices {
         #if os(iOS)
         DiagLog.log("[INIT2] Step 7b: creating CallManager")
         let cm = CallManager()
-        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        // Model B: the NE proxy backend is created by startPythonBackend AFTER
+        // this step, so hand the transport a lazy provider that resolves the
+        // live `RnsTelephony` facet at call time (it also survives
+        // restartPythonBackend reassigning `self.backend`). Model A builds its
+        // in-process transport from `transport` and ignores this.
+        #if COLUMBA_RUNTIME_MODEL_B
+        let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = { [weak self] in
+            await MainActor.run { self?.backend?.telephony }
+        }
+        #else
+        let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = nil
+        #endif
+        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase, backendProvider: mbProvider)
         cm.callHistoryRepository = self.callHistoryRepository
         self.callManager = cm
         DiagLog.log("[INIT2] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
@@ -5014,7 +5040,19 @@ public final class AppServices {
         #if os(iOS)
         if callManager == nil, let identity = self.identity, let transport = self.transport, let pt = pathTable, let db = database {
             let cm = CallManager()
-            await cm.initialize(identity: identity, transport: transport, pathTable: pt, database: db)
+            // Model B: resolve the NE proxy backend's RnsTelephony facet lazily
+            // (it may not be assigned until startPythonBackend, and
+            // restartPythonBackend reassigns it). Model A ignores the provider
+            // and builds its in-process transport from `transport`.
+            #if COLUMBA_RUNTIME_MODEL_B
+            let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = { [weak self] in
+                await MainActor.run { self?.backend?.telephony }
+            }
+            #else
+            let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = nil
+            #endif
+            await cm.initialize(identity: identity, transport: transport, pathTable: pt, database: db, backendProvider: mbProvider)
+            cm.callHistoryRepository = self.callHistoryRepository
             self.callManager = cm
         }
         #endif

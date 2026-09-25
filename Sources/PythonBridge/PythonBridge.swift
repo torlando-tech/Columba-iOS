@@ -971,7 +971,10 @@ public final class PythonBridge: @unchecked Sendable {
             case "link_identified":
                 let linkId = pyIntFromDict(item, key: "link_id") ?? 0
                 let identity = pyStringFromDict(item, key: "identity_hash") ?? ""
-                out.append(.linkIdentified(linkId: linkId, identityHashHex: identity, t: t))
+                // Model A resolves the caller's identity via the in-process
+                // Compat Link (the full Identity object); the public key isn't
+                // needed on the event here.
+                out.append(.linkIdentified(linkId: linkId, identityHashHex: identity, t: t, publicKeyHex: nil))
             default:
                 continue
             }

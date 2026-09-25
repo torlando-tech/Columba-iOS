@@ -279,6 +279,45 @@ final class NEPythonRNS: @unchecked Sendable {
         return Self.dict(from: call("nomadnet_fetch_op", kwargs: kwargs))
     }
 
+    // MARK: - LXST telephony link ops
+    //
+    // The NE Python RNS owns the live RNS.Link for voice. These mirror the
+    // existing `rns_bridge.open_link` / `link_send` / `link_identify` /
+    // `link_teardown` functions. Inbound frames + the identify / close events
+    // ride the `drainEvents` queue (the `link_*` events), so the app only
+    // marshals the four request ops across the seam. `openLink` blocks up to
+    // ~10s (the Python bounded path request) but runs on a detached `Task` in
+    // `dispatchPython`, so it does not stall the NE's packet path.
+
+    /// `rns_bridge.open_link(dest_hash_hex, aspect, identity_public_key_hex)`
+    /// → `{ok, link_id, reason}`. The forward path is the exact shape the app's
+    /// `openLink` proxy decodes.
+    func openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String) -> [String: Any]? {
+        Self.dict(from: call("open_link", kwargs: [
+            "dest_hash_hex": destHashHex,
+            "aspect": aspect,
+            "identity_public_key_hex": identityPublicKeyHex,
+        ]))
+    }
+
+    /// `rns_bridge.link_send(link_id, data_hex)` → `{ok, reason}`.
+    func linkSend(linkId: Int, dataHex: String) -> [String: Any]? {
+        Self.dict(from: call("link_send", kwargs: [
+            "link_id": linkId,
+            "data_hex": dataHex,
+        ]))
+    }
+
+    /// `rns_bridge.link_identify(link_id)` → `{ok, reason}`.
+    func linkIdentify(linkId: Int) -> [String: Any]? {
+        Self.dict(from: call("link_identify", kwargs: ["link_id": linkId]))
+    }
+
+    /// `rns_bridge.link_teardown(link_id)` → `{ok, reason}`.
+    func linkTeardown(linkId: Int) -> [String: Any]? {
+        Self.dict(from: call("link_teardown", kwargs: ["link_id": linkId]))
+    }
+
     // MARK: - Ops
 
     /// Call a `rns_bridge` op that returns a JSON dict, forwarding the raw JSON.

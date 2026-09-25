@@ -208,11 +208,43 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// reply can't hang. Response payload: JSON-encoded `ProxyNomadNetOutcome`.
     case nomadnetFetch(destHashHex: String, path: String, timeoutSeconds: Double, formFields: [String: String]?)
 
+    // MARK: LXST telephony link ops (mirrors `RnsTelephony`).
+    //
+    // The NE Python RNS owns the live RNS.Link (it already has `open_link` /
+    // `link_send` / `link_identify` / `link_teardown` + the inbound-link +
+    // packet + identify callbacks that feed the `link_*` events). The app's
+    // LXSTSwift `Telephone` drives a Model B `NetworkTransport` that marshals
+    // these four ops across the seam; inbound frames ride the event drain.
+    //
+    /// Open an outbound RNS.Link to a destination (default aspect
+    /// `lxst.telephony`). `identityPublicKeyHex` is the 64-byte public key used
+    /// to build + verify the exact destination when the identity isn't recalled
+    /// yet (may be ""). The NE performs a bounded path request (up to ~10s)
+    /// before reporting unreachable, so the app applies an IPC deadline > 10s.
+    /// Response payload: the NE's raw `{ok, link_id, reason}` JSON (the app
+    /// decodes it; the shape matches the Python `open_link` return exactly).
+    case openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String)
+
+    /// Send opaque bytes over an established link. `dataHex` is the hex payload
+    /// (the NE wraps it in a single RNS.Packet). Response payload: a Bool
+    /// (JSON `true`/`false`) - `ok` from the NE. A per-frame short IPC deadline
+    /// on the app keeps a wedged NE from hanging the audio.
+    case linkSend(linkId: Int, dataHex: String)
+
+    /// Reveal our identity on the link (RNS LINKIDENTIFY) so the remote's
+    /// `link_identified` event fires. Response payload: a Bool (JSON).
+    case linkIdentify(linkId: Int)
+
+    /// Tear down the link from our side (both peers' `link_state=closed` fires).
+    /// Response payload: a Bool (JSON).
+    case linkTeardown(linkId: Int)
+
     // MARK: Codable (discriminated union)
 
     private enum CodingKeys: String, CodingKey {
         case op, displayName, destHashHex, content, method, fieldsData
         case path, timeoutSeconds, formFields
+        case aspect, identityPublicKeyHex, linkId, dataHex
     }
 
     /// Stable discriminator strings (decoupled from the Swift case names so a
@@ -221,6 +253,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case start, stop, announce, announceTelephony, statusSnapshot
         case persist, registeredDestinationHashes, lxmfSend, heardAnnounces
         case drainEvents, bleConnections, nomadnetFetch
+        case openLink, linkSend, linkIdentify, linkTeardown
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -261,6 +294,21 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(path, forKey: .path)
             try c.encode(timeoutSeconds, forKey: .timeoutSeconds)
             try c.encodeIfPresent(formFields, forKey: .formFields)
+        case .openLink(let destHashHex, let aspect, let identityPublicKeyHex):
+            try c.encode(Op.openLink, forKey: .op)
+            try c.encode(destHashHex, forKey: .destHashHex)
+            try c.encode(aspect, forKey: .aspect)
+            try c.encode(identityPublicKeyHex, forKey: .identityPublicKeyHex)
+        case .linkSend(let linkId, let dataHex):
+            try c.encode(Op.linkSend, forKey: .op)
+            try c.encode(linkId, forKey: .linkId)
+            try c.encode(dataHex, forKey: .dataHex)
+        case .linkIdentify(let linkId):
+            try c.encode(Op.linkIdentify, forKey: .op)
+            try c.encode(linkId, forKey: .linkId)
+        case .linkTeardown(let linkId):
+            try c.encode(Op.linkTeardown, forKey: .op)
+            try c.encode(linkId, forKey: .linkId)
         }
     }
 
@@ -302,6 +350,21 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
                 timeoutSeconds: try c.decode(Double.self, forKey: .timeoutSeconds),
                 formFields: try c.decodeIfPresent([String: String].self, forKey: .formFields)
             )
+        case .openLink:
+            self = .openLink(
+                destHashHex: try c.decode(String.self, forKey: .destHashHex),
+                aspect: try c.decode(String.self, forKey: .aspect),
+                identityPublicKeyHex: try c.decode(String.self, forKey: .identityPublicKeyHex)
+            )
+        case .linkSend:
+            self = .linkSend(
+                linkId: try c.decode(Int.self, forKey: .linkId),
+                dataHex: try c.decode(String.self, forKey: .dataHex)
+            )
+        case .linkIdentify:
+            self = .linkIdentify(linkId: try c.decode(Int.self, forKey: .linkId))
+        case .linkTeardown:
+            self = .linkTeardown(linkId: try c.decode(Int.self, forKey: .linkId))
         }
     }
 }
@@ -516,6 +579,11 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
     public let dataHex: String?
     public let identityHashHex: String?
     public let inbound: Bool?
+    /// `link_identified` only: the remote's 64-byte public key (X25519 ||
+    /// Ed25519), hex. Lets the app compute the caller's
+    /// `<identity>.lxmf.delivery` contact hash (the identity hash alone is not
+    /// enough - the delivery hash derives from the full public-key blob).
+    public let publicKeyHex: String?
 
     public init(
         kind: String, t: Double,
@@ -524,7 +592,8 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         sourceHashHex: String? = nil, messageHashHex: String? = nil, content: String? = nil,
         title: String? = nil, fieldsHex: String? = nil, method: String? = nil,
         state: String? = nil, reason: String? = nil, rssi: Double? = nil, snr: Double? = nil,
-        linkId: Int? = nil, dataHex: String? = nil, identityHashHex: String? = nil, inbound: Bool? = nil
+        linkId: Int? = nil, dataHex: String? = nil, identityHashHex: String? = nil, inbound: Bool? = nil,
+        publicKeyHex: String? = nil
     ) {
         self.kind = kind
         self.t = t
@@ -548,6 +617,7 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         self.dataHex = dataHex
         self.identityHashHex = identityHashHex
         self.inbound = inbound
+        self.publicKeyHex = publicKeyHex
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -559,5 +629,6 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         case state, reason, rssi, snr
         case linkId = "link_id", dataHex = "data_hex", identityHashHex = "identity_hash"
         case inbound
+        case publicKeyHex = "public_key"
     }
 }
