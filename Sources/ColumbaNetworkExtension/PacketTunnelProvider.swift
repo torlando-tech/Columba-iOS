@@ -387,10 +387,25 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             let outcome = Self.mapSendOutcome(res)
             return .ok(try? JSONEncoder().encode(outcome))
 
-        case .nomadnetFetch:
-            // The browser fetch is not wired to the NE Python engine in this
-            // slice; reply a typed failure the app surfaces (not a crash).
-            return .error("nomadnet fetch not available in the NE python engine yet")
+        case .nomadnetFetch(let destHashHex, let path, let timeoutSeconds, let formFields):
+            // One-shot NomadNet page fetch: run the synchronous RNS-Link request
+            // in the NE Python engine (nomadnet_fetch_op base64-encodes the page
+            // bytes so they survive the callBridge JSON round-trip) and map the
+            // result onto the ProxyNomadNetOutcome the app's proxy decodes. A
+            // bridge-level failure (NE not running / node not up) degrades to a
+            // typed `.notStarted`/`.unknown` outcome, matching the app's
+            // "stopped backend" contract.
+            guard let res = engine.nomadnetFetch(destHashHex: destHashHex, path: path, timeout: timeoutSeconds, formFields: formFields) else {
+                return .ok(try? JSONEncoder().encode(ProxyNomadNetOutcome(ok: false, status: "not-started", data: Data(), contentType: "")))
+            }
+            let data = Data(base64Encoded: (res["data_b64"] as? String) ?? "") ?? Data()
+            let outcome = ProxyNomadNetOutcome(
+                ok: (res["ok"] as? Bool) ?? false,
+                status: (res["status"] as? String) ?? "unknown",
+                data: data,
+                contentType: (res["content_type"] as? String) ?? ""
+            )
+            return .ok(try? JSONEncoder().encode(outcome))
         }
     }
 

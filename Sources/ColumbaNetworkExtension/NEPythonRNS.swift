@@ -257,6 +257,28 @@ final class NEPythonRNS: @unchecked Sendable {
         return Self.dict(from: call("send_opportunistic", kwargs: kwargs))
     }
 
+    /// One-shot NomadNet page fetch over an RNS Link (Model B IPC path).
+    ///
+    /// Marshals into `rns_bridge.nomadnet_fetch_op`, which runs the synchronous
+    /// fetch and base64-encodes the `data` bytes (the `callBridge` reply is a
+    /// `json.dumps` of the Python return, which can't carry raw bytes). Returns
+    /// the parsed Python result dict `{ok, status, data_b64, content_type}`, or
+    /// nil on a bridge-level failure. `formFields` nil = plain GET (the op
+    /// defaults to `None`). This call blocks up to ~2·timeout inside Python, but
+    /// runs on a detached `Task` in `dispatchPython` (not the tunnel thread), so
+    /// it does not stall the NE's packet path.
+    func nomadnetFetch(destHashHex: String, path: String, timeout: Double, formFields: [String: String]?) -> [String: Any]? {
+        var kwargs: [String: Any] = [
+            "dest_hash_hex": destHashHex,
+            "path": path,
+            "timeout": timeout,
+        ]
+        if let formFields, !formFields.isEmpty {
+            kwargs["form_fields"] = formFields
+        }
+        return Self.dict(from: call("nomadnet_fetch_op", kwargs: kwargs))
+    }
+
     // MARK: - Ops
 
     /// Call a `rns_bridge` op that returns a JSON dict, forwarding the raw JSON.

@@ -2524,6 +2524,35 @@ def fetch_nomadnet_page(
     return {"ok": True, "status": "ok", "data": payload, "content_type": ""}
 
 
+def nomadnet_fetch_op(dest_hash_hex: str, path: str,
+                      timeout: float = 30.0,
+                      form_fields: dict[str, str] | None = None) -> dict[str, Any]:
+    """Model B IPC wrapper around :func:`fetch_nomadnet_page`.
+
+    The NE bridge (`NEPythonRuntime.callBridge`) serializes a Python op's return
+    with ``json.dumps``, which cannot carry a raw ``bytes`` value (it falls back
+    to a ``__repr__`` string and loses the page). So this wrapper runs the fetch
+    and base64-encodes the ``data`` bytes before returning, keeping the result
+    JSON-serializable. The NE Swift side (``NEPythonRNS.nomadnetFetch``) decodes
+    the base64 back to ``Data``. The in-process Model A path
+    (``PythonBridge.fetchNomadNetPage``) keeps calling :func:`fetch_nomadnet_page`
+    directly via the C-API, so this wrapper is additive and never changes the
+    bytes the working Model A path returns.
+    """
+    import base64
+
+    result = fetch_nomadnet_page(
+        dest_hash_hex, path, timeout=timeout, form_fields=form_fields
+    )
+    data_b64 = base64.b64encode(result.get("data") or b"").decode("ascii")
+    return {
+        "ok": bool(result.get("ok")),
+        "status": result.get("status") or "",
+        "data_b64": data_b64,
+        "content_type": result.get("content_type") or "",
+    }
+
+
 @_balanced_runtime_teardown
 def reset_identity(identity_path: str) -> None:
     """Delete identity bytes on disk and tear down state. Caller must call
