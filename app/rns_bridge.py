@@ -660,6 +660,13 @@ def _open_grdb() -> None:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys=ON")
+        # One-time repair (idempotent): earlier inbound INSERTs (559eccb4)
+        # bound an explicit NULL into `is_pinned`. The app's ConversationRecord
+        # decodes it as a non-optional Int, so a NULL row throws the whole
+        # getConversations() and freezes the Chats list. Backfill to the schema
+        # default 0; no-op once fixed.
+        conn.execute("UPDATE conversations SET is_pinned = 0 WHERE is_pinned IS NULL")
+        conn.commit()
         _grdb_conn = conn
     except Exception as e:  # noqa: BLE001
         RNS.log(f"rns_bridge: grdb open failed: {e}", RNS.LOG_ERROR)
@@ -746,14 +753,20 @@ def _write_inbound_to_grdb(message: Any) -> bool:
                 except Exception:  # noqa: BLE001
                     preview = None
                 if conv is None:
+                    # `is_pinned` is omitted from the column list on purpose so
+                    # the schema DEFAULT 0 applies - binding an explicit NULL
+                    # would store NULL and the app's ConversationRecord (a
+                    # non-optional Int) then fails to decode the whole row,
+                    # throwing every getConversations() and freezing the Chats
+                    # list (see 559eccb4 inbound regression).
                     conn.execute(
                         "INSERT INTO conversations "
                         "(destination_hash, display_name, last_message_timestamp, "
                         " last_message_preview, unread_count, is_unread, is_favorite, "
-                        " is_pinned, icon_name, icon_fg_color, icon_bg_color, "
+                        " icon_name, icon_fg_color, icon_bg_color, "
                         " created_at, updated_at) "
-                        "VALUES (?,?, ?,?,?,0,0,NULL,NULL,NULL,NULL,?,?)",
-                        (conversation_hash, None, timestamp, preview, 1, now, now),
+                        "VALUES (?,?,?,?,?,?,0,NULL,NULL,NULL,?,?)",
+                        (conversation_hash, None, timestamp, preview, 1, 1, now, now),
                     )
                 else:
                     _, last_ts, unread = conv
