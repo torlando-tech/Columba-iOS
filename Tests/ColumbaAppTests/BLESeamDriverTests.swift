@@ -30,23 +30,54 @@ final class BLESeamDriverTests: XCTestCase {
         }
     }
 
-    func testModelBBLEServiceRequiresExplicitUserOptIn() {
-        let suiteName = "test.ModelBBLEOptIn.\(UUID().uuidString)"
+    func testModelBBLEServiceGatedOnEnabledBLEInterface() {
+        let suiteName = "test.ModelBBLEInterfaceGate.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             return XCTFail("Could not create isolated UserDefaults suite")
         }
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        XCTAssertFalse(ModelBBLEService.isUserOptedIn(in: defaults))
-        XCTAssertFalse(ModelBBLEService.shouldStart(in: defaults))
+        let repo = InterfaceRepository(userDefaults: defaults)
+        func gate() -> Bool {
+            // shouldStart and hasEnabledBLEInterface must agree on the same repo.
+            let should = ModelBBLEService.shouldStart(repo: repo)
+            let has = ModelBBLEService.hasEnabledBLEInterface(repo: repo)
+            precondition(should == has, "shouldStart and hasEnabledBLEInterface disagree")
+            return should
+        }
 
-        ModelBBLEService.recordUserOptIn(in: defaults)
-        XCTAssertTrue(ModelBBLEService.isUserOptedIn(in: defaults))
-        XCTAssertTrue(ModelBBLEService.shouldStart(in: defaults))
+        // No interfaces → not started.
+        XCTAssertFalse(gate())
 
-        ModelBBLEService.clearUserOptIn(in: defaults)
-        XCTAssertFalse(ModelBBLEService.isUserOptedIn(in: defaults))
-        XCTAssertFalse(ModelBBLEService.shouldStart(in: defaults))
+        // A non-BLE interface alone must not start the BLE host.
+        let server = TcpCommunityServer.defaultServer
+        repo.addInterface(InterfaceEntity(
+            name: server.name,
+            type: .tcpClient,
+            config: .tcpClient(TCPClientConfig(
+                targetHost: server.host,
+                targetPort: server.port
+            ))
+        ))
+        XCTAssertFalse(gate())
+
+        // An enabled .ble interface starts the host.
+        let bleId = "test-ble-\(UUID().uuidString)"
+        repo.addInterface(InterfaceEntity(
+            id: bleId,
+            name: "Bluetooth LE",
+            type: .ble,
+            config: .ble(BLEConfig())
+        ))
+        XCTAssertTrue(gate())
+
+        // Disabling that .ble interface stops the gate (presence alone is not enough).
+        repo.toggleInterface(id: bleId, enabled: false)
+        XCTAssertFalse(gate())
+
+        // Re-enabling brings it back.
+        repo.toggleInterface(id: bleId, enabled: true)
+        XCTAssertTrue(gate())
     }
 
     @MainActor

@@ -26,32 +26,19 @@ public final class ModelBBLEService: @unchecked Sendable {
 
     public static let shared = ModelBBLEService()
 
-    static let userOptInKey = "model_b_ble_user_opt_in"
-
-    static var isUserOptedIn: Bool {
-        isUserOptedIn(in: .standard)
+    /// True when the BLE host should start: an enabled `.ble` interface exists in
+    /// the repository. Gated on the interface list (not a standalone consent flag);
+    /// the interface is created via Manage Interfaces (or onboarding in shipping
+    /// builds where BLE is selectable). `repo` is injectable for tests.
+    static func shouldStart(repo: InterfaceRepository = InterfaceRepository()) -> Bool {
+        hasEnabledBLEInterface(repo: repo)
     }
 
-    static func isUserOptedIn(in defaults: UserDefaults) -> Bool {
-        defaults.bool(forKey: userOptInKey)
-    }
-
-    static func recordUserOptIn(in defaults: UserDefaults = .standard) {
-        defaults.set(true, forKey: userOptInKey)
-    }
-
-    static func clearUserOptIn(in defaults: UserDefaults = .standard) {
-        defaults.removeObject(forKey: userOptInKey)
-    }
-
-    /// App-wide Bluetooth authorization is not transport-specific consent. Only the
-    /// explicit onboarding or Settings action may enable the Model B BLE host.
-    static var shouldStart: Bool {
-        shouldStart(in: .standard)
-    }
-
-    static func shouldStart(in defaults: UserDefaults) -> Bool {
-        isUserOptedIn(in: defaults)
+    /// True when any enabled interface in the repository is a BLE interface.
+    /// Reads the same store the rest of the app uses (App Group suite, falling
+    /// back to standard defaults when the App Group container is unavailable).
+    static func hasEnabledBLEInterface(repo: InterfaceRepository = InterfaceRepository()) -> Bool {
+        repo.getEnabledInterfaces().contains { $0.type == .ble }
     }
 
     private init() {}

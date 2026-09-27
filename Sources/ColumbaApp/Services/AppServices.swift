@@ -1857,13 +1857,9 @@ public final class AppServices {
 
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B: CoreBluetooth lives in the app process, but it is optional. Do not
-        // construct the driver (and trigger iOS authorization) unless onboarding or
-        // Settings recorded an explicit transport opt-in.
-        if ModelBBLEService.shouldStart {
-            ModelBBLEService.shared.start(identityHash: identity.hash)
-        } else {
-            DiagLog.log("[BLE] Model B BLE service skipped — no explicit user opt-in")
-        }
+        // construct the driver (and trigger iOS authorization) unless a BLE interface
+        // is configured and enabled (created by onboarding / Manage Interfaces).
+        syncModelBBLEService()
         #endif
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -3197,6 +3193,12 @@ public final class AppServices {
         if BackendPreference.modelB {
             let fresh = InterfaceRepository().getEnabledInterfaces()
             _ = await writePythonConfig(interfaces: fresh)
+            // Bring the app-side CoreBluetooth radio + seam up (or down) to match the
+            // new interface set BEFORE restarting the NE node: the NE's reticulum-swift
+            // BLEInterface drives the radio over that seam, so the seam must be listening
+            // first. A runtime BLE-interface enable would otherwise leave the NE with a
+            // BLEInterface but no radio behind it, so peers could never connect.
+            syncModelBBLEService()
             DiagLog.log("[RNS-HOT] modelB: shared config rewritten (\(fresh.count) interfaces); restarting NE python node")
             let outcome = await restartPythonBackendUnlocked()
             DiagLog.log("[RNS-HOT] modelB: restart outcome=\(outcome)")
@@ -5174,8 +5176,43 @@ public final class AppServices {
     }
 
     /// Whether BLE interface is currently active.
+    /// Model A: the app's Compat `BLEInterface` is non-nil. Model B: the
+    /// app-side CoreBluetooth host (`ModelBBLEService`) is running — the
+    /// NE-owned reticulum-swift `BLEInterface` drives it over the seam, so
+    /// `bleInterface` (Model A only) is never set in Model B.
     public var isBLEActive: Bool {
+        #if COLUMBA_RUNTIME_MODEL_B
+        ModelBBLEService.shared.isRunning
+        #else
         bleInterface != nil
+        #endif
+    }
+    #endif
+
+    #if COLUMBA_RUNTIME_MODEL_B
+    /// Start or stop the app-side CoreBluetooth host to match the configured
+    /// interface list. The NE owns the reticulum-swift `BLEInterface`; this side
+    /// runs the radio + the App-Group seam the NE drives it over, so it must be
+    /// running exactly when a BLE interface is enabled. Called at boot (once the
+    /// start identity is cached) and on every interface Apply (so a runtime
+    /// enable/disable of a BLE interface starts/stops the host without a relaunch).
+    func syncModelBBLEService() {
+        guard let identity = pythonStartIdentity else {
+            DiagLog.log("[BLE] Model B BLE sync skipped — no start identity yet")
+            return
+        }
+        if ModelBBLEService.shouldStart() {
+            if ModelBBLEService.shared.isRunning {
+                return
+            }
+            ModelBBLEService.shared.start(identityHash: identity.hash)
+            DiagLog.log("[BLE] Model B BLE service synced — enabled BLE interface present")
+        } else {
+            if ModelBBLEService.shared.isRunning {
+                ModelBBLEService.shared.stop()
+            }
+            DiagLog.log("[BLE] Model B BLE service synced — no enabled BLE interface")
+        }
     }
     #endif
 

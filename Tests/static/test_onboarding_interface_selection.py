@@ -321,20 +321,31 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertIn("getEnabledInterfaces()", guard)
         self.assertIn(".ble", guard)
 
-    def test_model_b_ble_service_requires_explicit_opt_in(self) -> None:
+    def test_model_b_ble_service_gated_on_enabled_ble_interface(self) -> None:
         service = source(MODEL_B_BLE_SERVICE)
         view_model = source(VIEW_MODEL)
         app_services = source(APP_SERVICES)
         settings = source(SETTINGS_VIEW)
 
-        self.assertIn('userOptInKey = "model_b_ble_user_opt_in"', service)
-        self.assertIn("recordUserOptIn()", view_model)
-        self.assertIn("ModelBBLEService.isUserOptedIn", view_model)
-        self.assertIn("shouldStart(in:", service)
+        # The host is gated on the configured interface list, not on a standalone
+        # consent flag: no opt-in key, no record/clear/isOptedIn API.
+        self.assertNotIn("userOptInKey", service)
+        self.assertNotIn("recordUserOptIn", service)
+        self.assertNotIn("clearUserOptIn", service)
+        self.assertNotIn("isUserOptedIn", service)
+        # shouldStart is derived from an enabled .ble interface in the repository.
+        self.assertIn("shouldStart", service)
+        self.assertIn("hasEnabledBLEInterface", service)
+        self.assertIn("getEnabledInterfaces()", service)
+        self.assertIn(".ble", service)
         self.assertNotIn("CBCentralManager.authorization", service)
-        self.assertIn("ModelBBLEService.recordUserOptIn()", settings)
-        self.assertIn("ModelBBLEService.clearUserOptIn()", settings)
-        self.assertIn('Text("Bluetooth Mesh")', settings)
+        # Onboarding no longer records a BLE opt-in.
+        self.assertNotIn("recordUserOptIn", view_model)
+        self.assertNotIn("ModelBBLEService.isUserOptedIn", view_model)
+        # The standalone "Bluetooth Mesh" toggle is gone.
+        self.assertNotIn('Text("Bluetooth Mesh")', settings)
+        # AppServices still starts the host under a single shouldStart guard, and
+        # shuts it down on shutdown.
         start = "ModelBBLEService.shared.start(identityHash: identity.hash)"
         self.assertEqual(1, app_services.count(start))
         start_offset = app_services.index(start)
