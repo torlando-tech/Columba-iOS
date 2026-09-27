@@ -113,6 +113,7 @@ public final class AppGroupBLEServer: BleEventSink, @unchecked Sendable {
         case let .disconnect(addr):
             driver.radioDisconnect(address: addr)
         case let .send(addr, data):
+            log?("[BLE] server: send addr=\(addr) len=\(data.count)")
             driver.radioSend(address: addr, data: data)
         case .syncExistingConnections:
             driver.radioSyncExistingConnections()

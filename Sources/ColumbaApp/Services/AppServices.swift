@@ -898,6 +898,16 @@ public final class AppServices {
     /// count is 0 — that's useful too: "no peers discovered yet").
     private var lastAuxiliaryKey: String = "<uninitialized>"
 
+    /// Online auxiliary peer ids we've already triggered an announce for.
+    /// A newly-spawned online peer (a fresh BLE bond, an auto-connected
+    /// backbone, …) joins the mesh AFTER the startup announce, so it has
+    /// not yet seen our LXMf/telephony services. The transport's
+    /// `setOnInterfacePeerSpawned` callback is a no-op stub in the Compat
+    /// layer, so the intended re-announce-on-peer-spawn never fires; this
+    /// set is the working replacement - the 2s status poll sees the new
+    /// peer here and fires `autoAnnounce()` once per peer.
+    private var announcedOnlineAuxPeers: Set<String> = []
+
     // MARK: - Telephony link bridge state
     //
     // Maps the Python RNS.Link IDs (bridge-allocated UInt64) to the Compat
@@ -2874,6 +2884,27 @@ public final class AppServices {
         if auxKey != lastAuxiliaryKey {
             DiagLog.log("[RNS] auxiliary interfaces (\(auxiliary.count)): \(auxKey)")
             lastAuxiliaryKey = auxKey
+        }
+        // Re-announce when a new online auxiliary peer spawns (a BLE phone that
+        // bonds mid-session, a fresh auto-connected backbone). The transport's
+        // onInterfacePeerSpawned callback is a no-op stub in the Compat layer,
+        // so without this a peer that joins AFTER the startup announce never
+        // learns our LXMf/telephony services and its link sits as a zombie
+        // ("no real data") - RNS keeps the GATT link up and exchanging the
+        // handshake, but no announces/messages ever flow. The 2s poll is the
+        // working trigger: it sees the new online peer here. Drop a peer from
+        // the set when it goes offline so a reconnect re-announces.
+        let onlineAuxIds = Set(auxiliary.filter(\.online).map(\.id))
+        let newOnlinePeers = onlineAuxIds.subtracting(announcedOnlineAuxPeers)
+        announcedOnlineAuxPeers = onlineAuxIds
+        if !newOnlinePeers.isEmpty {
+            let policy = AutoAnnouncePolicy.current()
+            if policy.masterEnabled, policy.onPeerSpawned {
+                DiagLog.log("[AUTO_ANNOUNCE] new online aux peer(s) \(newOnlinePeers.sorted().joined(separator: ", ")) - firing")
+                await autoAnnounce()
+            } else {
+                DiagLog.log("[AUTO_ANNOUNCE] new online aux peer(s) \(newOnlinePeers.sorted().joined(separator: ", ")) - on-peer-spawn gate off, skipping")
+            }
         }
         for (entityId, status) in byEntity {
             let newState: InterfaceState = status.online ? .connected : .disconnected

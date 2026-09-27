@@ -3016,6 +3016,23 @@ def clear_ble_callbacks() -> None:
     _ble_callbacks.clear()
 
 
+# [BLE-DIAG] File-backed BLE diagnostic channel. RNS.log goes to the unified
+# log (hard to capture on-device), so during diagnosis the driver appends
+# key data-path events to <config_dir>/ble-diag.log, which is pullable via
+# devicectl. No-ops before config_dir is known. Remove after diagnosis.
+def ble_diag(msg: str) -> None:
+    cfg = _state.get("config_dir")
+    if not cfg:
+        return
+    try:
+        import time as _t
+        line = f"[{_t.strftime('%H:%M:%S', _t.localtime())}] {msg}\n"
+        with open(os.path.join(cfg, "ble-diag.log"), "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
 # Smoke-test entry point: register a callable that doubles its arg. The
 # Swift side calls `invokeBLECallbackBoolSync(slot="_test_roundtrip", args=[5])`
 # and asserts the bool return is True. Used by `lxma-test://test-ble-callback-roundtrip`
