@@ -5121,14 +5121,11 @@ public final class AppServices {
     /// `BleConnectionDetails` → `BLEConnectionInfo` here so the dedicated
     /// connections screen renders real peers.
     public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
-        // Model B: the BLE radio + reticulum-swift `BLEInterface` run across the NE
-        // seam, NOT `SwiftBLEBridge` (the Model A Python-path CoreBluetooth
-        // singleton). Query the NE's native peers over the proxy IPC. The Model A
-        // `SwiftBLEBridge` path below only applies when Model B is off.
-        if BackendPreference.modelB {
-            return await backend?.bleConnections() ?? []
-        }
-        guard bleInterface != nil else { return [] }
+        // In both Model A and Model B the real CoreBluetooth radio lives in the
+        // app process (Model B: driven by AppGroupBLEServer over the seam,
+        // Model A: driven by the in-app Python driver).  Read the peer
+        // connection details directly from SwiftBLEBridge.shared rather than
+        // round-tripping to the NE - the NE has no BLE connection data.
         let details = SwiftBLEBridge.shared.getConnectionDetails()
         // Group by identity. When a peer is connected via BOTH central
         // and peripheral roles (each direction opens its own GATT link),
