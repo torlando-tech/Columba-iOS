@@ -1874,7 +1874,18 @@ public final class AppServices {
         // Always copied (regardless of whether BLE is enabled in the
         // current config) so a later restart with BLE-enabled config finds
         // them without an extra deployment step.
-        deployIOSBLEPythonFilesIfPossible(configDir: pyDir)
+        //
+        // Model B: the NE's Python engine reads the App-Group SHARED dir, so
+        // deploy there too (the app-local pyDir above is process-private and the
+        // NE can't see it). Without the shared-dir copy the NE can't `exec()`
+        // IOSBLEInterface.py and the BLE interface never comes up.
+        var deployDirs: [URL] = [pyDir]
+        #if COLUMBA_RUNTIME_MODEL_B
+        if let sharedDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) {
+            deployDirs.append(sharedDir)
+        }
+        #endif
+        deployIOSBLEPythonFilesIfPossible(configDirs: deployDirs)
 
         // Generate the RNS config from user-saved interface entities. The
         // file lands at `<configDir>/config` where Python's
@@ -4649,17 +4660,15 @@ public final class AppServices {
     /// so the files are in place whether or not the current config has BLE
     /// enabled. A subsequent restart with BLE-enabled config then works
     /// without a separate deploy step.
-    private func deployIOSBLEPythonFilesIfPossible(configDir: URL) {
-        let fm = FileManager.default
-        guard let bundleAppDir = Bundle.main.url(forResource: "app", withExtension: nil) else {
+    ///
+    /// `configDirs` may include both the app-local dir and the App-Group shared
+    /// dir (Model B): the NE's Python engine reads the shared dir, so the
+    /// `IOSBLEInterface.py`/`IOSBLEDriver.py` must land there too or RNS can't
+    /// `exec()` them.
+    private func deployIOSBLEPythonFilesIfPossible(configDirs: [URL]) {
+        guard !configDirs.isEmpty,
+              let bundleAppDir = Bundle.main.url(forResource: "app", withExtension: nil) else {
             DiagLog.log("[BLE_DIAG] app/ bundle resource missing — skipping deploy")
-            return
-        }
-        let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
-        do {
-            try fm.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
-        } catch {
-            DiagLog.log("[BLE_DIAG] failed to create interfaces dir: \(error)")
             return
         }
 
@@ -4669,24 +4678,33 @@ public final class AppServices {
             (subdirectory: "rnode", name: "IOSRNodeInterface.py"),
             (subdirectory: "rnode", name: "IOSRNodeDriver.py")
         ]
-        for file in files {
-            let src = bundleAppDir
-                .appendingPathComponent(file.subdirectory, isDirectory: true)
-                .appendingPathComponent(file.name)
-            guard fm.fileExists(atPath: src.path) else {
-                DiagLog.log("[RNS_NATIVE] bundled Python interface missing: \(src.path)")
+        for configDir in configDirs {
+            let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
+            } catch {
+                DiagLog.log("[BLE_DIAG] failed to create interfaces dir: \(error)")
                 continue
             }
-            let name = file.name
-            let dst = interfacesDir.appendingPathComponent(name)
-            if fm.fileExists(atPath: dst.path) {
-                try? fm.removeItem(at: dst)
-            }
-            do {
-                try fm.copyItem(at: src, to: dst)
-                DiagLog.log("[RNS_NATIVE] Deployed \(name) to \(dst.path)")
-            } catch {
-                DiagLog.log("[RNS_NATIVE] Failed to copy \(name): \(error)")
+            for file in files {
+                let src = bundleAppDir
+                    .appendingPathComponent(file.subdirectory, isDirectory: true)
+                    .appendingPathComponent(file.name)
+                guard FileManager.default.fileExists(atPath: src.path) else {
+                    DiagLog.log("[RNS_NATIVE] bundled Python interface missing: \(src.path)")
+                    continue
+                }
+                let name = file.name
+                let dst = interfacesDir.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: dst.path) {
+                    try? FileManager.default.removeItem(at: dst)
+                }
+                do {
+                    try FileManager.default.copyItem(at: src, to: dst)
+                    DiagLog.log("[RNS_NATIVE] Deployed \(name) to \(dst.path)")
+                } catch {
+                    DiagLog.log("[RNS_NATIVE] Failed to copy \(name): \(error)")
+                }
             }
         }
     }

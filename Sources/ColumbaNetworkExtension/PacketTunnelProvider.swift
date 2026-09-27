@@ -164,6 +164,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
         }
 
+        // Model B BLE: route the C-ABI forwarder's app→NE events into the
+        // driver's Python callback slots. Idempotent; the forwarder itself
+        // (NEBLECABIBridge) self-starts when the Python driver issues its first
+        // columba_ble_* command, so only the event-routing hook is wired here.
+        NEPythonBridgeHook.wireToPython()
+
         // Set up dummy tunnel settings (required by NEPacketTunnelProvider)
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
         settings.ipv4Settings = NEIPv4Settings(addresses: ["169.254.1.1"], subnetMasks: ["255.255.255.255"])

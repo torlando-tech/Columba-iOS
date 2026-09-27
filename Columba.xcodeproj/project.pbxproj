@@ -222,7 +222,6 @@
 		697B28367B07702842284116 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
 		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
 		6B53DC3B0EC0F0F6AF49E066 /* BackendPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */; };
-		6DFD1336E74B3E8F8131A97B /* AppGroupBLEDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAGD /* AppGroupBLEDriver.swift */; };
 		71FAB7848D244A6D2FC1628A /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A8D344945F752C18EF2D9E /* AudioManager.swift */; };
 		73B2FC9ECC25BA7B4AFF3D96 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 030380C51B178354F4D4E88F /* ReticulumSwift */; };
 		74FD5AD4D082F479A53DDA93 /* NetworkStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F035 /* NetworkStatusView.swift */; };
@@ -358,6 +357,7 @@
 		E001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE01 /* PacketTunnelProvider.swift */; };
 		E0C2 /* NEPythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC2 /* NEPythonRuntime.swift */; };
 		N0C3 /* NEPythonRNS.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC3 /* NEPythonRNS.swift */; };
+		N0C4 /* NEBLECABIBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC4 /* NEBLECABIBridge.swift */; };
 		E002 /* SharedFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F076 /* SharedFrameQueue.swift */; };
 		E079C55745CBDD622CA51842 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
 		E154CBBB80370FD16B8319CA /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
@@ -370,7 +370,6 @@
 		E63DE54C6FD31D240E66BD5B /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
 		E8CD0AF97B2A2B9FAE29F088 /* PythonRNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E59C40C0DF095105ECF040B /* PythonRNodeBLEBridge.swift */; };
 		EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
-		EAGD /* AppGroupBLEDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAGD /* AppGroupBLEDriver.swift */; };
 		EB373633ECFEC7ED56EF72E4 /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EBCA636D502CF4367E32C7 /* TCPClientWizard.swift */; };
 		EBDS /* BLEDriverSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDS /* BLEDriverSeam.swift */; };
 		EBST /* AppGroupBLESeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBST /* AppGroupBLESeamTransport.swift */; };
@@ -694,7 +693,6 @@
 		F084 /* MonospaceLineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonospaceLineView.swift; sourceTree = "<group>"; };
 		F085 /* ZoomableScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomableScrollView.swift; sourceTree = "<group>"; };
 		F0A5 /* ColumbaModelBApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaModelBApp.entitlements; sourceTree = "<group>"; };
-		FAGD /* AppGroupBLEDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupBLEDriver.swift; sourceTree = "<group>"; };
 		FB2569A3C1BFBFDD77F7E639 /* BackendPreference.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackendPreference.swift; sourceTree = "<group>"; };
 		FBDS /* BLEDriverSeam.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEDriverSeam.swift; sourceTree = "<group>"; };
 		FBDT /* BLESeamDriverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BLESeamDriverTests.swift; sourceTree = "<group>"; };
@@ -703,6 +701,7 @@
 		FE01 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		FEC2 /* NEPythonRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEPythonRuntime.swift; sourceTree = "<group>"; };
 		FEC3 /* NEPythonRNS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEPythonRNS.swift; sourceTree = "<group>"; };
+		FEC4 /* NEBLECABIBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEBLECABIBridge.swift; sourceTree = "<group>"; };
 		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE03 /* ColumbaNetworkExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaNetworkExtension.entitlements; sourceTree = "<group>"; };
 		FF6CE45231CD48906B9C226D /* lucide.ttf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = lucide.ttf; sourceTree = "<group>"; };
@@ -975,6 +974,7 @@
 				FE01 /* PacketTunnelProvider.swift */,
 				FEC2 /* NEPythonRuntime.swift */,
 				FEC3 /* NEPythonRNS.swift */,
+				FEC4 /* NEBLECABIBridge.swift */,
 				FE02 /* Info.plist */,
 				FE03 /* ColumbaNetworkExtension.entitlements */,
 			);
@@ -1111,7 +1111,6 @@
 				FBST /* AppGroupBLESeamTransport.swift */,
 				FBSV /* AppGroupBLEServer.swift */,
 				FBDS /* BLEDriverSeam.swift */,
-				FAGD /* AppGroupBLEDriver.swift */,
 				AGBF /* AppGroupBridgeInterface.swift */,
 				EDLF /* ExtensionDiagLog.swift */,
 				AGPF /* AppGroupPaths.swift */,
@@ -1769,7 +1768,6 @@
 				15D4C7BF2F5EBFB685022ED2 /* BackgroundDeliveryGateView.swift in Sources */,
 				3D759EC171FEA82AD5A804DB /* BackgroundDeliveryPage.swift in Sources */,
 				5C05E5EC2A287FEAD018BB36 /* AppGroupBridgeInterface.swift in Sources */,
-				6DFD1336E74B3E8F8131A97B /* AppGroupBLEDriver.swift in Sources */,
 				895BF78C85D1C5471DA53961 /* AppGroupBLESeamTransport.swift in Sources */,
 				384033BE99794CB11185E99C /* AppGroupBLEServer.swift in Sources */,
 				36AA591CD5DF055FA6124E7D /* BLEDriverSeam.swift in Sources */,
@@ -1809,7 +1807,7 @@
 				EBST /* AppGroupBLESeamTransport.swift in Sources */,
 				EBSV /* AppGroupBLEServer.swift in Sources */,
 				EBDS /* BLEDriverSeam.swift in Sources */,
-				EAGD /* AppGroupBLEDriver.swift in Sources */,
+				N0C4 /* NEBLECABIBridge.swift in Sources */,
 				EDL2B /* ExtensionDiagLog.swift in Sources */,
 				AGP2B /* AppGroupPaths.swift in Sources */,
 				AGB2B /* AppGroupBridgeInterface.swift in Sources */,

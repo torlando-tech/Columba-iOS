@@ -339,6 +339,30 @@ final class NEPythonRNS: @unchecked Sendable {
         return result
     }
 
+    /// Fire-and-forget call into a named rns_bridge function (BLE event
+    /// delivery). The caller (NEBLECABIBridge) only needs the side effect
+    /// (the driver's callback slot firing); the return value is ignored. Logs
+    /// failures so a missing slot or a Python-side raise is visible in
+    /// ext-diag without tearing down the forwarder.
+    func invoke(_ fn: String, kwargs: [String: Any]) {
+        guard NEPythonRuntime.shared.state == .running else {
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): python not running, dropping")
+            return
+        }
+        guard let payload = Self.payload(kwargs: kwargs),
+              let out = NEPythonRuntime.shared.callBridge(fn, payload: payload) else {
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): callBridge returned nil")
+            return
+        }
+        guard let (ok, _, error) = Self.parse(out) else {
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): unparseable reply")
+            return
+        }
+        if !ok {
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn) raised: \(error ?? "(no error)")")
+        }
+    }
+
     // MARK: - Shared config dir (NE-side)
 
     /// The App-Group-shared RNS config dir for the app's current identity.

@@ -2965,6 +2965,51 @@ def _ble_get_callback(slot: str) -> Any:
     return _ble_callbacks.get(slot)
 
 
+def invoke_ble_callback(slot: str, address: str, extra: Any = None, **_kw: Any) -> None:
+    """Deliver a Model B BLE event into the driver's registered callback slot.
+
+    The NE's `NEBLECABIBridge` (the `columba_ble_*` C-ABI forwarder) relays the
+    app's `SwiftBLEBridge` CoreBluetooth events over the App-Group seam and
+    calls this named function through the embedded interpreter (the NE's only
+    Swift→Python channel). We expand `address` + `extra` into the positional
+    args each driver raw-handler expects (see `IOSBLEDriver._raw_on_*`), so the
+    driver fires exactly as it does in the in-app (Model A) Python path.
+
+    `extra` is a JSON dict; byte fields ride as base64 strings (`identity_b64`,
+    `data_b64`) so they survive the JSON serialization.
+    """
+    cb = _ble_callbacks.get(slot)
+    if cb is None:
+        return
+    extra = extra or {}
+    try:
+        import base64 as _b64
+        if slot == "on_device_discovered":
+            cb(address, str(extra.get("name") or ""), int(extra.get("rssi") or 0), list(extra.get("service_uuids") or []))
+        elif slot == "on_device_connected":
+            ident = extra.get("identity_b64")
+            cb(address, _b64.b64decode(ident) if ident else None)
+        elif slot == "on_device_disconnected":
+            cb(address)
+        elif slot == "on_data_received":
+            cb(address, _b64.b64decode(extra.get("data_b64") or ""))
+        elif slot == "on_mtu_negotiated":
+            cb(address, int(extra.get("mtu") or 0))
+        elif slot == "on_identity_received":
+            cb(address, str(extra.get("identity_hex") or ""))
+        elif slot == "on_address_changed":
+            cb(str(extra.get("old_address") or ""), str(extra.get("new_address") or ""), str(extra.get("identity_hash") or ""))
+        elif slot == "on_error":
+            cb(str(extra.get("severity") or "info"), str(extra.get("message") or ""))
+        # on_duplicate_identity_detected: the synchronous bool check is not
+        # round-tripped across the process boundary (it would require blocking
+        # the app's BLE serial queue on a cross-process hop). The driver
+        # resolves identity/rotation via the async on_address_changed path, so
+        # the duplicate slot simply isn't invoked here.
+    except Exception as e:  # noqa: BLE001 — a bad event must not tear down the bridge
+        RNS.log(f"invoke_ble_callback({slot}) raised: {e}", RNS.LOG_ERROR)
+
+
 def clear_ble_callbacks() -> None:
     """Drop every registered BLE callback. Called from `stop()` / restart so
     we don't keep references to closures bound to a torn-down driver."""
