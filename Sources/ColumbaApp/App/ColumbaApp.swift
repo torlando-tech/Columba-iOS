@@ -118,13 +118,14 @@ struct ColumbaApp: App {
             SwiftBLEBridge.shared.restoreAtLaunch()
         }
         #elseif COLUMBA_RUNTIME_MODEL_B
-        if ModelBRNodeService.rnodeBackgroundRestoreEnabled {
-            // GATED (A9, RISK 5): re-materialize the RNode `BLETransport` central early so
-            // iOS honors CoreBluetooth state restoration / a background relaunch-for-BLE for
-            // a configured RNode. OFF by default — flip `rnodeBackgroundRestoreEnabled`
-            // after verifying on a physical device that the background wake is serviced and
-            // that the mesh + RNode centrals don't collide on the shared restore identifier.
-            ModelBRNodeService.shared.restore()
+        if ModelBRNodeSessionService.rnodeBackgroundRestoreEnabled {
+            // GATED (A9, RISK 5): re-arm the RNode session seam early so iOS
+            // honors CoreBluetooth state restoration / a background
+            // relaunch-for-BLE for a configured RNode. OFF by default - flip
+            // `rnodeBackgroundRestoreEnabled` after verifying on a physical
+            // device that the background wake is serviced and that the mesh +
+            // RNode centrals don't collide on the shared restore identifier.
+            ModelBRNodeSessionService.shared.restore()
         }
         #endif
         #endif

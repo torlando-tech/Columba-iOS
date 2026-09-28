@@ -72,6 +72,15 @@ public enum SharedDefaultsConstants {
     /// app→NE RNode-seam queue (`rnodeSeamA2N`). The NE's seam transport observes it.
     public static let rnodeSeamA2NNotificationName = "network.columba.rnodeSeam.a2n"
 
+    /// Darwin notification posted when an `RNodeSessionSeamMessage` is written to the
+    /// NE→app RNode-session-seam queue (`rnodeSessionSeamN2A`). The app's
+    /// `AppGroupRNodeSessionServer` observes it.
+    public static let rnodeSessionSeamN2ANotificationName = "network.columba.rnodeSessionSeam.n2a"
+    /// Darwin notification posted when an `RNodeSessionSeamMessage` is written to the
+    /// app→NE RNode-session-seam queue (`rnodeSessionSeamA2N`). The NE's
+    /// `NERNodeCABIBridge` observes it.
+    public static let rnodeSessionSeamA2NNotificationName = "network.columba.rnodeSessionSeam.a2n"
+
     /// Shared UserDefaults key holding the JSON-encoded interface
     /// configuration array (full `InterfaceEntity` objects). Both the
     /// app's `InterfaceRepository` and the extension's
@@ -160,6 +169,15 @@ public enum SharedFrameQueueName {
     public static let rnodeSeamN2A = "rnode_seam_n2a"
     /// app→NE: RNode transport events (dataReceived / stateChanged). NE drains.
     public static let rnodeSeamA2N = "rnode_seam_a2n"
+
+    // Model B Python RNode session seam (dedicated queues, separate from the
+    // reticulum-swift RNode seam above). Carries `RNodeSessionSeamMessage` for the
+    // Python `IOSRNodeDriver` (open / write / close / setOnline + data/state/failure
+    // events). Kept on its own queues so the two wire formats never intermix.
+    /// NE→app: session commands (open / write / close / setOnline). App drains.
+    public static let rnodeSessionSeamN2A = "rnode_session_seam_n2a"
+    /// app→NE: session events (stateChanged / dataReceived / writeResult / failureChanged). NE drains.
+    public static let rnodeSessionSeamA2N = "rnode_session_seam_a2n"
 }
 
 /// A frame read from the shared queue, tagged with its source interface.

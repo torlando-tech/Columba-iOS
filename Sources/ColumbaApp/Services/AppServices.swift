@@ -4865,21 +4865,28 @@ public final class AppServices {
     private func startRNodeInterfaceUnlocked(config rnodeConfig: RNodeConfig, name: String) async throws {
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B: the RNode protocol stack (RNodeInterface + KISS framing) runs in the
-        // Network Extension — the app hosts ONLY the CoreBluetooth NUS radio. Start the
-        // app-side seam server FIRST (so it's listening when the NE responds), then
-        // persist the radio config for the NE, which (re)builds its RNodeInterface on
-        // the change notification and drives connect/send/disconnect over the seam.
+        // Network Extension's embedded Python RNS node. The app hosts ONLY the
+        // CoreBluetooth NUS radio (the shipping `PythonRNodeBLESessionRegistry`). The
+        // NE's Python `IOSRNodeInterface` (emitted in the config as
+        // `type = IOSRNodeInterface`) drives the radio across the App-Group
+        // RNode-session seam via the `columba_rnode_session_*` C-ABI the
+        // `NERNodeCABIBridge` forwards from the NE. Start the app-side session
+        // server FIRST (so it is listening when the NE's driver issues `open`),
+        // then persist the radio config for the NE (it (re)builds its
+        // IOSRNodeInterface on the change notification and drives open/read/write/
+        // close over the seam).
+        //
         // UI-facing Compat interface object; its `.state` is driven by the app-side
-        // radio's BLE link state via the onLinkStateChange callback below (the NE owns
-        // the authoritative RNodeInterface, but the BLE link state is a good proxy and
-        // the app has it directly).
+        // radio's BLE link state via the onLinkStateChange callback below (the NE
+        // owns the authoritative RNodeInterface, but the BLE link state is a good
+        // proxy and the app has it directly).
         let uiInterface = RNodeInterface(config: rnodeConfig, name: name)
         uiInterface.state = .connecting
         self.rnodeInterface = uiInterface
 
-        // Watchdog: if the link never reports connected/failed — the NE never sent
-        // `.connect` (config read-after-write race exhausted), or the radio scans
-        // forever on a name mismatch — surface a timeout instead of a perpetual
+        // Watchdog: if the link never reports connected/failed - the NE's Python
+        // driver never issued `open` (config not reloaded), or the radio scans
+        // forever on a name mismatch - surface a timeout instead of a perpetual
         // "Connecting…". Cancelled in applyRNodeLinkState / stopRNodeInterface.
         rnodeConnectWatchdog?.cancel()
         rnodeConnectWatchdog = Task { @MainActor [weak self] in
@@ -4889,22 +4896,18 @@ public final class AppServices {
             guard !Task.isCancelled else { return }
             guard let self, let iface = self.rnodeInterface, iface.state == .connecting else { return }
             iface.state = .connectionFailed(
-                underlying: "RNode didn't connect — check Bluetooth is on and Background Delivery is enabled, then try again"
+                underlying: "RNode didn't connect. Check Bluetooth is on and Background Delivery is enabled, then try again"
             )
             NotificationObserver.postNetworkStateChanged()
         }
 
-        guard ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState, reason in
+        ModelBRNodeSessionService.shared.start(onLinkStateChange: { [weak self] linkState, reason in
             self?.applyRNodeLinkState(linkState, reason)
-        }) else {
-            // The failure callback is dispatched onto the next main-queue turn.
-            // Stop the watchdog synchronously so it cannot later replace the
-            // actionable restore-identifier failure with a generic timeout.
-            rnodeConnectWatchdog?.cancel()
-            rnodeConnectWatchdog = nil
-            return
-        }
+        })
 
+        // Persist the radio config so the NE (re)builds its Python IOSRNodeInterface
+        // with the right device name / radio parameters. `saveToAppGroup` posts the
+        // change notification the NE's config observer reacts to.
         let seamConfig = RNodeSeamConfig(
             deviceName: rnodeConfig.deviceName,
             frequency: rnodeConfig.frequency,
@@ -4915,9 +4918,9 @@ public final class AppServices {
             stAlock: rnodeConfig.stAlock,
             ltAlock: rnodeConfig.ltAlock
         )
-        seamConfig.saveToAppGroup()  // posts rnodeConfigChanged → NE (re)builds its RNodeInterface
+        seamConfig.saveToAppGroup()
 
-        logger.info("RNodeInterface (Model B) started: \(name)")
+        logger.info("RNodeInterface (Model B, Python driver) started: \(name)")
         #elseif COLUMBA_RUNTIME_PYTHON
         // Python owns the RNS interface + KISS/RNode protocol. The custom
         // IOSRNodeInterface loaded during backend startup drives the native
@@ -4959,12 +4962,13 @@ public final class AppServices {
         #if COLUMBA_RUNTIME_MODEL_B
         rnodeConnectWatchdog?.cancel()
         rnodeConnectWatchdog = nil
-        // Clear the NE's RNode config (→ it tears down its RNodeInterface) and stop the
-        // app-side radio server.
+        // Clear the NE's RNode config (→ it tears down its IOSRNodeInterface) and
+        // stop the app-side session server (which closes the live CoreBluetooth
+        // session it owns).
         RNodeSeamConfig.clearFromAppGroup()
-        ModelBRNodeService.shared.stop()
+        ModelBRNodeSessionService.shared.stop()
         rnodeInterface = nil
-        logger.info("RNodeInterface (Model B) stopped")
+        logger.info("RNodeInterface (Model B, Python driver) stopped")
         #elseif COLUMBA_RUNTIME_PYTHON
         PythonRNodeBLEBridge.shared.setStateHandler(nil)
         if closeAllPythonSessions {
@@ -4984,9 +4988,10 @@ public final class AppServices {
 
     #if COLUMBA_RUNTIME_MODEL_B
     /// Reflect the app-side RNode radio's BLE link state onto the UI-facing Compat
-    /// interface object + refresh the UI. The NE owns the authoritative `RNodeInterface`;
-    /// the BLE link state is a good-enough proxy for the Settings "connected" indicator.
-    private func applyRNodeLinkState(_ linkState: RNodeLinkState, _ reason: String?) {
+    /// interface object + refresh the UI. The NE's Python driver owns the
+    /// authoritative `IOSRNodeInterface`; the CoreBluetooth link state is a
+    /// good-enough proxy for the Settings "connected" indicator.
+    private func applyRNodeLinkState(_ linkState: RNodeSessionLinkState, _ reason: String?) {
         let mapped: InterfaceState
         switch linkState {
         case .disconnected: mapped = .disconnected
