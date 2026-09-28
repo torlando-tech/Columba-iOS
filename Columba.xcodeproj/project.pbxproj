@@ -195,7 +195,8 @@ RSTP_APP /* AppGroupRNodeSessionTransport.swift in Sources */ = {isa = PBXBuildF
 RSTP_NE  /* AppGroupRNodeSessionTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = RSTP /* AppGroupRNodeSessionTransport.swift */; };
 RSNS_APP /* AppGroupRNodeSessionServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = RSNS /* AppGroupRNodeSessionServer.swift */; };
 RSNS_NE  /* AppGroupRNodeSessionServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = RSNS /* AppGroupRNodeSessionServer.swift */; };
-NRRF_NE  /* NERNodeCABIBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = NRRF /* NERNodeCABIBridge.swift */; };
+NRRB_NE /* PythonRNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E59C40C0DF095105ECF040B /* PythonRNodeBLEBridge.swift */; };
+NDDI_NE /* NERNodeDiagLogShim.swift in Sources */ = {isa = PBXBuildFile; fileRef = NDDI /* NERNodeDiagLogShim.swift */; };
 PNSD_APP /* PythonRNodeSessionDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = PNSD /* PythonRNodeSessionDriver.swift */; };
 MRSS_APP /* ModelBRNodeSessionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = MRSS /* ModelBRNodeSessionService.swift */; };
 		469A907E6FC79CED8F8B5F8D /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* MapView.swift */; platformFilter = ios; };
@@ -704,6 +705,7 @@ MRSS_APP /* ModelBRNodeSessionService.swift in Sources */ = {isa = PBXBuildFile;
 		RSTP /* AppGroupRNodeSessionTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupRNodeSessionTransport.swift; sourceTree = "<group>"; };
 		RSNS /* AppGroupRNodeSessionServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupRNodeSessionServer.swift; sourceTree = "<group>"; };
 		NRRF /* NERNodeCABIBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NERNodeCABIBridge.swift; sourceTree = "<group>"; };
+		NDDI /* NERNodeDiagLogShim.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NERNodeDiagLogShim.swift; sourceTree = "<group>"; };
 		PNSD /* PythonRNodeSessionDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonRNodeSessionDriver.swift; sourceTree = "<group>"; };
 		MRSS /* ModelBRNodeSessionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelBRNodeSessionService.swift; sourceTree = "<group>"; };
 		FE02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -979,7 +981,8 @@ MRSS_APP /* ModelBRNodeSessionService.swift in Sources */ = {isa = PBXBuildFile;
 				FE01 /* PacketTunnelProvider.swift */,
 				FEC2 /* NEPythonRuntime.swift */,
 				FEC3 /* NEPythonRNS.swift */,
-				FEC4 /* NEBLECABIBridge.swift */,				NRRF /* NERNodeCABIBridge.swift */,
+				FEC4 /* NEBLECABIBridge.swift */,	NRRF /* NERNodeCABIBridge.swift */,
+				NDDI /* NERNodeDiagLogShim.swift */,
 
 				FE02 /* Info.plist */,
 				FE03 /* ColumbaNetworkExtension.entitlements */,
@@ -1816,7 +1819,8 @@ MRSS_APP /* ModelBRNodeSessionService.swift in Sources */ = {isa = PBXBuildFile;
 				EBST /* AppGroupBLESeamTransport.swift in Sources */,
 				EBSV /* AppGroupBLEServer.swift in Sources */,
 				EBDS /* BLEDriverSeam.swift in Sources */,
-				N0C4 /* NEBLECABIBridge.swift in Sources */,				NRRF_NE /* NERNodeCABIBridge.swift in Sources */,
+				N0C4 /* NEBLECABIBridge.swift in Sources */,	NRRB_NE /* PythonRNodeBLEBridge.swift in Sources */,
+				NDDI_NE /* NERNodeDiagLogShim.swift in Sources */,
 
 				EDL2B /* ExtensionDiagLog.swift in Sources */,
 				AGP2B /* AppGroupPaths.swift in Sources */,
@@ -1824,10 +1828,7 @@ MRSS_APP /* ModelBRNodeSessionService.swift in Sources */ = {isa = PBXBuildFile;
 				PXI2B /* ProxyIPC.swift in Sources */,
 				NMF2B /* NomadNetFetch.swift in Sources */,
 				OBQ2B /* OutboxQueue.swift in Sources */,
-				45C9E9AFAC34D61BFB3797AA /* RNodeSeam.swift in Sources */,				RSES_NE /* RNodeSessionSeam.swift in Sources */,
-				RSTP_NE /* AppGroupRNodeSessionTransport.swift in Sources */,
-				RSNS_NE /* AppGroupRNodeSessionServer.swift in Sources */,
-				NRRF_NE /* NERNodeCABIBridge.swift in Sources */,
+				45C9E9AFAC34D61BFB3797AA /* RNodeSeam.swift in Sources */,
 
 				00C7D4D86301E2E6D027DE0A /* PropagationSeam.swift in Sources */,
 			);
@@ -2236,6 +2237,7 @@ MRSS_APP /* ModelBRNodeSessionService.swift in Sources */ = {isa = PBXBuildFile;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RNODE_NO_BLE_RESTORE";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/ColumbaNetworkExtension/ColumbaNEPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -2263,6 +2265,7 @@ MRSS_APP /* ModelBRNodeSessionService.swift in Sources */ = {isa = PBXBuildFile;
 				PRODUCT_BUNDLE_IDENTIFIER = network.columba.Columba.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) COLUMBA_RNODE_NO_BLE_RESTORE";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/ColumbaNetworkExtension/ColumbaNEPython-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

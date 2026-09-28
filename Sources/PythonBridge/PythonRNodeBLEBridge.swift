@@ -117,11 +117,23 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
             qos: .userInitiated
         )
         super.init()
+        // The CBCentralManagerOptionRestoreIdentifierKey path requires the app-level
+        // bluetooth-central background entitlement. A Network Extension does not have
+        // it, and CoreBluetooth trips an internal NSAssert (SIGABRT) the moment the
+        // central is created with that option in-process. The NE never restores
+        // background state here (no centralManagerWillRestoreState exists anywhere),
+        // so under COLUMBA_RNODE_NO_BLE_RESTORE (set on the NE target) we create the
+        // central with no options - the exact form verified to reach .poweredOn in
+        // the NE by the on-device GATT probe.
+        #if COLUMBA_RNODE_NO_BLE_RESTORE
+        central = CBCentralManager(delegate: self, queue: queue)
+        #else
         central = CBCentralManager(
             delegate: self,
             queue: queue,
             options: [CBCentralManagerOptionRestoreIdentifierKey: restorationIdentifier]
         )
+        #endif
     }
 
     func connect() {
