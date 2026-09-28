@@ -171,10 +171,6 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
                 completion(PythonRNodeNativeBLEError.notConnected)
                 return
             }
-            // [RNODE-RX-DIAG] Temporary: confirm the app actually pushes KISS bytes
-            // to the device (TX direction). If this never fires, the detect command
-            // never reaches the RNode so it can't respond (rx=0).
-            DiagLog.log("[RNODE-TX-DIAG] send \(data.count)B type=\(type == .withoutResponse ? "w/oResp" : "withResp") mtu=\(max(20, peripheral.maximumWriteValueLength(for: type)))")
             let mtu = max(20, peripheral.maximumWriteValueLength(for: type))
             var offset = 0
             while offset < data.count {
@@ -206,13 +202,6 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
         rssi RSSI: NSNumber
     ) {
         let matches = isTarget(peripheral)
-        // [RNODE-GATT-DIAG] Temporary: log a match, or any RNode-named peripheral
-        // (to confirm whether the target is advertising). Ambient devices are
-        // omitted to keep the log usable.
-        let isRNodeName = (peripheral.name ?? "").hasPrefix("RNode")
-        if matches || isRNodeName {
-            DiagLog.log("[RNODE-GATT-DIAG] didDiscover name=\(peripheral.name ?? "nil") id=\(peripheral.identifier.uuidString) matches=\(matches) (want '\(deviceName)' id=\(deviceIdentifier?.uuidString ?? "nil"))")
-        }
         guard matches else { return }
         central.stopScan()
         self.peripheral = peripheral
@@ -221,7 +210,6 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        DiagLog.log("[RNODE-GATT-DIAG] didConnect name=\(peripheral.name ?? "nil") id=\(peripheral.identifier.uuidString)")
         guard isTarget(peripheral) else {
             central.cancelPeripheralConnection(peripheral)
             return
@@ -269,9 +257,6 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        // [RNODE-GATT-DIAG] Temporary: pinpoint where the GATT connect sequence
-        // fails. The device connects but sometimes never reaches "connected".
-        DiagLog.log("[RNODE-GATT-DIAG] didDiscoverServices error=\(error?.localizedDescription ?? "nil") services=\(peripheral.services?.map { $0.uuid.description } ?? [])")
         if let error { fail(error); return }
         guard let service = peripheral.services?.first(where: { $0.uuid == Self.nusService }) else {
             fail(PythonRNodeNativeBLEError.serviceMissing)
@@ -285,9 +270,6 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
-        // [RNODE-GATT-DIAG] Temporary: confirm the TX/RX characteristics were found
-        // and what properties they expose (write vs writeWithoutResponse vs notify).
-        DiagLog.log("[RNODE-GATT-DIAG] didDiscoverChars service=\(service.uuid.description) error=\(error?.localizedDescription ?? "nil") chars=\(service.characteristics?.map { "\($0.uuid.description)=0x\(String($0.properties.rawValue, radix: 16))" } ?? [])")
         if let error { fail(error); return }
         txCharacteristic = service.characteristics?.first(where: { $0.uuid == Self.nusTX })
         rxCharacteristic = service.characteristics?.first(where: { $0.uuid == Self.nusRX })
@@ -303,10 +285,6 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
         didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        // [RNODE-GATT-DIAG] Temporary: confirm the notify-subscribe (state=2 gate)
-        // actually completes. If didDiscoverChars fired but this never does, the
-        // CCCD write is the thing that hangs (or the device rejects it).
-        DiagLog.log("[RNODE-GATT-DIAG] didUpdateNotif char=\(characteristic.uuid.description) notifying=\(characteristic.isNotifying) error=\(error?.localizedDescription ?? "nil") rxPresent=\(rxCharacteristic != nil)")
         if let error { fail(error); return }
         guard characteristic.uuid == Self.nusTX,
               characteristic.isNotifying,
@@ -327,8 +305,6 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
     private func beginConnection() {
         guard central.state == .poweredOn else { pendingConnect = true; return }
         let connected = central.retrieveConnectedPeripherals(withServices: [Self.nusService])
-        // [RNODE-GATT-DIAG] Temporary: which connect path is taken + CB cache state.
-        DiagLog.log("[RNODE-GATT-DIAG] beginConnection wantName='\(deviceName)' wantId=\(deviceIdentifier?.uuidString ?? "nil") connectedNUS=\(connected.compactMap { $0.name })")
         // Reuse ONLY a link that is already connected. A cached-but-not-connected
         // peripheral (from a prior session, via target_device_identifier) is stale:
         // central.connect() on it hangs until timeout because the peripheral is
@@ -611,16 +587,7 @@ public final class PythonRNodeBLEBridge: @unchecked Sendable {
             return
         }
         inbound.append(data)
-        let rxName = deviceName
-        let rxCount = inbound.count
-        let rxLen = data.count
         lock.unlock()
-        // [RNODE-RX-DIAG] confirm GATT notifications are actually landing in the
-        // app radio (the first KISS hop from the device). If this never fires after
-        // the device connects, the device is not sending KISS (environment); if it
-        // does and the interface still never goes online, the bug is downstream
-        // (server poller / NE seam / Python read). Temporary - remove once resolved.
-        DiagLog.log("[RNODE-RX-DIAG] receive \(rxLen)B for '\(rxName ?? "?")' (inbound=\(rxCount))")
     }
 
     private func update(

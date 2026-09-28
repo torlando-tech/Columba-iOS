@@ -170,10 +170,17 @@ final class NERNodeCABIBridge: @unchecked Sendable {
     func state(handle: Int32) -> Int32 {
         lock.lock(); defer { lock.unlock() }
         guard let s = sessions[handle] else { return Int32(RNodeSessionLinkState.disconnected.rawValue) }
-        // Mirror the app's `publishedStateLocked`: a CONNECTED GATT link that
-        // RNS has not yet marked online reports CONNECTING, so the Python
-        // driver's poll waits until the interface is actually usable.
-        if s.state == .connected && !s.online { return Int32(RNodeSessionLinkState.connecting.rawValue) }
+        // Report the raw GATT link state to the Python driver's connect poll.
+        // Do NOT gate on `s.online` here: the RNode driver's `connect()` blocks
+        // until state()==CONNECTED, then the interface runs the KISS detect +
+        // configure handshake, and only THEN calls setOnline(true). Gating
+        // connected behind online would deadlock that loop (connect() never
+        // returns, so _configure_device never runs, so online is never set, so
+        // state never reports connected) - the session would sit at CONNECTING
+        // until the driver's CONNECT_TIMEOUT and close. RNode needs the GATT
+        // link usable before it is "online"; the online flag is the result of
+        // the handshake, not a precondition. (The BLE publishedStateLocked gate
+        // works for BLE because BLE bonding IS the usable state; RNode is not.)
         return Int32(s.state.rawValue)
     }
 

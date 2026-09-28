@@ -235,11 +235,6 @@ public final class AppGroupRNodeSessionServer: @unchecked Sendable {
             // Inbound bytes?
             let data = driver.read(radioHandle: snap.handle)
             if !data.isEmpty {
-                // [RNODE-RX-DIAG] confirm the app-side poller drained the radio's
-                // rx buffer and is forwarding it NE-ward over the seam. If the
-                // registry's [RNODE-RX-DIAG] receive fires but this one doesn't,
-                // the bug is in the poller/driver.read hop. Temporary.
-                log("[RNODE-RX-DIAG] poller forwarding \(data.count)B for '\(key.name)' (handle=\(snap.handle))")
                 transport.send(.dataReceived(deviceName: key.name, deviceIdentifier: key.id, data: data))
             }
         }
