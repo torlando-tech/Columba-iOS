@@ -1870,6 +1870,7 @@ public final class AppServices {
         // construct the driver (and trigger iOS authorization) unless a BLE interface
         // is configured and enabled (created by onboarding / Manage Interfaces).
         syncModelBBLEService()
+        syncModelBRNodeSessionService()
         #endif
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -3241,6 +3242,10 @@ public final class AppServices {
             // first. A runtime BLE-interface enable would otherwise leave the NE with a
             // BLEInterface but no radio behind it, so peers could never connect.
             syncModelBBLEService()
+            // Same for the RNode seam: the NE's Python IOSRNodeInterface drives the
+            // CoreBluetooth NUS radio over the session seam, so it must be listening
+            // before the NE node (re)starts and issues `open`.
+            syncModelBRNodeSessionService()
             DiagLog.log("[RNS-HOT] modelB: shared config rewritten (\(fresh.count) interfaces); restarting NE python node")
             let outcome = await restartPythonBackendUnlocked()
             DiagLog.log("[RNS-HOT] modelB: restart outcome=\(outcome)")
@@ -5286,6 +5291,32 @@ public final class AppServices {
                 ModelBBLEService.shared.stop()
             }
             DiagLog.log("[BLE] Model B BLE service synced — no enabled BLE interface")
+        }
+    }
+
+    /// Bring the app-side Model B RNode session seam (the CoreBluetooth NUS relay
+    /// behind the NE's Python `IOSRNodeInterface`) up or down to match the current
+    /// interface set. Mirrors `syncModelBBLEService`: a `.rnode` interface's app-side
+    /// radio is optional, so only start the seam when one is configured + enabled.
+    /// This is what keeps the RNode session server listening across a
+    /// `restartPythonBackend` (which tears every Model B service down via
+    /// `shutdownUnlocked`/`stopRNodeInterfaceUnlocked` and then re-inits) - without
+    /// it, the NE's RNode interface comes up after a restart but its `open` has no
+    /// app-side listener, so the radio never connects.
+    func syncModelBRNodeSessionService() {
+        if ModelBRNodeSessionService.shouldStart() {
+            if ModelBRNodeSessionService.shared.isRunning {
+                return
+            }
+            ModelBRNodeSessionService.shared.start(onLinkStateChange: { [weak self] linkState, reason in
+                self?.applyRNodeLinkState(linkState, reason)
+            })
+            DiagLog.log("[RNODE] Model B RNode session service synced; enabled RNode interface present")
+        } else {
+            if ModelBRNodeSessionService.shared.isRunning {
+                ModelBRNodeSessionService.shared.stop()
+            }
+            DiagLog.log("[RNODE] Model B RNode session service synced; no enabled RNode interface")
         }
     }
     #endif
