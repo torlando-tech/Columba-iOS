@@ -2796,6 +2796,19 @@ public final class AppServices {
         if snapshotKey != lastInterfaceSnapshotKey {
             DiagLog.log("[RNS] interfaces=\(snapshotKey)")
             lastInterfaceSnapshotKey = snapshotKey
+            // Model B: the NE-owned interface badges (RNode / BLE / per-relay TCP) are
+            // EVENT-DRIVEN - InterfaceManagementViewModel.refreshNEBackedStatus runs
+            // only on networkStateChangedInApp, never on a timer. A bare RNS interface
+            // online-flip (e.g. the RNode finishing its KISS handshake) posts no push on
+            // its own, so the badge would stay stale ("connecting") even though this
+            // snapshot already reports the interface online. Post on every real
+            // online-state change so the badge re-fetches. Gated to Model B: Model A
+            // drives its badges straight off the Compat stubs / native registry this same
+            // call updates, and adding a push there would recreate the ~10/s app<->NE IPC
+            // flood the event-driven design removed.
+            if BackendPreference.modelB {
+                NotificationObserver.postNetworkStateChanged()
+            }
         }
         // The config section name PythonConfigWriter wrote is the matching
         // key — it's stable across the bridge and unique per entity.
