@@ -70,8 +70,8 @@ PYSERIAL_SPEC="pyserial>=3.5"
 # Pure-Python, zero runtime deps.
 # Pinned to a commit (not a bare repo URL or a moving branch) so CI and dev
 # builds are reproducible — bump deliberately. The local checkout is 49 commits
-# past the v0.2.2 tag, so a tag pin would regress; this is origin/main@07d9413.
-BLE_RETICULUM_REF="${BLE_RETICULUM_REF:-07d941304c9a1dc3a8e58087b3b974ff3d229e56}"
+# past the v0.2.2 tag, so a tag pin would regress; this is origin/main@ed164a8.
+BLE_RETICULUM_REF="${BLE_RETICULUM_REF:-ed164a8d5d9eea6e73d16d6c8459bc7ff09e2c0b}"
 if [ -n "${BLE_RETICULUM_LOCAL:-}" ]; then
     echo "==> BLE_RETICULUM_LOCAL set — using local ble-reticulum checkout: $BLE_RETICULUM_LOCAL"
     BLE_RETICULUM_SPEC="$BLE_RETICULUM_LOCAL"
