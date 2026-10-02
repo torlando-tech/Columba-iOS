@@ -31,7 +31,10 @@ ROOT = Path(__file__).resolve().parents[2]
 APPSERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 COLUMBA_APP = ROOT / "Sources/ColumbaApp/App/ColumbaApp.swift"
 MESSAGE_BUBBLE = ROOT / "Sources/ColumbaApp/Views/Messaging/MessageBubble.swift"
-SEAM_WIRE = ROOT / "Sources/Shared/AppGroupRNodeSeamWire.swift"
+# The RNode seam wire moved into RNodeSeam.swift when the RNode driver moved
+# into the NE (AppGroupRNodeSeamWire.swift was deleted); the NO-PII
+# diagnosticLabel contract now guards the live seam file.
+SEAM_WIRE = ROOT / "Sources/Shared/RNodeSeam.swift"
 RNODE_SEAM = ROOT / "Sources/Shared/RNodeSeam.swift"
 
 # Every .swift file compiled into a shipping target (Sources/ is the

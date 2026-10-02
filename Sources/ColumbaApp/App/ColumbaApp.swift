@@ -209,7 +209,7 @@ struct ColumbaApp: App {
                     let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
                     let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
                     let content = components?.queryItems?.first(where: { $0.name == "content" })?.value ?? "node contract test"
-                    DiagLog.log("[TEST-NODE-SEND] to=\(to.prefix(8))… content=\(content.prefix(24))")
+                    DiagLog.log("[TEST-NODE-SEND] to=\(to.prefix(8))… content_bytes=\(content.utf8.count)")
                     guard !to.isEmpty else {
                         DiagLog.log("[TEST-NODE-SEND] missing/empty 'to'")
                         return
