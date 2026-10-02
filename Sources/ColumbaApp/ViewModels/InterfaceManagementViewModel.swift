@@ -627,8 +627,20 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         }
 
         logger.info("Applying interface changes live (hot add/remove)")
-        await appServices.applyInterfaceChanges()
-        showSuccess("Interface changes applied")
+        let outcome = await appServices.applyInterfaceChanges()
+        // Report the HONEST outcome rather than assuming success: a change that
+        // is only persisted (AutoInterface blocks a same-process restart), or a
+        // failed config write / restart, must not be announced as "applied".
+        switch outcome {
+        case .applied:
+            showSuccess("Interface changes applied")
+        case .persistedRequiresRelaunch:
+            showSuccess("Saved - applies on the next app relaunch")
+        case .configWriteFailed:
+            showError("Changes could not be saved (config write failed); the running node is unchanged")
+        case .restartFailed:
+            showError("Interface change was saved but the node restart failed; check the connection")
+        }
     }
 
     // MARK: - Status Observation

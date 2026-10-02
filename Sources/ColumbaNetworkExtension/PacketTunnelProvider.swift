@@ -275,13 +275,27 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// store + the in-NE engine. Returns `nil` when it can't be built (no
     /// App-Group store) — the caller replies a typed failure in that case.
     ///
-    /// SINGLE RUNTIME: the bounded `[0xF5 0x02]` control channel is a SEPARATE
-    /// seam from the legacy `ProxyRequest` IPC (which the app's
-    /// `ProxyRnsBackend` uses, and which `dispatchPython` routes to
-    /// `NEPythonRNS`). Until the Python RNS engine gets its own `NodeEngine`
-    /// conformance, the owner runs the engine-agnostic fail-closed `StubEngine`
-    /// so the control channel stays reachable + honest rather than referencing
-    /// the removed C++ node.
+    /// SINGLE RUNTIME + NEW CONTROL CHANNEL: the bounded `[0xF5 0x02]`
+    /// node-service control channel is a SEPARATE, parallel architecture from
+    /// the legacy `ProxyRequest` IPC (which the app's `ProxyRnsBackend` uses,
+    /// and which `dispatchPython` routes to `NEPythonRNS`). The PRODUCTION
+    /// message send goes through that `ProxyRequest` path - it is NOT routed
+    /// through this node owner. This owner is the node-contract "first vertical
+    /// slice" (contracts 6/6.5/15): a separate durable store + versioned
+    /// control framing with a pluggable engine, being brought up incrementally.
+    ///
+    /// Until `NEPythonRNS` gets its own `NodeEngine` conformance (a separate
+    /// increment - the engine adapter is a deliberate black box that must not
+    /// redefine app behavior, and wiring it is a one-line change here), the
+    /// owner runs the engine-agnostic fail-closed `StubEngine`. That is the
+    /// correct, honest state for the slice: the channel is reachable, the
+    /// durable store + admission ledger work, and a command is COMMITTED as a
+    /// typed rejection at the capability gate rather than referencing the
+    /// removed C++ node. The DEBUG `test-node-send` deep link is the device
+    /// plumbing test for THIS channel; while it runs on `StubEngine` it is
+    /// EXPECTED to log a committed rejection - that is the signal the
+    /// framing/store/admission path works end-to-end up to the engine gate,
+    /// not a regression in the (separate, working) production send path.
     private func nodeOwnerIfNeeded() -> NodeOwner? {
         if let existing = nodeOwner { return existing }
         guard let storeURL = AppGroupPaths.nodeServiceStoreURL(),

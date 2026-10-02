@@ -3019,6 +3019,27 @@ public final class AppServices {
         }
     }
 
+    /// The honest result of a user "Apply" of staged interface changes
+    /// (`applyInterfaceChanges`). Callers MUST branch on this rather than
+    /// assuming success: a change that is only persisted (and needs a relaunch)
+    /// or a failed config write / restart must not be reported as applied.
+    public enum InterfaceApplyOutcome: Equatable {
+        /// The change is LIVE on the running node now (Model B: the NE node
+        /// restarted and re-read the fresh config; Python: hot add/remove ran).
+        case applied
+        /// The change is persisted to disk but NOT live on the running node; it
+        /// takes effect on the next clean relaunch. (Model B with an enabled
+        /// AutoInterface, where a same-process re-init is unsafe; or Python with
+        /// no running backend.)
+        case persistedRequiresRelaunch
+        /// The config could not be written to disk, so the node still reads the
+        /// stale config. The edit did NOT take effect.
+        case configWriteFailed
+        /// The config was written but the node restart (Model B) threw - the
+        /// stack is down and the change is not live.
+        case restartFailed
+    }
+
     /// True when the configured interface set contains an AutoInterface — the
     /// one case where a SAME-PROCESS Reticulum re-initialization is unsafe
     /// (issue #193 / Greptile P1 #2). `AutoInterface.detach()` only sets
@@ -3227,13 +3248,13 @@ public final class AppServices {
     /// exit), so re-adding the same AutoInterface mid-session may collide —
     /// TCP is unaffected.
     @MainActor
-    public func applyInterfaceChanges() async {
+    public func applyInterfaceChanges() async -> InterfaceApplyOutcome {
         await withLifecycleOperation {
             await applyInterfaceChangesUnlocked()
         }
     }
 
-    private func applyInterfaceChangesUnlocked() async {
+    private func applyInterfaceChangesUnlocked() async -> InterfaceApplyOutcome {
         // Model B: the NE owns the RNS node + all interfaces; the app's `backend` here is
         // the thin `ProxyRnsBackend`, whose `addInterface` throws `unsupportedInProxy`.
         //
@@ -3247,7 +3268,14 @@ public final class AppServices {
         // in the C++ engine that no longer exists.
         if BackendPreference.modelB {
             let fresh = InterfaceRepository().getEnabledInterfaces()
-            _ = await writePythonConfig(interfaces: fresh)
+            // The shared config write is the mechanism the NE node re-reads on
+            // restart, so a failed write means the node would come back with the
+            // STALE config - do not restart, and report the failure (Issue 3).
+            let configWritten = await writePythonConfig(interfaces: fresh)
+            if !configWritten {
+                DiagLog.log("[RNS-HOT] modelB: shared config write FAILED; not restarting (the NE would re-read the stale config)")
+                return .configWriteFailed
+            }
             // Bring the app-side CoreBluetooth radio + seam up (or down) to match the
             // new interface set BEFORE restarting the NE node: the NE's reticulum-swift
             // BLEInterface drives the radio over that seam, so the seam must be listening
@@ -3257,19 +3285,33 @@ public final class AppServices {
             DiagLog.log("[RNS-HOT] modelB: shared config rewritten (\(fresh.count) interfaces); restarting NE python node")
             let outcome = await restartPythonBackendUnlocked()
             DiagLog.log("[RNS-HOT] modelB: restart outcome=\(outcome)")
-            return
+            // Map the restart outcome to an honest Apply result (Issue 2): a
+            // same-process restart refused by the AutoInterface guard, or a
+            // never-started backend, persists the change for the next relaunch;
+            // a throw means the stack is down.
+            switch outcome {
+            case .applied:
+                return .applied
+            case .requiresRelaunch, .skipped:
+                return .persistedRequiresRelaunch
+            case .failed:
+                return .restartFailed
+            }
         }
 
         let fresh = InterfaceRepository().getEnabledInterfaces()
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
 
         // 1. Durability — always persist, even if there's no live backend.
+        // (In the Python path this is a durability backstop: the live change is
+        // the hot add/remove below. A failed write only affects the cold-launch
+        // config, not whether the change is live now.)
         _ = await writePythonConfig(interfaces: fresh)
 
         guard let backend = backend else {
             DiagLog.log("[RNS-HOT] no running backend — config written, applies on next launch")
             pythonInterfaceEntities = freshById
-            return
+            return .persistedRequiresRelaunch
         }
 
         let live = pythonInterfaceEntities
@@ -3311,6 +3353,7 @@ public final class AppServices {
 
         // 5. Keep the status-poll's matching set in sync with what's live.
         pythonInterfaceEntities = freshById
+        return .applied
     }
 
     /// Hot-add one interface to the running Python stack and seed its Swift

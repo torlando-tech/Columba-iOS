@@ -246,6 +246,35 @@ final class NodeOwnerTests: XCTestCase {
     }
 
     @MainActor
+    func testRepeatHelloSameBootDoesNotResetExecutionGuard() async throws {
+        // Regression (Issue 5): a repeat hello that returns the SAME bootID must
+        // NOT clear `executedThisBoot`, otherwise a client could re-hello and
+        // re-admit an already-accepted command to re-run its send (duplicate).
+        let fixedBoot = BootID(UUID(uuidString: "11111111-2222-3333-4444-555555555555")!)
+        engine.startDescriptor = Descriptor(
+            version: .v1_0, storeEpoch: store.epochValue, bootID: fixedBoot,
+            storeSchema: 1, capabilities: engine.capabilities, backend: engine.buildInfo,
+            runtime: RuntimeSnapshot(bootID: fixedBoot, phase: .ready,
+                                     desiredEnabled: true, actualEnabled: true,
+                                     enabledIdentities: [], connectivity: .interfacesAvailable,
+                                     observedAt: Instant(0)))
+        let d1 = try await hello()
+        let cmd = CommandID()
+        try store.stage(submitIntent(commandID: cmd))
+        _ = await owner.handle(envelope(.admit(session: session(boot: d1.bootID), commandID: cmd)))
+        XCTAssertEqual(engine.executeCalls.count, 1, "first admit must execute once")
+
+        // Re-hello: the engine reports the SAME bootID, so the boot did NOT change.
+        let d2 = try await hello()
+        XCTAssertEqual(d2.bootID, d1.bootID, "fixed engine bootID must be stable across hellos")
+
+        // A re-admit of the SAME command after the repeat hello must NOT re-run
+        // the side effect (the execution guard survived the repeat hello).
+        _ = await owner.handle(envelope(.admit(session: session(boot: d2.bootID), commandID: cmd)))
+        XCTAssertEqual(engine.executeCalls.count, 1, "repeat hello must not reset the once-per-boot execution guard")
+    }
+
+    @MainActor
     func testActStopCallsEngineStop() async throws {
         let d = try await hello()
         XCTAssertEqual(engine.stopCalls, 0)

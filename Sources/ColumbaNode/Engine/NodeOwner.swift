@@ -141,9 +141,19 @@ public actor NodeOwner {
         } catch {
             desc = self.degradedDescriptor(error: NodeError(code: .unavailable, message: String(describing: error)))
         }
+        // Reset boot-scoped state ONLY when the boot actually changed. A repeat
+        // hello in the SAME boot must NOT clear `executedThisBoot`: doing so
+        // lets a client re-hello and then re-`admit` an already-accepted command,
+        // re-running its (message-send) side effect in the same boot - a
+        // duplicate. The guard must persist across session hellos (Issue 5).
+        // `engine.start` is idempotent-ish (it brings the node up), so a repeat
+        // hello that gets the same bootID back keeps the guard intact.
+        let bootChanged = self.descriptor == nil || self.descriptor?.bootID != desc.bootID
         self.descriptor = desc
-        self.operations.removeAll()
-        self.executedThisBoot.removeAll()
+        if bootChanged {
+            self.operations.removeAll()
+            self.executedThisBoot.removeAll()
+        }
 
         return Reply(requestID: requestID, storeEpoch: desc.storeEpoch, bootID: desc.bootID,
                      result: .success(.hello(desc)))
