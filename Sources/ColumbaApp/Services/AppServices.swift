@@ -5123,19 +5123,23 @@ public final class AppServices {
     #if canImport(CoreBluetooth)
     /// Get snapshot of all BLE peer connection info for UI display.
     ///
-    /// The actual peer state lives in `SwiftBLEBridge.shared` — that's the
-    /// process-wide CoreBluetooth singleton our Python `IOSBLEDriver` calls
-    /// into via ctypes. Compat's `BLEInterface.getConnectionInfos()` was a
-    /// `[]` stub, which is why BLEConnectionsView showed nothing even when
-    /// a peer was visible in Network Status. Map the bridge's
-    /// `BleConnectionDetails` → `BLEConnectionInfo` here so the dedicated
-    /// connections screen renders real peers.
+    /// Model B: the mesh CoreBluetooth radio runs in the Network Extension
+    /// (SwiftBLEBridge, linked into the NE target), so the app's own
+    /// `SwiftBLEBridge.shared` is a dormant singleton that never sees peers.
+    /// Round-trip the live peer list to the NE via the proxy backend, which
+    /// reads them from the in-extension radio. Model A: the in-app radio is
+    /// the source of truth, so read `SwiftBLEBridge.shared` directly.
     public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
-        // In both Model A and Model B the real CoreBluetooth radio lives in the
-        // app process (Model B: driven by AppGroupBLEServer over the seam,
-        // Model A: driven by the in-app Python driver).  Read the peer
-        // connection details directly from SwiftBLEBridge.shared rather than
-        // round-tripping to the NE - the NE has no BLE connection data.
+        #if COLUMBA_RUNTIME_MODEL_B
+        if BackendPreference.modelB, let backend = backend {
+            return await backend.bleConnections()
+        }
+        #endif
+        // Model A (and any non-Model-B path that falls through here): the
+        // in-app radio is the source of truth. Read the peer connection
+        // details directly from SwiftBLEBridge.shared. (In Model B the early
+        // return above handles the query, so this branch only runs for the
+        // in-app radio.)
         let details = SwiftBLEBridge.shared.getConnectionDetails()
         // Group by identity. When a peer is connected via BOTH central
         // and peripheral roles (each direction opens its own GATT link),
@@ -5214,10 +5218,15 @@ public final class AppServices {
     }
 
     private func disconnectBLEPeerUnlocked(identityHex: String) async {
-        // Resolve identity → address via the bridge; if found, ask the
-        // bridge to drop the GATT connection. The Compat stub's
-        // disconnectPeer was a no-op, so this is the path that actually
-        // closes the link.
+        #if COLUMBA_RUNTIME_MODEL_B
+        // Model B: the radio is in the NE, so the link is dropped there.
+        if BackendPreference.modelB, let backend = backend {
+            await backend.disconnectBLEPeer(identityHashHex: identityHex)
+            return
+        }
+        #endif
+        // Model A: resolve identity → address via the in-app bridge and drop
+        // the GATT connection directly.
         if let address = SwiftBLEBridge.shared.getPeerAddress(identityHashHex: identityHex) {
             SwiftBLEBridge.shared.disconnect(address: address)
         }
@@ -5225,12 +5234,13 @@ public final class AppServices {
 
     /// Whether BLE interface is currently active.
     /// Model A: the app's Compat `BLEInterface` is non-nil. Model B: the
-    /// app-side CoreBluetooth host (`ModelBBLEService`) is running — the
-    /// NE-owned reticulum-swift `BLEInterface` drives it over the seam, so
-    /// `bleInterface` (Model A only) is never set in Model B.
+    /// radio lives in the Network Extension (the app no longer runs a
+    /// CoreBluetooth host), so the app's notion of "active" is that a BLE
+    /// interface is enabled in the config; the NE drives the radio and the
+    /// connections screen shows the live peer list via the proxy query.
     public var isBLEActive: Bool {
         #if COLUMBA_RUNTIME_MODEL_B
-        ModelBBLEService.shared.isRunning
+        InterfaceRepository().getEnabledInterfaces().contains { $0.type == .ble }
         #else
         bleInterface != nil
         #endif
@@ -5238,29 +5248,17 @@ public final class AppServices {
     #endif
 
     #if COLUMBA_RUNTIME_MODEL_B
-    /// Start or stop the app-side CoreBluetooth host to match the configured
-    /// interface list. The NE owns the reticulum-swift `BLEInterface`; this side
-    /// runs the radio + the App-Group seam the NE drives it over, so it must be
-    /// running exactly when a BLE interface is enabled. Called at boot (once the
-    /// start identity is cached) and on every interface Apply (so a runtime
-    /// enable/disable of a BLE interface starts/stops the host without a relaunch).
+    /// Phase 2: the mesh CoreBluetooth radio now runs in the Network Extension
+    /// (SwiftBLEBridge is linked into the NE target and driven in-process by the
+    /// NE's Python driver). The app no longer runs a CoreBluetooth host, so this
+    /// used-to-start-the-app-radio hook is now a no-op: the NE owns the radio,
+    /// and a second app-side `SwiftBLEBridge` instance would fight the NE's over
+    /// the same GATT service (the "second central drops the first" failure mode).
+    /// Kept as a no-op rather than deleted because its call sites (backend
+    /// start + interface Apply) still run, and the app-side seam files it
+    /// started are removed in a follow-up commit after on-device verify.
     func syncModelBBLEService() {
-        guard let identity = pythonStartIdentity else {
-            DiagLog.log("[BLE] Model B BLE sync skipped — no start identity yet")
-            return
-        }
-        if ModelBBLEService.shouldStart() {
-            if ModelBBLEService.shared.isRunning {
-                return
-            }
-            ModelBBLEService.shared.start(identityHash: identity.hash)
-            DiagLog.log("[BLE] Model B BLE service synced — enabled BLE interface present")
-        } else {
-            if ModelBBLEService.shared.isRunning {
-                ModelBBLEService.shared.stop()
-            }
-            DiagLog.log("[BLE] Model B BLE service synced — no enabled BLE interface")
-        }
+        DiagLog.log("[BLE] Model B: mesh radio runs in the NE; no app-side host (Phase 2)")
     }
     #endif
 

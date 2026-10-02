@@ -24,6 +24,7 @@ import Network
 import NetworkExtension
 import UserNotifications
 import ColumbaNode
+import SwiftBLEBridge
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
@@ -159,16 +160,38 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             switch NEPythonRuntime.shared.start() {
             case .success:
                 ExtensionDiagLog.log("[NE-PY-RNS] python ready (node starts on first .start IPC)")
+                // Auto-restart: if the app previously started a node (persisted
+                // display name + shared config dir exist), bring it up now.
+                // This covers the tunnel-session-reconnect relaunch case where
+                // the in-process RNS restart already ran but the NE was killed
+                // before the app re-sent .start. Idempotent: if the app sends
+                // .start later, engine.start() is a no-op restart.
+                let defaults = UserDefaults(suiteName: "group.network.columba.Columba")
+                if let name = defaults?.string(forKey: "rnsLastDisplayName") {
+                    let configDir = (NEPythonRNS.sharedConfigDir() as NSString).appendingPathComponent("config")
+                    if FileManager.default.fileExists(atPath: configDir) {
+                        ExtensionDiagLog.log("[NE-PY-RNS] auto-start: config found, starting node")
+                        if NEPythonRNS.shared.start(displayName: name) != nil {
+                            ExtensionDiagLog.log("[NE-PY-RNS] auto-start: node started")
+                        } else {
+                            ExtensionDiagLog.log("[NE-PY-RNS] auto-start: start failed (no identity?)")
+                        }
+                    }
+                }
             case .failure(let err):
                 ExtensionDiagLog.log("[NE-PY-RNS] init failed: \(err.localizedDescription)")
             }
         }
 
-        // Model B BLE: route the C-ABI forwarder's app→NE events into the
-        // driver's Python callback slots. Idempotent; the forwarder itself
-        // (NEBLECABIBridge) self-starts when the Python driver issues its first
-        // columba_ble_* command, so only the event-routing hook is wired here.
+        // Model B BLE: the mesh CoreBluetooth radio (SwiftBLEBridge) now runs
+        // IN-PROCESS in the NE (Phase 2). Wire its event callback into the
+        // driver's Python callback slots and force-link the package's
+        // `columba_ble_*` C-ABI into this dylib. Idempotent; install before the
+        // Python driver issues its first `columba_ble_start` so early events
+        // land in the driver. The hook wires lazily (checks Python state at
+        // event time), so ordering vs Python init does not matter.
         NEPythonBridgeHook.wireToPython()
+        NEBLECallbackInvoker.install()
 
         // Set up dummy tunnel settings (required by NEPacketTunnelProvider)
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
@@ -321,6 +344,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // Bring the Python RNS node up. The engine loads the shared identity
             // + the app-written shared config itself. No identity yet ⇒ nil ⇒
             // `.unsupported` (the app retries until the app creates one).
+            // Persist the display name so the NE can auto-restart the node
+            // after a relaunch (e.g. tunnel session reconnect) without waiting
+            // for the app to re-send .start.
+            UserDefaults(suiteName: "group.network.columba.Columba")?
+                .set(displayName, forKey: "rnsLastDisplayName")
             guard let localInfoJSON = engine.start(displayName: displayName) else {
                 return .unsupported
             }
@@ -366,10 +394,59 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return .ok(try? JSONEncoder().encode(mapped))
 
         case .bleConnections:
-            // BLE/RNode radio state lives in the app process (CoreBluetooth);
-            // the NE Python engine does not own the radio in this slice. The
-            // app's BLE screen degrades to empty.
-            return .ok(nil)
+            // Phase 2: the mesh CoreBluetooth radio now runs IN-PROCESS in the
+            // NE (SwiftBLEBridge, linked into this target). The app's BLE
+            // connections screen round-trips this, so read the live peer
+            // details from the in-extension radio and map them onto the
+            // [BLEPeerSnapshot] the app's `ProxyRnsBackend.bleConnections()`
+            // decodes. Group by identity (a peer bonded via BOTH central and
+            // peripheral roles yields two entries; prefer the peripheral path
+            // and borrow the central-side RSSI, mirroring the app-side mapping).
+            let details = SwiftBLEBridge.shared.getConnectionDetails()
+            var rep: [String: BleConnectionDetails] = [:]
+            var rssiByIdentity: [String: Int] = [:]
+            var earliestConnectedAt: [String: Date] = [:]
+            for d in details {
+                guard let id = d.identityHashHex else { continue }
+                if let r = d.rssi { rssiByIdentity[id] = r }
+                earliestConnectedAt[id] = min(earliestConnectedAt[id] ?? d.connectedAt, d.connectedAt)
+                if let existing = rep[id] {
+                    if d.role == .peripheral && existing.role != .peripheral {
+                        rep[id] = d
+                    } else if d.mtu > existing.mtu {
+                        rep[id] = d
+                    }
+                } else {
+                    rep[id] = d
+                }
+            }
+            let snapshots: [BLEPeerSnapshot] = rep.values.map { d in
+                let id = d.identityHashHex ?? d.address
+                let rssi = d.rssi ?? rssiByIdentity[id]
+                return BLEPeerSnapshot(
+                    identityHash: id,
+                    isOutgoing: d.role == .central,
+                    rssi: rssi ?? 0,
+                    mtu: d.mtu,
+                    connectedAt: earliestConnectedAt[id] ?? d.connectedAt,
+                    lastActivity: d.lastActivity,
+                    bytesSent: 0,
+                    bytesReceived: 0,
+                    packetsSent: 0,
+                    packetsReceived: 0
+                )
+            }
+            return .ok(try? JSONEncoder().encode(snapshots))
+
+        case .bleDisconnect(let identityHashHex):
+            // The NE owns the radio in Model B, so the app resolves identity to
+            // a link and asks the in-extension radio to drop it. Return true
+            // only when a connected peer with that identity existed.
+            if let address = SwiftBLEBridge.shared.getPeerAddress(identityHashHex: identityHashHex) {
+                SwiftBLEBridge.shared.disconnect(address: address)
+                return .ok(try? JSONEncoder().encode(true))
+            }
+            return .ok(try? JSONEncoder().encode(false))
 
         case .persist:
             guard let res = engine.persist() else { return .error("persist failed") }

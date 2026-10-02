@@ -143,6 +143,7 @@
 		11D0621686D1D65C9602C911 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = F196C8A0BA9EBC9F7F2FCF9F /* RNSAPI */; };
 		11DE32B4ABEF3646B6B42728 /* MaterialDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F036 /* MaterialDesignIcons.swift */; };
 		13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */; };
+		A1B2C3D4E5F6A00000000002 /* SwiftBLEBridge in Frameworks (NE) */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6A00000000001 /* SwiftBLEBridge (NE) */; };
 		140E03C294121F7FA2D478A9 /* ContactCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011 /* ContactCard.swift */; };
 		147A84617097826BCE5DBD49 /* InterfaceManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F030 /* InterfaceManagementViewModel.swift */; };
 		15D4C7BF2F5EBFB685022ED2 /* BackgroundDeliveryGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */; };
@@ -763,6 +764,7 @@
 			files = (
 				ED87073E0742395F2CA27807 /* ColumbaNode in Frameworks */,
 				8A321B0938566F0D62D64563 /* Python.xcframework in Frameworks (NE) */,
+				A1B2C3D4E5F6A00000000002 /* SwiftBLEBridge in Frameworks (NE) */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1398,6 +1400,7 @@
 				021FA3D73B6F8B711A97D40F /* ReticulumSwift */,
 				B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */,
 				57110F986F2A3DFB3F95E483 /* ColumbaNode */,
+				A1B2C3D4E5F6A00000000001 /* SwiftBLEBridge (NE) */,
 			);
 			productName = ColumbaNetworkExtension;
 			productReference = EPROD /* ColumbaNetworkExtension.appex */;
@@ -2206,6 +2209,7 @@
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -2234,6 +2238,7 @@
 				INFOPLIST_FILE = Sources/ColumbaNetworkExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Columba Transport";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Columba uses Bluetooth for peer-to-peer mesh networking and connecting to RNode radio devices.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -2608,6 +2613,10 @@
 		57110F986F2A3DFB3F95E483 /* ColumbaNode */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ColumbaNode;
+		};
+		A1B2C3D4E5F6A00000000001 /* SwiftBLEBridge (NE) */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwiftBLEBridge;
 		};
 		021FA3D73B6F8B711A97D40F /* ReticulumSwift */ = {
 			isa = XCSwiftPackageProductDependency;

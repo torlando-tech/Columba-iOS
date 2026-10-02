@@ -29,5 +29,14 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Columba Transport maintains network connections for message delivery while the app is in the background.</string>
+	<!-- CoreBluetooth background modes. The NE is a background process; without
+	     bluetooth-peripheral iOS silently disables peripheral advertising while it
+	     runs in the background (startAdvertising still returns no error). The host
+	     app declares the same pair in its own Info.plist; the radio now lives here. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+	</array>
 </dict>
 </plist>

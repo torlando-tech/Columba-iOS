@@ -496,6 +496,19 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         }
     }
 
+    /// Disconnect a Model B BLE peer by identity hash. The NE owns the radio,
+    /// so the link is dropped NE-side. Degrades to false when the round-trip
+    /// fails or no connected peer with that identity exists.
+    @discardableResult
+    public func disconnectBLEPeer(identityHashHex: String) async -> Bool {
+        guard let response = try? await roundTrip(.bleDisconnect(identityHashHex: identityHashHex), op: "bleDisconnect"),
+              case .ok(let payload) = response, let payload,
+              let ok = try? JSONDecoder().decode(Bool.self, from: payload) else {
+            return false
+        }
+        return ok
+    }
+
     /// RSSI dBm → coarse signal bucket (60/75/90 steps), matching the Model A
     /// mapping in `AppServices`.
     private static func signalQuality(forRssi rssi: Int) -> SignalQuality {

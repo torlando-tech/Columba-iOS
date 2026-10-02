@@ -200,6 +200,12 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// `[BLEPeerSnapshot]`.
     case bleConnections
 
+    /// Disconnect a specific Model B BLE peer by its identity hash. The NE
+    /// owns the radio in Model B, so the app resolves identity→address and
+    /// drops the link NE-side. Response payload: JSON `Bool` (true when a peer
+    /// with that identity was connected and is now dropped).
+    case bleDisconnect(identityHashHex: String)
+
     /// Fetch a NomadNet page over a one-shot RNS Link (mirrors
     /// `RnsNomadnet.fetchNomadNetPage`). Model B runs the fetch NE-side via the
     /// shared `NomadNetFetch` helper (the NE owns transport/identity/pathTable);
@@ -252,7 +258,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     private enum Op: String, Codable {
         case start, stop, announce, announceTelephony, statusSnapshot
         case persist, registeredDestinationHashes, lxmfSend, heardAnnounces
-        case drainEvents, bleConnections, nomadnetFetch
+        case drainEvents, bleConnections, bleDisconnect, nomadnetFetch
         case openLink, linkSend, linkIdentify, linkTeardown
     }
 
@@ -288,6 +294,9 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(fieldsData, forKey: .fieldsData)
         case .bleConnections:
             try c.encode(Op.bleConnections, forKey: .op)
+        case .bleDisconnect(let identityHashHex):
+            try c.encode(Op.bleDisconnect, forKey: .op)
+            try c.encode(identityHashHex, forKey: .destHashHex)
         case .nomadnetFetch(let destHashHex, let path, let timeoutSeconds, let formFields):
             try c.encode(Op.nomadnetFetch, forKey: .op)
             try c.encode(destHashHex, forKey: .destHashHex)
@@ -343,6 +352,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             )
         case .bleConnections:
             self = .bleConnections
+        case .bleDisconnect:
+            self = .bleDisconnect(identityHashHex: try c.decode(String.self, forKey: .destHashHex))
         case .nomadnetFetch:
             self = .nomadnetFetch(
                 destHashHex: try c.decode(String.self, forKey: .destHashHex),

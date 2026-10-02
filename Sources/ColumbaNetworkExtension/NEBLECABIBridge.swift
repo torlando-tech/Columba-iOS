@@ -2,167 +2,46 @@
 //  NEBLECABIBridge.swift
 //  ColumbaNetworkExtension
 //
-//  NE-side implementation of the `columba_ble_*` C-ABI that `IOSBLEDriver.py`
-//  resolves via `ctypes.CDLL(None)`. In the NE process the real CoreBluetooth
-//  radio cannot run (CoreBluetooth is unavailable in a Network Extension), so
-//  these symbols do NOT drive a radio directly - they forward the command over
-//  the App-Group BLE seam to the app, where `SwiftBLEBridge` (the same
-//  singleton the shipping Python path uses) performs the CoreBluetooth work.
+//  NE-side wiring for the in-extension mesh BLE radio.
 //
-//  This is the Model B analog of the app's `BleNativeBindings.swift`:
-//  identical symbol names + signatures (so the unmodified Python driver works
-//  in both processes), different back end (seam forwarder vs in-process radio).
+//  After Phase 2 of the NE-is-sole-runtime relocation, the real CoreBluetooth
+//  radio (`SwiftBLEBridge`, the same SwiftPM package the app links) is compiled
+//  into the NE target. Its `columba_ble_*` C-ABI exports
+//  (`Sources/SwiftBLEBridge/BleNativeBindings.swift`) are therefore present in
+//  the NE dylib, so the unmodified Python `IOSBLEDriver`
+//  (`ctypes.CDLL(None) -> columba_ble_*`) now drives the radio IN-PROCESS, with
+//  no App-Group seam. This file no longer defines a forwarder or any
+//  `columba_ble_*` symbols (that would duplicate the package's). It has exactly
+//  two jobs:
 //
-//      NE:  IOSBLEDriver (Python) ──CDLL(None)──▶ NEBLECABIBridge (this file)
-//                                                   │  AppGroupBLESeamTransport
-//      app: AppGroupBLEServer ──▶ SwiftBLEBridge (real CoreBluetooth)
+//    1. `NEPythonBridgeHook` - the single Swift->Python channel for this
+//       process. The NE calls the named `rns_bridge.invoke_ble_callback`
+//       function through the embedded interpreter, so the driver's registered
+//       callback slots fire exactly as they do in the in-app (Model A) path.
 //
-//  Return codes match the Python driver's contract: 0 = ok, -1 = not running,
-//  -2 = bad arg.
+//    2. `NEBLECallbackInvoker` - the `BleCallbackInvoker` installed on
+//       `SwiftBLEBridge.shared`. It translates each `BleCallbackSlot` the radio
+//       emits into the `invoke_ble_callback(slot, address, extra)` payload
+//       `rns_bridge` expects (byte fields ride as base64 strings so they
+//       survive the JSON serialization). Installed once at NE startup, before
+//       the Python driver's first `columba_ble_start`, so early connection
+//       events are not lost.
 //
-//  Value-returning calls (`get_peer_role/mtu/rssi`) are answered from a small
-//  local peer cache maintained by the inbound event stream, so the synchronous
-//  ctypes call never blocks on a cross-process round trip.
-//
-//  Events app→NE are delivered to Python via `rns_bridge.invoke_ble_callback`
-//  (a named function the NE calls through the embedded interpreter), so the
-//  driver's registered callback slots fire exactly as in the app.
+//  Return codes / event shapes match the Python driver's contract:
+//    - commands: 0 = ok, -1 = not running, -2 = bad arg (handled in the
+//      package's BleNativeBindings, not here)
+//    - events: the `invoke_ble_callback` extra-dict contract in rns_bridge.py
 //
 
 import Foundation
+import SwiftBLEBridge
 
-final class NEBLECABIBridge: @unchecked Sendable {
-    static let shared = NEBLECABIBridge()
-
-    private let transport: BLESeamTransport
-    private let lock = NSLock()
-    private var started = false
-    private var inboundTask: Task<Void, Never>?
-
-    /// Per-peer cache for the value-returning C-ABI calls. Updated by the
-    /// inbound app→NE event stream.
-    private struct Peer {
-        var mtu: Int32 = 0
-        var rssi: Int32 = Int32.min   // Int32.min = unknown (matches Python sentinel)
-        var role: Int32 = 0           // 0 unknown, 1 central (we dialed), 2 peripheral (they dialed)
-        var connected = false
-    }
-    private var peers: [String: Peer] = [:]
-
-    private init() {
-        transport = AppGroupBLESeamTransport(role: .networkExtension)
-    }
-
-    // MARK: - Lifecycle
-
-    /// Begin consuming app→NE events. Idempotent. Called when the first BLE
-    /// command arrives (the Python driver's `columba_ble_start`).
-    func ensureStarted() {
-        lock.lock(); defer { lock.unlock() }
-        guard !started else { return }
-        started = true
-        transport.start()
-        inboundTask = Task { [weak self] in
-            guard let self else { return }
-            for await msg in self.transport.inbound { self.handle(msg) }
-        }
-        ExtensionDiagLog.log("[BLE-NE] forwarder started; relaying app radio events to Python")
-    }
-
-    // MARK: - Command forwarding (NE Python → app radio)
-
-    func sendStart(serviceUuid: String, rxCharUuid: String, txCharUuid: String, identityCharUuid: String) {
-        ensureStarted()
-        transport.send(.start(serviceUuid: serviceUuid, rxCharUuid: rxCharUuid, txCharUuid: txCharUuid, identityCharUuid: identityCharUuid))
-    }
-    func sendStop() { transport.send(.stop) }
-    func sendSetIdentity(_ id: Data) { transport.send(.setIdentity(identity: id)) }
-    func sendSyncExistingConnections() { transport.send(.syncExistingConnections) }
-    func sendRequestIdentityResync(_ addr: String) { transport.send(.requestIdentityResync(address: addr)) }
-    func sendStartScanning() { transport.send(.startScanning) }
-    func sendStopScanning() { transport.send(.stopScanning) }
-    func sendStartAdvertising(name: String, identity: Data) { transport.send(.startAdvertising(deviceName: name, identity: identity)) }
-    func sendStopAdvertising() { transport.send(.stopAdvertising) }
-    func sendConnect(_ addr: String) {
-        lock.lock(); peers[addr, default: Peer()].role = 1; peers[addr]?.connected = true; lock.unlock()
-        transport.send(.connect(address: addr))
-    }
-    func sendDisconnect(_ addr: String) { transport.send(.disconnect(address: addr)) }
-    func send(_ addr: String, _ data: Data) { transport.send(.send(address: addr, data: data)) }
-    func sendConfigurePower(_ name: String) {
-        // tx power preset is informational on iOS; forward as a no-op dbm value.
-        transport.send(.configurePower(address: "", txPowerDbm: 0))
-    }
-
-    // MARK: - Value queries (answered from the local peer cache)
-
-    func peerRole(_ addr: String) -> Int32 { lock.lock(); defer { lock.unlock() }; return peers[addr]?.role ?? 0 }
-    func peerMtu(_ addr: String) -> Int32 { lock.lock(); defer { lock.unlock() }; return peers[addr]?.mtu ?? 0 }
-    func peerRssi(_ addr: String) -> Int32 { lock.lock(); defer { lock.unlock() }; return peers[addr]?.rssi ?? Int32.min }
-
-    // MARK: - Inbound app→NE events → Python callbacks
-
-    private func handle(_ msg: BLEDriverSeamMessage) {
-        switch msg {
-        case let .deviceDiscovered(addr, name, rssi):
-            lock.lock(); peers[addr, default: Peer()].rssi = Int32(rssi); lock.unlock()
-            invoke("on_device_discovered", address: addr, extra: ["name": name, "rssi": Int32(rssi), "service_uuids": []])
-
-        case let .deviceConnected(addr, identity):
-            lock.lock()
-            var p = peers[addr] ?? Peer()
-            p.connected = true
-            if p.role == 0 { p.role = 2 }
-            peers[addr] = p
-            lock.unlock()
-            var extra: [String: Any] = [:]
-            if let id = identity { extra["identity_b64"] = id.base64EncodedString() }
-            invoke("on_device_connected", address: addr, extra: extra)
-
-        case let .deviceDisconnected(addr):
-            lock.lock(); peers[addr]?.connected = false; lock.unlock()
-            invoke("on_device_disconnected", address: addr, extra: [:])
-
-        case let .dataReceived(addr, data):
-            invoke("on_data_received", address: addr, extra: ["data_b64": data.base64EncodedString()])
-
-        case let .mtuNegotiated(addr, mtu):
-            lock.lock(); peers[addr, default: Peer()].mtu = Int32(mtu); lock.unlock()
-            invoke("on_mtu_negotiated", address: addr, extra: ["mtu": Int32(mtu)])
-
-        case let .identityReceived(addr, hex):
-            invoke("on_identity_received", address: addr, extra: ["identity_hex": hex])
-
-        case let .addressChanged(old, new, id):
-            lock.lock()
-            if let p = peers[old] { peers[new] = p; peers[old]?.connected = false }
-            lock.unlock()
-            invoke("on_address_changed", address: new, extra: ["old_address": old, "new_address": new, "identity_hash": id])
-
-        case let .error(sev, message):
-            invoke("on_error", address: "", extra: ["severity": sev, "message": message])
-
-        case .start, .stop, .setIdentity, .startScanning, .stopScanning,
-             .startAdvertising, .stopAdvertising, .connect, .disconnect, .send,
-             .syncExistingConnections, .requestIdentityResync, .configurePower:
-            break  // command direction; the forwarder never receives these
-        }
-    }
-
-    /// Deliver an event to Python. The payload is JSON `{address, extra}` and
-    /// the NE calls the named `rns_bridge.invoke_ble_callback` function through
-    /// the embedded interpreter. The Python side expands `address`+`extra` into
-    /// the driver's positional callback args.
-    private func invoke(_ slot: String, address: String, extra: [String: Any]) {
-        let payload: [String: Any] = ["slot": slot, "address": address, "extra": extra]
-        NEPythonBridgeHook.shared.invoke(fn: "invoke_ble_callback", object: payload)
-    }
-}
-
-// Indirection so the always-compiled C-ABI symbols can reach the NE Python
-// runtime (which this file does not import). The NE wiring sets the hook once
-// at startup; a nil hook degrades event delivery to a no-op (commands still
-// forward to the app; the driver just stops receiving async events).
+/// The single Swift->Python delivery channel for BLE events in the NE process.
+/// `PacketTunnelProvider` wires it once at startup (idempotent); a nil hook
+/// degrades event delivery to a no-op (commands still reach the radio in-process;
+/// the driver just stops receiving async events). Kept in this file (not
+/// SwiftBLEBridge, which is a shared package) because it binds to the NE's
+/// `NEPythonRNS` interpreter seam, which the package must not depend on.
 final class NEPythonBridgeHook: @unchecked Sendable {
     static let shared = NEPythonBridgeHook()
     private var fn: (@Sendable (String, [String: Any]) -> Void)?
@@ -181,109 +60,186 @@ final class NEPythonBridgeHook: @unchecked Sendable {
     }
 }
 
-// MARK: - C-ABI shims (mirror BleNativeBindings.swift symbol-for-symbol)
+/// Translates `SwiftBLEBridge`'s `BleCallbackSlot` invocations into the
+/// `invoke_ble_callback(slot, address, extra)` payload delivered to Python
+/// through `NEPythonBridgeHook`. Argument decoding mirrors the proven app-side
+/// invoker (`ModelBBLEService`'s nested `Invoker`); the only difference is the
+/// sink: here it is the NE's Python channel instead of the App-Group seam.
+///
+/// `invoke` runs on SwiftBLEBridge's serial queue, so events are delivered in
+/// order. `invokeBool` is the synchronous duplicate-identity check, which is NOT
+/// round-tripped to Python (it would block the BLE serial queue on a Python hop);
+/// it returns `false` so the radio always accepts and the driver resolves
+/// identity/rotation via the async `on_address_changed` path - the same behavior
+/// the app's seam invoker had.
+final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
+    static let shared = NEBLECallbackInvoker()
 
-private func neble_cstr(_ ptr: UnsafePointer<CChar>?) -> String? {
-    guard let ptr else { return nil }
-    return String(cString: ptr)
+    private init() {}
+
+    func invoke(slot: BleCallbackSlot, args: [Any]) {
+        #if DEBUG
+        // [BLE-NE-DIAG] Event-out channel log (DEBUG only): proves the in-NE
+        // radio is emitting events and the invoker is translating them.
+        ExtensionDiagLog.log("[BLE-NE-DIAG] event slot=\(slot.rawValue) args=\(args.count)")
+        #endif
+        let str: (Any?) -> String = { v in
+            switch v {
+            case let s as String: return s
+            case let n as NSNumber: return n.stringValue
+            default: return ""
+            }
+        }
+        let int: (Any?) -> Int = { v in
+            switch v {
+            case let n as Int: return n
+            case let n as NSNumber: return n.intValue
+            case let d as Double: return Int(d)
+            default: return 0
+            }
+        }
+        switch slot {
+        case .onDeviceDiscovered:
+            // [address, name, rssi, serviceUUIDs]
+            let address = args.count > 0 ? str(args[0]) : ""
+            let name = args.count > 1 ? str(args[1]) : ""
+            let rssi = args.count > 2 ? int(args[2]) : 0
+            let serviceUUIDs = args.count > 3 ? (args[3] as? [String] ?? []) : []
+            NEPythonBridgeHook.shared.invoke(
+                fn: "invoke_ble_callback",
+                object: [
+                    "slot": slot.rawValue,
+                    "address": address,
+                    "extra": ["name": name, "rssi": rssi, "service_uuids": serviceUUIDs],
+                ]
+            )
+        case .onDeviceConnected:
+            // [address, peerIdentity]
+            let address = args.count > 0 ? str(args[0]) : ""
+            let identity = args.count > 1 ? (args[1] as? Data) : nil
+            var extra: [String: Any] = [:]
+            if let identity { extra["identity_b64"] = identity.base64EncodedString() }
+            NEPythonBridgeHook.shared.invoke(
+                fn: "invoke_ble_callback",
+                object: ["slot": slot.rawValue, "address": address, "extra": extra]
+            )
+        case .onDeviceDisconnected:
+            // [address]
+            let address = args.count > 0 ? str(args[0]) : ""
+            NEPythonBridgeHook.shared.invoke(
+                fn: "invoke_ble_callback",
+                object: ["slot": slot.rawValue, "address": address, "extra": [:]]
+            )
+        case .onDataReceived:
+            // [address, value]
+            let address = args.count > 0 ? str(args[0]) : ""
+            let data = args.count > 1 ? (args[1] as? Data ?? Data()) : Data()
+            NEPythonBridgeHook.shared.invoke(
+                fn: "invoke_ble_callback",
+                object: [
+                    "slot": slot.rawValue,
+                    "address": address,
+                    "extra": ["data_b64": data.base64EncodedString()],
+                ]
+            )
+        case .onMtuNegotiated:
+            // [address, mtu]
+            let address = args.count > 0 ? str(args[0]) : ""
+            let mtu = args.count > 1 ? int(args[1]) : 0
+            NEPythonBridgeHook.shared.invoke(
+                fn: "invoke_ble_callback",
+                object: [
+                    "slot": slot.rawValue,
+                    "address": address,
+                    "extra": ["mtu": mtu],
+                ]
+            )
+        case .onIdentityReceived:
+            // [address, identityHex]
+            let address = args.count > 0 ? str(args[0]) : ""
+            let identityHex = args.count > 1 ? str(args[1]) : ""
+            NEPythonBridgeHook.shared.invoke(
+                fn: "invoke_ble_callback",
+                object: [
+                    "slot": slot.rawValue,
+                    "address": address,
+                    "extra": ["identity_hex": identityHex],
+                ]
+            )
+        case .onAddressChanged:
+            // [oldAddress, address, identityHex]
+            let oldAddress = args.count > 0 ? str(args[0]) : ""
+            let newAddress = args.count > 1 ? str(args[1]) : ""
+            let identityHash = args.count > 2 ? str(args[2]) : ""
+            NEPythonBridgeHook.shared.invoke(
+                fn: "invoke_ble_callback",
+                object: [
+                    "slot": slot.rawValue,
+                    "address": newAddress,
+                    "extra": [
+                        "old_address": oldAddress,
+                        "new_address": newAddress,
+                        "identity_hash": identityHash,
+                    ],
+                ]
+            )
+        case .onDuplicateIdentityDetected:
+            // Synchronous bool check - not round-tripped (see class docs).
+            break
+        case .onError:
+            // [severity, message]
+            let severity: String = args.count > 0 ? str(args[0]) : "info"
+            // Radio status text (the radio routes its info messages through
+            // this slot too, severity "info"); only warnings/errors are logged.
+            let detail: String = args.count > 1 ? str(args[1]) : ""
+            if severity != "info" {
+                ExtensionDiagLog.log("[BLE-NE-ERR] severity=\(severity) msg=\(detail)")
+            }
+            NEPythonBridgeHook.shared.invoke(
+                fn: "invoke_ble_callback",
+                object: [
+                    "slot": slot.rawValue,
+                    "address": "",
+                    "extra": ["severity": severity, "message": detail],
+                ]
+            )
+        }
+    }
+
+    /// Synchronous duplicate-identity check. Not round-tripped to Python (would
+    /// block the BLE serial queue on a Python hop). Return false so the radio
+    /// always accepts; the driver resolves rotation via async on_address_changed.
+    func invokeBool(slot: BleCallbackSlot, args: [Any]) -> Bool { false }
 }
 
-private func neble_bytes(_ ptr: UnsafePointer<CChar>?, length: Int32) -> Data? {
-    guard let ptr, length >= 0 else { return nil }
-    if length == 0 { return Data() }
-    return ptr.withMemoryRebound(to: UInt8.self, capacity: Int(length)) { Data(bytes: $0, count: Int(length)) }
-}
-
-@_used
-@_cdecl("columba_ble_start")
-public func columba_ble_start(
-    _ serviceUuid: UnsafePointer<CChar>?, _ rxCharUuid: UnsafePointer<CChar>?,
-    _ txCharUuid: UnsafePointer<CChar>?, _ identityCharUuid: UnsafePointer<CChar>?
-) -> Int32 {
-    guard let s = neble_cstr(serviceUuid), let r = neble_cstr(rxCharUuid),
-          let t = neble_cstr(txCharUuid), let i = neble_cstr(identityCharUuid) else { return -2 }
-    NEBLECABIBridge.shared.sendStart(serviceUuid: s, rxCharUuid: r, txCharUuid: t, identityCharUuid: i)
-    return 0
-}
-
-@_cdecl("columba_ble_stop")
-public func columba_ble_stop() -> Int32 { NEBLECABIBridge.shared.sendStop(); return 0 }
-
-@_cdecl("columba_ble_set_identity")
-public func columba_ble_set_identity(_ bytes: UnsafePointer<CChar>?, _ length: Int32) -> Int32 {
-    guard let data = neble_bytes(bytes, length: length) else { return -2 }
-    NEBLECABIBridge.shared.sendSetIdentity(data); return 0
-}
-
-@_cdecl("columba_ble_sync_existing_connections")
-public func columba_ble_sync_existing_connections() -> Int32 {
-    NEBLECABIBridge.shared.sendSyncExistingConnections(); return 0
-}
-
-@_cdecl("columba_ble_request_identity_resync")
-public func columba_ble_request_identity_resync(_ address: UnsafePointer<CChar>?) -> Int32 {
-    guard let addr = neble_cstr(address) else { return -2 }
-    NEBLECABIBridge.shared.sendRequestIdentityResync(addr); return 0
-}
-
-@_cdecl("columba_ble_start_scanning")
-public func columba_ble_start_scanning() -> Int32 { NEBLECABIBridge.shared.sendStartScanning(); return 0 }
-
-@_cdecl("columba_ble_stop_scanning")
-public func columba_ble_stop_scanning() -> Int32 { NEBLECABIBridge.shared.sendStopScanning(); return 0 }
-
-@_cdecl("columba_ble_start_advertising")
-public func columba_ble_start_advertising(
-    _ deviceName: UnsafePointer<CChar>?, _ identityBytes: UnsafePointer<CChar>?, _ identityLength: Int32
-) -> Int32 {
-    let name = neble_cstr(deviceName)
-    let identity = neble_bytes(identityBytes, length: identityLength) ?? Data()
-    NEBLECABIBridge.shared.sendStartAdvertising(name: name ?? "", identity: identity); return 0
-}
-
-@_cdecl("columba_ble_stop_advertising")
-public func columba_ble_stop_advertising() -> Int32 { NEBLECABIBridge.shared.sendStopAdvertising(); return 0 }
-
-@_cdecl("columba_ble_connect")
-public func columba_ble_connect(_ address: UnsafePointer<CChar>?) -> Int32 {
-    guard let addr = neble_cstr(address) else { return -2 }
-    NEBLECABIBridge.shared.sendConnect(addr); return 0
-}
-
-@_cdecl("columba_ble_disconnect")
-public func columba_ble_disconnect(_ address: UnsafePointer<CChar>?) -> Int32 {
-    guard let addr = neble_cstr(address) else { return -2 }
-    NEBLECABIBridge.shared.sendDisconnect(addr); return 0
-}
-
-@_cdecl("columba_ble_send")
-public func columba_ble_send(
-    _ address: UnsafePointer<CChar>?, _ data: UnsafePointer<CChar>?, _ length: Int32
-) -> Int32 {
-    guard let addr = neble_cstr(address), let payload = neble_bytes(data, length: length) else { return -2 }
-    NEBLECABIBridge.shared.send(addr, payload); return 0
-}
-
-@_cdecl("columba_ble_get_peer_role")
-public func columba_ble_get_peer_role(_ address: UnsafePointer<CChar>?) -> Int32 {
-    guard let addr = neble_cstr(address) else { return -2 }
-    return NEBLECABIBridge.shared.peerRole(addr)
-}
-
-@_cdecl("columba_ble_get_peer_mtu")
-public func columba_ble_get_peer_mtu(_ address: UnsafePointer<CChar>?) -> Int32 {
-    guard let addr = neble_cstr(address) else { return -2 }
-    return NEBLECABIBridge.shared.peerMtu(addr)
-}
-
-@_cdecl("columba_ble_get_peer_rssi")
-public func columba_ble_get_peer_rssi(_ address: UnsafePointer<CChar>?) -> Int32 {
-    guard let addr = neble_cstr(address) else { return Int32.min }
-    return NEBLECABIBridge.shared.peerRssi(addr)
-}
-
-@_cdecl("columba_ble_configure_power")
-public func columba_ble_configure_power(_ presetName: UnsafePointer<CChar>?) -> Int32 {
-    guard let name = neble_cstr(presetName) else { return -2 }
-    NEBLECABIBridge.shared.sendConfigurePower(name); return 0
+extension NEBLECallbackInvoker {
+    /// Install the invoker on the in-extension radio + force-link the package's
+    /// `columba_ble_*` C-ABI into the NE dylib. Idempotent. Called once at NE
+    /// startup (after `NEPythonBridgeHook.wireToPython()`), before the Python
+    /// driver issues its first `columba_ble_start`, so the radio's event
+    /// callback is live from the first connection.
+    static func install() {
+        // Force the package's BleNativeBindings out of the static archive so the
+        // `@_cdecl columba_ble_*` exports (driven by the NE's Python driver via
+        // CDLL(None)) are present in this dylib.
+        columbaBLEForceLinkNativeBindings()
+        SwiftBLEBridge.shared.setCallbackInvoker(NEBLECallbackInvoker.shared)
+        ExtensionDiagLog.log("[BLE-NE] in-process radio callback invoker installed (no seam)")
+        #if DEBUG
+        // [BLE-NE-DIAG] Periodic radio-state probe (DEBUG only): log the
+        // radio's own view of itself (started + connected peers + peer
+        // details) every 15s for a bounded 12-iteration window. If the radio
+        // is silently failing to advertise or a peer bonds but never produces
+        // events, this is the first signal.
+        Task {
+            let b = SwiftBLEBridge.shared
+            for _ in 0..<12 {
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
+                let peers = b.getConnectedPeers()
+                let details = b.getConnectionDetails()
+                ExtensionDiagLog.log("[BLE-NE-DIAG] started=\(b.isStarted) peers=\(peers.count) detail=\(details.count)")
+            }
+        }
+        #endif
+    }
 }
